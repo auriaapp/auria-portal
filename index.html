@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auria — Portal de Apontamentos</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;min-height:100vh}
+  :root{--navy:#1A2F4A;--gold:#E8960A;--red:#E24B4A;--green:#27AE60;--gray:#F8F9FA}
+
+  /* LOGIN */
+  #tela-login{display:flex;align-items:center;justify-content:center;min-height:100vh;
+    background:linear-gradient(135deg,#E8F4FD 0%,#F0F4F8 100%)}
+  .login-card{background:#fff;border-radius:18px;padding:36px 40px;width:380px;
+    box-shadow:0 8px 40px rgba(26,47,74,.1);text-align:center}
+  .login-card img{width:140px;margin-bottom:8px}
+  .login-card h2{color:var(--navy);font-size:22px;margin-bottom:4px}
+  .login-card p{color:#7A9AB8;font-size:12px;margin-bottom:24px}
+  .field-lbl{text-align:left;font-size:12px;color:var(--navy);font-weight:600;margin-bottom:4px;margin-top:12px}
+  .field-inp{width:100%;padding:10px 14px;border:1.5px solid #C5DAEB;border-radius:9px;
+    font-size:14px;outline:none;transition:border .2s}
+  .field-inp:focus{border-color:var(--navy)}
+  .btn-primary{width:100%;padding:12px;background:var(--gold);color:#fff;border:none;
+    border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:20px;transition:background .2s}
+  .btn-primary:hover{background:#BA7517}
+  .login-err{color:#E74C3C;font-size:12px;margin-top:10px;min-height:18px}
+  .tabs{display:flex;gap:8px;margin-bottom:8px}
+  .tab{flex:1;padding:8px;border-radius:8px;border:1.5px solid #C5DAEB;background:#fff;
+    font-size:13px;cursor:pointer;font-weight:600;color:#7A9AB8;transition:all .2s}
+  .tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+  /* PORTAL */
+  #tela-portal{display:none}
+  .topbar{background:var(--navy);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;
+    box-shadow:0 2px 12px rgba(0,0,0,.15)}
+  .topbar img{height:32px}
+  .topbar-title{color:#fff;font-size:16px;font-weight:700;flex:1}
+  .topbar-user{color:#7A9AB8;font-size:12px;text-align:right}
+  .topbar-user span{display:block;color:#AED6F1;font-size:11px}
+  .btn-logout{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);
+    padding:6px 14px;border-radius:7px;font-size:12px;cursor:pointer}
+  .btn-logout:hover{background:rgba(255,255,255,.2)}
+
+  .container{max-width:1100px;margin:0 auto;padding:24px 16px}
+
+  /* KPIs */
+  .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .kpi{background:#fff;border-radius:12px;padding:16px;text-align:center;
+    box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  .kpi-num{font-size:28px;font-weight:700;margin-bottom:2px}
+  .kpi-lbl{font-size:11px;color:#7A9AB8;text-transform:uppercase;letter-spacing:.05em}
+  .kpi-blue .kpi-num{color:#185FA5}
+  .kpi-orange .kpi-num{color:#854F0B}
+  .kpi-green .kpi-num{color:#1E8449}
+  .kpi-red .kpi-num{color:#A32D2D}
+
+  /* FILTROS */
+  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+  .filter-sel{padding:8px 14px;border:1.5px solid #C5DAEB;border-radius:8px;
+    background:#fff;font-size:13px;color:var(--navy);outline:none;cursor:pointer}
+  .filter-sel:focus{border-color:var(--navy)}
+  .search-inp{flex:1;min-width:200px;padding:8px 14px;border:1.5px solid #C5DAEB;
+    border-radius:8px;font-size:13px;outline:none}
+  .search-inp:focus{border-color:var(--navy)}
+
+  /* TABELA */
+  .table-wrap{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);overflow:hidden}
+  .table-header{padding:14px 20px;border-bottom:1px solid #EEF2F7;display:flex;
+    justify-content:space-between;align-items:center}
+  .table-header h3{color:var(--navy);font-size:15px}
+  .table-count{color:#7A9AB8;font-size:12px}
+  table{width:100%;border-collapse:collapse}
+  th{background:#F8F9FB;padding:10px 14px;text-align:left;font-size:11px;
+    color:#7A9AB8;text-transform:uppercase;letter-spacing:.06em;font-weight:700;
+    border-bottom:1px solid #EEF2F7}
+  td{padding:12px 14px;font-size:13px;color:#2C3E50;border-bottom:1px solid #F5F7FA}
+  tr:hover td{background:#FAFBFC;cursor:pointer}
+  tr.late td{background:#FFF5F5}
+  tr.resolved td{background:#F0FFF4}
+
+  .badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600}
+  .badge-open{background:#FEF9EC;color:#854F0B}
+  .badge-resolved{background:#EAF3DE;color:#1E8449}
+  .badge-late{background:#FCEBEB;color:#A32D2D}
+  .badge-sev{background:#FCEBEB;color:#A32D2D}
+  .badge-imp{background:#FEF9EC;color:#854F0B}
+  .badge-obs{background:#EAF3DE;color:#1E8449}
+
+  /* MODAL */
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
+    z-index:1000;align-items:center;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal{background:#fff;border-radius:16px;width:640px;max-width:95vw;max-height:88vh;
+    overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+  .modal-header{background:var(--navy);padding:18px 24px;border-radius:16px 16px 0 0;
+    display:flex;justify-content:space-between;align-items:center}
+  .modal-header h3{color:#fff;font-size:16px}
+  .modal-close{background:rgba(255,255,255,.15);color:#fff;border:none;
+    width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:16px}
+  .modal-body{padding:24px}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
+  .field-group label{font-size:11px;color:#7A9AB8;text-transform:uppercase;
+    letter-spacing:.06em;font-weight:700;display:block;margin-bottom:4px}
+  .field-group p{font-size:14px;color:#2C3E50;font-weight:500}
+  .field-full{margin-bottom:14px}
+  .field-full label{font-size:11px;color:#7A9AB8;text-transform:uppercase;
+    letter-spacing:.06em;font-weight:700;display:block;margin-bottom:4px}
+  .field-full p{font-size:14px;color:#2C3E50;line-height:1.6}
+  .btn-resolver{width:100%;padding:12px;background:var(--green);color:#fff;border:none;
+    border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-top:16px;transition:background .2s}
+  .btn-resolver:hover{background:#1E8449}
+  .btn-resolver:disabled{background:#ccc;cursor:not-allowed}
+  .log-list{list-style:none;max-height:160px;overflow-y:auto}
+  .log-list li{padding:6px 0;border-bottom:1px solid #F5F7FA;font-size:12px;color:#555}
+  .log-list li span{color:#7A9AB8;font-size:11px;margin-right:8px}
+  .img-grid{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .img-grid img{width:120px;height:90px;object-fit:cover;border-radius:8px;
+    border:1px solid #eee;cursor:pointer}
+
+  /* ATRASADOS */
+  .late-bar{background:#FCEBEB;border:1px solid #F7C1C1;border-radius:12px;
+    padding:14px 18px;margin-bottom:16px}
+  .late-bar h4{color:#A32D2D;font-size:13px;font-weight:700;margin-bottom:8px}
+  .late-item{display:flex;align-items:center;gap:12px;padding:6px 0;
+    border-bottom:1px solid #F9D0D0}
+  .late-item:last-child{border-bottom:none}
+  .late-id{font-weight:700;color:#E24B4A;font-size:13px;min-width:60px}
+  .late-title{flex:1;font-size:13px;color:#2C3E50}
+  .late-days{font-size:12px;font-weight:700;color:#A32D2D}
+
+  .empty{text-align:center;padding:48px;color:#7A9AB8}
+  .loading{text-align:center;padding:48px;color:#7A9AB8;font-size:14px}
+  @media(max-width:640px){
+    .kpi-row{grid-template-columns:1fr 1fr}
+    .field-row{grid-template-columns:1fr}
+    th:nth-child(n+4),td:nth-child(n+4){display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- TELA DE LOGIN -->
+<div id="tela-login">
+  <div class="login-card">
+    <img src="https://sabzccokueowpromwxdg.supabase.co/storage/v1/object/public/Auria/Gemini_Generated_Image_enohj2enohj2enoh-Photoroom.png" alt="Auria">
+    <h2>Portal de Apontamentos</h2>
+    <p>Acesso para projetistas e fornecedores</p>
+    <div class="tabs">
+      <button class="tab active" onclick="setModo('login')">Entrar</button>
+      <button class="tab" onclick="setModo('cadastro')">Criar conta</button>
+    </div>
+    <div id="campo-nome" style="display:none">
+      <div class="field-lbl">Nome completo</div>
+      <input class="field-inp" id="inp-nome" placeholder="Ex: Eng. Carlos Silva">
+    </div>
+    <div class="field-lbl">E-mail</div>
+    <input class="field-inp" id="inp-email" type="email" placeholder="seu@email.com">
+    <div class="field-lbl">Senha</div>
+    <input class="field-inp" id="inp-senha" type="password" placeholder="Sua senha">
+    <button class="btn-primary" onclick="acao()" id="btn-acao">Entrar →</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<!-- TELA PORTAL -->
+<div id="tela-portal">
+  <div class="topbar">
+    <img src="https://sabzccokueowpromwxdg.supabase.co/storage/v1/object/public/Auria/Gemini_Generated_Image_enohj2enohj2enoh-Photoroom.png" alt="Auria">
+    <div class="topbar-title">Portal de Apontamentos</div>
+    <div class="topbar-user">
+      <span id="user-nome"></span>
+      <span id="user-email"></span>
+    </div>
+    <button class="btn-logout" onclick="logout()">Sair</button>
+  </div>
+  <div class="container">
+    <div class="kpi-row">
+      <div class="kpi kpi-blue"><div class="kpi-num" id="kpi-total">—</div><div class="kpi-lbl">Total</div></div>
+      <div class="kpi kpi-orange"><div class="kpi-num" id="kpi-aberto">—</div><div class="kpi-lbl">Em aberto</div></div>
+      <div class="kpi kpi-green"><div class="kpi-num" id="kpi-resolvido">—</div><div class="kpi-lbl">Resolvidos</div></div>
+      <div class="kpi kpi-red"><div class="kpi-num" id="kpi-atraso">—</div><div class="kpi-lbl">Atrasados</div></div>
+    </div>
+    <div id="late-section"></div>
+    <div class="filters">
+      <input class="search-inp" id="busca" placeholder="🔍 Buscar apontamento..." oninput="filtrar()">
+      <select class="filter-sel" id="fil-status" onchange="filtrar()">
+        <option value="">Todos os status</option>
+        <option>Em aberto</option>
+        <option>Resolvido</option>
+      </select>
+      <select class="filter-sel" id="fil-crit" onchange="filtrar()">
+        <option value="">Todas as criticidades</option>
+        <option>Severa / Imediata</option>
+        <option>Importante / Programada</option>
+        <option>Observação / Atenção</option>
+      </select>
+      <select class="filter-sel" id="fil-emp" onchange="filtrar()">
+        <option value="">Todos os empreendimentos</option>
+      </select>
+    </div>
+    <div class="table-wrap">
+      <div class="table-header">
+        <h3>Meus Apontamentos</h3>
+        <span class="table-count" id="count-txt"></span>
+      </div>
+      <div id="tabela-body"><div class="loading">Carregando...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-titulo">Apontamento</h3>
+      <button class="modal-close" onclick="fecharModal()">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'sb_publishable_Cpa8142-Z91liTnnqJfopw_dux2jbVY';
+let TOKEN = null, USER = null, TODOS = [], FILTRADOS = [];
+let MODO = 'login';
+
+// ── Auth ──────────────────────────────────────────────────────
+function setModo(m) {
+  MODO = m;
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&m==='login')||(i===1&&m==='cadastro')));
+  document.getElementById('campo-nome').style.display = m==='cadastro'?'block':'none';
+  document.getElementById('btn-acao').textContent = m==='login'?'Entrar →':'Criar conta →';
+  document.getElementById('login-err').textContent='';
+}
+
+async function acao() {
+  const email = document.getElementById('inp-email').value.trim();
+  const senha = document.getElementById('inp-senha').value.trim();
+  const nome  = document.getElementById('inp-nome').value.trim();
+  const err   = document.getElementById('login-err');
+  if(!email||!senha){err.textContent='Preencha e-mail e senha.';return}
+  err.textContent='Aguarde...';err.style.color='#7A9AB8';
+  const endpoint = MODO==='login'
+    ? `${SUPA_URL}/auth/v1/token?grant_type=password`
+    : `${SUPA_URL}/auth/v1/signup`;
+  const body = MODO==='login'
+    ? {email,password:senha}
+    : {email,password:senha,data:{nome}};
+  try {
+    const r = await fetch(endpoint,{method:'POST',
+      headers:{'apikey':SUPA_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d = await r.json();
+    if(d.access_token){
+      TOKEN=d.access_token;
+      USER={id:d.user.id,email:d.user.email,nome:d.user.user_metadata?.nome||email.split('@')[0]};
+      localStorage.setItem('auria_token',TOKEN);
+      localStorage.setItem('auria_user',JSON.stringify(USER));
+      entrar();
+    } else {
+      const msg = d.error_description||d.message||'Erro ao autenticar';
+      err.textContent = msg.includes('Invalid')?'E-mail ou senha incorretos.':msg;
+      err.style.color='#E74C3C';
+    }
+  } catch(e){err.textContent='Sem conexão com o servidor.';err.style.color='#E74C3C';}
+}
+
+function logout(){
+  localStorage.removeItem('auria_token');localStorage.removeItem('auria_user');
+  TOKEN=null;USER=null;TODOS=[];
+  document.getElementById('tela-portal').style.display='none';
+  document.getElementById('tela-login').style.display='flex';
+}
+
+function entrar(){
+  document.getElementById('tela-login').style.display='none';
+  document.getElementById('tela-portal').style.display='block';
+  document.getElementById('user-nome').textContent=USER.nome;
+  document.getElementById('user-email').textContent=USER.email;
+  carregarApontamentos();
+}
+
+// ── Dados ─────────────────────────────────────────────────────
+async function carregarApontamentos(){
+  document.getElementById('tabela-body').innerHTML='<div class="loading">Carregando seus apontamentos...</div>';
+  try {
+    // Busca apontamentos onde o e-mail do usuário aparece nos participantes
+    const r = await fetch(
+      `${SUPA_URL}/rest/v1/apontamentos?select=*&order=prazo_min.asc.nullslast`,
+      {headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,'Accept':'application/json'}});
+    if(r.status===401){logout();return;}
+    TODOS = await r.json();
+    // Filtra por e-mail do projetista nos participantes
+    TODOS = TODOS.filter(a=>{
+      const p = a.participantes||{};
+      return Object.values(p).some(v=>
+        (v.emails||'').toLowerCase().split(/[,;]/).map(s=>s.trim()).includes(USER.email.toLowerCase())
+      );
+    });
+    // Popula filtro de empreendimentos
+    const emps = [...new Set(TODOS.map(a=>a.empreendimento).filter(Boolean))];
+    const sel = document.getElementById('fil-emp');
+    emps.forEach(e=>{const o=document.createElement('option');o.value=e;o.textContent=e;sel.appendChild(o);});
+    atualizarKPIs();
+    filtrar();
+  } catch(e){
+    document.getElementById('tabela-body').innerHTML='<div class="empty">Erro ao carregar dados.</div>';
+  }
+}
+
+function isAtrasado(a){
+  if(a.status==='Resolvido') return false;
+  if(!a.prazo_min) return false;
+  const [d,m,y]=a.prazo_min.split('/');
+  return new Date(y,m-1,d)<new Date();
+}
+
+function diasAtraso(a){
+  if(!a.prazo_min) return 0;
+  const [d,m,y]=a.prazo_min.split('/');
+  const diff=Math.floor((new Date()-new Date(y,m-1,d))/86400000);
+  return diff>0?diff:0;
+}
+
+function stripEmoji(p){return (p||'').replace(/🔴 |🟠 |🟡 /g,'').trim();}
+
+function atualizarKPIs(){
+  const total=TODOS.length;
+  const aberto=TODOS.filter(a=>a.status==='Em aberto').length;
+  const resolvido=TODOS.filter(a=>a.status==='Resolvido').length;
+  const atraso=TODOS.filter(a=>isAtrasado(a)).length;
+  document.getElementById('kpi-total').textContent=total;
+  document.getElementById('kpi-aberto').textContent=aberto;
+  document.getElementById('kpi-resolvido').textContent=resolvido;
+  document.getElementById('kpi-atraso').textContent=atraso;
+  // Seção atrasados
+  const atrasados=TODOS.filter(a=>isAtrasado(a)).sort((a,b)=>diasAtraso(b)-diasAtraso(a));
+  const sec=document.getElementById('late-section');
+  if(atrasados.length){
+    sec.innerHTML=`<div class="late-bar"><h4>⏰ Apontamentos atrasados (${atrasados.length})</h4>`+
+      atrasados.map(a=>`<div class="late-item">
+        <span class="late-id">${a.id}</span>
+        <span class="late-title">${a.titulo||'Sem título'}</span>
+        <span class="late-days">+${diasAtraso(a)} dias</span>
+      </div>`).join('')+'</div>';
+  } else sec.innerHTML='';
+}
+
+function filtrar(){
+  const busca=(document.getElementById('busca').value||'').toLowerCase();
+  const st=document.getElementById('fil-status').value;
+  const cr=document.getElementById('fil-crit').value;
+  const emp=document.getElementById('fil-emp').value;
+  FILTRADOS=TODOS.filter(a=>{
+    if(st&&a.status!==st) return false;
+    if(cr&&stripEmoji(a.prioridade)!==cr) return false;
+    if(emp&&a.empreendimento!==emp) return false;
+    if(busca&&!(a.titulo||'').toLowerCase().includes(busca)&&
+       !(a.descricao||'').toLowerCase().includes(busca)&&
+       !(a.id||'').toLowerCase().includes(busca)) return false;
+    return true;
+  });
+  renderTabela();
+}
+
+function renderTabela(){
+  const el=document.getElementById('tabela-body');
+  document.getElementById('count-txt').textContent=`${FILTRADOS.length} apontamento(s)`;
+  if(!FILTRADOS.length){el.innerHTML='<div class="empty">Nenhum apontamento encontrado.</div>';return;}
+  el.innerHTML=`<table>
+    <thead><tr>
+      <th>ID</th><th>Título</th><th>Empreendimento</th>
+      <th>Status</th><th>Criticidade</th><th>Prazo</th>
+    </tr></thead>
+    <tbody>${FILTRADOS.map(a=>{
+      const atr=isAtrasado(a);
+      const statusTxt=atr?'Em atraso':a.status;
+      const statusBadge=atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open';
+      const crit=stripEmoji(a.prioridade);
+      const critBadge=crit.startsWith('Severa')?'badge-sev':crit.startsWith('Imp')?'badge-imp':'badge-obs';
+      return `<tr class="${atr?'late':a.status==='Resolvido'?'resolved':''}" onclick="abrirModal('${a.id}')">
+        <td><strong>${a.id}</strong></td>
+        <td>${a.titulo||'—'}</td>
+        <td>${a.empreendimento||'—'}</td>
+        <td><span class="badge ${statusBadge}">${statusTxt}</span></td>
+        <td><span class="badge ${critBadge}">${crit||'—'}</span></td>
+        <td>${a.prazo_min||'—'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+// ── Modal ─────────────────────────────────────────────────────
+function abrirModal(id){
+  const a=TODOS.find(x=>x.id===id);if(!a) return;
+  document.getElementById('modal-titulo').textContent=`📍 ${a.id} — ${a.titulo||'Sem título'}`;
+  const atr=isAtrasado(a);
+  const logs=(a.log_json||[]).filter(l=>l.tipo!=='sistema');
+  const logsSist=(a.log_json||[]).filter(l=>l.tipo==='sistema');
+  document.getElementById('modal-body').innerHTML=`
+    <div class="field-row">
+      <div class="field-group"><label>Empreendimento</label><p>${a.empreendimento||'—'}</p></div>
+      <div class="field-group"><label>Disciplina</label><p>${a.disciplina||'—'}</p></div>
+    </div>
+    <div class="field-row">
+      <div class="field-group"><label>Status</label>
+        <p><span class="badge ${atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open'}">${atr?'Em atraso':a.status}</span></p>
+      </div>
+      <div class="field-group"><label>Criticidade</label>
+        <p>${stripEmoji(a.prioridade)||'—'}</p>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field-group"><label>Prazo</label><p>${a.prazo_min||'—'}</p></div>
+      <div class="field-group"><label>Conclusão</label><p>${a.conclusao||'—'}</p></div>
+    </div>
+    <div class="field-row">
+      <div class="field-group"><label>Tipo</label><p>${a.tipo||'—'}</p></div>
+      <div class="field-group"><label>Etapa</label><p>${a.etapa||'—'}</p></div>
+    </div>
+    <div class="field-full"><label>Descrição</label><p>${a.descricao||'—'}</p></div>
+    ${logsSist.length?`<div class="field-full"><label>Histórico do sistema</label>
+      <ul class="log-list">${logsSist.map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}</ul>
+    </div>`:''}
+    ${logs.length?`<div class="field-full"><label>Observações do analista</label>
+      <ul class="log-list">${logs.map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}</ul>
+    </div>`:''}
+    ${a.status!=='Resolvido'?`
+    <button class="btn-resolver" onclick="marcarResolvido('${a.id}')" 
+      ${atr?'':''}
+      id="btn-res-${a.id}">
+      ✅ Marcar como Resolvido
+    </button>`:'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>'}
+  `;
+  document.getElementById('modal').classList.add('open');
+}
+
+function fecharModal(){document.getElementById('modal').classList.remove('open');}
+document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')fecharModal();});
+
+async function marcarResolvido(id){
+  const btn=document.getElementById(`btn-res-${id}`);
+  btn.disabled=true;btn.textContent='Salvando...';
+  try {
+    const hoje=new Date().toLocaleDateString('pt-BR');
+    const a=TODOS.find(x=>x.id===id);
+    const logs=[...(a.log_json||[]),{data:hoje+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
+      texto:`Apontamento marcado como Resolvido pelo projetista (${USER.email}).`,tipo:'sistema'}];
+    const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
+      method:'PATCH',
+      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+        'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({status:'Resolvido',conclusao:hoje,log_json:logs})});
+    if(r.ok){
+      a.status='Resolvido';a.conclusao=hoje;a.log_json=logs;
+      atualizarKPIs();filtrar();fecharModal();
+    } else {btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro ao salvar.');}
+  } catch(e){btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro de conexão.');}
+}
+
+// ── Init ─────────────────────────────────────────────────────
+window.addEventListener('keydown',e=>{if(e.key==='Enter')acao();});
+(function init(){
+  const t=localStorage.getItem('auria_token');
+  const u=localStorage.getItem('auria_user');
+  if(t&&u){
+    TOKEN=t;USER=JSON.parse(u);
+    entrar();
+  }
+})();
+</script>
+</body>
+</html>
