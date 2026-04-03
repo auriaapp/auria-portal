@@ -480,10 +480,7 @@ function abrirModal(id){
       </div>`:''}
     </div>
 
-    ${a.status!=='Resolvido'?`
-    <button class="btn-resolver" onclick="marcarResolvido('${a.id}')" id="btn-res-${a.id}">
-      ✅ Marcar como Resolvido
-    </button>`:'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>'}
+    ${a.status==='Resolvido'?'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>':''}
   `;
   document.getElementById('modal').classList.add('open');
 }
@@ -580,74 +577,6 @@ window.addEventListener('keydown',e=>{if(e.key==='Enter')acao();});
 function fecharModal(){document.getElementById('modal').classList.remove('open');}
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')fecharModal();});
 
-async function marcarResolvido(id){
-  const btn=document.getElementById(`btn-res-${id}`);
-  btn.disabled=true;btn.textContent='Salvando...';
-  try {
-    const hoje=new Date().toLocaleDateString('pt-BR');
-    const a=TODOS.find(x=>x.id===id);
-    const logs=[...(a.log_json||[]),{data:hoje+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
-      texto:`Apontamento marcado como Resolvido pelo projetista (${USER.email}).`,tipo:'sistema'}];
-    const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({status:'Resolvido',conclusao:hoje,log_json:logs})});
-    if(r.ok){
-      a.status='Resolvido';a.conclusao=hoje;a.log_json=logs;
-      atualizarKPIs();filtrar();fecharModal();
-    } else {btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro ao salvar.');}
-  } catch(e){btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro de conexão.');}
-}
-
-// ── Chat ─────────────────────────────────────────────────────
-async function enviarMensagem(id){
-  const inp = document.getElementById('chat-inp');
-  const texto = inp.value.trim();
-  if(!texto) return;
-  const a = TODOS.find(x=>x.id===id);
-  if(!a) return;
-  const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
-    new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const msgs = [...(a.mensagens||[]), {
-    de: 'projetista',
-    nome: USER.nome,
-    email: USER.email,
-    texto,
-    data: agora
-  }];
-  inp.value='';
-  try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
-    if(r.ok){
-      a.mensagens = msgs;
-      // Atualiza chat sem fechar modal
-      const chatDiv = document.getElementById('chat-msgs');
-      if(chatDiv){
-        chatDiv.innerHTML += `
-          <div style="margin-bottom:10px">
-            <div style="display:flex;justify-content:flex-end">
-              <div style="max-width:80%">
-                <div style="font-size:10px;color:#7A9AB8;margin-bottom:2px;text-align:right">
-                  ${USER.nome||USER.email}
-                </div>
-                <div style="padding:8px 12px;border-radius:12px;font-size:13px;
-                  background:#1A2F4A;color:#fff">
-                  ${texto}
-                  <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${agora}</div>
-                </div>
-              </div>
-            </div>
-          </div>`;
-        chatDiv.scrollTop = chatDiv.scrollHeight;
-      }
-    } else { alert('Erro ao enviar mensagem.'); }
-  } catch(e){ alert('Erro de conexão.'); }
-}
 
 // ── Init ─────────────────────────────────────────────────────
 window.addEventListener('keydown',e=>{if(e.key==='Enter')acao();});
