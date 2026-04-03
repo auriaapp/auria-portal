@@ -413,13 +413,12 @@ function abrirModal(id){
       <div class="field-group"><label>Empreendimento</label><p>${a.empreendimento||'—'}</p></div>
       <div class="field-group"><label>Disciplina</label><p>${a.disciplina||'—'}</p></div>
     </div>
+    ${a.prancha_nome?`<div class="field-full"><label>Prancha</label><p>📄 ${a.prancha_nome}</p></div>`:''}
     <div class="field-row">
       <div class="field-group"><label>Status</label>
         <p><span class="badge ${atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open'}">${atr?'Em atraso':a.status}</span></p>
       </div>
-      <div class="field-group"><label>Criticidade</label>
-        <p>${stripEmoji(a.prioridade)||'—'}</p>
-      </div>
+      <div class="field-group"><label>Criticidade</label><p>${stripEmoji(a.prioridade)||'—'}</p></div>
     </div>
     <div class="field-row">
       <div class="field-group"><label>Prazo</label><p>${a.prazo_min||'—'}</p></div>
@@ -430,16 +429,54 @@ function abrirModal(id){
       <div class="field-group"><label>Etapa</label><p>${a.etapa||'—'}</p></div>
     </div>
     <div class="field-full"><label>Descrição</label><p>${a.descricao||'—'}</p></div>
-    ${logsSist.length?`<div class="field-full"><label>Histórico do sistema</label>
-      <ul class="log-list">${logsSist.map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}</ul>
+
+    ${(a.obs_coord&&a.obs_coord.length)?`
+    <div class="field-full">
+      <label>Comentários da coordenação</label>
+      <ul class="log-list">
+        ${a.obs_coord.map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}
+      </ul>
     </div>`:''}
-    ${logs.length?`<div class="field-full"><label>Observações do analista</label>
-      <ul class="log-list">${logs.map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}</ul>
+
+    ${(a.log_json&&a.log_json.filter(l=>l.tipo==='sistema').length)?`
+    <div class="field-full"><label>Histórico do sistema</label>
+      <ul class="log-list">
+        ${a.log_json.filter(l=>l.tipo==='sistema').map(l=>`<li><span>${l.data||''}</span>${l.texto}</li>`).join('')}
+      </ul>
     </div>`:''}
+
+    <!-- CHAT -->
+    <div class="field-full" style="margin-top:16px">
+      <label>💬 Chat com a coordenação</label>
+      <div id="chat-msgs" style="max-height:180px;overflow-y:auto;border:1px solid #EEF2F7;
+        border-radius:8px;padding:10px;margin:8px 0;background:#FAFBFC">
+        ${((a.mensagens||[]).length===0)?'<p style="color:#7A9AB8;font-size:12px;text-align:center">Nenhuma mensagem ainda.</p>':
+          (a.mensagens||[]).map(m=>`
+          <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:${m.de==='projetista'?'flex-end':'flex-start'}">
+              <div style="max-width:80%;padding:8px 12px;border-radius:12px;font-size:13px;
+                background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
+                color:${m.de==='projetista'?'#fff':'#2C3E50'}">
+                ${m.texto}
+                <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}</div>
+              </div>
+            </div>
+          </div>`).join('')
+        }
+      </div>
+      ${a.status!=='Resolvido'?`
+      <div style="display:flex;gap:8px">
+        <input id="chat-inp" placeholder="Digite sua mensagem..." 
+          style="flex:1;padding:10px 14px;border:1.5px solid #C5DAEB;border-radius:9px;font-size:13px;outline:none"
+          onkeydown="if(event.key==='Enter')enviarMensagem('${a.id}')">
+        <button onclick="enviarMensagem('${a.id}')"
+          style="padding:10px 18px;background:#E8960A;color:#fff;border:none;border-radius:9px;
+          font-size:13px;font-weight:700;cursor:pointer">Enviar</button>
+      </div>`:''}
+    </div>
+
     ${a.status!=='Resolvido'?`
-    <button class="btn-resolver" onclick="marcarResolvido('${a.id}')" 
-      ${atr?'':''}
-      id="btn-res-${a.id}">
+    <button class="btn-resolver" onclick="marcarResolvido('${a.id}')" id="btn-res-${a.id}">
       ✅ Marcar como Resolvido
     </button>`:'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>'}
   `;
@@ -467,6 +504,50 @@ async function marcarResolvido(id){
       atualizarKPIs();filtrar();fecharModal();
     } else {btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro ao salvar.');}
   } catch(e){btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro de conexão.');}
+}
+
+// ── Chat ─────────────────────────────────────────────────────
+async function enviarMensagem(id){
+  const inp = document.getElementById('chat-inp');
+  const texto = inp.value.trim();
+  if(!texto) return;
+  const a = TODOS.find(x=>x.id===id);
+  if(!a) return;
+  const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
+    new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const msgs = [...(a.mensagens||[]), {
+    de: 'projetista',
+    nome: USER.nome,
+    email: USER.email,
+    texto,
+    data: agora
+  }];
+  inp.value='';
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
+      method:'PATCH',
+      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+        'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({mensagens: msgs})});
+    if(r.ok){
+      a.mensagens = msgs;
+      // Atualiza chat sem fechar modal
+      const chatDiv = document.getElementById('chat-msgs');
+      if(chatDiv){
+        chatDiv.innerHTML += `
+          <div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:flex-end">
+              <div style="max-width:80%;padding:8px 12px;border-radius:12px;font-size:13px;
+                background:#1A2F4A;color:#fff">
+                ${texto}
+                <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${agora}</div>
+              </div>
+            </div>
+          </div>`;
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+      }
+    } else { alert('Erro ao enviar mensagem.'); }
+  } catch(e){ alert('Erro de conexão.'); }
 }
 
 // ── Init ─────────────────────────────────────────────────────
