@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Auria — Portal de Apontamentos</title>
+<link rel="icon" type="image/png" href="Gemini_Generated_Image_enohj2enohj2enoh-Photoroom.png">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;min-height:100vh}
@@ -14,7 +15,7 @@
     background:linear-gradient(135deg,#E8F4FD 0%,#F0F4F8 100%)}
   .login-card{background:#fff;border-radius:18px;padding:36px 40px;width:380px;
     box-shadow:0 8px 40px rgba(26,47,74,.1);text-align:center}
-  .login-card img{width:240px;margin-bottom:8px}
+  .login-card img{width:140px;margin-bottom:8px}
   .login-card h2{color:var(--navy);font-size:22px;margin-bottom:4px}
   .login-card p{color:#7A9AB8;font-size:12px;margin-bottom:24px}
   .field-lbl{text-align:left;font-size:12px;color:var(--navy);font-weight:600;margin-bottom:4px;margin-top:12px}
@@ -34,7 +35,7 @@
   #tela-portal{display:none}
   .topbar{background:var(--navy);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;
     box-shadow:0 2px 12px rgba(0,0,0,.15)}
-  .topbar img{height:120px}
+  .topbar img{height:48px}
   .topbar-title{color:#fff;font-size:16px;font-weight:700;flex:1}
   .topbar-user{color:#7A9AB8;font-size:12px;text-align:right}
   .topbar-user span{display:block;color:#AED6F1;font-size:11px}
@@ -175,7 +176,39 @@
     <button class="btn-logout" onclick="logout()">Sair</button>
   </div>
   <div class="container">
-    <div class="kpi-row">
+    <!-- PONTUAÇÃO DO FORNECEDOR -->
+<div id="score-section" style="margin-bottom:16px;display:none">
+  <div style="background:#fff;border-radius:12px;padding:16px 20px;
+    box-shadow:0 2px 8px rgba(0,0,0,.06);display:flex;align-items:center;gap:20px">
+    <div>
+      <div style="font-size:11px;color:#7A9AB8;text-transform:uppercase;
+        letter-spacing:.06em;font-weight:700;margin-bottom:4px">Sua Pontuação</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="score-num" style="font-size:36px;font-weight:700;color:#1A2F4A">—</span>
+        <span id="score-arrow" style="font-size:24px"></span>
+      </div>
+      <div id="score-trend" style="font-size:11px;color:#7A9AB8;margin-top:2px"></div>
+    </div>
+    <div style="flex:1;border-left:1px solid #EEF2F7;padding-left:20px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#185FA5" id="sc-eng">—</div>
+          <div style="font-size:10px;color:#7A9AB8">Engajamento</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#854F0B" id="sc-prazo">—</div>
+          <div style="font-size:10px;color:#7A9AB8">Prazo</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#1E8449" id="sc-assert">—</div>
+          <div style="font-size:10px;color:#7A9AB8">Assertividade</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="kpi-row">
       <div class="kpi kpi-blue"><div class="kpi-num" id="kpi-total">—</div><div class="kpi-lbl">Total</div></div>
       <div class="kpi kpi-orange"><div class="kpi-num" id="kpi-aberto">—</div><div class="kpi-lbl">Em aberto</div></div>
       <div class="kpi kpi-green"><div class="kpi-num" id="kpi-resolvido">—</div><div class="kpi-lbl">Resolvidos</div></div>
@@ -344,17 +377,101 @@ function atualizarKPIs(){
   document.getElementById('kpi-aberto').textContent=aberto;
   document.getElementById('kpi-resolvido').textContent=resolvido;
   document.getElementById('kpi-atraso').textContent=atraso;
+  calcularPontuacao();
   // Seção atrasados
   const atrasados=TODOS.filter(a=>isAtrasado(a)).sort((a,b)=>diasAtraso(b)-diasAtraso(a));
   const sec=document.getElementById('late-section');
   if(atrasados.length){
     sec.innerHTML=`<div class="late-bar"><h4>⏰ Apontamentos atrasados (${atrasados.length})</h4>`+
-      atrasados.map(a=>`<div class="late-item">
+      atrasados.map(a=>`<div class="late-item" onclick="abrirModal('${a.id}')" style="cursor:pointer">
         <span class="late-id">${a.id}</span>
         <span class="late-title">${a.titulo||'Sem título'}</span>
         <span class="late-days">+${diasAtraso(a)} dias</span>
       </div>`).join('')+'</div>';
   } else sec.innerHTML='';
+}
+
+function calcularPontuacao(){
+  if(!TODOS.length) return;
+  document.getElementById('score-section').style.display='block';
+
+  // ── Prazo (40%) ──────────────────────────────────────────
+  let ptPrazo = 100;
+  TODOS.forEach(a=>{
+    const dias = diasAtraso(a);
+    if(dias > 0) ptPrazo -= dias * 3;
+    else if(a.status==='Resolvido' && a.prazo_min && a.conclusao){
+      try{
+        const [pd,pm,py]=a.prazo_min.split('/');
+        const [cd,cm,cy]=a.conclusao.split('/');
+        const diff=Math.floor((new Date(py,pm-1,pd)-new Date(cy,cm-1,cd))/86400000);
+        if(diff>0) ptPrazo += diff*2;
+      }catch(e){}
+    }
+    if(a.status==='Resolvido' && diasAtraso(a)===0) ptPrazo += 10;
+  });
+  ptPrazo = Math.max(0, Math.min(100, Math.round(ptPrazo)));
+
+  // ── Engajamento (30%) ─────────────────────────────────────
+  let ptEng = 100;
+  TODOS.forEach(a=>{
+    const msgs = a.mensagens||[];
+    const meusMsgs = msgs.filter(m=>m.de==='projetista').length;
+    if(a.visibilidade==='Público' && meusMsgs===0) ptEng -= 5;
+    else if(meusMsgs > 0) ptEng += 3;
+  });
+  ptEng = Math.max(0, Math.min(100, Math.round(ptEng)));
+
+  // ── Assertividade (30%) ───────────────────────────────────
+  let ptAssert = 100;
+  TODOS.forEach(a=>{
+    const tipo = (a.tipo||'').toLowerCase();
+    if(tipo.includes('interferência') || tipo.includes('interferencia')) ptAssert -= 10;
+    else if(tipo.includes('norma') || tipo.includes('diretriz')) ptAssert -= 10;
+    else if(tipo.includes('ausência') || tipo.includes('ausencia') || tipo.includes('detalhe')) ptAssert -= 5;
+    if(a.status==='Resolvido') ptAssert += 2;
+  });
+  ptAssert = Math.max(0, Math.min(100, Math.round(ptAssert)));
+
+  // ── Total ponderado ───────────────────────────────────────
+  const total = Math.round(ptPrazo*0.4 + ptEng*0.3 + ptAssert*0.3);
+
+  // ── Tendência diária ─────────────────────────────────────
+  // Compara score de hoje com score de ontem (baseado em apontamentos com conclusao)
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
+  function scoreData(data){
+    let s=0;
+    TODOS.forEach(a=>{
+      if(a.status==='Resolvido' && a.conclusao){
+        try{
+          const [d,m,y]=a.conclusao.split('/');
+          const dt=new Date(y,m-1,d);
+          if(dt<=data) s+=3;
+        }catch(e){}
+      }
+      if(isAtrasado(a)) s-=diasAtraso(a)*3;
+    });
+    return s;
+  }
+  const scoreHoje = scoreData(hoje);
+  const scoreOntem = scoreData(ontem);
+  const tendencia = scoreHoje > scoreOntem ? 'up' : scoreHoje < scoreOntem ? 'down' : 'neutral';
+
+  // ── Exibe ─────────────────────────────────────────────────
+  document.getElementById('score-num').textContent = total;
+  document.getElementById('score-num').style.color =
+    total>=70?'#1E8449':total>=40?'#854F0B':'#A32D2D';
+  document.getElementById('score-arrow').textContent =
+    tendencia==='up'?'↑':tendencia==='down'?'↓':'→';
+  document.getElementById('score-arrow').style.color =
+    tendencia==='up'?'#27AE60':tendencia==='down'?'#E74C3C':'#7A9AB8';
+  document.getElementById('score-trend').textContent =
+    tendencia==='up'?'Tendência de melhora':
+    tendencia==='down'?'Tendência de queda':'Estável';
+  document.getElementById('sc-eng').textContent = ptEng;
+  document.getElementById('sc-prazo').textContent = ptPrazo;
+  document.getElementById('sc-assert').textContent = ptAssert;
 }
 
 function filtrar(){
@@ -531,6 +648,7 @@ async function enviarMensagem(id){
       headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
         'Content-Type':'application/json','Prefer':'return=minimal'},
       body:JSON.stringify({mensagens: msgs})});
+    console.log('PATCH status:', r.status, await r.text());
     if(r.ok){
       a.mensagens = msgs;
       // Atualiza chat sem fechar modal
