@@ -37,7 +37,7 @@
   #tela-portal{display:none}
   .topbar{background:var(--navy);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;
     box-shadow:0 2px 12px rgba(0,0,0,.15)}
-  .topbar img{height:96px}
+  .topbar img{height:48px}
   .topbar-title{color:#fff;font-size:16px;font-weight:700;flex:1}
   .topbar-user{color:#7A9AB8;font-size:12px;text-align:right}
   .topbar-user span{display:block;color:#AED6F1;font-size:11px}
@@ -570,18 +570,22 @@ function abrirModal(id){
       <div id="chat-msgs" style="max-height:180px;overflow-y:auto;border:1px solid #EEF2F7;
         border-radius:8px;padding:10px;margin:8px 0;background:#FAFBFC">
         ${((a.mensagens||[]).length===0)?'<p style="color:#7A9AB8;font-size:12px;text-align:center">Nenhuma mensagem ainda.</p>':
-          (a.mensagens||[]).map(m=>`
-          <div style="margin-bottom:10px">
+          (a.mensagens||[]).map((m,mIdx)=>`
+          <div style="margin-bottom:10px" id="msg-${mIdx}-${a.id}">
             <div style="display:flex;justify-content:${m.de==='projetista'?'flex-end':'flex-start'}">
               <div style="max-width:80%">
                 <div style="font-size:10px;color:#7A9AB8;margin-bottom:2px;text-align:${m.de==='projetista'?'right':'left'}">
                   ${m.nome||m.email||'Projetista'}
+                  ${m.de==='projetista'&&m.email===USER.email&&podEditarMsg(m)?`
+                    <span onclick="editarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:6px;color:#7A9AB8" title="Editar">✏️</span>
+                    <span onclick="deletarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:4px;color:#E74C3C" title="Deletar">🗑</span>
+                  `:''}
                 </div>
                 <div style="padding:8px 12px;border-radius:12px;font-size:13px;
                   background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
                   color:${m.de==='projetista'?'#fff':'#2C3E50'}">
                   ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${m.texto}</span>`:m.tipo==='croqui'&&m.imagem?`<div>${m.texto}</div><img src="${m.imagem}" style="max-width:200px;border-radius:6px;margin-top:4px">`:m.texto}
-                  <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}</div>
+                  <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}${m.editado?' (editado)':''}</div>
                 </div>
               </div>
             </div>
@@ -651,6 +655,52 @@ async function marcarResolvido(id){
 }
 
 // ── Chat ─────────────────────────────────────────────────────
+function podEditarMsg(m){
+  // Verifica se a mensagem foi criada há menos de 15 minutos
+  if(!m.data) return false;
+  try {
+    const [datePart, timePart] = m.data.split(' ');
+    const [d,mo,y] = datePart.split('/');
+    const [h,min] = timePart.split(':');
+    const msgDate = new Date(y, mo-1, d, h, min);
+    return (new Date() - msgDate) < 15*60*1000;
+  } catch(e){ return false; }
+}
+
+async function editarMsg(idx, issueId){
+  const a = TODOS.find(x=>x.id===issueId); if(!a) return;
+  const msg = (a.mensagens||[])[idx]; if(!msg) return;
+  const novoTexto = prompt('Editar mensagem:', msg.texto);
+  if(novoTexto === null || novoTexto.trim() === '') return;
+  const msgs = [...(a.mensagens||[])];
+  msgs[idx] = {...msg, texto: novoTexto.trim(), editado: true};
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
+      method:'PATCH',
+      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+        'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({mensagens: msgs})});
+    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(issueId); }
+    else { alert('Erro ao editar.'); }
+  } catch(e){ alert('Erro de conexão.'); }
+}
+
+async function deletarMsg(idx, issueId){
+  if(!confirm('Deletar esta mensagem?')) return;
+  const a = TODOS.find(x=>x.id===issueId); if(!a) return;
+  const msgs = (a.mensagens||[]).filter((_,i)=>i!==idx);
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
+      method:'PATCH',
+      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+        'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({mensagens: msgs})});
+    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(issueId); }
+    else { alert('Erro ao deletar.'); }
+  } catch(e){ alert('Erro de conexão.'); }
+}
+
+
 function abrirSugestaoPrazo(id){
   const picker = document.getElementById(`prazo-picker-${id}`);
   if(picker) picker.style.display = picker.style.display==='none'?'block':'none';
