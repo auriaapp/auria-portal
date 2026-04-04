@@ -50,7 +50,9 @@
   /* KPIs */
   .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
   .kpi{background:#fff;border-radius:12px;padding:16px;text-align:center;
-    box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    box-shadow:0 2px 8px rgba(0,0,0,.06);transition:all .15s}
+  .kpi:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.12)}
+  .kpi.active{outline:2.5px solid currentColor;transform:translateY(-2px)}
   .kpi-num{font-size:28px;font-weight:700;margin-bottom:2px}
   .kpi-lbl{font-size:11px;color:#7A9AB8;text-transform:uppercase;letter-spacing:.05em}
   .kpi-blue .kpi-num{color:#185FA5}
@@ -211,10 +213,10 @@
 </div>
 
 <div class="kpi-row">
-      <div class="kpi kpi-blue"><div class="kpi-num" id="kpi-total">—</div><div class="kpi-lbl">Total</div></div>
-      <div class="kpi kpi-orange"><div class="kpi-num" id="kpi-aberto">—</div><div class="kpi-lbl">Em aberto</div></div>
-      <div class="kpi kpi-green"><div class="kpi-num" id="kpi-resolvido">—</div><div class="kpi-lbl">Resolvidos</div></div>
-      <div class="kpi kpi-red"><div class="kpi-num" id="kpi-atraso">—</div><div class="kpi-lbl">Atrasados</div></div>
+      <div class="kpi kpi-blue" id="kpi-card-total" onclick="filtrarKpi('')" style="cursor:pointer" title="Mostrar todos"><div class="kpi-num" id="kpi-total">—</div><div class="kpi-lbl">Total</div></div>
+      <div class="kpi kpi-orange" id="kpi-card-aberto" onclick="filtrarKpi('Em aberto')" style="cursor:pointer" title="Filtrar em aberto"><div class="kpi-num" id="kpi-aberto">—</div><div class="kpi-lbl">Em aberto</div></div>
+      <div class="kpi kpi-green" id="kpi-card-resolvido" onclick="filtrarKpi('Resolvido')" style="cursor:pointer" title="Filtrar resolvidos"><div class="kpi-num" id="kpi-resolvido">—</div><div class="kpi-lbl">Resolvidos</div></div>
+      <div class="kpi kpi-red" id="kpi-card-atraso" onclick="filtrarKpi('atraso')" style="cursor:pointer" title="Filtrar atrasados"><div class="kpi-num" id="kpi-atraso">—</div><div class="kpi-lbl">Atrasados</div></div>
     </div>
     <div id="late-section"></div>
     <div class="filters">
@@ -476,13 +478,44 @@ function calcularPontuacao(){
   document.getElementById('sc-assert').textContent = ptAssert;
 }
 
+let _kpi_ativo = "";  // rastreia qual KPI está selecionado
+
+function filtrarKpi(tipo){
+  // Toggle: se clicar no mesmo KPI, desfaz o filtro
+  if(_kpi_ativo === tipo){
+    _kpi_ativo = "";
+    document.getElementById("fil-status").value = "";
+    // Remove active de todos
+    ["kpi-card-total","kpi-card-aberto","kpi-card-resolvido","kpi-card-atraso"]
+      .forEach(id=>document.getElementById(id)?.classList.remove("active"));
+  } else {
+    _kpi_ativo = tipo;
+    // Aplica filtro
+    if(tipo === "") document.getElementById("fil-status").value = "";
+    else if(tipo === "atraso") document.getElementById("fil-status").value = "";
+    else document.getElementById("fil-status").value = tipo;
+    // Marca card ativo
+    ["kpi-card-total","kpi-card-aberto","kpi-card-resolvido","kpi-card-atraso"]
+      .forEach(id=>document.getElementById(id)?.classList.remove("active"));
+    const cardMap = {"":"kpi-card-total","Em aberto":"kpi-card-aberto",
+                     "Resolvido":"kpi-card-resolvido","atraso":"kpi-card-atraso"};
+    document.getElementById(cardMap[tipo])?.classList.add("active");
+  }
+  // Força filtro especial para atrasados
+  _filtro_atraso = (_kpi_ativo === "atraso");
+  filtrar();
+}
+
+let _filtro_atraso = false;
+
 function filtrar(){
   const busca=(document.getElementById('busca').value||'').toLowerCase();
   const st=document.getElementById('fil-status').value;
   const cr=document.getElementById('fil-crit').value;
   const emp=document.getElementById('fil-emp').value;
   FILTRADOS=TODOS.filter(a=>{
-    if(st&&a.status!==st) return false;
+    if(_filtro_atraso && !isAtrasado(a)) return false;
+    if(!_filtro_atraso && st&&a.status!==st) return false;
     if(cr&&stripEmoji(a.prioridade)!==cr) return false;
     if(emp&&a.empreendimento!==emp) return false;
     if(busca&&!(a.titulo||'').toLowerCase().includes(busca)&&
