@@ -580,7 +580,7 @@ function abrirModal(id){
                 <div style="padding:8px 12px;border-radius:12px;font-size:13px;
                   background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
                   color:${m.de==='projetista'?'#fff':'#2C3E50'}">
-                  ${m.texto}
+                  ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${m.texto}</span>`:m.tipo==='croqui'&&m.imagem?`<div>${m.texto}</div><img src="${m.imagem}" style="max-width:200px;border-radius:6px;margin-top:4px">`:m.texto}
                   <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}</div>
                 </div>
               </div>
@@ -589,6 +589,29 @@ function abrirModal(id){
         }
       </div>
       ${a.status!=='Resolvido'?`
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button onclick="abrirSugestaoPrazo('${a.id}')"
+          style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #C5DAEB;
+          border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">📅 Sugerir prazo</button>
+        <label style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #C5DAEB;
+          border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">
+          🖼 Croqui
+          <input type="file" accept="image/*" style="display:none" onchange="enviarCroqui(this,'${a.id}')">
+        </label>
+      </div>
+      <div id="prazo-picker-${a.id}" style="display:none;background:#F8F9FB;border:1.5px solid #C5DAEB;
+        border-radius:9px;padding:10px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;color:#1A2F4A;margin-bottom:6px">Sugerir novo prazo:</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="date" id="prazo-date-${a.id}"
+            style="padding:8px;border:1.5px solid #C5DAEB;border-radius:8px;font-size:13px;flex:1">
+          <button onclick="enviarSugestaoPrazo('${a.id}')"
+            style="padding:8px 14px;background:#1A2F4A;color:#fff;border:none;
+            border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">Enviar</button>
+          <button onclick="document.getElementById('prazo-picker-${a.id}').style.display='none'"
+            style="padding:8px;background:transparent;border:none;cursor:pointer;color:#7A9AB8">✕</button>
+        </div>
+      </div>
       <div style="display:flex;gap:8px">
         <input id="chat-inp" placeholder="Digite sua mensagem..." 
           style="flex:1;padding:10px 14px;border:1.5px solid #C5DAEB;border-radius:9px;font-size:13px;outline:none"
@@ -628,6 +651,84 @@ async function marcarResolvido(id){
 }
 
 // ── Chat ─────────────────────────────────────────────────────
+function abrirSugestaoPrazo(id){
+  const picker = document.getElementById(`prazo-picker-${id}`);
+  if(picker) picker.style.display = picker.style.display==='none'?'block':'none';
+}
+
+async function enviarSugestaoPrazo(id){
+  const dateInp = document.getElementById(`prazo-date-${id}`);
+  if(!dateInp || !dateInp.value){ alert('Selecione uma data.'); return; }
+  // Convert yyyy-mm-dd to dd/mm/yyyy
+  const [y,m,d] = dateInp.value.split('-');
+  const prazoFmt = `${d}/${m}/${y}`;
+  const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
+    new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const a = TODOS.find(x=>x.id===id); if(!a) return;
+  const msgs = [...(a.mensagens||[]), {
+    de: 'projetista',
+    tipo: 'sugestao_prazo',
+    nome: USER.nome,
+    email: USER.email,
+    texto: `📅 Sugestão de novo prazo: ${prazoFmt}`,
+    prazo_sugerido: prazoFmt,
+    data: agora
+  }];
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
+      method:'PATCH',
+      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+        'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({mensagens: msgs})});
+    if(r.ok){
+      a.mensagens = msgs;
+      document.getElementById(`prazo-picker-${id}`).style.display='none';
+      // Reload modal
+      fecharModal(); abrirModal(id);
+      alert(`✅ Sugestão de prazo enviada: ${prazoFmt}`);
+    } else { alert('Erro ao enviar sugestão.'); }
+  } catch(e){ alert('Erro de conexão.'); }
+}
+
+async function enviarCroqui(input, id){
+  const file = input.files[0]; if(!file) return;
+  const a = TODOS.find(x=>x.id===id); if(!a) return;
+  // Compress image
+  const canvas = document.createElement('canvas');
+  const img = new Image();
+  img.onload = async function(){
+    const maxW = 800, maxH = 800;
+    let w=img.width, h=img.height;
+    if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+    if(h>maxH){w=Math.round(w*maxH/h);h=maxH;}
+    canvas.width=w; canvas.height=h;
+    canvas.getContext('2d').drawImage(img,0,0,w,h);
+    const base64 = canvas.toDataURL('image/jpeg',0.6);
+    const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
+      new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const msgs = [...(a.mensagens||[]), {
+      de: 'projetista',
+      tipo: 'croqui',
+      nome: USER.nome,
+      email: USER.email,
+      texto: '🖼 Croqui enviado',
+      imagem: base64,
+      data: agora
+    }];
+    try {
+      const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
+        method:'PATCH',
+        headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
+          'Content-Type':'application/json','Prefer':'return=minimal'},
+        body:JSON.stringify({mensagens: msgs})});
+      if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+      else { alert('Erro ao enviar croqui.'); }
+    } catch(e){ alert('Erro de conexão.'); }
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+
 async function enviarMensagem(id){
   const inp = document.getElementById('chat-inp');
   const texto = inp.value.trim();
