@@ -456,36 +456,44 @@ async function init(){
   const today = new Date();
   document.getElementById('topbarDate').textContent =
     today.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  const { data:{ session } } = await sb.auth.getSession();
-  if(session){ await afterLogin(session.user); }
-  else{ show('loginWrap'); hide('app'); }
+  // Seguranca: CEO panel sempre exige login — nunca usa sessao salva
+  try{ await sb.auth.signOut(); }catch(e){}
+  document.getElementById('loginWrap').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
 }
 
 async function doLogin(){
   const email = v('loginEmail'), pass = v('loginPass');
   const errEl = document.getElementById('loginErr');
-  errEl.style.display='none';
+  errEl.style.display = 'none';
   try{
-    const { data, error } = await sb.auth.signInWithPassword({email,password:pass});
+    const { data, error } = await sb.auth.signInWithPassword({email, password:pass});
     if(error) throw error;
     await afterLogin(data.user);
-  }catch(e){ showErr(errEl,'Credenciais invalidas ou acesso negado.'); }
+  }catch(e){ showErr(errEl, 'Credenciais invalidas ou acesso negado.'); }
 }
 
 async function afterLogin(user){
-  const { data:profile } = await sb.from('usuarios_auria').select('*').eq('id',user.id).single();
+  const { data:profile } = await sb.from('usuarios_auria').select('*').eq('id', user.id).single();
   if(!profile || profile.role !== 'super_admin'){
     await sb.auth.signOut();
-    window.location.reload();
+    document.getElementById('loginWrap').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    showErr(document.getElementById('loginErr'), 'Acesso exclusivo para administradores Auria.');
     return;
   }
-  USER = {...user,...profile};
+  USER = {...user, ...profile};
   document.getElementById('sbUserName').textContent = profile.nome || user.email;
-  hide('loginWrap'); show('app');
+  document.getElementById('loginWrap').style.display = 'none';
+  document.getElementById('app').style.display = '';
   await loadAll();
 }
 
-async function doLogout(){ await sb.auth.signOut(); hide('app'); show('loginWrap'); }
+async function doLogout(){
+  await sb.auth.signOut();
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginWrap').style.display = 'flex';
+}
 
 async function loadAll(){
   await Promise.all([ loadOverview(), loadClientes(), loadUsuarios(), loadChamados(), loadMetricas() ]);
