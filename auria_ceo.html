@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Painel CEO</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --blue:#3B82F6;--blue-dark:#1D4ED8;--blue-light:#EFF6FF;--blue-mid:#DBEAFE;
+  --green:#10B981;--green-light:#ECFDF5;
+  --red:#EF4444;--red-light:#FEF2F2;
+  --yellow:#F59E0B;--yellow-light:#FFFBEB;
+  --purple:#8B5CF6;--purple-light:#F5F3FF;
+  --gray:#94A3B8;--gray-light:#F8FAFC;--gray-border:#E2E8F0;
+  --text:#1E293B;--text-mid:#475569;--text-soft:#94A3B8;
+  --sidebar-w:240px;--card-radius:14px;
+  --shadow:0 1px 4px rgba(0,0,0,.07),0 4px 16px rgba(0,0,0,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--text);min-height:100vh}
+
+/* LOGIN */
+#loginWrap{display:flex;align-items:center;justify-content:center;min-height:100vh;
+  background:linear-gradient(135deg,#0F172A 0%,#1E3A5F 60%,#1D4ED8 100%)}
+.login-box{background:#fff;border-radius:20px;padding:44px 40px;width:380px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.login-logo{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+.login-logo-icon{width:42px;height:42px;background:linear-gradient(135deg,var(--blue),var(--blue-dark));
+  border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+.login-logo-txt{font-size:22px;font-weight:800}
+.login-logo-badge{font-size:10px;background:#0F172A;color:#fff;border-radius:4px;
+  padding:2px 7px;font-weight:700;letter-spacing:.5px;margin-top:2px}
+.form-label{font-size:12px;font-weight:600;color:var(--text-mid);margin-bottom:5px;display:block}
+.form-inp{width:100%;border:1.5px solid var(--gray-border);border-radius:9px;padding:10px 13px;
+  font-size:14px;outline:none;color:var(--text);background:#FAFAFA;transition:border .15s}
+.form-inp:focus{border-color:var(--blue);background:#fff}
+.form-group{margin-bottom:16px}
+.btn-login{width:100%;background:linear-gradient(135deg,var(--blue),var(--blue-dark));color:#fff;
+  border:none;border-radius:9px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;margin-top:6px}
+.btn-login:hover{opacity:.9}
+.login-err{background:var(--red-light);color:var(--red);border-radius:8px;
+  padding:9px 13px;font-size:13px;margin-bottom:14px;display:none}
+.ceo-badge{text-align:center;font-size:11px;color:var(--text-soft);margin-top:16px}
+
+/* APP */
+#app{display:none;min-height:100vh}
+.layout{display:flex;min-height:100vh}
+
+/* SIDEBAR CEO */
+.sidebar{width:var(--sidebar-w);background:linear-gradient(180deg,#0F172A 0%,#1a2744 100%);
+  color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:100}
+.sb-brand{padding:22px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px}
+.sb-brand-icon{width:34px;height:34px;background:linear-gradient(135deg,var(--blue),var(--blue-dark));
+  border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px}
+.sb-brand-name{font-size:16px;font-weight:800}
+.sb-brand-role{font-size:9px;color:var(--yellow);letter-spacing:.8px;text-transform:uppercase;margin-top:1px;font-weight:700}
+.sb-nav{flex:1;padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.sb-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;
+  cursor:pointer;font-size:13px;font-weight:500;color:rgba(255,255,255,.6);transition:all .15s;text-decoration:none}
+.sb-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.sb-item.active{background:var(--blue);color:#fff;font-weight:700}
+.sb-section{font-size:9px;font-weight:700;letter-spacing:.8px;color:rgba(255,255,255,.25);
+  text-transform:uppercase;padding:12px 12px 4px}
+.sb-user{padding:14px 16px;border-top:1px solid rgba(255,255,255,.08)}
+.sb-user-name{font-size:13px;font-weight:600}
+.sb-user-badge{display:inline-block;font-size:9px;background:var(--yellow);color:#000;
+  border-radius:4px;padding:1px 6px;font-weight:700;margin-top:3px}
+.sb-logout{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;
+  color:rgba(255,255,255,.35);cursor:pointer;transition:color .15s}
+.sb-logout:hover{color:var(--red)}
+
+/* MAIN */
+.main{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column}
+.topbar{background:#fff;border-bottom:1px solid var(--gray-border);padding:0 28px;
+  height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+.topbar-title{font-size:16px;font-weight:700}
+.topbar-sub{font-size:12px;color:var(--text-soft);margin-top:1px}
+.topbar-date{font-size:12px;color:var(--text-soft)}
+.content{padding:24px 28px;flex:1}
+.page{display:none}
+.page.active{display:block}
+
+/* KPI CEO */
+.kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.kpi-card{background:#fff;border-radius:var(--card-radius);padding:16px 18px;
+  box-shadow:var(--shadow);border-left:3px solid var(--gray-border)}
+.kpi-card.blue{border-left-color:var(--blue)}
+.kpi-card.green{border-left-color:var(--green)}
+.kpi-card.red{border-left-color:var(--red)}
+.kpi-card.yellow{border-left-color:var(--yellow)}
+.kpi-card.purple{border-left-color:var(--purple)}
+.kpi-label{font-size:10px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.06em}
+.kpi-value{font-size:26px;font-weight:800;margin:4px 0 2px}
+.kpi-sub{font-size:11px;color:var(--text-soft)}
+
+/* TABLE */
+.tbl-wrap{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:18px}
+.tbl-head{padding:14px 18px;border-bottom:1px solid var(--gray-border);display:flex;align-items:center;justify-content:space-between}
+.tbl-title{font-size:14px;font-weight:700}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;font-weight:700;color:var(--text-soft);text-transform:uppercase;
+  letter-spacing:.05em;padding:10px 18px;text-align:left;background:var(--gray-light);border-bottom:1px solid var(--gray-border)}
+td{padding:12px 18px;font-size:13px;border-bottom:1px solid var(--gray-border)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--gray-light)}
+.badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px}
+.badge-ativo{background:var(--green-light);color:var(--green)}
+.badge-inativo{background:var(--red-light);color:var(--red)}
+.badge-basic{background:var(--gray-light);color:var(--gray)}
+.badge-pro{background:var(--blue-mid);color:var(--blue-dark)}
+.badge-enterprise{background:var(--purple-light);color:var(--purple)}
+
+/* BOTOES */
+.btn-primary{background:var(--blue);color:#fff;border:none;border-radius:9px;
+  padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn-primary:hover{background:var(--blue-dark)}
+.btn-secondary{background:var(--gray-light);border:1px solid var(--gray-border);color:var(--text-mid);
+  border-radius:9px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer}
+.btn-sm{border:1.5px solid var(--gray-border);background:#fff;border-radius:7px;
+  padding:5px 11px;font-size:11px;cursor:pointer;color:var(--text-mid);transition:all .15s}
+.btn-sm:hover{border-color:var(--blue);color:var(--blue)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.toolbar-title{font-size:14px;font-weight:700}
+
+/* CARD NOVO CLIENTE */
+.add-client-card{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);
+  padding:24px 28px;max-width:580px;margin-bottom:24px}
+.add-client-title{font-size:15px;font-weight:700;margin-bottom:4px}
+.add-client-sub{font-size:12px;color:var(--text-soft);margin-bottom:20px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-full{grid-column:1/-1}
+.step-indicator{display:flex;align-items:center;gap:8px;margin-bottom:20px}
+.step{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-soft)}
+.step.done{color:var(--green)}
+.step.active{color:var(--blue);font-weight:700}
+.step-num{width:22px;height:22px;border-radius:50%;background:var(--gray-border);
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text-soft)}
+.step.active .step-num{background:var(--blue);color:#fff}
+.step.done .step-num{background:var(--green);color:#fff}
+.step-sep{flex:1;height:1px;background:var(--gray-border)}
+
+/* CHAMADOS */
+.chamado-row{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--gray-border)}
+.chamado-row:last-child{border-bottom:none}
+.chamado-prio{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.prio-critica{background:var(--red)}.prio-alta{background:var(--yellow)}.prio-normal{background:var(--blue)}.prio-baixa{background:var(--gray)}
+.chamado-info{flex:1}
+.chamado-titulo{font-size:13px;font-weight:600}
+.chamado-meta{font-size:11px;color:var(--text-soft);margin-top:2px}
+.chamado-status{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px}
+.st-aberto{background:var(--red-light);color:var(--red)}
+.st-atendimento{background:var(--yellow-light);color:var(--yellow)}
+.st-fechado{background:var(--green-light);color:var(--green)}
+
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;
+  align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:16px;padding:28px;width:500px;max-width:95vw;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);position:relative}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:4px}
+.modal-sub{font-size:12px;color:var(--text-soft);margin-bottom:20px}
+.modal-close{position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-soft)}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;right:24px;background:#1E293B;color:#fff;
+  border-radius:10px;padding:12px 18px;font-size:13px;font-weight:500;z-index:999;
+  transform:translateY(80px);opacity:0;transition:all .3s;pointer-events:none}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.green{background:var(--green)}.toast.red{background:var(--red)}
+
+.spinner{width:20px;height:20px;border:2px solid var(--gray-border);border-top-color:var(--blue);
+  border-radius:50%;animation:spin .7s linear infinite;display:inline-block;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-row{display:flex;align-items:center;padding:20px;color:var(--text-soft);font-size:13px}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--gray-border);border-radius:10px}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginWrap">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-icon">A</div>
+      <div>
+        <div class="login-logo-txt">Auria</div>
+        <div class="login-logo-badge">CEO PANEL</div>
+      </div>
+    </div>
+    <div style="font-size:15px;font-weight:700;margin-bottom:4px">Acesso Restrito</div>
+    <div style="font-size:13px;color:var(--text-soft);margin-bottom:22px">Somente administradores do sistema</div>
+    <div class="login-err" id="loginErr"></div>
+    <div class="form-group">
+      <label class="form-label">E-mail</label>
+      <input class="form-inp" id="loginEmail" type="email" placeholder="ceo@auria.app">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Senha</label>
+      <input class="form-inp" id="loginPass" type="password" placeholder="••••••••">
+    </div>
+    <button class="btn-login" onclick="doLogin()">Entrar no Painel</button>
+    <div class="ceo-badge">Auria v1.0 &mdash; Acesso administrativo</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sb-brand">
+        <div class="sb-brand-icon">A</div>
+        <div>
+          <div class="sb-brand-name">Auria</div>
+          <div class="sb-brand-role">&#9733; Super Admin</div>
+        </div>
+      </div>
+      <nav class="sb-nav">
+        <div class="sb-section">Visao Geral</div>
+        <a class="sb-item active" data-page="overview" onclick="goPage('overview')">
+          <span>&#9632;</span> Overview
+        </a>
+        <a class="sb-item" data-page="clientes" onclick="goPage('clientes')">
+          <span>&#9679;</span> Clientes
+        </a>
+        <div class="sb-section">Operacao</div>
+        <a class="sb-item" data-page="usuarios" onclick="goPage('usuarios')">
+          <span>&#9786;</span> Usuarios
+        </a>
+        <a class="sb-item" data-page="chamados" onclick="goPage('chamados')">
+          <span>&#9993;</span> Chamados
+        </a>
+        <a class="sb-item" data-page="metricas" onclick="goPage('metricas')">
+          <span>&#128202;</span> Metricas
+        </a>
+        <div class="sb-section">Gestao</div>
+        <a class="sb-item" data-page="novoCliente" onclick="goPage('novoCliente')">
+          <span>&#43;</span> Novo Cliente
+        </a>
+      </nav>
+      <div class="sb-user">
+        <div class="sb-user-name" id="sbUserName">CEO</div>
+        <div class="sb-user-badge">SUPER ADMIN</div>
+        <div class="sb-logout" onclick="doLogout()">&#8592; Sair</div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title" id="topbarTitle">Overview Geral</div>
+          <div class="topbar-sub" id="topbarSub">Todos os clientes Auria</div>
+        </div>
+        <span class="topbar-date" id="topbarDate"></span>
+      </div>
+      <div class="content">
+
+        <!-- OVERVIEW -->
+        <div class="page active" id="pageOverview">
+          <div class="kpi-row">
+            <div class="kpi-card blue">
+              <div class="kpi-label">Empresas Ativas</div>
+              <div class="kpi-value" id="kpiEmpresas">—</div>
+              <div class="kpi-sub">clientes Auria</div>
+            </div>
+            <div class="kpi-card green">
+              <div class="kpi-label">Total Analistas</div>
+              <div class="kpi-value" id="kpiAnalistas">—</div>
+              <div class="kpi-sub">usuarios ativos</div>
+            </div>
+            <div class="kpi-card purple">
+              <div class="kpi-label">Empreendimentos</div>
+              <div class="kpi-value" id="kpiEmps">—</div>
+              <div class="kpi-sub">projetos cadastrados</div>
+            </div>
+            <div class="kpi-card yellow">
+              <div class="kpi-label">Apontamentos</div>
+              <div class="kpi-value" id="kpiApts">—</div>
+              <div class="kpi-sub">total no sistema</div>
+            </div>
+            <div class="kpi-card red">
+              <div class="kpi-label">Chamados Abertos</div>
+              <div class="kpi-value" id="kpiChamados">—</div>
+              <div class="kpi-sub">aguardando atendimento</div>
+            </div>
+          </div>
+
+          <div class="tbl-wrap">
+            <div class="tbl-head">
+              <div class="tbl-title">Clientes Ativos</div>
+              <button class="btn-primary" onclick="goPage('novoCliente')">+ Novo Cliente</button>
+            </div>
+            <div id="tblClientes"><div class="loading-row"><div class="spinner"></div>Carregando...</div></div>
+          </div>
+        </div>
+
+        <!-- CLIENTES -->
+        <div class="page" id="pageClientes">
+          <div class="toolbar">
+            <div class="toolbar-title">Todos os Clientes</div>
+            <button class="btn-primary" onclick="goPage('novoCliente')">+ Novo Cliente</button>
+          </div>
+          <div class="tbl-wrap">
+            <div id="tblClientesFull"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+        </div>
+
+        <!-- USUARIOS -->
+        <div class="page" id="pageUsuarios">
+          <div class="toolbar"><div class="toolbar-title">Todos os Usuarios</div></div>
+          <div class="tbl-wrap">
+            <div id="tblUsuarios"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+        </div>
+
+        <!-- CHAMADOS -->
+        <div class="page" id="pageChamados">
+          <div class="toolbar">
+            <div class="toolbar-title">Chamados de Suporte</div>
+          </div>
+          <div class="tbl-wrap">
+            <div style="padding:18px 22px" id="listChamados">
+              <div class="loading-row"><div class="spinner"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- METRICAS -->
+        <div class="page" id="pageMetricas">
+          <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
+            <div class="kpi-card blue">
+              <div class="kpi-label">Total Snapshots</div>
+              <div class="kpi-value" id="kpiSnaps">—</div>
+              <div class="kpi-sub">registros de metricas</div>
+            </div>
+            <div class="kpi-card green">
+              <div class="kpi-label">Emps com dados hoje</div>
+              <div class="kpi-value" id="kpiHoje">—</div>
+              <div class="kpi-sub">enviaram snapshot hoje</div>
+            </div>
+            <div class="kpi-card yellow">
+              <div class="kpi-label">Dias com cobertura</div>
+              <div class="kpi-value" id="kpiDias">—</div>
+              <div class="kpi-sub">dias distintos</div>
+            </div>
+          </div>
+          <div class="tbl-wrap">
+            <div class="tbl-head"><div class="tbl-title">Ultimos snapshots por empresa</div></div>
+            <div id="tblMetricas"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+        </div>
+
+        <!-- NOVO CLIENTE -->
+        <div class="page" id="pageNovoCliente">
+          <div class="add-client-card">
+            <div class="add-client-title">Cadastrar Novo Cliente</div>
+            <div class="add-client-sub">Preencha os dados da empresa e do gerente responsavel. Um e-mail de boas-vindas sera enviado automaticamente.</div>
+
+            <div class="step-indicator">
+              <div class="step active" id="step1">
+                <div class="step-num">1</div>
+                <span>Empresa</span>
+              </div>
+              <div class="step-sep"></div>
+              <div class="step" id="step2">
+                <div class="step-num">2</div>
+                <span>Gerente</span>
+              </div>
+              <div class="step-sep"></div>
+              <div class="step" id="step3">
+                <div class="step-num">3</div>
+                <span>Confirmar</span>
+              </div>
+            </div>
+
+            <!-- STEP 1: empresa -->
+            <div id="stepForm1">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="form-label">Nome da empresa *</label>
+                  <input class="form-inp" id="ncEmpNome" placeholder="Construtora Exemplo Ltda">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">CNPJ</label>
+                  <input class="form-inp" id="ncEmpCnpj" placeholder="00.000.000/0000-00">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Plano</label>
+                  <select class="form-inp" id="ncEmpPlano">
+                    <option value="basic">Basic (ate 10 analistas)</option>
+                    <option value="professional">Professional (ate 30 analistas)</option>
+                    <option value="enterprise">Enterprise (ilimitado)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Limite empreendimentos</label>
+                  <input class="form-inp" id="ncEmpLimEmp" type="number" value="5" min="1">
+                </div>
+              </div>
+              <button class="btn-primary" onclick="stepAvanco(2)">Proximo &#8594;</button>
+            </div>
+
+            <!-- STEP 2: gerente -->
+            <div id="stepForm2" style="display:none">
+              <div class="form-grid">
+                <div class="form-group form-full">
+                  <label class="form-label">Nome do gerente / coordenador *</label>
+                  <input class="form-inp" id="ncGerNome" placeholder="Nome completo">
+                </div>
+                <div class="form-group form-full">
+                  <label class="form-label">E-mail profissional *</label>
+                  <input class="form-inp" id="ncGerEmail" type="email" placeholder="gerente@empresa.com">
+                </div>
+              </div>
+              <div style="display:flex;gap:10px">
+                <button class="btn-secondary" onclick="stepAvanco(1)">&#8592; Voltar</button>
+                <button class="btn-primary" onclick="stepAvanco(3)">Proximo &#8594;</button>
+              </div>
+            </div>
+
+            <!-- STEP 3: confirmar -->
+            <div id="stepForm3" style="display:none">
+              <div style="background:var(--gray-light);border-radius:10px;padding:16px;margin-bottom:16px">
+                <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:10px">RESUMO</div>
+                <div id="ncResumo" style="font-size:13px;line-height:1.8"></div>
+              </div>
+              <div style="background:var(--blue-light);border:1px solid var(--blue-mid);border-radius:10px;padding:14px;margin-bottom:16px;font-size:12px;color:var(--blue-dark)">
+                Um e-mail de boas-vindas sera enviado para o gerente com o link de acesso ao Painel da Gestao.
+                O gerente devera criar sua senha no primeiro acesso.
+              </div>
+              <div style="display:flex;gap:10px">
+                <button class="btn-secondary" onclick="stepAvanco(2)">&#8592; Voltar</button>
+                <button class="btn-primary" id="btnCriarCliente" onclick="criarCliente()">Criar Cliente e Enviar Convite</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+let USER = null;
+let _NC  = {};  // new client data
+
+async function init(){
+  const today = new Date();
+  document.getElementById('topbarDate').textContent =
+    today.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session){ await afterLogin(session.user); }
+  else{ show('loginWrap'); hide('app'); }
+}
+
+async function doLogin(){
+  const email = v('loginEmail'), pass = v('loginPass');
+  const errEl = document.getElementById('loginErr');
+  errEl.style.display='none';
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({email,password:pass});
+    if(error) throw error;
+    await afterLogin(data.user);
+  }catch(e){ showErr(errEl,'Credenciais invalidas ou acesso negado.'); }
+}
+
+async function afterLogin(user){
+  const { data:profile } = await sb.from('usuarios_auria').select('*').eq('id',user.id).single();
+  if(!profile || profile.role !== 'super_admin'){
+    await sb.auth.signOut();
+    showErr(document.getElementById('loginErr'),'Acesso exclusivo para administradores Auria.');
+    return;
+  }
+  USER = {...user,...profile};
+  document.getElementById('sbUserName').textContent = profile.nome || user.email;
+  hide('loginWrap'); show('app');
+  await loadAll();
+}
+
+async function doLogout(){ await sb.auth.signOut(); hide('app'); show('loginWrap'); }
+
+async function loadAll(){
+  await Promise.all([ loadOverview(), loadClientes(), loadUsuarios(), loadChamados(), loadMetricas() ]);
+}
+
+async function loadOverview(){
+  const [
+    {count:ce},{count:ca},{count:cemp},{count:cch},
+    {data:mets}
+  ] = await Promise.all([
+    sb.from('empresas_auria').select('*',{count:'exact',head:true}).eq('ativo',true),
+    sb.from('usuarios_auria').select('*',{count:'exact',head:true}).eq('role','analista').eq('ativo',true),
+    sb.from('empreendimentos_auria').select('*',{count:'exact',head:true}).eq('ativo',true),
+    sb.from('chamados_auria').select('*',{count:'exact',head:true}).eq('status','aberto'),
+    sb.from('metricas_diarias_auria').select('total_abertos,total_resolvidos').limit(200)
+  ]);
+  setText('kpiEmpresas', ce||0);
+  setText('kpiAnalistas', ca||0);
+  setText('kpiEmps', cemp||0);
+  setText('kpiChamados', cch||0);
+  const totalApts = (mets||[]).reduce((s,m)=>s+(m.total_abertos||0)+(m.total_resolvidos||0),0);
+  setText('kpiApts', totalApts);
+}
+
+async function loadClientes(){
+  const { data } = await sb.from('empresas_auria').select('*, usuarios_auria(count)').order('criado_em',{ascending:false});
+  const rows = (data||[]);
+  const html = rows.length ? `
+    <table>
+      <thead><tr>
+        <th>Empresa</th><th>Plano</th><th>Gerente</th><th>Criado em</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody>${rows.map(e=>`
+        <tr>
+          <td><strong>${esc(e.nome)}</strong>${e.cnpj?`<br><span style="font-size:11px;color:var(--text-soft)">${e.cnpj}</span>`:''}</td>
+          <td><span class="badge badge-${e.plano}">${e.plano||'basic'}</span></td>
+          <td style="font-size:12px;color:var(--text-soft)">—</td>
+          <td style="font-size:12px;color:var(--text-soft)">${fmtDate(e.criado_em)}</td>
+          <td><span class="badge badge-${e.ativo?'ativo':'inativo'}">${e.ativo?'Ativo':'Inativo'}</span></td>
+          <td>
+            <button class="btn-sm" onclick="toggleEmpresa('${e.id}',${!e.ativo})">${e.ativo?'Desativar':'Ativar'}</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '<div style="padding:20px;color:var(--text-soft);font-size:13px">Nenhum cliente cadastrado.</div>';
+  setHTML('tblClientes', html);
+  setHTML('tblClientesFull', html);
+}
+
+async function loadUsuarios(){
+  const { data } = await sb.from('usuarios_auria')
+    .select('*, empresas_auria(nome)').order('criado_em',{ascending:false}).limit(100);
+  const html = (data||[]).length ? `
+    <table>
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Empresa</th><th>Ultimo acesso</th><th>Status</th></tr></thead>
+      <tbody>${(data||[]).map(u=>`
+        <tr>
+          <td><strong>${esc(u.nome||'—')}</strong></td>
+          <td style="font-size:12px">${esc(u.email)}</td>
+          <td><span class="badge badge-${u.role==='super_admin'?'pro':u.role==='gerente'?'pro':'basic'}">${u.role}</span></td>
+          <td style="font-size:12px;color:var(--text-soft)">${esc(u.empresas_auria?.nome||'—')}</td>
+          <td style="font-size:12px;color:var(--text-soft)">${u.ultimo_acesso?fmtDate(u.ultimo_acesso):'Nunca'}</td>
+          <td><span class="badge badge-${u.ativo?'ativo':'inativo'}">${u.ativo?'Ativo':'Inativo'}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '<div style="padding:20px;color:var(--text-soft)">Nenhum usuario.</div>';
+  setHTML('tblUsuarios', html);
+}
+
+async function loadChamados(){
+  const { data } = await sb.from('chamados_auria')
+    .select('*, empresas_auria(nome)').order('criado_em',{ascending:false}).limit(50);
+  if(!(data||[]).length){
+    setHTML('listChamados','<div style="color:var(--text-soft);font-size:13px;padding:8px">Nenhum chamado aberto.</div>');
+    return;
+  }
+  setHTML('listChamados', (data||[]).map(c=>`
+    <div class="chamado-row">
+      <div class="chamado-prio prio-${c.prioridade}"></div>
+      <div class="chamado-info">
+        <div class="chamado-titulo">${esc(c.titulo)}</div>
+        <div class="chamado-meta">${esc(c.empresas_auria?.nome||'—')} &bull; ${fmtDate(c.criado_em)}</div>
+      </div>
+      <span class="chamado-status st-${c.status.replace('_','')||'aberto'}">${c.status}</span>
+      <button class="btn-sm" onclick="fecharChamado('${c.id}')">Fechar</button>
+    </div>`).join(''));
+}
+
+async function loadMetricas(){
+  const { data, count } = await sb.from('metricas_diarias_auria')
+    .select('*, empreendimentos_auria(nome, empresas_auria(nome))', {count:'exact'})
+    .order('data',{ascending:false}).limit(20);
+  const today = new Date().toISOString().split('T')[0];
+  const hoje  = (data||[]).filter(m=>m.data===today).length;
+  const dias  = new Set((data||[]).map(m=>m.data)).size;
+  setText('kpiSnaps', count||0);
+  setText('kpiHoje', hoje);
+  setText('kpiDias', dias);
+  const html = (data||[]).length ? `
+    <table>
+      <thead><tr><th>Empreendimento</th><th>Empresa</th><th>Data</th><th>Abertos</th><th>Atraso</th><th>Resolvidos</th><th>Resposta</th></tr></thead>
+      <tbody>${(data||[]).map(m=>`
+        <tr>
+          <td><strong>${esc(m.empreendimentos_auria?.nome||'—')}</strong></td>
+          <td style="font-size:12px;color:var(--text-soft)">${esc(m.empreendimentos_auria?.empresas_auria?.nome||'—')}</td>
+          <td style="font-size:12px">${m.data}</td>
+          <td>${m.total_abertos||0}</td>
+          <td style="color:var(--red)">${m.total_em_atraso||0}</td>
+          <td style="color:var(--green)">${m.total_resolvidos||0}</td>
+          <td>${Math.round(m.indice_resposta||0)}%</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '<div style="padding:20px;color:var(--text-soft)">Nenhum dado ainda.</div>';
+  setHTML('tblMetricas', html);
+}
+
+// ── NOVO CLIENTE ──────────────────────────────────────
+function stepAvanco(n){
+  const empNome  = v('ncEmpNome');
+  const gerNome  = v('ncGerNome');
+  const gerEmail = v('ncGerEmail');
+  if(n===2 && !empNome){ showToast('Informe o nome da empresa','red'); return; }
+  if(n===3 && (!gerNome||!gerEmail)){ showToast('Informe nome e e-mail do gerente','red'); return; }
+  if(n===3){
+    _NC = {
+      empNome, empCnpj:v('ncEmpCnpj'), empPlano:v('ncEmpPlano'),
+      empLimEmp:parseInt(v('ncEmpLimEmp')||'5'),
+      gerNome, gerEmail
+    };
+    document.getElementById('ncResumo').innerHTML = `
+      <b>Empresa:</b> ${esc(_NC.empNome)}<br>
+      <b>CNPJ:</b> ${esc(_NC.empCnpj)||'—'}<br>
+      <b>Plano:</b> ${_NC.empPlano}<br>
+      <b>Limite empreendimentos:</b> ${_NC.empLimEmp}<br>
+      <b>Gerente:</b> ${esc(_NC.gerNome)}<br>
+      <b>E-mail:</b> ${esc(_NC.gerEmail)}
+    `;
+  }
+  [1,2,3].forEach(i=>{
+    document.getElementById('stepForm'+i).style.display = i===n?'block':'none';
+    const st = document.getElementById('step'+i);
+    st.className = 'step'+(i<n?' done':i===n?' active':'');
+  });
+}
+
+async function criarCliente(){
+  const btn = document.getElementById('btnCriarCliente');
+  btn.disabled=true; btn.textContent='Criando...';
+  try{
+    // 1. Cria empresa
+    const { data:emp, error:empErr } = await sb.from('empresas_auria').insert({
+      nome:_NC.empNome, cnpj:_NC.empCnpj||null,
+      plano:_NC.empPlano, limite_empreendimentos:_NC.empLimEmp,
+      limite_analistas: _NC.empPlano==='enterprise'?999:_NC.empPlano==='professional'?30:10
+    }).select().single();
+    if(empErr) throw empErr;
+
+    // 2. Gera convite para gerente
+    const { error:convErr } = await sb.from('convites_auria').insert({
+      email:_NC.gerEmail, role:'gerente', empresa_id:emp.id, convidado_por:USER.id
+    });
+    if(convErr) throw convErr;
+
+    // 3. Envia invite via Supabase Auth (e-mail automatico)
+    // Nota: requer service_role key em producao. Aqui registra e exibe link manual.
+    showToast('Cliente criado! Convite registrado para '+_NC.gerEmail,'green');
+    ['ncEmpNome','ncEmpCnpj','ncGerNome','ncGerEmail'].forEach(id=>document.getElementById(id).value='');
+    stepAvanco(1);
+    await loadAll();
+    setTimeout(()=>goPage('clientes'),1500);
+  }catch(e){
+    showToast('Erro: '+e.message,'red');
+  }finally{
+    btn.disabled=false; btn.textContent='Criar Cliente e Enviar Convite';
+  }
+}
+
+async function toggleEmpresa(id, novoStatus){
+  await sb.from('empresas_auria').update({ativo:novoStatus}).eq('id',id);
+  showToast(novoStatus?'Empresa ativada':'Empresa desativada', novoStatus?'green':'red');
+  await loadClientes();
+}
+
+async function fecharChamado(id){
+  await sb.from('chamados_auria').update({status:'fechado'}).eq('id',id);
+  showToast('Chamado fechado','green');
+  await loadChamados();
+}
+
+function goPage(name){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
+  const map={overview:'pageOverview',clientes:'pageClientes',usuarios:'pageUsuarios',
+    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente'};
+  const titles={overview:'Overview Geral',clientes:'Clientes',usuarios:'Usuarios',
+    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente'};
+  document.getElementById(map[name]||'pageOverview').classList.add('active');
+  document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
+  document.getElementById('topbarTitle').textContent = titles[name]||'';
+}
+
+// ── UTILS ─────────────────────────────────────────────
+function v(id){ return (document.getElementById(id)||{}).value||''; }
+function show(id){ document.getElementById(id).style.display=''; }
+function hide(id){ document.getElementById(id).style.display='none'; }
+function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
+function setHTML(id,h){ const el=document.getElementById(id); if(el) el.innerHTML=h; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showErr(el,msg){ el.textContent=msg; el.style.display='block'; }
+function fmtDate(s){ if(!s) return '—'; try{ return new Date(s).toLocaleDateString('pt-BR'); }catch{ return s; } }
+let _tT=null;
+function showToast(msg,type){
+  const t=document.getElementById('toast'); t.textContent=msg;
+  t.className='toast '+(type||''); t.classList.add('show');
+  clearTimeout(_tT); _tT=setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+document.getElementById('loginPass').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+init();
+</script>
+</body>
+</html>

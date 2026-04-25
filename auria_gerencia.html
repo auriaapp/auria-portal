@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Painel da Gestão</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --blue:#3B82F6;--blue-dark:#1D4ED8;--blue-light:#EFF6FF;--blue-mid:#DBEAFE;
+  --green:#10B981;--green-light:#ECFDF5;
+  --red:#EF4444;--red-light:#FEF2F2;
+  --yellow:#F59E0B;--yellow-light:#FFFBEB;
+  --gray:#94A3B8;--gray-light:#F8FAFC;--gray-border:#E2E8F0;
+  --text:#1E293B;--text-mid:#475569;--text-soft:#94A3B8;
+  --sidebar-w:240px;
+  --card-radius:14px;
+  --shadow:0 1px 4px rgba(0,0,0,.07),0 4px 16px rgba(0,0,0,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--text);min-height:100vh}
+
+/* ── LOGIN ─────────────────────────────────────────── */
+#loginWrap{display:flex;align-items:center;justify-content:center;min-height:100vh;
+  background:linear-gradient(135deg,#1E3A5F 0%,#2563EB 100%)}
+.login-box{background:#fff;border-radius:20px;padding:44px 40px;width:380px;
+  box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.login-logo{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+.login-logo-icon{width:40px;height:40px;background:var(--blue);border-radius:10px;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px}
+.login-logo-txt{font-size:22px;font-weight:800;color:var(--text)}
+.login-logo-sub{font-size:12px;color:var(--text-soft);margin-top:1px}
+.login-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
+.login-sub{font-size:13px;color:var(--text-soft);margin-bottom:24px}
+.form-label{font-size:12px;font-weight:600;color:var(--text-mid);margin-bottom:5px;display:block}
+.form-inp{width:100%;border:1.5px solid var(--gray-border);border-radius:9px;
+  padding:10px 13px;font-size:14px;outline:none;color:var(--text);background:#FAFAFA;
+  transition:border .15s}
+.form-inp:focus{border-color:var(--blue);background:#fff}
+.form-group{margin-bottom:16px}
+.btn-login{width:100%;background:var(--blue);color:#fff;border:none;border-radius:9px;
+  padding:12px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s;margin-top:6px}
+.btn-login:hover{background:var(--blue-dark)}
+.login-err{background:var(--red-light);color:var(--red);border-radius:8px;
+  padding:9px 13px;font-size:13px;margin-bottom:14px;display:none}
+
+/* ── APP SHELL ─────────────────────────────────────── */
+#app{display:none;min-height:100vh}
+.layout{display:flex;min-height:100vh}
+
+/* ── SIDEBAR ────────────────────────────────────────── */
+.sidebar{width:var(--sidebar-w);background:linear-gradient(180deg,#1E3A5F 0%,#1a3356 100%);
+  color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;
+  height:100vh;z-index:100;flex-shrink:0}
+.sb-brand{padding:22px 20px 18px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:10px}
+.sb-brand-icon{width:34px;height:34px;background:var(--blue);border-radius:8px;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px}
+.sb-brand-name{font-size:16px;font-weight:800;letter-spacing:.3px}
+.sb-brand-role{font-size:10px;color:rgba(255,255,255,.5);letter-spacing:.5px;text-transform:uppercase;margin-top:1px}
+.sb-nav{flex:1;padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.sb-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;
+  cursor:pointer;font-size:13px;font-weight:500;color:rgba(255,255,255,.7);
+  transition:all .15s;text-decoration:none}
+.sb-item:hover{background:rgba(255,255,255,.08);color:#fff}
+.sb-item.active{background:var(--blue);color:#fff;font-weight:700}
+.sb-item-icon{font-size:16px;width:20px;text-align:center}
+.sb-section{font-size:9px;font-weight:700;letter-spacing:.8px;color:rgba(255,255,255,.3);
+  text-transform:uppercase;padding:12px 12px 4px}
+.sb-user{padding:14px 16px;border-top:1px solid rgba(255,255,255,.1)}
+.sb-user-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-user-email{font-size:11px;color:rgba(255,255,255,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-logout{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;
+  color:rgba(255,255,255,.4);cursor:pointer;transition:color .15s}
+.sb-logout:hover{color:var(--red)}
+
+/* ── MAIN ───────────────────────────────────────────── */
+.main{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column}
+.topbar{background:#fff;border-bottom:1px solid var(--gray-border);padding:0 28px;
+  height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+.topbar-title{font-size:16px;font-weight:700}
+.topbar-sub{font-size:12px;color:var(--text-soft);margin-top:1px}
+.topbar-right{display:flex;align-items:center;gap:12px}
+.topbar-date{font-size:12px;color:var(--text-soft)}
+.btn-refresh{background:var(--gray-light);border:1px solid var(--gray-border);border-radius:8px;
+  padding:7px 14px;font-size:12px;cursor:pointer;color:var(--text-mid);transition:all .15s}
+.btn-refresh:hover{background:var(--blue-mid);border-color:var(--blue);color:var(--blue)}
+.content{padding:24px 28px;flex:1}
+
+/* ── PAGE SECTIONS ──────────────────────────────────── */
+.page{display:none}
+.page.active{display:block}
+
+/* ── KPI SUMMARY ROW ─────────────────────────────────── */
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.kpi-card{background:#fff;border-radius:var(--card-radius);padding:18px 20px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:4px}
+.kpi-label{font-size:11px;font-weight:600;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em}
+.kpi-value{font-size:28px;font-weight:800;color:var(--text);line-height:1}
+.kpi-trend{display:flex;align-items:center;gap:5px;margin-top:2px}
+.kpi-trend-txt{font-size:11px;color:var(--text-soft)}
+.trend-up-bad{color:var(--red);font-weight:700}
+.trend-down-good{color:var(--green);font-weight:700}
+.trend-up-good{color:var(--green);font-weight:700}
+.trend-down-bad{color:var(--red);font-weight:700}
+.trend-stable{color:var(--gray);font-weight:700}
+.kpi-card.kpi-alert{border-left:3px solid var(--red)}
+.kpi-card.kpi-ok{border-left:3px solid var(--green)}
+
+/* ── TOOLBAR ─────────────────────────────────────────── */
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.toolbar-left{display:flex;align-items:center;gap:10px}
+.toolbar-title{font-size:14px;font-weight:700;color:var(--text)}
+.toolbar-count{font-size:12px;color:var(--text-soft);background:var(--gray-light);
+  border:1px solid var(--gray-border);border-radius:20px;padding:2px 10px}
+.inp-search{border:1.5px solid var(--gray-border);border-radius:9px;padding:8px 13px;
+  font-size:13px;outline:none;background:#fff;color:var(--text);width:200px}
+.inp-search:focus{border-color:var(--blue)}
+.sel-sort{border:1.5px solid var(--gray-border);border-radius:9px;padding:8px 12px;
+  font-size:13px;outline:none;background:#fff;color:var(--text);cursor:pointer}
+.btn-primary{background:var(--blue);color:#fff;border:none;border-radius:9px;
+  padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn-primary:hover{background:var(--blue-dark)}
+
+/* ── CARDS GRID ──────────────────────────────────────── */
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px}
+.emp-card{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);
+  overflow:hidden;transition:box-shadow .2s,transform .2s;cursor:default}
+.emp-card:hover{box-shadow:0 4px 20px rgba(0,0,0,.12);transform:translateY(-2px)}
+
+.card-head{padding:16px 18px 12px;display:flex;align-items:center;gap:13px;
+  border-bottom:1px solid var(--gray-border)}
+.card-logo{width:44px;height:44px;border-radius:10px;overflow:hidden;flex-shrink:0;
+  background:var(--blue-mid);display:flex;align-items:center;justify-content:center}
+.card-logo img{width:100%;height:100%;object-fit:contain}
+.card-logo-ph{font-size:18px;font-weight:800;color:var(--blue)}
+.card-meta{flex:1;min-width:0}
+.card-nome{font-size:14px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-loc{font-size:11px;color:var(--text-soft);margin-top:2px}
+.badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;flex-shrink:0}
+.badge-ativo{background:var(--green-light);color:var(--green)}
+.badge-inativo{background:var(--yellow-light);color:var(--yellow)}
+.badge-pausado{background:#F3F4F6;color:var(--gray)}
+
+.card-metrics{padding:14px 18px;display:flex;flex-direction:column;gap:7px}
+.metric-row{display:flex;align-items:center;gap:6px}
+.metric-icon{font-size:13px;width:18px;text-align:center;flex-shrink:0}
+.metric-label{font-size:12px;color:var(--text-mid);flex:1}
+.metric-val{font-size:13px;font-weight:700;color:var(--text);min-width:38px;text-align:right}
+.metric-pct{font-size:11px;color:var(--text-soft);min-width:32px;text-align:right}
+.trend-badge{font-size:11px;font-weight:800;width:20px;text-align:center;flex-shrink:0}
+
+.card-footer{padding:12px 18px 16px;background:var(--gray-light);border-top:1px solid var(--gray-border)}
+.taxa-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.taxa-label{font-size:11px;color:var(--text-soft);flex:1}
+.taxa-num{font-size:12px;font-weight:700;color:var(--blue)}
+.taxa-bar{height:5px;background:var(--gray-border);border-radius:10px;flex:1;overflow:hidden}
+.taxa-fill{height:100%;background:linear-gradient(90deg,var(--blue),#60A5FA);border-radius:10px;transition:width .4s}
+.card-footer-btns{display:flex;justify-content:flex-end}
+.btn-ver{background:none;border:1.5px solid var(--blue);color:var(--blue);
+  border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-ver:hover{background:var(--blue);color:#fff}
+
+/* ── DETALHE EMPREENDIMENTO ──────────────────────────── */
+.detalhe-back{display:flex;align-items:center;gap:8px;margin-bottom:20px;cursor:pointer;
+  font-size:13px;color:var(--text-mid);font-weight:600}
+.detalhe-back:hover{color:var(--blue)}
+.detalhe-header{background:#fff;border-radius:var(--card-radius);padding:20px 24px;
+  margin-bottom:18px;box-shadow:var(--shadow);display:flex;align-items:center;gap:16px}
+.detalhe-logo{width:56px;height:56px;border-radius:12px;background:var(--blue-mid);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0}
+.detalhe-logo img{width:100%;height:100%;object-fit:contain}
+.detalhe-nome{font-size:20px;font-weight:800}
+.detalhe-loc{font-size:13px;color:var(--text-soft);margin-top:3px}
+.detalhe-kpi{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+.dk-card{background:#fff;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);text-align:center}
+.dk-val{font-size:22px;font-weight:800}
+.dk-lbl{font-size:10px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+.detalhe-section{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);
+  padding:18px 22px;margin-bottom:14px}
+.detalhe-section-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;
+  padding-bottom:8px;border-bottom:1px solid var(--gray-border)}
+.disc-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--gray-border)}
+.disc-row:last-child{border-bottom:none}
+.disc-name{font-size:13px;color:var(--text);flex:0 0 130px}
+.disc-bar-wrap{flex:1;height:7px;background:var(--gray-border);border-radius:10px;overflow:hidden}
+.disc-bar{height:100%;background:var(--blue);border-radius:10px}
+.disc-counts{font-size:11px;color:var(--text-soft);min-width:100px;text-align:right}
+.analista-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--gray-border)}
+.analista-row:last-child{border-bottom:none}
+.analista-avatar{width:32px;height:32px;border-radius:50%;background:var(--blue-mid);
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--blue);flex-shrink:0}
+.analista-info{flex:1}
+.analista-nome{font-size:13px;font-weight:600}
+.analista-acesso{font-size:11px;color:var(--text-soft)}
+.analista-status{font-size:11px;color:var(--green);font-weight:600}
+
+/* ── EMPTY + LOADING ─────────────────────────────────── */
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-soft)}
+.empty-state-icon{font-size:48px;margin-bottom:12px}
+.empty-state-txt{font-size:14px}
+.loading-spinner{display:flex;align-items:center;justify-content:center;padding:60px;color:var(--text-soft);gap:10px}
+.spinner{width:20px;height:20px;border:2px solid var(--gray-border);border-top-color:var(--blue);
+  border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── MODAL ───────────────────────────────────────────── */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;
+  align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:16px;padding:28px;width:480px;max-width:95vw;
+  box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative}
+.modal-title{font-size:16px;font-weight:700;margin-bottom:4px}
+.modal-sub{font-size:12px;color:var(--text-soft);margin-bottom:20px}
+.modal-close{position:absolute;top:16px;right:16px;background:none;border:none;
+  font-size:20px;cursor:pointer;color:var(--text-soft)}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.btn-secondary{background:var(--gray-light);border:1px solid var(--gray-border);color:var(--text-mid);
+  border-radius:9px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer}
+.btn-danger{background:var(--red);color:#fff;border:none;border-radius:9px;
+  padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer}
+
+/* ── ANALISTAS PAGE ──────────────────────────────────── */
+.analista-card{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:16px 20px;
+  display:flex;align-items:center;gap:14px}
+.analista-card-av{width:42px;height:42px;border-radius:50%;background:var(--blue-mid);
+  display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:var(--blue);flex-shrink:0}
+.analista-card-info{flex:1}
+.analista-card-nome{font-size:14px;font-weight:600}
+.analista-card-email{font-size:12px;color:var(--text-soft)}
+.analista-card-emps{font-size:11px;color:var(--blue);margin-top:3px}
+.analista-card-actions{display:flex;gap:8px}
+.btn-sm{border:1.5px solid var(--gray-border);background:#fff;border-radius:7px;
+  padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text-mid);transition:all .15s}
+.btn-sm:hover{border-color:var(--blue);color:var(--blue)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
+.analistas-grid{display:flex;flex-direction:column;gap:10px}
+
+/* ── DISTRIBUIÇÃO ────────────────────────────────────── */
+.dist-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.dist-panel{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);padding:18px}
+.dist-panel-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)}
+.dist-emp-item{padding:10px 12px;border:1.5px solid var(--gray-border);border-radius:9px;margin-bottom:8px;cursor:pointer;transition:all .15s}
+.dist-emp-item:hover,.dist-emp-item.selected{border-color:var(--blue);background:var(--blue-light)}
+.dist-emp-nome{font-size:13px;font-weight:600}
+.dist-check-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--gray-border)}
+.dist-check-item:last-child{border-bottom:none}
+.dist-check-item input[type=checkbox]{accent-color:var(--blue);width:15px;height:15px}
+.dist-check-name{font-size:13px;flex:1}
+
+/* ── TOAST ───────────────────────────────────────────── */
+.toast{position:fixed;bottom:24px;right:24px;background:#1E293B;color:#fff;
+  border-radius:10px;padding:12px 18px;font-size:13px;font-weight:500;z-index:999;
+  transform:translateY(80px);opacity:0;transition:all .3s;pointer-events:none}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.green{background:var(--green)}
+.toast.red{background:var(--red)}
+
+/* ── SCROLLBAR ───────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--gray-border);border-radius:10px}
+</style>
+</head>
+<body>
+
+<!-- ═══ LOGIN ═══════════════════════════════════════════ -->
+<div id="loginWrap">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-icon">A</div>
+      <div>
+        <div class="login-logo-txt">Auria</div>
+        <div class="login-logo-sub">Painel da Gestão</div>
+      </div>
+    </div>
+    <div class="login-title">Entrar na sua conta</div>
+    <div class="login-sub">Acesso exclusivo para gerentes e coordenadores</div>
+    <div class="login-err" id="loginErr"></div>
+    <div class="form-group">
+      <label class="form-label">E-mail</label>
+      <input class="form-inp" id="loginEmail" type="email" placeholder="seu@email.com">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Senha</label>
+      <input class="form-inp" id="loginPass" type="password" placeholder="••••••••">
+    </div>
+    <button class="btn-login" id="btnLogin">Entrar</button>
+  </div>
+</div>
+
+<!-- ═══ APP ═════════════════════════════════════════════ -->
+<div id="app">
+  <div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sb-brand">
+        <div class="sb-brand-icon">A</div>
+        <div>
+          <div class="sb-brand-name">Auria</div>
+          <div class="sb-brand-role">Gestão</div>
+        </div>
+      </div>
+      <nav class="sb-nav">
+        <div class="sb-section">Principal</div>
+        <a class="sb-item active" data-page="dashboard" onclick="goPage('dashboard')">
+          <span class="sb-item-icon">&#9632;</span> Dashboard
+        </a>
+        <a class="sb-item" data-page="empreendimentos" onclick="goPage('empreendimentos')">
+          <span class="sb-item-icon">&#9679;</span> Empreendimentos
+        </a>
+        <div class="sb-section">Equipe</div>
+        <a class="sb-item" data-page="analistas" onclick="goPage('analistas')">
+          <span class="sb-item-icon">&#9786;</span> Analistas
+        </a>
+        <a class="sb-item" data-page="distribuicao" onclick="goPage('distribuicao')">
+          <span class="sb-item-icon">&#9636;</span> Distribuicao
+        </a>
+      </nav>
+      <div class="sb-user">
+        <div class="sb-user-name" id="sbUserName">Carregando...</div>
+        <div class="sb-user-email" id="sbUserEmail"></div>
+        <div class="sb-logout" onclick="doLogout()">&#8592; Sair</div>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title" id="topbarTitle">Dashboard Geral</div>
+          <div class="topbar-sub" id="topbarSub">Todos os empreendimentos</div>
+        </div>
+        <div class="topbar-right">
+          <span class="topbar-date" id="topbarDate"></span>
+          <button class="btn-refresh" onclick="refreshData()">&#8635; Atualizar</button>
+        </div>
+      </div>
+
+      <div class="content">
+
+        <!-- ══ PAGE: DASHBOARD ══════════════════════════ -->
+        <div class="page active" id="pageDashboard">
+          <div class="kpi-row" id="kpiRow">
+            <div class="kpi-card"><div class="kpi-label">Total Abertos</div>
+              <div class="kpi-value" id="kpiAbertos">—</div>
+              <div class="kpi-trend"><span class="trend-stable" id="kpiAbertosTrend">—</span>
+              <span class="kpi-trend-txt" id="kpiAbertosTxt">vs 5 dias ant.</span></div></div>
+            <div class="kpi-card kpi-alert"><div class="kpi-label">Em Atraso</div>
+              <div class="kpi-value" id="kpiAtraso">—</div>
+              <div class="kpi-trend"><span class="trend-stable" id="kpiAtrasoTrend">—</span>
+              <span class="kpi-trend-txt">vs 5 dias ant.</span></div></div>
+            <div class="kpi-card kpi-ok"><div class="kpi-label">Resolvidos (mes)</div>
+              <div class="kpi-value" id="kpiResolvidos">—</div>
+              <div class="kpi-trend"><span class="trend-stable" id="kpiResolvidosTrend">—</span>
+              <span class="kpi-trend-txt">vs 5 dias ant.</span></div></div>
+            <div class="kpi-card"><div class="kpi-label">Resposta Projetistas</div>
+              <div class="kpi-value" id="kpiResposta">—</div>
+              <div class="kpi-trend"><span class="trend-stable" id="kpiRespostaTrend">—</span>
+              <span class="kpi-trend-txt">vs 5 dias ant.</span></div></div>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="toolbar-title">Empreendimentos</div>
+              <span class="toolbar-count" id="empCount">0 ativos</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <input class="inp-search" id="searchInp" placeholder="Buscar..." oninput="filterCards()">
+              <select class="sel-sort" id="sortSel" onchange="sortCards()">
+                <option value="criticos">Mais criticos primeiro</option>
+                <option value="nome">Nome A-Z</option>
+                <option value="atraso">Maior atraso</option>
+                <option value="resposta">Menor resposta</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="cards-grid" id="cardsGrid">
+            <div class="loading-spinner"><div class="spinner"></div> Carregando...</div>
+          </div>
+        </div>
+
+        <!-- ══ PAGE: DETALHE EMP ═══════════════════════ -->
+        <div class="page" id="pageDetalhe">
+          <div class="detalhe-back" onclick="goPage('dashboard')">&#8592; Voltar ao Dashboard</div>
+          <div class="detalhe-header" id="detalheHeader"></div>
+          <div class="detalhe-kpi" id="detalheKpi"></div>
+          <div class="detalhe-section" id="detalheDisciplinas"></div>
+          <div class="detalhe-section" id="detalheAnalistas"></div>
+        </div>
+
+        <!-- ══ PAGE: EMPREENDIMENTOS ═══════════════════ -->
+        <div class="page" id="pageEmpreendimentos">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="toolbar-title">Empreendimentos</div>
+            </div>
+            <button class="btn-primary" onclick="openModalNovoEmp()">+ Novo Empreendimento</button>
+          </div>
+          <div id="empListaAdmin" class="cards-grid">
+            <div class="loading-spinner"><div class="spinner"></div></div>
+          </div>
+        </div>
+
+        <!-- ══ PAGE: ANALISTAS ═════════════════════════ -->
+        <div class="page" id="pageAnalistas">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <div class="toolbar-title">Analistas</div>
+            </div>
+            <button class="btn-primary" onclick="openModalConvite()">+ Convidar Analista</button>
+          </div>
+          <div class="analistas-grid" id="analistasList">
+            <div class="loading-spinner"><div class="spinner"></div></div>
+          </div>
+        </div>
+
+        <!-- ══ PAGE: DISTRIBUICAO ══════════════════════ -->
+        <div class="page" id="pageDistribuicao">
+          <div class="toolbar">
+            <div class="toolbar-title">Distribuicao de Empreendimentos</div>
+          </div>
+          <div style="font-size:13px;color:var(--text-soft);margin-bottom:16px">
+            Selecione um empreendimento e marque quais analistas tem acesso a ele.
+          </div>
+          <div class="dist-grid">
+            <div class="dist-panel">
+              <div class="dist-panel-title">Empreendimentos</div>
+              <div id="distEmpList"></div>
+            </div>
+            <div class="dist-panel">
+              <div class="dist-panel-title">Analistas com acesso</div>
+              <div id="distAnalistaList"><div style="color:var(--text-soft);font-size:13px">Selecione um empreendimento</div></div>
+              <button class="btn-primary" style="margin-top:14px;width:100%" onclick="salvarDistribuicao()">Salvar alteracoes</button>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /content -->
+    </div><!-- /main -->
+  </div><!-- /layout -->
+</div><!-- /app -->
+
+<!-- ═══ MODAIS ═══════════════════════════════════════════ -->
+<div class="modal-bg" id="modalConvite">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalConvite')">&#215;</button>
+    <div class="modal-title">Convidar Analista</div>
+    <div class="modal-sub">Um e-mail sera enviado com o link de acesso</div>
+    <div class="form-group">
+      <label class="form-label">Nome completo</label>
+      <input class="form-inp" id="conviteNome" placeholder="Nome do analista">
+    </div>
+    <div class="form-group">
+      <label class="form-label">E-mail profissional</label>
+      <input class="form-inp" id="conviteEmail" type="email" placeholder="analista@empresa.com">
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalConvite')">Cancelar</button>
+      <button class="btn-primary" onclick="enviarConvite()">Enviar convite</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalNovoEmp">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalNovoEmp')">&#215;</button>
+    <div class="modal-title">Novo Empreendimento</div>
+    <div class="modal-sub">Configure o empreendimento para sua empresa</div>
+    <div class="form-group">
+      <label class="form-label">Nome do empreendimento</label>
+      <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Cidade</label>
+        <input class="form-inp" id="empCidade" placeholder="Sao Paulo">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Estado</label>
+        <input class="form-inp" id="empEstado" placeholder="SP" maxlength="2">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalNovoEmp')">Cancelar</button>
+      <button class="btn-primary" onclick="criarEmpreendimento()">Criar</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════
+const SUPA_URL  = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb        = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let USER       = null;
+let EMPRESA    = null;
+let EMPS       = [];
+let METRICS    = [];
+let ANALISTAS  = [];
+let DIST_EMP   = null;   // empreendimento selecionado na distribuicao
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+async function init(){
+  const today = new Date();
+  document.getElementById('topbarDate').textContent =
+    today.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session){ await afterLogin(session.user); }
+  else{ show('loginWrap'); hide('app'); }
+}
+
+async function doLogin(){
+  const email = v('loginEmail'), pass = v('loginPass');
+  const errEl = document.getElementById('loginErr');
+  errEl.style.display='none';
+  if(!email||!pass){ showErr(errEl,'Preencha todos os campos'); return; }
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({email,password:pass});
+    if(error) throw error;
+    await afterLogin(data.user);
+  }catch(e){ showErr(errEl, 'E-mail ou senha incorretos. Verifique e tente novamente.'); }
+}
+
+async function afterLogin(user){
+  const { data:profile, error } = await sb.from('usuarios_auria')
+    .select('*, empresas_auria(*)').eq('id',user.id).single();
+
+  if(error || !profile || !['gerente','super_admin'].includes(profile.role)){
+    await sb.auth.signOut();
+    const errEl = document.getElementById('loginErr');
+    showErr(errEl,'Acesso negado. Este painel e exclusivo para gerentes.');
+    return;
+  }
+  USER    = {...user,...profile};
+  EMPRESA = profile.empresas_auria;
+  document.getElementById('sbUserName').textContent  = profile.nome || user.email;
+  document.getElementById('sbUserEmail').textContent = user.email;
+  hide('loginWrap'); show('app');
+  await loadAll();
+}
+
+async function doLogout(){
+  await sb.auth.signOut();
+  USER=null; EMPRESA=null; EMPS=[]; METRICS=[];
+  hide('app'); show('loginWrap');
+}
+
+// ═══════════════════════════════════════════════════════
+// DATA LOADING
+// ═══════════════════════════════════════════════════════
+async function loadAll(){
+  await Promise.all([ loadEmpreendimentos(), loadMetrics(), loadAnalistas() ]);
+  renderDashboard();
+}
+
+async function loadEmpreendimentos(){
+  const q = sb.from('empreendimentos_auria').select('*').eq('ativo',true).order('nome');
+  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
+  const { data } = await q;
+  EMPS = data || [];
+  document.getElementById('empCount').textContent = EMPS.length+' ativo'+(EMPS.length!==1?'s':'');
+}
+
+async function loadMetrics(){
+  const today = new Date();
+  const d10   = new Date(today - 10*864e5);
+  const iso10 = d10.toISOString().split('T')[0];
+  const q = sb.from('metricas_diarias_auria').select('*').gte('data',iso10).order('data',{ascending:false});
+  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
+  const { data } = await q;
+  METRICS = data || [];
+}
+
+async function loadAnalistas(){
+  const q = sb.from('usuarios_auria').select('*, analista_empreendimento_auria(empreendimento_id, ativo)').eq('role','analista');
+  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
+  const { data } = await q;
+  ANALISTAS = data || [];
+}
+
+async function refreshData(){
+  showToast('Atualizando dados...','');
+  await loadAll();
+  showToast('Dados atualizados!','green');
+}
+
+// ═══════════════════════════════════════════════════════
+// TRENDS
+// ═══════════════════════════════════════════════════════
+function calcTrend(rows, field, goodDir){
+  // goodDir: 'up' = mais e melhor (resolvidos), 'down' = menos e melhor (atraso)
+  const sorted = [...rows].sort((a,b)=>new Date(b.data)-new Date(a.data));
+  const recent = sorted.slice(0,5), older = sorted.slice(5,10);
+  if(!recent.length) return {dir:'stable',color:'neutral',pct:0};
+  const avg = arr => arr.length ? arr.reduce((s,r)=>s+(r[field]||0),0)/arr.length : 0;
+  const cur = avg(recent), prev = avg(older);
+  if(prev===0&&cur===0) return {dir:'stable',color:'neutral',pct:0};
+  const pct = prev>0 ? ((cur-prev)/prev*100) : (cur>0?100:0);
+  let dir = pct>5?'up':pct<-5?'down':'stable';
+  let color = 'neutral';
+  if(dir!=='stable'){
+    const good = (dir==='up'&&goodDir==='up')||(dir==='down'&&goodDir==='down');
+    color = good?'green':'red';
+  }
+  return {dir, color, pct:Math.round(Math.abs(pct))};
+}
+
+function trendHTML(t){
+  const icons={up:'&#8593;',down:'&#8595;',stable:'&mdash;'};
+  const cls={green:'trend-up-good',red:'trend-up-bad',neutral:'trend-stable'};
+  const c = t.dir==='down'&&t.color==='green'?'trend-down-good':
+            t.dir==='down'&&t.color==='red'?'trend-down-bad':cls[t.color];
+  const pct = t.pct>0?` ${t.pct}%`:'';
+  return `<span class="trend-badge ${c}">${icons[t.dir]}${pct}</span>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════
+function renderDashboard(){
+  // KPI totais
+  const latest = {};
+  EMPS.forEach(e=>{
+    const rows = METRICS.filter(m=>m.empreendimento_id===e.id)
+      .sort((a,b)=>new Date(b.data)-new Date(a.data));
+    latest[e.id] = rows[0]||{total_abertos:0,total_em_atraso:0,total_resolvidos:0,indice_resposta:0};
+  });
+  const sum = (f)=>Object.values(latest).reduce((s,r)=>s+(r[f]||0),0);
+  const avgResp = EMPS.length ? Math.round(sum('indice_resposta')/EMPS.length) : 0;
+
+  // Tendencias globais
+  const tAbertos   = calcTrend(METRICS,'total_abertos','down');
+  const tAtraso    = calcTrend(METRICS,'total_em_atraso','down');
+  const tResolvidos= calcTrend(METRICS,'total_resolvidos','up');
+  const tResposta  = calcTrend(METRICS,'indice_resposta','up');
+
+  setText('kpiAbertos',   sum('total_abertos'));
+  setText('kpiAtraso',    sum('total_em_atraso'));
+  setText('kpiResolvidos',sum('total_resolvidos'));
+  setText('kpiResposta',  avgResp+'%');
+  setHTML('kpiAbertosTrend',   trendHTML(tAbertos));
+  setHTML('kpiAtrasoTrend',    trendHTML(tAtraso));
+  setHTML('kpiResolvidosTrend',trendHTML(tResolvidos));
+  setHTML('kpiRespostaTrend',  trendHTML(tResposta));
+
+  renderCards();
+}
+
+let _empDataCache = [];
+function renderCards(){
+  const search = v('searchInp').toLowerCase();
+  let list = EMPS.filter(e=> !search || e.nome.toLowerCase().includes(search));
+  list = sortEmpList(list);
+  _empDataCache = list;
+
+  if(!list.length){
+    setHTML('cardsGrid','<div class="empty-state"><div class="empty-state-icon">&#9679;</div><div class="empty-state-txt">Nenhum empreendimento encontrado</div></div>');
+    return;
+  }
+  setHTML('cardsGrid', list.map(emp=>buildCard(emp)).join(''));
+}
+
+function buildCard(emp){
+  const rows = METRICS.filter(m=>m.empreendimento_id===emp.id)
+    .sort((a,b)=>new Date(b.data)-new Date(a.data));
+  const lat  = rows[0]||{total_abertos:0,total_em_dia:0,total_em_atraso:0,total_resolvidos:0,indice_resposta:0};
+  const tAb  = calcTrend(rows,'total_abertos','down');
+  const tDia = calcTrend(rows,'total_em_dia','up');
+  const tAt  = calcTrend(rows,'total_em_atraso','down');
+  const tRes = calcTrend(rows,'total_resolvidos','up');
+  const tRep = calcTrend(rows,'indice_resposta','up');
+  const tot  = (lat.total_abertos||0)+(lat.total_resolvidos||0);
+  const taxa = tot>0?Math.round((lat.total_resolvidos||0)/tot*100):0;
+  const loc  = [emp.cidade,emp.estado].filter(Boolean).join(', ')||'&mdash;';
+  const logo = emp.logo_url
+    ? `<img src="${emp.logo_url}" alt="${emp.nome}">`
+    : `<div class="card-logo-ph">${emp.nome[0].toUpperCase()}</div>`;
+  return `
+  <div class="emp-card" id="card-${emp.id}">
+    <div class="card-head">
+      <div class="card-logo">${logo}</div>
+      <div class="card-meta">
+        <div class="card-nome">${esc(emp.nome)}</div>
+        <div class="card-loc">${loc}</div>
+      </div>
+      <span class="badge badge-${emp.ativo?'ativo':'pausado'}">${emp.ativo?'Ativo':'Pausado'}</span>
+    </div>
+    <div class="card-metrics">
+      <div class="metric-row">
+        <span class="metric-icon">&#128196;</span>
+        <span class="metric-label">Abertos</span>
+        <span class="metric-val">${lat.total_abertos||0}</span>
+        ${trendHTML(tAb)}
+      </div>
+      <div class="metric-row">
+        <span class="metric-icon">&#128197;</span>
+        <span class="metric-label">Em dia</span>
+        <span class="metric-val">${lat.total_em_dia||0}</span>
+        ${trendHTML(tDia)}
+      </div>
+      <div class="metric-row">
+        <span class="metric-icon">&#9888;</span>
+        <span class="metric-label">Em atraso</span>
+        <span class="metric-val">${lat.total_em_atraso||0}</span>
+        ${trendHTML(tAt)}
+      </div>
+      <div class="metric-row">
+        <span class="metric-icon">&#10003;</span>
+        <span class="metric-label">Resolvidos</span>
+        <span class="metric-val">${lat.total_resolvidos||0}</span>
+        ${trendHTML(tRes)}
+      </div>
+      <div class="metric-row">
+        <span class="metric-icon">&#128202;</span>
+        <span class="metric-label">Resp. projetistas</span>
+        <span class="metric-val">${Math.round(lat.indice_resposta||0)}%</span>
+        ${trendHTML(tRep)}
+      </div>
+    </div>
+    <div class="card-footer">
+      <div class="taxa-row">
+        <span class="taxa-label">Taxa de resolucao</span>
+        <div class="taxa-bar"><div class="taxa-fill" style="width:${taxa}%"></div></div>
+        <span class="taxa-num">${taxa}%</span>
+      </div>
+      <div class="card-footer-btns">
+        <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function sortEmpList(list){
+  const sel = v('sortSel');
+  return list.sort((a,b)=>{
+    const ma = METRICS.filter(m=>m.empreendimento_id===a.id).sort((x,y)=>new Date(y.data)-new Date(x.data))[0]||{};
+    const mb = METRICS.filter(m=>m.empreendimento_id===b.id).sort((x,y)=>new Date(y.data)-new Date(x.data))[0]||{};
+    if(sel==='nome') return a.nome.localeCompare(b.nome);
+    if(sel==='atraso') return (mb.total_em_atraso||0)-(ma.total_em_atraso||0);
+    if(sel==='resposta') return (ma.indice_resposta||0)-(mb.indice_resposta||0);
+    // criticos: score = atraso*3 + abertos - resolvidos*0.5
+    const sa = (ma.total_em_atraso||0)*3+(ma.total_abertos||0)-(ma.total_resolvidos||0)*0.5;
+    const sb2= (mb.total_em_atraso||0)*3+(mb.total_abertos||0)-(mb.total_resolvidos||0)*0.5;
+    return sb2-sa;
+  });
+}
+
+function filterCards(){ renderCards(); }
+function sortCards(){ renderCards(); }
+
+// ═══════════════════════════════════════════════════════
+// DETALHE EMPREENDIMENTO
+// ═══════════════════════════════════════════════════════
+async function verDetalhe(empId){
+  const emp = EMPS.find(e=>e.id===empId);
+  if(!emp) return;
+  goPage('detalhe');
+  document.getElementById('topbarTitle').textContent = emp.nome;
+  document.getElementById('topbarSub').textContent   = [emp.cidade,emp.estado].filter(Boolean).join(', ')||'';
+
+  const logo = emp.logo_url
+    ? `<img src="${emp.logo_url}" style="width:100%;height:100%;object-fit:contain">`
+    : `<div style="font-size:22px;font-weight:800;color:var(--blue)">${emp.nome[0].toUpperCase()}</div>`;
+
+  setHTML('detalheHeader',`
+    <div class="detalhe-logo">${logo}</div>
+    <div>
+      <div class="detalhe-nome">${esc(emp.nome)}</div>
+      <div class="detalhe-loc">${[emp.cidade,emp.estado].filter(Boolean).join(', ')||'&mdash;'}</div>
+    </div>
+    <span class="badge badge-ativo" style="margin-left:auto">${emp.ativo?'Ativo':'Inativo'}</span>
+  `);
+
+  const rows = METRICS.filter(m=>m.empreendimento_id===emp.id)
+    .sort((a,b)=>new Date(b.data)-new Date(a.data));
+  const lat  = rows[0]||{total_abertos:0,total_em_dia:0,total_em_atraso:0,total_resolvidos:0,indice_resposta:0};
+  const tot  = (lat.total_abertos||0)+(lat.total_resolvidos||0);
+  const taxa = tot>0?Math.round((lat.total_resolvidos||0)/tot*100):0;
+
+  setHTML('detalheKpi',`
+    <div class="dk-card"><div class="dk-val" style="color:var(--blue)">${lat.total_abertos||0}</div><div class="dk-lbl">Abertos</div></div>
+    <div class="dk-card"><div class="dk-val" style="color:var(--green)">${lat.total_em_dia||0}</div><div class="dk-lbl">Em dia</div></div>
+    <div class="dk-card"><div class="dk-val" style="color:var(--red)">${lat.total_em_atraso||0}</div><div class="dk-lbl">Em atraso</div></div>
+    <div class="dk-card"><div class="dk-val" style="color:var(--green)">${lat.total_resolvidos||0}</div><div class="dk-lbl">Resolvidos</div></div>
+    <div class="dk-card"><div class="dk-val" style="color:var(--blue)">${Math.round(lat.indice_resposta||0)}%</div><div class="dk-lbl">Resp. projetistas</div></div>
+  `);
+
+  // Analistas do empreendimento
+  const { data:ae } = await sb.from('analista_empreendimento_auria')
+    .select('*, usuarios_auria(nome,email,ultimo_acesso)')
+    .eq('empreendimento_id', empId).eq('ativo',true);
+
+  const anHtml = (ae&&ae.length) ? ae.map(a=>`
+    <div class="analista-row">
+      <div class="analista-avatar">${(a.usuarios?.nome||'?')[0].toUpperCase()}</div>
+      <div class="analista-info">
+        <div class="analista-nome">${esc(a.usuarios_auria?.nome||'Analista')}</div>
+        <div class="analista-acesso">${esc(a.usuarios_auria?.email||'')}</div>
+      </div>
+      <div class="analista-status">Ativo</div>
+    </div>`).join('')
+    : '<div style="color:var(--text-soft);font-size:13px">Nenhum analista atribuido</div>';
+
+  setHTML('detalheAnalistas',`
+    <div class="detalhe-section-title">Analistas responsaveis</div>${anHtml}`);
+  setHTML('detalheDisciplinas',`
+    <div class="detalhe-section-title">Taxa de resolucao geral</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+      <div style="flex:1;height:10px;background:var(--gray-border);border-radius:10px;overflow:hidden">
+        <div style="height:100%;width:${taxa}%;background:linear-gradient(90deg,var(--blue),#60A5FA);border-radius:10px"></div>
+      </div>
+      <span style="font-size:16px;font-weight:800;color:var(--blue)">${taxa}%</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-soft);margin-top:8px">
+      Baseado nos ultimos dados recebidos do app Auria
+    </div>
+  `);
+}
+
+// ═══════════════════════════════════════════════════════
+// ANALISTAS PAGE
+// ═══════════════════════════════════════════════════════
+function renderAnalistasPage(){
+  if(!ANALISTAS.length){
+    setHTML('analistasList','<div class="empty-state"><div class="empty-state-icon">&#9786;</div><div class="empty-state-txt">Nenhum analista cadastrado. Envie um convite!</div></div>');
+    return;
+  }
+  setHTML('analistasList', ANALISTAS.map(a=>{
+    const aes = (a.analista_empreendimento_auria||[]).filter(x=>x.ativo);
+    const empNomes = aes.map(ae=>{
+      const e=EMPS.find(x=>x.id===ae.empreendimento_id);
+      return e?e.nome:'';
+    }).filter(Boolean);
+    const av = (a.nome||a.email||'?')[0].toUpperCase();
+    return `
+    <div class="analista-card">
+      <div class="analista-card-av">${av}</div>
+      <div class="analista-card-info">
+        <div class="analista-card-nome">${esc(a.nome||a.email)}</div>
+        <div class="analista-card-email">${esc(a.email)}</div>
+        <div class="analista-card-emps">${empNomes.length?empNomes.join(', '):'Sem empreendimento atribuido'}</div>
+      </div>
+      <div class="analista-card-actions">
+        <button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button>
+        <button class="btn-sm danger" onclick="revogarAnalista('${a.id}','${esc(a.nome||a.email)}')">Revogar</button>
+      </div>
+    </div>`;
+  }).join(''));
+}
+
+// ═══════════════════════════════════════════════════════
+// DISTRIBUICAO PAGE
+// ═══════════════════════════════════════════════════════
+function renderDistPage(){
+  setHTML('distEmpList', EMPS.map(e=>`
+    <div class="dist-emp-item${DIST_EMP===e.id?' selected':''}" onclick="selDistEmp('${e.id}')">
+      <div class="dist-emp-nome">${esc(e.nome)}</div>
+    </div>`).join(''));
+  if(DIST_EMP) renderDistAnalistas();
+}
+
+function selDistEmp(empId){
+  DIST_EMP = empId;
+  document.querySelectorAll('.dist-emp-item').forEach(el=>{
+    el.classList.toggle('selected', el.getAttribute('onclick')===`selDistEmp('${empId}')`);
+  });
+  renderDistAnalistas();
+}
+
+async function renderDistAnalistas(){
+  if(!DIST_EMP){setHTML('distAnalistaList','<div style="color:var(--text-soft);font-size:13px">Selecione um empreendimento</div>');return;}
+  const {data:ae} = await sb.from('analista_empreendimento_auria')
+    .select('analista_id').eq('empreendimento_id',DIST_EMP).eq('ativo',true);
+  const ativos = (ae||[]).map(x=>x.analista_id);
+  setHTML('distAnalistaList', ANALISTAS.map(a=>`
+    <div class="dist-check-item">
+      <input type="checkbox" id="da-${a.id}" ${ativos.includes(a.id)?'checked':''}>
+      <label class="dist-check-name" for="da-${a.id}">${esc(a.nome||a.email)}</label>
+    </div>`).join('')||'<div style="color:var(--text-soft);font-size:13px">Nenhum analista cadastrado</div>');
+}
+
+async function salvarDistribuicao(){
+  if(!DIST_EMP){showToast('Selecione um empreendimento','red');return;}
+  const checks = document.querySelectorAll('[id^="da-"]');
+  const selecionados = [...checks].filter(c=>c.checked).map(c=>c.id.replace('da-',''));
+  const naoSelecionados = [...checks].filter(c=>!c.checked).map(c=>c.id.replace('da-',''));
+
+  // Ativa os selecionados (upsert)
+  for(const aid of selecionados){
+    await sb.from('analista_empreendimento_auria').upsert({
+      analista_id:aid, empreendimento_id:DIST_EMP,
+      concedido_por:USER.id, ativo:true
+    },{onConflict:'analista_id,empreendimento_id'});
+  }
+  // Desativa os desmarcados
+  for(const aid of naoSelecionados){
+    await sb.from('analista_empreendimento_auria')
+      .update({ativo:false})
+      .eq('analista_id',aid).eq('empreendimento_id',DIST_EMP);
+  }
+  showToast('Distribuicao salva com sucesso!','green');
+  await loadAnalistas();
+}
+
+// ═══════════════════════════════════════════════════════
+// CONVITE
+// ═══════════════════════════════════════════════════════
+async function enviarConvite(){
+  const email = v('conviteEmail'), nome = v('conviteNome');
+  if(!email){ showToast('Informe o e-mail','red'); return; }
+
+  // Gera token e insere na tabela convites
+  const { data, error } = await sb.from('convites_auria').insert({
+    email, role:'analista', empresa_id:EMPRESA.id, convidado_por:USER.id
+  }).select().single();
+
+  if(error){ showToast('Erro ao gerar convite: '+error.message,'red'); return; }
+
+  // Convida via Supabase Auth (envia e-mail automatico)
+  const { error:invErr } = await sb.auth.admin?.inviteUserByEmail?.(email, {
+    data:{ nome, empresa_id:EMPRESA.id }
+  });
+
+  closeModal('modalConvite');
+  document.getElementById('conviteEmail').value='';
+  document.getElementById('conviteNome').value='';
+  showToast('Convite enviado para '+email,'green');
+  await loadAnalistas();
+  renderAnalistasPage();
+}
+
+async function criarEmpreendimento(){
+  const nome = v('empNome'), cidade = v('empCidade'), estado = v('empEstado').toUpperCase();
+  if(!nome){ showToast('Informe o nome','red'); return; }
+  const { error } = await sb.from('empreendimentos_auria').insert({
+    nome, cidade, estado, empresa_id:EMPRESA.id, criado_por:USER.id
+  });
+  if(error){ showToast('Erro: '+error.message,'red'); return; }
+  closeModal('modalNovoEmp');
+  ['empNome','empCidade','empEstado'].forEach(id=>document.getElementById(id).value='');
+  showToast('Empreendimento criado!','green');
+  await loadEmpreendimentos();
+  renderCards();
+}
+
+async function revogarAnalista(analistaId, nome){
+  if(!confirm('Revogar acesso de '+nome+'?')) return;
+  await sb.from('analista_empreendimento_auria').update({ativo:false}).eq('analista_id',analistaId);
+  await sb.from('usuarios_auria').update({ativo:false}).eq('id',analistaId);
+  showToast('Acesso revogado','red');
+  await loadAnalistas();
+  renderAnalistasPage();
+}
+
+// ═══════════════════════════════════════════════════════
+// NAVEGACAO
+// ═══════════════════════════════════════════════════════
+function goPage(name){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
+  const pageMap = {
+    dashboard:'pageDashboard', detalhe:'pageDetalhe',
+    empreendimentos:'pageEmpreendimentos', analistas:'pageAnalistas',
+    distribuicao:'pageDistribuicao'
+  };
+  const titleMap = {
+    dashboard:'Dashboard Geral', detalhe:'Detalhe',
+    empreendimentos:'Empreendimentos', analistas:'Analistas',
+    distribuicao:'Distribuicao'
+  };
+  const subMap = {
+    dashboard:'Todos os empreendimentos',
+    empreendimentos:'Gerencie seus projetos',
+    analistas:'Equipe de analistas',
+    distribuicao:'Atribuicao de acessos'
+  };
+  document.getElementById(pageMap[name]||'pageDashboard').classList.add('active');
+  document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
+  if(name!=='detalhe'){
+    document.getElementById('topbarTitle').textContent = titleMap[name]||'';
+    document.getElementById('topbarSub').textContent   = subMap[name]||'';
+  }
+  if(name==='dashboard')     renderDashboard();
+  if(name==='analistas')     renderAnalistasPage();
+  if(name==='distribuicao')  renderDistPage();
+  if(name==='empreendimentos'){
+    setHTML('empListaAdmin', EMPS.map(e=>buildCard(e)).join('')||
+      '<div class="empty-state"><div class="empty-state-txt">Nenhum empreendimento</div></div>');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// MODAIS
+// ═══════════════════════════════════════════════════════
+function openModalConvite(){ document.getElementById('modalConvite').classList.add('open'); }
+function openModalNovoEmp(){ document.getElementById('modalNovoEmp').classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+
+// ═══════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════
+function v(id){ return (document.getElementById(id)||{}).value||''; }
+function show(id){ document.getElementById(id).style.display=''; }
+function hide(id){ document.getElementById(id).style.display='none'; }
+function setText(id,t){ const el=document.getElementById(id); if(el) el.textContent=t; }
+function setHTML(id,h){ const el=document.getElementById(id); if(el) el.innerHTML=h; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showErr(el,msg){ el.textContent=msg; el.style.display='block'; }
+let _toastT=null;
+function showToast(msg,type){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast '+(type||'');
+  t.classList.add('show');
+  clearTimeout(_toastT);
+  _toastT=setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+// LOGIN KEY
+document.getElementById('loginPass').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+document.getElementById('btnLogin').addEventListener('click', doLogin);
+
+// INIT
+init();
+</script>
+</body>
+</html>
