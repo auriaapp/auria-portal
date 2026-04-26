@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Ativar Conta</title>
+<link rel="icon" type="image/png" href="logo_symbol.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#0F172A 0%,#1E3A5F 60%,#1D4ED8 100%);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.box{background:#fff;border-radius:20px;padding:48px 44px;width:420px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.logo-wrap{display:flex;flex-direction:column;align-items:center;margin-bottom:36px}
+.logo-wrap img{height:80px;object-fit:contain}
+.badge{margin-top:12px;font-size:11px;background:#0F172A;color:#fff;border-radius:5px;padding:4px 14px;font-weight:700;letter-spacing:1.5px}
+h2{font-size:20px;font-weight:800;color:#0F172A;margin-bottom:6px;text-align:center}
+.sub{font-size:14px;color:#64748B;text-align:center;margin-bottom:28px;line-height:1.5}
+label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;padding:12px 14px;border:1.5px solid #E2E8F0;border-radius:10px;font-size:14px;outline:none;transition:border .2s;margin-bottom:16px}
+input:focus{border-color:#3B82F6}
+.req{font-size:12px;color:#94A3B8;margin-top:-10px;margin-bottom:16px}
+.btn{width:100%;padding:14px;background:linear-gradient(135deg,#1D4ED8,#1E3A5F);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px}
+.btn:hover{opacity:.9}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.err{background:#FEF2F2;color:#EF4444;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px;display:none}
+.ok{background:#ECFDF5;color:#10B981;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px;display:none;text-align:center}
+.strength{height:4px;border-radius:4px;margin-top:-10px;margin-bottom:16px;background:#E2E8F0;overflow:hidden}
+.strength-bar{height:100%;width:0%;transition:width .3s,background .3s;border-radius:4px}
+#loadWrap{text-align:center;color:#64748B;font-size:14px;padding:20px 0}
+</style>
+</head>
+<body>
+
+<div class="box">
+  <div class="logo-wrap">
+    <img src="logo_full.png" alt="Auria">
+    <div class="badge">ATIVAR CONTA</div>
+  </div>
+
+  <!-- Estado: carregando -->
+  <div id="loadWrap">Verificando convite...</div>
+
+  <!-- Estado: formulário de senha -->
+  <div id="formWrap" style="display:none">
+    <h2>Defina sua senha</h2>
+    <p class="sub">Crie uma senha segura para acessar o Painel da Gestão Auria.</p>
+
+    <div id="errBox" class="err"></div>
+    <div id="okBox" class="ok"></div>
+
+    <label>Nova senha</label>
+    <input type="password" id="pass1" placeholder="Mínimo 8 caracteres" oninput="checkStrength()">
+    <div class="strength"><div class="strength-bar" id="strengthBar"></div></div>
+
+    <label>Confirmar senha</label>
+    <input type="password" id="pass2" placeholder="Repita a senha">
+
+    <button class="btn" id="btnAtivar" onclick="ativar()">Ativar conta e entrar no painel</button>
+  </div>
+
+  <!-- Estado: erro de link inválido -->
+  <div id="invalidWrap" style="display:none;text-align:center">
+    <p style="font-size:40px;margin-bottom:16px">⚠️</p>
+    <h2 style="margin-bottom:8px">Link inválido ou expirado</h2>
+    <p class="sub">Este link de ativação já foi usado ou expirou.<br>Entre em contato com a Auria para receber um novo convite.</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const PAINEL  = 'https://auriaapp.github.io/auria-portal/auria_gerencia.html';
+const sb      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+async function init(){
+  // O Supabase coloca os tokens no hash da URL após o clique no link de convite
+  const hash = window.location.hash;
+  const params = new URLSearchParams(hash.replace('#',''));
+  const type   = params.get('type');
+  const token  = params.get('access_token');
+
+  if(!token || type !== 'invite'){
+    document.getElementById('loadWrap').style.display   = 'none';
+    document.getElementById('invalidWrap').style.display = 'block';
+    return;
+  }
+
+  // Seta a sessão com o token do convite mas NÃO redireciona ainda
+  const { error } = await sb.auth.setSession({
+    access_token:  token,
+    refresh_token: params.get('refresh_token') || ''
+  });
+
+  if(error){
+    document.getElementById('loadWrap').style.display   = 'none';
+    document.getElementById('invalidWrap').style.display = 'block';
+    return;
+  }
+
+  // Mostra formulário de definição de senha
+  document.getElementById('loadWrap').style.display  = 'none';
+  document.getElementById('formWrap').style.display  = 'block';
+}
+
+function checkStrength(){
+  const p = document.getElementById('pass1').value;
+  const bar = document.getElementById('strengthBar');
+  let score = 0;
+  if(p.length >= 8) score++;
+  if(/[A-Z]/.test(p)) score++;
+  if(/[0-9]/.test(p)) score++;
+  if(/[^A-Za-z0-9]/.test(p)) score++;
+  const w = ['0%','25%','50%','75%','100%'][score];
+  const c = ['#E2E8F0','#EF4444','#F59E0B','#3B82F6','#10B981'][score];
+  bar.style.width = w; bar.style.background = c;
+}
+
+async function ativar(){
+  const pass1 = document.getElementById('pass1').value;
+  const pass2 = document.getElementById('pass2').value;
+  const errBox = document.getElementById('errBox');
+  const okBox  = document.getElementById('okBox');
+  errBox.style.display = 'none';
+
+  if(pass1.length < 8){
+    errBox.textContent = 'A senha deve ter pelo menos 8 caracteres.';
+    errBox.style.display = 'block'; return;
+  }
+  if(pass1 !== pass2){
+    errBox.textContent = 'As senhas não coincidem.';
+    errBox.style.display = 'block'; return;
+  }
+
+  const btn = document.getElementById('btnAtivar');
+  btn.disabled = true; btn.textContent = 'Ativando...';
+
+  const { error } = await sb.auth.updateUser({ password: pass1 });
+
+  if(error){
+    errBox.textContent = 'Erro: ' + error.message;
+    errBox.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Ativar conta e entrar no painel';
+    return;
+  }
+
+  okBox.textContent = '✅ Conta ativada! Redirecionando para o painel...';
+  okBox.style.display = 'block';
+  btn.style.display = 'none';
+
+  setTimeout(()=>{ window.location.href = PAINEL; }, 2000);
+}
+
+init();
+</script>
+</body>
+</html>
