@@ -657,13 +657,37 @@ async function criarCliente(){
     });
     if(convErr) throw convErr;
 
-    // 3. Envia invite via Supabase Auth (e-mail automatico)
-    // Nota: requer service_role key em producao. Aqui registra e exibe link manual.
-    showToast('Cliente criado! Convite registrado para '+_NC.gerEmail,'green');
+    // 3. Envia e-mail de boas-vindas via Edge Function
+    btn.textContent='Enviando e-mail...';
+    try{
+      const { data:{ session } } = await sb.auth.getSession();
+      await fetch(
+        'https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+            'apikey': SUPA_KEY,
+          },
+          body: JSON.stringify({
+            gerNome:  _NC.gerNome,
+            gerEmail: _NC.gerEmail,
+            empNome:  _NC.empNome,
+            plano:    _NC.empPlano,
+          }),
+        }
+      );
+    }catch(emailErr){
+      console.warn('E-mail nao enviado:', emailErr);
+    }
+
+    showToast('Cliente criado e e-mail de boas-vindas enviado para '+_NC.gerEmail,'green');
     ['ncEmpNome','ncEmpCnpj','ncGerNome','ncGerEmail'].forEach(id=>document.getElementById(id).value='');
+    _NC = {};
     stepAvanco(1);
     await loadAll();
-    setTimeout(()=>goPage('clientes'),1500);
+    setTimeout(()=>goPage('clientes'),2000);
   }catch(e){
     showToast('Erro: '+e.message,'red');
   }finally{
