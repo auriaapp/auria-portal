@@ -462,27 +462,57 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 </div>
 
 <div class="modal-bg" id="modalNovoEmp">
-  <div class="modal">
+  <div class="modal" style="width:560px;max-width:96vw">
     <button class="modal-close" onclick="closeModal('modalNovoEmp')">&#215;</button>
-    <div class="modal-title">Novo Empreendimento</div>
-    <div class="modal-sub">Configure o empreendimento para sua empresa</div>
-    <div class="form-group">
-      <label class="form-label">Nome do empreendimento</label>
-      <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista">
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="form-group">
-        <label class="form-label">Cidade</label>
-        <input class="form-inp" id="empCidade" placeholder="Sao Paulo">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Estado</label>
-        <input class="form-inp" id="empEstado" placeholder="SP" maxlength="2">
+
+    <!-- Cabeçalho -->
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:22px">
+      <div style="width:46px;height:46px;background:var(--blue-light);border-radius:12px;
+                  display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">&#127959;</div>
+      <div>
+        <div class="modal-title" style="margin-bottom:2px">Novo Empreendimento</div>
+        <div class="modal-sub" style="margin-bottom:0">Preencha os dados do projeto. Analistas podem ser atribuidos depois.</div>
       </div>
     </div>
-    <div class="modal-footer">
+
+    <!-- Seção: Identificação -->
+    <div style="background:var(--gray-light);border-radius:10px;padding:16px 18px;margin-bottom:14px">
+      <div style="font-size:10px;font-weight:700;color:var(--text-soft);text-transform:uppercase;
+                  letter-spacing:.7px;margin-bottom:14px">&#9679; Identificacao</div>
+      <div class="form-group">
+        <label class="form-label">Nome do empreendimento <span style="color:var(--red)">*</span></label>
+        <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista, Torre A">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 80px;gap:12px;margin-top:4px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Cidade</label>
+          <input class="form-inp" id="empCidade" placeholder="Sao Paulo">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">UF</label>
+          <input class="form-inp" id="empEstado" placeholder="SP" maxlength="2"
+                 style="text-transform:uppercase"
+                 oninput="this.value=this.value.toUpperCase().slice(0,2)">
+        </div>
+      </div>
+    </div>
+
+    <!-- Aviso analistas -->
+    <div style="display:flex;align-items:flex-start;gap:10px;background:#EFF6FF;
+                border-left:3px solid var(--blue);border-radius:0 8px 8px 0;
+                padding:11px 14px;margin-bottom:20px">
+      <span style="font-size:16px;margin-top:1px">&#128161;</span>
+      <div style="font-size:12px;color:#1E40AF;line-height:1.5">
+        <strong>Analistas responsaveis</strong> podem ser atribuidos apos a criacao,
+        na pagina <strong>Distribuicao</strong>. E possivel adicionar multiplos analistas por empreendimento.
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top:4px">
       <button class="btn-secondary" onclick="closeModal('modalNovoEmp')">Cancelar</button>
-      <button class="btn-primary" onclick="criarEmpreendimento()">Criar</button>
+      <button class="btn-primary" id="btnCriarEmp" onclick="criarEmpreendimento()">
+        &#43; Criar Empreendimento
+      </button>
     </div>
   </div>
 </div>
@@ -567,9 +597,10 @@ async function loadAll(){
 }
 
 async function loadEmpreendimentos(){
-  const q = sb.from('empreendimentos_auria').select('*').eq('ativo',true).order('nome');
-  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
-  const { data } = await q;
+  let q = sb.from('empreendimentos_auria').select('*').eq('ativo',true).order('nome');
+  if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
+  const { data, error } = await q;
+  if(error) console.error('loadEmpreendimentos:', error.message);
   EMPS = data || [];
   document.getElementById('empCount').textContent = EMPS.length+' ativo'+(EMPS.length!==1?'s':'');
 }
@@ -578,15 +609,15 @@ async function loadMetrics(){
   const today = new Date();
   const d10   = new Date(today - 10*864e5);
   const iso10 = d10.toISOString().split('T')[0];
-  const q = sb.from('metricas_diarias_auria').select('*').gte('data',iso10).order('data',{ascending:false});
-  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
+  let q = sb.from('metricas_diarias_auria').select('*').gte('data',iso10).order('data',{ascending:false});
+  if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
   const { data } = await q;
   METRICS = data || [];
 }
 
 async function loadAnalistas(){
-  const q = sb.from('usuarios_auria').select('*, analista_empreendimento_auria(empreendimento_id, ativo)').eq('role','analista');
-  if(USER.role==='gerente') q.eq('empresa_id', EMPRESA.id);
+  let q = sb.from('usuarios_auria').select('*, analista_empreendimento_auria(empreendimento_id, ativo)').eq('role','analista');
+  if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
   const { data } = await q;
   ANALISTAS = data || [];
 }
@@ -943,22 +974,46 @@ async function enviarConvite(){
 }
 
 async function criarEmpreendimento(){
-  const nome = v('empNome'), cidade = v('empCidade'), estado = v('empEstado').toUpperCase();
-  if(!nome){ showToast('Informe o nome','red'); return; }
+  const nome   = v('empNome').trim();
+  const cidade = v('empCidade').trim();
+  const estado = v('empEstado').trim().toUpperCase().slice(0,2);
+  if(!nome){ showToast('Informe o nome do empreendimento','red'); return; }
   if(!EMPRESA || !EMPRESA.id){ showToast('Erro: nenhuma empresa vinculada a este usuário.','red'); return; }
+
+  const btn = document.getElementById('btnCriarEmp');
+  btn.disabled = true; btn.textContent = 'Criando...';
+
   try{
     const { error } = await sb.from('empreendimentos_auria').insert({
-      nome, cidade, estado, empresa_id:EMPRESA.id, criado_por:USER.id
+      nome, cidade, estado,
+      empresa_id: EMPRESA.id,
+      criado_por: USER.id,
+      ativo: true
     });
     if(error) throw error;
     closeModal('modalNovoEmp');
-    ['empNome','empCidade','empEstado'].forEach(id=>document.getElementById(id).value='');
-    showToast('Empreendimento criado!','green');
+    ['empNome','empCidade','empEstado'].forEach(id=>{
+      const el=document.getElementById(id); if(el) el.value='';
+    });
+    showToast('Empreendimento criado com sucesso!','green');
     await loadEmpreendimentos();
     renderCards();
+    renderEmpreendimentosPage();
   }catch(e){
     showToast('Erro: '+e.message,'red');
+  }finally{
+    btn.disabled = false; btn.textContent = 'Criar Empreendimento';
   }
+}
+
+function renderEmpreendimentosPage(){
+  const el = document.getElementById('empListaAdmin');
+  if(!el) return;
+  if(!EMPS.length){
+    el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">&#127959;</div><div class="empty-state-txt">Nenhum empreendimento cadastrado ainda.<br>Clique em &ldquo;+ Novo Empreendimento&rdquo; para comecar.</div></div>';
+    return;
+  }
+  el.innerHTML = EMPS.map(e=>buildCard(e)).join('');
 }
 
 async function revogarAnalista(analistaId, nome){
@@ -998,13 +1053,10 @@ function goPage(name){
     document.getElementById('topbarTitle').textContent = titleMap[name]||'';
     document.getElementById('topbarSub').textContent   = subMap[name]||'';
   }
-  if(name==='dashboard')     renderDashboard();
-  if(name==='analistas')     renderAnalistasPage();
-  if(name==='distribuicao')  renderDistPage();
-  if(name==='empreendimentos'){
-    setHTML('empListaAdmin', EMPS.map(e=>buildCard(e)).join('')||
-      '<div class="empty-state"><div class="empty-state-txt">Nenhum empreendimento</div></div>');
-  }
+  if(name==='dashboard')       renderDashboard();
+  if(name==='analistas')       renderAnalistasPage();
+  if(name==='distribuicao')    renderDistPage();
+  if(name==='empreendimentos') renderEmpreendimentosPage();
 }
 
 // ═══════════════════════════════════════════════════════
