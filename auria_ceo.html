@@ -533,8 +533,9 @@ async function loadClientes(){
           <td style="font-size:12px;color:var(--text-soft)">—</td>
           <td style="font-size:12px;color:var(--text-soft)">${fmtDate(e.criado_em)}</td>
           <td><span class="badge badge-${e.ativo?'ativo':'inativo'}">${e.ativo?'Ativo':'Inativo'}</span></td>
-          <td>
+          <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <button class="btn-sm" onclick="toggleEmpresa('${e.id}',${!e.ativo})">${e.ativo?'Desativar':'Ativar'}</button>
+            <button class="btn-sm danger" onclick="deletarEmpresa('${e.id}','${esc(e.nome)}')">Apagar</button>
           </td>
         </tr>`).join('')}
       </tbody>
@@ -699,6 +700,37 @@ async function toggleEmpresa(id, novoStatus){
   await sb.from('empresas_auria').update({ativo:novoStatus}).eq('id',id);
   showToast(novoStatus?'Empresa ativada':'Empresa desativada', novoStatus?'green':'red');
   await loadClientes();
+}
+
+async function deletarEmpresa(id, nome){
+  if(!confirm(`⚠️ Tem certeza que deseja APAGAR a empresa "${nome}"?\n\nIsso irá remover permanentemente:\n• Todos os dados da empresa\n• Todos os usuários vinculados\n• Todos os empreendimentos\n\nEsta ação não pode ser desfeita.`)) return;
+
+  try{
+    // 1. Busca todos os usuários da empresa
+    const { data: usuarios } = await sb.from('usuarios_auria').select('id').eq('empresa_id', id);
+
+    // 2. Chama Edge Function para apagar usuários do Auth e limpeza completa
+    const { data:{ session } } = await sb.auth.getSession();
+    const resp = await fetch(
+      'https://sabzccokueowpromwxdg.supabase.co/functions/v1/delete-empresa',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': SUPA_KEY,
+        },
+        body: JSON.stringify({ empresa_id: id, usuario_ids: (usuarios||[]).map(u=>u.id) }),
+      }
+    );
+    const result = await resp.json();
+    if(!resp.ok) throw new Error(result.error || 'Erro ao apagar empresa');
+
+    showToast(`Empresa "${nome}" apagada com sucesso`,'green');
+    await loadAll();
+  }catch(e){
+    showToast('Erro: '+e.message,'red');
+  }
 }
 
 async function fecharChamado(id){
