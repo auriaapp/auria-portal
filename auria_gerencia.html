@@ -638,6 +638,56 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- ═══ MODAL: EXCLUIR EMPREENDIMENTO ════════════════════ -->
+<div class="modal-bg" id="modalDeleteEmp">
+  <div class="modal" style="width:480px;max-width:95vw;border-top:4px solid var(--red)">
+    <button class="modal-close" onclick="closeModal('modalDeleteEmp')">&#215;</button>
+
+    <!-- Ícone + título -->
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:44px;margin-bottom:8px">&#9888;&#65039;</div>
+      <div class="modal-title" style="color:var(--red);font-size:18px">Excluir Empreendimento</div>
+      <div class="modal-sub" style="margin-bottom:0">Esta acao nao pode ser desfeita.</div>
+    </div>
+
+    <!-- Nome do empreendimento destacado -->
+    <div style="background:var(--red-light);border:1.5px solid #FCA5A5;border-radius:10px;
+                padding:14px 16px;margin-bottom:16px;text-align:center">
+      <div style="font-size:11px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Empreendimento a ser excluido</div>
+      <div id="deleteEmpNome" style="font-size:16px;font-weight:800;color:var(--text)"></div>
+    </div>
+
+    <!-- O que será apagado -->
+    <div style="background:var(--gray-light);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--text-mid);line-height:1.8">
+      Serao removidos permanentemente:<br>
+      &#10006; Todos os vinculos com analistas<br>
+      &#10006; Os dados do empreendimento<br>
+      <span style="color:var(--text-soft);font-size:11px">* Apontamentos e metricas historicas sao mantidos</span>
+    </div>
+
+    <!-- Campo de confirmação -->
+    <div class="form-group">
+      <label class="form-label" style="color:var(--red)">
+        Digite o nome do empreendimento para confirmar:
+      </label>
+      <input class="form-inp" id="deleteEmpConfirmInput"
+             placeholder="Nome exato do empreendimento"
+             oninput="checkDeleteConfirm()"
+             style="border-color:#FCA5A5;font-weight:600">
+      <div style="font-size:11px;color:var(--text-soft);margin-top:4px">O nome deve ser identico, incluindo maiusculas e espacos</div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalDeleteEmp')">Cancelar</button>
+      <button class="btn-danger" id="btnConfirmarDelete" disabled
+              onclick="executarExclusaoEmp()"
+              style="opacity:.4;transition:opacity .2s">
+        &#128465; Confirmar exclusao
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -825,7 +875,7 @@ function renderCards(){
   setHTML('cardsGrid', list.map(emp=>buildCard(emp)).join(''));
 }
 
-function buildCard(emp){
+function buildCard(emp, adminMode=false){
   const rows = METRICS.filter(m=>m.empreendimento_id===emp.id)
     .sort((a,b)=>new Date(b.data)-new Date(a.data));
   const lat  = rows[0]||{total_abertos:0,total_em_dia:0,total_em_atraso:0,total_resolvidos:0,indice_resposta:0};
@@ -891,6 +941,8 @@ function buildCard(emp){
         <span class="taxa-num">${taxa}%</span>
       </div>
       <div class="card-footer-btns">
+        ${adminMode ? `<button class="btn-ver" onclick="abrirDeleteEmp('${emp.id}')"
+          style="border-color:var(--red);color:var(--red);margin-right:auto">&#128465; Excluir</button>` : ''}
         <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
       </div>
     </div>
@@ -1260,7 +1312,59 @@ function renderEmpreendimentosPage(){
     el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">&#127959;</div><div class="empty-state-txt">Nenhum empreendimento cadastrado ainda.<br>Clique em &ldquo;+ Novo Empreendimento&rdquo; para comecar.</div></div>';
     return;
   }
-  el.innerHTML = EMPS.map(e=>buildCard(e)).join('');
+  el.innerHTML = EMPS.map(e=>buildCard(e, true)).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+// EXCLUIR EMPREENDIMENTO
+// ═══════════════════════════════════════════════════════
+let EMP_TO_DELETE = null;
+
+function abrirDeleteEmp(empId){
+  const emp = EMPS.find(e=>e.id===empId);
+  if(!emp) return;
+  EMP_TO_DELETE = emp;
+  document.getElementById('deleteEmpNome').textContent        = emp.nome;
+  document.getElementById('deleteEmpConfirmInput').value      = '';
+  const btn = document.getElementById('btnConfirmarDelete');
+  btn.disabled = true; btn.style.opacity = '.4';
+  document.getElementById('modalDeleteEmp').classList.add('open');
+  setTimeout(()=>document.getElementById('deleteEmpConfirmInput').focus(), 120);
+}
+
+function checkDeleteConfirm(){
+  const val = document.getElementById('deleteEmpConfirmInput').value;
+  const ok  = val === EMP_TO_DELETE?.nome;
+  const btn = document.getElementById('btnConfirmarDelete');
+  btn.disabled    = !ok;
+  btn.style.opacity = ok ? '1' : '.4';
+}
+
+async function executarExclusaoEmp(){
+  if(!EMP_TO_DELETE) return;
+  const btn = document.getElementById('btnConfirmarDelete');
+  btn.disabled = true; btn.textContent = 'Excluindo...';
+  try{
+    // 1. Remove vínculos analista ↔ empreendimento
+    await sb.from('analista_empreendimento_auria').delete().eq('empreendimento_id', EMP_TO_DELETE.id);
+    // 2. Remove métricas do empreendimento
+    await sb.from('metricas_diarias_auria').delete().eq('empreendimento_id', EMP_TO_DELETE.id);
+    // 3. Remove o empreendimento
+    const { error } = await sb.from('empreendimentos_auria').delete().eq('id', EMP_TO_DELETE.id);
+    if(error) throw error;
+    // 4. Remove logo do Storage (melhor esforço)
+    sb.storage.from('logos').remove([`empreendimentos/${EMP_TO_DELETE.id}`]).catch(()=>{});
+
+    closeModal('modalDeleteEmp');
+    showToast('Empreendimento "'+EMP_TO_DELETE.nome+'" excluido.','red');
+    EMP_TO_DELETE = null;
+    await loadEmpreendimentos();
+    renderCards();
+    renderEmpreendimentosPage();
+  }catch(e){
+    showToast('Erro ao excluir: '+e.message,'red');
+    btn.disabled = false; btn.textContent = '&#128465; Confirmar exclusao';
+  }
 }
 
 async function revogarAnalista(analistaId, nome){
