@@ -208,12 +208,16 @@ function getFck(mo) {
   return null;
 }
 
-// ── Detecção de sobreposições Pilar×Viga ─────────────────────────────────────
-// Pilares (+ fundações/estacas) têm prioridade sobre vigas.
-// O volume da região de interseção é descontado das vigas para evitar
-// dupla contagem na concretagem de trechos.
+// ── Detecção de sobreposições (3 níveis de prioridade) ───────────────────────
+// Nível 1 (maior prioridade): Pilares, Fundações, Estacas
+//   → desconta de Vigas e Lajes
+// Nível 2: Vigas, Membros
+//   → desconta de Lajes (mas NÃO de Pilares)
+// Nível 3 (menor prioridade): Lajes
+//   → descontadas por tudo acima
 const OVERLAP_PRIORITY  = new Set(["IfcColumn","IfcFooting","IfcPile"]);
 const OVERLAP_SECONDARY = new Set(["IfcBeam","IfcMember"]);
+const OVERLAP_SLAB      = new Set(["IfcSlab"]);
 const OVERLAP_MIN_M3    = 0.0001; // 100 cm³ — ignora ruído numérico de AABBs
 
 /** Intersecção volumétrica de dois AABBs [minX,minY,minZ,maxX,maxY,maxZ] */
@@ -248,32 +252,64 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
       fck:         getFck(mo),
       isPriority:  OVERLAP_PRIORITY.has(mo.type),
       isSecondary: OVERLAP_SECONDARY.has(mo.type),
+      isSlab:      OVERLAP_SLAB.has(mo.type),
     });
   }
 
-  // Cruza cada pilar/fundação com cada viga e acumula deduções
-  const priority   = elems.filter(e => e.isPriority);
-  const secondary  = elems.filter(e => e.isSecondary);
-  const deductions = {};   // id → m³ a descontar desta viga
-  const pairs      = [];   // { colId, beamId, vol } — para highlight no clique
-  let totalOverlap = 0, overlapPairs = 0;
+  // Três níveis de prioridade
+  const tier1 = elems.filter(e => e.isPriority);   // Pilares, Fundações, Estacas
+  const tier2 = elems.filter(e => e.isSecondary);  // Vigas, Membros
+  const tier3 = elems.filter(e => e.isSlab);        // Lajes
 
-  for (const p of priority) {
-    for (const s of secondary) {
-      const ov = _aabbOverlapVol(p.entity.aabb, s.entity.aabb);
+  const deductions = {};   // id → m³ a descontar
+  const pairs      = [];   // { higherId, lowerId, vol, type } para highlight
+  let totalOverlap = 0;
+  let pairsColBeam = 0, pairsColSlab = 0, pairsBeamSlab = 0;
+
+  // Nível 1 × Nível 2: Pilar → desconta Viga
+  for (const t1 of tier1) {
+    for (const t2 of tier2) {
+      const ov = _aabbOverlapVol(t1.entity.aabb, t2.entity.aabb);
       if (ov > OVERLAP_MIN_M3) {
-        deductions[s.id] = (deductions[s.id] || 0) + ov;
-        totalOverlap += ov;
-        overlapPairs++;
-        pairs.push({ colId: p.id, beamId: s.id, vol: ov });
+        deductions[t2.id] = (deductions[t2.id] || 0) + ov;
+        totalOverlap += ov; pairsColBeam++;
+        pairs.push({ higherId: t1.id, lowerId: t2.id, vol: ov, type: "col-beam" });
       }
     }
   }
 
-  // IDs únicos de vigas e pilares envolvidos nas sobreposições
-  const overlapBeamIds = [...new Set(pairs.map(p => p.beamId))];
-  const overlapColIds  = [...new Set(pairs.map(p => p.colId))];
-  const affectedBeams  = overlapBeamIds.length;
+  // Nível 1 × Nível 3: Pilar → desconta Laje
+  for (const t1 of tier1) {
+    for (const t3 of tier3) {
+      const ov = _aabbOverlapVol(t1.entity.aabb, t3.entity.aabb);
+      if (ov > OVERLAP_MIN_M3) {
+        deductions[t3.id] = (deductions[t3.id] || 0) + ov;
+        totalOverlap += ov; pairsColSlab++;
+        pairs.push({ higherId: t1.id, lowerId: t3.id, vol: ov, type: "col-slab" });
+      }
+    }
+  }
+
+  // Nível 2 × Nível 3: Viga → desconta Laje
+  for (const t2 of tier2) {
+    for (const t3 of tier3) {
+      const ov = _aabbOverlapVol(t2.entity.aabb, t3.entity.aabb);
+      if (ov > OVERLAP_MIN_M3) {
+        deductions[t3.id] = (deductions[t3.id] || 0) + ov;
+        totalOverlap += ov; pairsBeamSlab++;
+        pairs.push({ higherId: t2.id, lowerId: t3.id, vol: ov, type: "beam-slab" });
+      }
+    }
+  }
+
+  const overlapPairs = pairsColBeam + pairsColSlab + pairsBeamSlab;
+
+  // IDs afetados por categoria (para highlight e estatísticas)
+  const overlapBeamIds = [...new Set(pairs.filter(p => p.type==="col-beam").map(p => p.lowerId))];
+  const overlapSlabIds = [...new Set(pairs.filter(p => p.type==="col-slab"||p.type==="beam-slab").map(p => p.lowerId))];
+  const overlapHigherIds = [...new Set(pairs.map(p => p.higherId))];
+  const affectedBeams = overlapBeamIds.length;
+  const affectedSlabs = overlapSlabIds.length;
 
   // Totais por tipo e por fck — já com desconto aplicado
   const byType = {}, byFck = {};
@@ -293,8 +329,11 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   }
 
   return { elems, byType, byFck, dedByFck, total, totalRaw,
-           totalOverlap, overlapPairs, affectedBeams,
-           deductions, pairs, overlapBeamIds, overlapColIds };
+           totalOverlap, overlapPairs,
+           pairsColBeam, pairsColSlab, pairsBeamSlab,
+           affectedBeams, affectedSlabs,
+           deductions, pairs,
+           overlapBeamIds, overlapSlabIds, overlapHigherIds };
 }
 
 /**
@@ -312,20 +351,25 @@ function _overlapWarningHtml(r, decimals = 3) {
          title="Clique para destacar as sobreposições no modelo"
          onmouseenter="this.style.borderColor='#f59e0b';this.style.background='#251800'"
          onmouseleave="this.style.borderColor='#78350f';this.style.background='#1c1200'">
-      <div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.07em;margin-bottom:5px">
+      <div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.07em;margin-bottom:6px">
         ⚠ SOBREPOSIÇÕES DETECTADAS
         <span style="color:#64748b;font-size:9px;font-weight:400;letter-spacing:0;margin-left:6px">ver no modelo →</span>
       </div>
-      <div style="color:#94a3b8;font-size:11px">
-        <b style="color:#fbbf24">${r.affectedBeams}</b>
-        viga${r.affectedBeams>1?"s":""} afetada${r.affectedBeams>1?"s":""}
-        &nbsp;·&nbsp;
-        <b style="color:#fbbf24">${r.overlapPairs}</b>
-        par${r.overlapPairs>1?"es":""} Pilar×Viga
+      <div style="color:#94a3b8;font-size:11px;line-height:1.7">
+        ${r.affectedBeams > 0 ? `<b style="color:#fbbf24">${r.affectedBeams}</b> viga${r.affectedBeams>1?"s":""} afetada${r.affectedBeams>1?"s":""}` : ""}
+        ${r.affectedBeams > 0 && r.affectedSlabs > 0 ? "&nbsp;·&nbsp;" : ""}
+        ${r.affectedSlabs > 0 ? `<b style="color:#fbbf24">${r.affectedSlabs}</b> laje${r.affectedSlabs>1?"s":""} afetada${r.affectedSlabs>1?"s":""}` : ""}
+      </div>
+      <div style="color:#64748b;font-size:10px;line-height:1.7;margin-top:2px">
+        ${r.pairsColBeam  > 0 ? `<span style="color:#94a3b8">${r.pairsColBeam}</span> Pilar×Viga` : ""}
+        ${r.pairsColBeam  > 0 && (r.pairsColSlab > 0 || r.pairsBeamSlab > 0) ? "&nbsp;·&nbsp;" : ""}
+        ${r.pairsColSlab  > 0 ? `<span style="color:#94a3b8">${r.pairsColSlab}</span> Pilar×Laje` : ""}
+        ${r.pairsColSlab  > 0 && r.pairsBeamSlab > 0 ? "&nbsp;·&nbsp;" : ""}
+        ${r.pairsBeamSlab > 0 ? `<span style="color:#94a3b8">${r.pairsBeamSlab}</span> Viga×Laje` : ""}
         &nbsp;·&nbsp;
         <span style="color:#f87171;font-weight:600">−${fmt(r.totalOverlap)} m³</span> descontado
       </div>
-      <div style="margin-top:4px;font-size:10px;color:#64748b">
+      <div style="margin-top:5px;font-size:10px;color:#64748b">
         Volume bruto:&nbsp;<span style="color:#94a3b8">${fmt(r.totalRaw)} m³</span>
         &nbsp;→&nbsp;
         Volume líquido:&nbsp;<span style="color:#34d399;font-weight:700">${fmt(r.total)} m³</span>
@@ -339,9 +383,13 @@ function _overlapWarningHtml(r, decimals = 3) {
  */
 function _setupOverlapClick(containerEl, result) {
   const card = containerEl.querySelector(".overlap-warn-card");
-  if (!card || !result.overlapBeamIds?.length) return;
-  const ids = [...result.overlapBeamIds, ...result.overlapColIds]
-    .filter(id => viewer.scene.objects[id]);
+  if (!card || !result.overlapPairs) return;
+  // Destaca: vigas afetadas + lajes afetadas + pilares/vigas que causaram desconto
+  const ids = [...new Set([
+    ...(result.overlapBeamIds  || []),
+    ...(result.overlapSlabIds  || []),
+    ...(result.overlapHigherIds|| []),
+  ])].filter(id => viewer.scene.objects[id]);
   if (!ids.length) return;
   card.addEventListener("click", () => {
     viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
@@ -1008,9 +1056,12 @@ function calcRegionVolume() {
 
   // Clique no tag de sobreposição → destaca as peças no modelo
   const overlapBtn = document.getElementById("regionOverlapBtn");
-  if (overlapBtn && result.overlapBeamIds?.length) {
-    const ids = [...result.overlapBeamIds, ...result.overlapColIds]
-      .filter(id => viewer.scene.objects[id]);
+  if (overlapBtn && result.overlapPairs) {
+    const ids = [...new Set([
+      ...(result.overlapBeamIds  || []),
+      ...(result.overlapSlabIds  || []),
+      ...(result.overlapHigherIds|| []),
+    ])].filter(id => viewer.scene.objects[id]);
     overlapBtn.addEventListener("click", e => {
       e.stopPropagation();
       viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
