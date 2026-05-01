@@ -38,6 +38,8 @@ try { viewer.cameraControl.dollyInertia    = 0; } catch(_) {}
 // dollyToPointer=true (default) causa pan lateral durante pinch-zoom → desativa
 try { viewer.cameraControl.dollyToPointer  = false; } catch(_) {}
 try { viewer.cameraControl.pivotOnPointer  = false; } catch(_) {}
+// Desktop: pan com botão do meio (roda) em vez do botão direito
+viewer.cameraControl.panRightClick = false;
 
 // ── Auto-home: se câmera derivar longe do modelo, retorna automaticamente ─────
 // (roda 600 ms após soltar o toque — sem nenhuma ação do usuário)
