@@ -384,22 +384,30 @@ function updateVolumePanel() {
   if (Object.keys(byFck).length) {
     const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
     html += `<div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.08em;
-      margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #1e293b;
-      display:flex;align-items:center;gap:6px">
+      margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #1e293b">
       POR RESISTÊNCIA (fck)
-      ${hasOverlap ? '<span style="color:#34d399;font-size:9px;font-weight:500;letter-spacing:0;opacity:.8">✓ já descontado</span>' : ''}
     </div>`;
     html += Object.entries(byFck)
       .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0]))
       .map(([fck,v]) => {
-        const ded    = result.dedByFck[fck] || 0;
-        const dedTag = ded > OVERLAP_MIN_M3
-          ? `<span style="color:#f87171;font-size:10px;font-weight:600;margin-left:5px"
-               title="Desconto de vigas sobrepostas com pilares nessa classe">−${ded.toFixed(3)}</span>`
-          : "";
-        return `<div class="volume-row volume-selectable" data-sel-fck="${fck}" title="Clique para selecionar no modelo" style="cursor:pointer">
+        const ded = result.dedByFck[fck] || 0;
+        let valueHtml;
+        if (ded > OVERLAP_MIN_M3) {
+          const bruto = v + ded;
+          // Equação: bruto − desconto = líquido m³
+          valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
+            <span style="color:#64748b;font-size:10px">${bruto.toFixed(3)}</span>
+            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(3)}</span>
+            <span style="color:#475569;font-size:10px">=</span>
+            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(3)} m³</span>
+          </span>`;
+        } else {
+          valueHtml = `${v.toFixed(3)} m³`;
+        }
+        return `<div class="volume-row volume-selectable" data-sel-fck="${fck}"
+                     title="Clique para selecionar no modelo" style="cursor:pointer">
           <span class="volume-label">C${fck} MPa <span style="font-size:9px;opacity:.5">▶</span></span>
-          <span class="volume-value">${v.toFixed(3)} m³${dedTag}</span>
+          <span class="volume-value" style="flex:1;text-align:right">${valueHtml}</span>
         </div>`;
       }).join("");
   }
@@ -472,21 +480,27 @@ function updateSelVolume() {
   if (Object.keys(byFck).length) {
     const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
     html += `<div style="color:#f59e0b;font-size:10px;font-weight:700;letter-spacing:.08em;
-      margin-top:10px;margin-bottom:5px;padding-top:8px;border-top:1px solid #1e293b;
-      display:flex;align-items:center;gap:5px">
+      margin-top:10px;margin-bottom:5px;padding-top:8px;border-top:1px solid #1e293b">
       POR RESISTÊNCIA (fck)
-      ${hasOverlap ? '<span style="color:#34d399;font-size:9px;font-weight:500;letter-spacing:0;opacity:.8">✓ já descontado</span>' : ''}
     </div>`;
     html += Object.entries(byFck)
       .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]))
       .map(([fck, v]) => {
-        const ded    = result.dedByFck[fck] || 0;
-        const dedTag = ded > OVERLAP_MIN_M3
-          ? `<span style="color:#f87171;font-size:10px;margin-left:4px"
-               title="Desconto sobreposição Pilar×Viga">−${ded.toFixed(4)}</span>`
-          : "";
+        const ded = result.dedByFck[fck] || 0;
+        let valueHtml;
+        if (ded > OVERLAP_MIN_M3) {
+          const bruto = v + ded;
+          valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
+            <span style="color:#64748b;font-size:10px">${bruto.toFixed(4)}</span>
+            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(4)}</span>
+            <span style="color:#475569;font-size:10px">=</span>
+            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(4)} m³</span>
+          </span>`;
+        } else {
+          valueHtml = `${v.toFixed(4)} m³`;
+        }
         return `<div class="volume-row"><span class="volume-label">C${fck} MPa</span>
-         <span class="volume-value">${v.toFixed(4)} m³${dedTag}</span></div>`;
+         <span class="volume-value" style="flex:1;text-align:right">${valueHtml}</span></div>`;
       }).join("");
   }
 
