@@ -261,17 +261,25 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   const tier2 = elems.filter(e => e.isSecondary);  // Vigas, Membros
   const tier3 = elems.filter(e => e.isSlab);        // Lajes
 
-  const deductions = {};   // id → m³ a descontar
-  const pairs      = [];   // { higherId, lowerId, vol, type } para highlight
+  const deductions      = {};   // id → m³ a descontar
+  const dedByTypeSource = {};   // tipo → { 'col-beam'|'col-slab'|'beam-slab' → m³ }
+  const pairs           = [];   // { higherId, lowerId, vol, type }
   let totalOverlap = 0;
   let pairsColBeam = 0, pairsColSlab = 0, pairsBeamSlab = 0;
+
+  // Helper: registra desconto e rastreia por tipo e origem
+  function _addDed(id, typeName, overlapType, vol) {
+    deductions[id] = (deductions[id] || 0) + vol;
+    if (!dedByTypeSource[typeName]) dedByTypeSource[typeName] = {};
+    dedByTypeSource[typeName][overlapType] = (dedByTypeSource[typeName][overlapType] || 0) + vol;
+  }
 
   // Nível 1 × Nível 2: Pilar → desconta Viga
   for (const t1 of tier1) {
     for (const t2 of tier2) {
       const ov = _aabbOverlapVol(t1.entity.aabb, t2.entity.aabb);
       if (ov > OVERLAP_MIN_M3) {
-        deductions[t2.id] = (deductions[t2.id] || 0) + ov;
+        _addDed(t2.id, t2.mo.type, "col-beam", ov);
         totalOverlap += ov; pairsColBeam++;
         pairs.push({ higherId: t1.id, lowerId: t2.id, vol: ov, type: "col-beam" });
       }
@@ -283,7 +291,7 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
     for (const t3 of tier3) {
       const ov = _aabbOverlapVol(t1.entity.aabb, t3.entity.aabb);
       if (ov > OVERLAP_MIN_M3) {
-        deductions[t3.id] = (deductions[t3.id] || 0) + ov;
+        _addDed(t3.id, t3.mo.type, "col-slab", ov);
         totalOverlap += ov; pairsColSlab++;
         pairs.push({ higherId: t1.id, lowerId: t3.id, vol: ov, type: "col-slab" });
       }
@@ -291,11 +299,12 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   }
 
   // Nível 2 × Nível 3: Viga → desconta Laje
+  // (Vigas têm maior MPa que lajes em concreto armado convencional)
   for (const t2 of tier2) {
     for (const t3 of tier3) {
       const ov = _aabbOverlapVol(t2.entity.aabb, t3.entity.aabb);
       if (ov > OVERLAP_MIN_M3) {
-        deductions[t3.id] = (deductions[t3.id] || 0) + ov;
+        _addDed(t3.id, t3.mo.type, "beam-slab", ov);
         totalOverlap += ov; pairsBeamSlab++;
         pairs.push({ higherId: t2.id, lowerId: t3.id, vol: ov, type: "beam-slab" });
       }
@@ -311,16 +320,17 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   const affectedBeams = overlapBeamIds.length;
   const affectedSlabs = overlapSlabIds.length;
 
-  // Totais por tipo e por fck — já com desconto aplicado
-  const byType = {}, byFck = {};
+  // Totais por tipo (bruto e líquido) e por fck
+  const byType = {}, byTypeRaw = {}, byFck = {};
   const dedByFck = {};   // fck → m³ descontado nessa classe
   let total = 0, totalRaw = 0;
 
   for (const el of elems) {
     totalRaw += el.vol;
+    byTypeRaw[el.mo.type] = (byTypeRaw[el.mo.type] || 0) + el.vol;   // bruto por tipo
     const ded    = deductions[el.id] || 0;
     const adjVol = Math.max(0, el.vol - ded);
-    byType[el.mo.type] = (byType[el.mo.type] || 0) + adjVol;
+    byType[el.mo.type] = (byType[el.mo.type] || 0) + adjVol;          // líquido por tipo
     total += adjVol;
     if (el.fck) {
       byFck[el.fck]    = (byFck[el.fck]    || 0) + adjVol;
@@ -328,7 +338,8 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
     }
   }
 
-  return { elems, byType, byFck, dedByFck, total, totalRaw,
+  return { elems, byType, byTypeRaw, byFck, dedByFck, dedByTypeSource,
+           total, totalRaw,
            totalOverlap, overlapPairs,
            pairsColBeam, pairsColSlab, pairsBeamSlab,
            affectedBeams, affectedSlabs,
@@ -398,10 +409,55 @@ function _setupOverlapClick(containerEl, result) {
   });
 }
 
+// Labels curtos para fontes de sobreposição
+const OVERLAP_SRC_LABEL = {
+  "col-beam":  "Pilar×Viga",
+  "col-slab":  "Pilar×Laje",
+  "beam-slab": "Viga×Laje",
+};
+
+/** Renderiza uma linha de tipo com bruto → fontes de desconto → líquido */
+function _typeRowHtml(t, net, result, clickable = true) {
+  const bruto   = result.byTypeRaw[t] || net;
+  const sources = result.dedByTypeSource[t] || {};
+  const totalDed = Object.values(sources).reduce((a,b) => a+b, 0);
+
+  // Valor principal: equação bruto − desconto = líquido
+  let valueHtml;
+  if (totalDed > OVERLAP_MIN_M3) {
+    valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
+      <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
+      <span style="color:#f87171;font-size:10px;font-weight:600">−${totalDed.toFixed(2)}</span>
+      <span style="color:#475569;font-size:10px">=</span>
+      <span style="color:#e2e8f0;font-weight:700">${net.toFixed(2)} m³</span>
+    </span>`;
+  } else {
+    valueHtml = `<span style="font-weight:700">${net.toFixed(2)} m³</span>`;
+  }
+
+  // Sub-linha com breakdown por fonte (só quando há ≥2 fontes)
+  const srcEntries = Object.entries(sources).filter(([,v]) => v > OVERLAP_MIN_M3);
+  const srcHtml = srcEntries.length > 1
+    ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:2px;padding-right:1px">
+        ${srcEntries.map(([k,v]) => `${OVERLAP_SRC_LABEL[k]||k}: <span style="color:#f87171">−${v.toFixed(2)}</span>`).join(" &nbsp;·&nbsp; ")} m³
+       </div>`
+    : "";
+
+  return `<div class="volume-row volume-selectable" data-sel-type="${t}"
+               title="Clique para selecionar no modelo"
+               style="cursor:pointer;flex-direction:column;align-items:stretch">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
+      <span style="flex:1;text-align:right">${valueHtml}</span>
+    </div>
+    ${srcHtml}
+  </div>`;
+}
+
 function updateVolumePanel() {
   const scope  = [...new Set(floorObjectIds || viewer.scene.objectIds)];
   const result = computeVolumeWithOverlaps(scope);
-  const { byType, byFck, total, deductions, elems } = result;
+  const { byType, byFck, total, totalRaw } = result;
 
   const rows = document.getElementById("volumeRows");
   if (!Object.keys(byType).length) {
@@ -409,24 +465,11 @@ function updateVolumePanel() {
     return;
   }
 
-  // Deduções agrupadas por tipo (para indicar quais tipos foram afetados)
-  const dedByType = {};
-  for (const el of elems) {
-    const ded = deductions[el.id] || 0;
-    if (ded > 0) dedByType[el.mo.type] = (dedByType[el.mo.type] || 0) + ded;
-  }
-
-  let html = Object.entries(byType).map(([t,v]) => {
-    const ded    = dedByType[t] || 0;
-    const dedTag = ded > OVERLAP_MIN_M3
-      ? `<span style="color:#f87171;font-size:10px;font-weight:600;margin-left:5px" title="Desconto de sobreposição com pilares">−${ded.toFixed(2)}</span>`
-      : "";
-    return `<div class="volume-row volume-selectable" data-sel-type="${t}" title="Clique para selecionar no modelo" style="cursor:pointer">
-      <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
-      <span class="volume-value">${v.toFixed(2)} m³${dedTag}</span>
-    </div>`;
-  }).join("") + `<div class="volume-row volume-total">
-    <span class="volume-label">TOTAL CONCRETO</span><span class="volume-value">${total.toFixed(2)} m³</span>
+  let html = Object.entries(byType)
+    .map(([t,v]) => _typeRowHtml(t, v, result))
+    .join("") + `<div class="volume-row volume-total">
+    <span class="volume-label">TOTAL CONCRETO</span>
+    <span class="volume-value" style="font-weight:700">${total.toFixed(2)} m³</span>
   </div>`;
 
   html += _overlapWarningHtml(result, 2);
@@ -497,32 +540,20 @@ function updateSelVolume() {
 
   // skipTypeFilter=true: inclui elementos independente do filtro de visibilidade
   const result = computeVolumeWithOverlaps([...selElements], true);
-  const { elems, byType, byFck, total, deductions } = result;
+  const { elems, byType, byFck, total } = result;
   const names = elems.map(e => e.mo.name || e.id);
-
-  // Deduções por tipo para indicativo visual
-  const dedByType = {};
-  for (const el of elems) {
-    const ded = deductions[el.id] || 0;
-    if (ded > 0) dedByType[el.mo.type] = (dedByType[el.mo.type] || 0) + ded;
-  }
 
   let html = `<div style="font-size:10px;color:#475569;margin-bottom:8px;line-height:1.5">
     ${names.join(" + ") || "—"}
   </div>`;
 
-  html += Object.entries(byType).map(([t, v]) => {
-    const ded    = dedByType[t] || 0;
-    const dedTag = ded > OVERLAP_MIN_M3
-      ? `<span style="color:#f87171;font-size:10px;margin-left:4px" title="Desconto sobreposição">−${ded.toFixed(2)}</span>`
-      : "";
-    return `<div class="volume-row"><span class="volume-label">${TYPE_LABELS[t]||t}</span>
-     <span class="volume-value">${v.toFixed(2)} m³${dedTag}</span></div>`;
-  }).join("");
+  html += Object.entries(byType)
+    .map(([t, v]) => _typeRowHtml(t, v, result))
+    .join("");
 
   html += `<div class="volume-row volume-total">
     <span class="volume-label">TOTAL</span>
-    <span class="volume-value">${total.toFixed(2)} m³</span>
+    <span class="volume-value" style="font-weight:700">${total.toFixed(2)} m³</span>
   </div>`;
 
   html += _overlapWarningHtml(result, 2);
