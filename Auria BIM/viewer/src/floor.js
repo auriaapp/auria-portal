@@ -253,6 +253,7 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   const priority   = elems.filter(e => e.isPriority);
   const secondary  = elems.filter(e => e.isSecondary);
   const deductions = {};   // id → m³ a descontar desta viga
+  const pairs      = [];   // { colId, beamId, vol } — para highlight no clique
   let totalOverlap = 0, overlapPairs = 0;
 
   for (const p of priority) {
@@ -262,14 +263,19 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
         deductions[s.id] = (deductions[s.id] || 0) + ov;
         totalOverlap += ov;
         overlapPairs++;
+        pairs.push({ colId: p.id, beamId: s.id, vol: ov });
       }
     }
   }
 
-  const affectedBeams = Object.keys(deductions).length;
+  // IDs únicos de vigas e pilares envolvidos nas sobreposições
+  const overlapBeamIds = [...new Set(pairs.map(p => p.beamId))];
+  const overlapColIds  = [...new Set(pairs.map(p => p.colId))];
+  const affectedBeams  = overlapBeamIds.length;
 
   // Totais por tipo e por fck — já com desconto aplicado
   const byType = {}, byFck = {};
+  const dedByFck = {};   // fck → m³ descontado nessa classe
   let total = 0, totalRaw = 0;
 
   for (const el of elems) {
@@ -278,30 +284,44 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
     const adjVol = Math.max(0, el.vol - ded);
     byType[el.mo.type] = (byType[el.mo.type] || 0) + adjVol;
     total += adjVol;
-    if (el.fck) byFck[el.fck] = (byFck[el.fck] || 0) + adjVol;
+    if (el.fck) {
+      byFck[el.fck]    = (byFck[el.fck]    || 0) + adjVol;
+      if (ded > 0) dedByFck[el.fck] = (dedByFck[el.fck] || 0) + ded;
+    }
   }
 
-  return { elems, byType, byFck, total, totalRaw, totalOverlap, overlapPairs, affectedBeams, deductions };
+  return { elems, byType, byFck, dedByFck, total, totalRaw,
+           totalOverlap, overlapPairs, affectedBeams,
+           deductions, pairs, overlapBeamIds, overlapColIds };
 }
 
-/** Gera o bloco HTML de aviso de sobreposições */
+/**
+ * Gera o bloco HTML de aviso de sobreposições (clicável para highlight no modelo).
+ * Após inserir no DOM, chame _setupOverlapClick(container, result).
+ */
 function _overlapWarningHtml(r, decimals = 3) {
   if (r.totalOverlap < OVERLAP_MIN_M3) return "";
   const fmt = v => v.toFixed(decimals);
   return `
-    <div style="margin-top:12px;padding:9px 11px;background:#1c1200;
-         border:1px solid #78350f;border-radius:7px;line-height:1.55">
+    <div class="overlap-warn-card"
+         style="margin-top:12px;padding:9px 11px;background:#1c1200;
+                border:1px solid #78350f;border-radius:7px;line-height:1.55;
+                cursor:pointer;user-select:none;transition:border-color .15s,background .15s"
+         title="Clique para destacar as sobreposições no modelo"
+         onmouseenter="this.style.borderColor='#f59e0b';this.style.background='#251800'"
+         onmouseleave="this.style.borderColor='#78350f';this.style.background='#1c1200'">
       <div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.07em;margin-bottom:5px">
         ⚠ SOBREPOSIÇÕES DETECTADAS
+        <span style="color:#64748b;font-size:9px;font-weight:400;letter-spacing:0;margin-left:6px">ver no modelo →</span>
       </div>
       <div style="color:#94a3b8;font-size:11px">
         <b style="color:#fbbf24">${r.affectedBeams}</b>
-        viga${r.affectedBeams>1?"s":""}
+        viga${r.affectedBeams>1?"s":""} afetada${r.affectedBeams>1?"s":""}
         &nbsp;·&nbsp;
         <b style="color:#fbbf24">${r.overlapPairs}</b>
         par${r.overlapPairs>1?"es":""} Pilar×Viga
         &nbsp;·&nbsp;
-        <span style="color:#f87171">−${fmt(r.totalOverlap)} m³</span> descontado
+        <span style="color:#f87171;font-weight:600">−${fmt(r.totalOverlap)} m³</span> descontado
       </div>
       <div style="margin-top:4px;font-size:10px;color:#64748b">
         Volume bruto:&nbsp;<span style="color:#94a3b8">${fmt(r.totalRaw)} m³</span>
@@ -309,6 +329,23 @@ function _overlapWarningHtml(r, decimals = 3) {
         Volume líquido:&nbsp;<span style="color:#34d399;font-weight:700">${fmt(r.total)} m³</span>
       </div>
     </div>`;
+}
+
+/**
+ * Ativa o clique no card de sobreposição:
+ * destaca vigas + pilares envolvidos e voa até eles.
+ */
+function _setupOverlapClick(containerEl, result) {
+  const card = containerEl.querySelector(".overlap-warn-card");
+  if (!card || !result.overlapBeamIds?.length) return;
+  const ids = [...result.overlapBeamIds, ...result.overlapColIds]
+    .filter(id => viewer.scene.objects[id]);
+  if (!ids.length) return;
+  card.addEventListener("click", () => {
+    viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
+    viewer.scene.setObjectsHighlighted(ids, true);
+    viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(ids), duration: 0.7 });
+  });
 }
 
 function updateVolumePanel() {
@@ -345,17 +382,30 @@ function updateVolumePanel() {
   html += _overlapWarningHtml(result, 3);
 
   if (Object.keys(byFck).length) {
-    html += `<div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.08em;margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #1e293b">POR RESISTÊNCIA (fck)</div>`;
+    const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
+    html += `<div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.08em;
+      margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #1e293b;
+      display:flex;align-items:center;gap:6px">
+      POR RESISTÊNCIA (fck)
+      ${hasOverlap ? '<span style="color:#34d399;font-size:9px;font-weight:500;letter-spacing:0;opacity:.8">✓ já descontado</span>' : ''}
+    </div>`;
     html += Object.entries(byFck)
       .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0]))
-      .map(([fck,v]) =>
-        `<div class="volume-row volume-selectable" data-sel-fck="${fck}" title="Clique para selecionar no modelo" style="cursor:pointer">
+      .map(([fck,v]) => {
+        const ded    = result.dedByFck[fck] || 0;
+        const dedTag = ded > OVERLAP_MIN_M3
+          ? `<span style="color:#f87171;font-size:10px;font-weight:600;margin-left:5px"
+               title="Desconto de vigas sobrepostas com pilares nessa classe">−${ded.toFixed(3)}</span>`
+          : "";
+        return `<div class="volume-row volume-selectable" data-sel-fck="${fck}" title="Clique para selecionar no modelo" style="cursor:pointer">
           <span class="volume-label">C${fck} MPa <span style="font-size:9px;opacity:.5">▶</span></span>
-          <span class="volume-value">${v.toFixed(3)} m³</span>
-        </div>`
-      ).join("");
+          <span class="volume-value">${v.toFixed(3)} m³${dedTag}</span>
+        </div>`;
+      }).join("");
   }
   rows.innerHTML = html;
+
+  _setupOverlapClick(rows, result);
 
   rows.querySelectorAll("[data-sel-type]").forEach(row => {
     row.addEventListener("click", () => {
@@ -420,18 +470,29 @@ function updateSelVolume() {
   html += _overlapWarningHtml(result, 4);
 
   if (Object.keys(byFck).length) {
+    const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
     html += `<div style="color:#f59e0b;font-size:10px;font-weight:700;letter-spacing:.08em;
-      margin-top:10px;margin-bottom:5px;padding-top:8px;border-top:1px solid #1e293b">
-      POR RESISTÊNCIA (fck)</div>`;
+      margin-top:10px;margin-bottom:5px;padding-top:8px;border-top:1px solid #1e293b;
+      display:flex;align-items:center;gap:5px">
+      POR RESISTÊNCIA (fck)
+      ${hasOverlap ? '<span style="color:#34d399;font-size:9px;font-weight:500;letter-spacing:0;opacity:.8">✓ já descontado</span>' : ''}
+    </div>`;
     html += Object.entries(byFck)
       .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]))
-      .map(([fck, v]) =>
-        `<div class="volume-row"><span class="volume-label">C${fck} MPa</span>
-         <span class="volume-value">${v.toFixed(4)} m³</span></div>`
-      ).join("");
+      .map(([fck, v]) => {
+        const ded    = result.dedByFck[fck] || 0;
+        const dedTag = ded > OVERLAP_MIN_M3
+          ? `<span style="color:#f87171;font-size:10px;margin-left:4px"
+               title="Desconto sobreposição Pilar×Viga">−${ded.toFixed(4)}</span>`
+          : "";
+        return `<div class="volume-row"><span class="volume-label">C${fck} MPa</span>
+         <span class="volume-value">${v.toFixed(4)} m³${dedTag}</span></div>`;
+      }).join("");
   }
 
-  document.getElementById("selVolumeRows").innerHTML = html;
+  const selRows = document.getElementById("selVolumeRows");
+  selRows.innerHTML = html;
+  _setupOverlapClick(selRows, result);
 }
 
 function toggleSelPick() {
@@ -909,7 +970,9 @@ function calcRegionVolume() {
 
   const overlapTag = totalOverlap > OVERLAP_MIN_M3
     ? `<span style="margin:0 8px;color:#334155">|</span>
-       <span style="color:#f59e0b;font-size:11px" title="${overlapPairs} sobreposição(ões) Pilar×Viga descontada(s)">
+       <span id="regionOverlapBtn"
+             style="color:#f59e0b;font-size:11px;cursor:pointer;text-decoration:underline dotted"
+             title="${result.overlapPairs} par(es) Pilar×Viga · clique para ver no modelo">
          ⚠ −${totalOverlap.toFixed(3)} m³ sobrep.</span>`
     : "";
 
@@ -926,6 +989,19 @@ function calcRegionVolume() {
   `;
   el.style.display = "";
   document.getElementById("regionClearBtn").addEventListener("click", clearRegion);
+
+  // Clique no tag de sobreposição → destaca as peças no modelo
+  const overlapBtn = document.getElementById("regionOverlapBtn");
+  if (overlapBtn && result.overlapBeamIds?.length) {
+    const ids = [...result.overlapBeamIds, ...result.overlapColIds]
+      .filter(id => viewer.scene.objects[id]);
+    overlapBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
+      viewer.scene.setObjectsHighlighted(ids, true);
+      viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(ids), duration: 0.7 });
+    });
+  }
 }
 
 function clearRegion() {
