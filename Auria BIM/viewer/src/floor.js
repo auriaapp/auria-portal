@@ -369,17 +369,17 @@ function updateVolumePanel() {
   let html = Object.entries(byType).map(([t,v]) => {
     const ded    = dedByType[t] || 0;
     const dedTag = ded > OVERLAP_MIN_M3
-      ? `<span style="color:#f87171;font-size:10px;font-weight:600;margin-left:5px" title="Desconto de sobreposição com pilares">−${ded.toFixed(3)}</span>`
+      ? `<span style="color:#f87171;font-size:10px;font-weight:600;margin-left:5px" title="Desconto de sobreposição com pilares">−${ded.toFixed(2)}</span>`
       : "";
     return `<div class="volume-row volume-selectable" data-sel-type="${t}" title="Clique para selecionar no modelo" style="cursor:pointer">
       <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
-      <span class="volume-value">${v.toFixed(3)} m³${dedTag}</span>
+      <span class="volume-value">${v.toFixed(2)} m³${dedTag}</span>
     </div>`;
   }).join("") + `<div class="volume-row volume-total">
-    <span class="volume-label">TOTAL CONCRETO</span><span class="volume-value">${total.toFixed(3)} m³</span>
+    <span class="volume-label">TOTAL CONCRETO</span><span class="volume-value">${total.toFixed(2)} m³</span>
   </div>`;
 
-  html += _overlapWarningHtml(result, 3);
+  html += _overlapWarningHtml(result, 2);
 
   if (Object.keys(byFck).length) {
     const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
@@ -396,13 +396,13 @@ function updateVolumePanel() {
           const bruto = v + ded;
           // Equação: bruto − desconto = líquido m³
           valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-            <span style="color:#64748b;font-size:10px">${bruto.toFixed(3)}</span>
-            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(3)}</span>
+            <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
+            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(2)}</span>
             <span style="color:#475569;font-size:10px">=</span>
-            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(3)} m³</span>
+            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(2)} m³</span>
           </span>`;
         } else {
-          valueHtml = `${v.toFixed(3)} m³`;
+          valueHtml = `${v.toFixed(2)} m³`;
         }
         return `<div class="volume-row volume-selectable" data-sel-fck="${fck}"
                      title="Clique para selecionar no modelo" style="cursor:pointer">
@@ -464,18 +464,18 @@ function updateSelVolume() {
   html += Object.entries(byType).map(([t, v]) => {
     const ded    = dedByType[t] || 0;
     const dedTag = ded > OVERLAP_MIN_M3
-      ? `<span style="color:#f87171;font-size:10px;margin-left:4px" title="Desconto sobreposição">−${ded.toFixed(4)}</span>`
+      ? `<span style="color:#f87171;font-size:10px;margin-left:4px" title="Desconto sobreposição">−${ded.toFixed(2)}</span>`
       : "";
     return `<div class="volume-row"><span class="volume-label">${TYPE_LABELS[t]||t}</span>
-     <span class="volume-value">${v.toFixed(4)} m³${dedTag}</span></div>`;
+     <span class="volume-value">${v.toFixed(2)} m³${dedTag}</span></div>`;
   }).join("");
 
   html += `<div class="volume-row volume-total">
     <span class="volume-label">TOTAL</span>
-    <span class="volume-value">${total.toFixed(4)} m³</span>
+    <span class="volume-value">${total.toFixed(2)} m³</span>
   </div>`;
 
-  html += _overlapWarningHtml(result, 4);
+  html += _overlapWarningHtml(result, 2);
 
   if (Object.keys(byFck).length) {
     const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
@@ -491,13 +491,13 @@ function updateSelVolume() {
         if (ded > OVERLAP_MIN_M3) {
           const bruto = v + ded;
           valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-            <span style="color:#64748b;font-size:10px">${bruto.toFixed(4)}</span>
-            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(4)}</span>
+            <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
+            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(2)}</span>
             <span style="color:#475569;font-size:10px">=</span>
-            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(4)} m³</span>
+            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(2)} m³</span>
           </span>`;
         } else {
-          valueHtml = `${v.toFixed(4)} m³`;
+          valueHtml = `${v.toFixed(2)} m³`;
         }
         return `<div class="volume-row"><span class="volume-label">C${fck} MPa</span>
          <span class="volume-value" style="flex:1;text-align:right">${valueHtml}</span></div>`;
@@ -746,7 +746,7 @@ function showProperties(objectId) {
     <div class="prop-group-title">Elemento</div>
     <div class="prop-row"><span class="prop-label">Nome</span><span class="prop-value">${mo.name||objectId}</span></div>
     <div class="prop-row"><span class="prop-label">Tipo</span><span class="prop-value">${mo.type||"—"}</span></div>
-    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume (3D)</span><span class="prop-value highlight">${vol.toFixed(4)} m³</span></div>` : ""}
+    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume (3D)</span><span class="prop-value highlight">${vol.toFixed(2)} m³</span></div>` : ""}
     ${fck  ? `<div class="prop-row"><span class="prop-label">Resistência</span><span class="prop-value highlight">C${fck} MPa</span></div>` : ""}
     <div class="prop-row"><span class="prop-label">GUID</span><span class="prop-value" style="font-size:10px;color:#475569">${objectId}</span></div>
   </div>`;
@@ -768,10 +768,10 @@ function fmtVal(name, value) {
   if (value == null) return "—";
   if (typeof value === "number") {
     const n = name.toLowerCase();
-    if (n.includes("volume")) return `${value.toFixed(3)} m³`;
-    if (n.includes("area"))   return `${value.toFixed(3)} m²`;
+    if (n.includes("volume")) return `${value.toFixed(2)} m³`;
+    if (n.includes("area"))   return `${value.toFixed(2)} m²`;
     if (/length|height|width|thickness|comprimento|largura|altura|dimensao/i.test(n)) return `${value % 1 ? value.toFixed(1) : value} cm`;
-    return value % 1 === 0 ? String(value) : value.toFixed(3);
+    return value % 1 === 0 ? String(value) : value.toFixed(2);
   }
   return String(value);
 }
@@ -979,7 +979,7 @@ function calcRegionVolume() {
 
   // 4. Exibe resultado no chip flutuante
   const breakdown = Object.entries(byType)
-    .map(([t,v]) => `<span style="color:#94a3b8">${TYPE_LABELS[t]||t}:</span> <b>${v.toFixed(3)}</b> m³`)
+    .map(([t,v]) => `<span style="color:#94a3b8">${TYPE_LABELS[t]||t}:</span> <b>${v.toFixed(2)}</b> m³`)
     .join(" &nbsp;·&nbsp; ");
 
   const overlapTag = totalOverlap > OVERLAP_MIN_M3
@@ -987,7 +987,7 @@ function calcRegionVolume() {
        <span id="regionOverlapBtn"
              style="color:#f59e0b;font-size:11px;cursor:pointer;text-decoration:underline dotted"
              title="${result.overlapPairs} par(es) Pilar×Viga · clique para ver no modelo">
-         ⚠ −${totalOverlap.toFixed(3)} m³ sobrep.</span>`
+         ⚠ −${totalOverlap.toFixed(2)} m³ sobrep.</span>`
     : "";
 
   const el = document.getElementById("regionResult");
@@ -995,7 +995,7 @@ function calcRegionVolume() {
     <span style="color:#3b82f6;font-weight:700;margin-right:10px">📐 Região</span>
     ${breakdown || '<span style="color:#475569">Nenhum elemento concreto encontrado</span>'}
     ${breakdown ? `<span style="margin:0 10px;color:#334155">|</span>
-    <span style="color:#34d399;font-weight:700">Total: ${total.toFixed(3)} m³</span>
+    <span style="color:#34d399;font-weight:700">Total: ${total.toFixed(2)} m³</span>
     ${overlapTag}
     <span style="margin:0 10px;color:#334155">|</span>
     <span style="color:#64748b">${inReg.length} elem.</span>` : ""}
