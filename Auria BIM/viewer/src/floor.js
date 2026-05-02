@@ -193,19 +193,39 @@ function computeEntityVolume(entity) {
 }
 
 function getFck(mo) {
+  let fallback = null; // resultado de varredura ampla (último recurso)
+
   for (const ps of (mo.propertySets || [])) {
     for (const p of (ps.properties || [])) {
-      const raw = typeof p.value === "object" ? p.value?.value : p.value;
-      // TQS exporta Material = "Concreto C50" — extrai o número da classe
-      if (p.name === "Material") {
-        const m = String(raw || "").match(/C\s*(\d+)/i);
+      const raw  = typeof p.value === "object" ? p.value?.value : p.value;
+      if (raw == null) continue;
+      const str  = String(raw).trim();
+      const name = String(p.name || "");
+
+      // ── 1. Propriedade chamada "Material" (padrão TQS: "Concreto C50") ──
+      if (/^material$/i.test(name)) {
+        const m = str.match(/C\s*(\d+)/i);
         if (m) return m[1];
+        // Valor é só um número puro → assume que é fck (ex: "50")
+        if (/^\d+$/.test(str) && +str >= 10 && +str <= 120) return str;
       }
-      // Fallback: propriedade Fck direta
-      if (/^fck$/i.test(p.name) && raw != null) return String(raw);
+
+      // ── 2. Propriedade com nome explicitamente relacionado a resistência ──
+      if (/^fck$|^resist|^classe.*concreto|^concreto$|concrete.*grade|grau.*concreto/i.test(name)) {
+        const m = str.match(/C\s*(\d+)/i);
+        if (m) return m[1];
+        if (/^\d+$/.test(str) && +str >= 10 && +str <= 120) return str;
+      }
+
+      // ── 3. Varredura ampla: qualquer propriedade com valor "C25"…"C90" ──
+      // (usado como último recurso para elementos com formato não padrão)
+      if (!fallback) {
+        const m = str.match(/\bC\s*(\d{2,3})\b/i);
+        if (m && +m[1] >= 10 && +m[1] <= 120) fallback = m[1];
+      }
     }
   }
-  return null;
+  return fallback; // null se nenhum fck encontrado
 }
 
 // ── Detecção de sobreposições (3 níveis de prioridade) ───────────────────────
