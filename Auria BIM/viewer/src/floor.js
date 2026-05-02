@@ -93,6 +93,7 @@ async function loadModel() {
       loadingEl.style.display = "none";
       updateHeader();
       updateVolumePanel();
+      _restorePrefs();
     });
     model.on("error", err => { loadingText.textContent = `Erro: ${err}`; });
   } catch (err) {
@@ -1204,8 +1205,8 @@ if (localStorage.getItem("auria-theme") === "light") {
 }
 
 // ── Fundo do modelo 3D ────────────────────────────────────────────────────────
-const BG = { bgDark:[0.06,0.07,0.09], bgGrey:[0.29,0.31,0.36], bgWhite:[0.94,0.94,0.94] };
-["bgDark","bgGrey","bgWhite"].forEach(bgId => {
+const BG = { bgDark:[0.06,0.07,0.09], bgBlue:[0.45,0.62,0.80], bgWhite:[0.94,0.94,0.94] };
+["bgDark","bgBlue","bgWhite"].forEach(bgId => {
   document.getElementById(bgId)?.addEventListener("click", () => {
     const c = BG[bgId];
     try { viewer.scene.canvas.backgroundColor = c; } catch(_) {}
@@ -1215,26 +1216,84 @@ const BG = { bgDark:[0.06,0.07,0.09], bgGrey:[0.29,0.31,0.36], bgWhite:[0.94,0.9
     if (obj) { const e = obj.edges; obj.edges = !e; obj.edges = e; }
     document.querySelectorAll(".swatch-btn").forEach(b => b.classList.remove("active"));
     document.getElementById(bgId).classList.add("active");
+    localStorage.setItem("auria-bg", bgId);
   });
 });
 
 // ── Arestas ───────────────────────────────────────────────────────────────────
 document.getElementById("togEdges").addEventListener("change", e => {
-  viewer.scene.objectIds.forEach(id => { const o=viewer.scene.objects[id]; if(o) o.edges=e.target.checked; });
+  const on = e.target.checked;
+  viewer.scene.objectIds.forEach(id => { const o=viewer.scene.objects[id]; if(o) o.edges=on; });
+  localStorage.setItem("auria-edges", on ? "1" : "0");
 });
 
 // ── Projeção ortográfica ──────────────────────────────────────────────────────
 document.getElementById("togOrtho").addEventListener("change", e => {
-  viewer.camera.projection = e.target.checked ? "ortho" : "perspective";
+  const on = e.target.checked;
+  viewer.camera.projection = on ? "ortho" : "perspective";
+  localStorage.setItem("auria-ortho", on ? "1" : "0");
 });
 
-// ── Modo arame (wireframe) ────────────────────────────────────────────────────
+// ── Modo arame — usa xray com fill quase transparente (XKT não suporta wireframe nativo) ──
 document.getElementById("togWireframe").addEventListener("change", e => {
-  viewer.scene.objectIds.forEach(id => {
-    const o = viewer.scene.objects[id];
-    if (o) { o.wireframe = e.target.checked; }
-  });
+  const on = e.target.checked;
+  if (on) {
+    viewer.scene.xrayMaterial.fillAlpha  = 0.04;
+    viewer.scene.xrayMaterial.edgeAlpha  = 1.0;
+    viewer.scene.xrayMaterial.edgeColor  = [0.2, 0.6, 1.0];
+    viewer.scene.objectIds.forEach(id => {
+      const o = viewer.scene.objects[id];
+      if (o) { o.xrayed = true; o.edges = true; }
+    });
+  } else {
+    viewer.scene.objectIds.forEach(id => {
+      const o = viewer.scene.objects[id];
+      if (o) o.xrayed = false;
+    });
+    const edgesOn = document.getElementById("togEdges").checked;
+    viewer.scene.objectIds.forEach(id => {
+      const o = viewer.scene.objects[id];
+      if (o) o.edges = edgesOn;
+    });
+  }
+  localStorage.setItem("auria-wireframe", on ? "1" : "0");
 });
+
+// ── Restauração de preferências salvas ────────────────────────────────────────
+function _restorePrefs() {
+  // Fundo
+  const savedBg = localStorage.getItem("auria-bg");
+  if (savedBg) {
+    const bgId = savedBg === "bgGrey" ? "bgBlue" : savedBg; // migração legada
+    document.getElementById(bgId)?.click();
+  }
+
+  // Arestas
+  const savedEdges = localStorage.getItem("auria-edges");
+  if (savedEdges !== null) {
+    const on = savedEdges === "1";
+    document.getElementById("togEdges").checked = on;
+    viewer.scene.objectIds.forEach(id => { const o=viewer.scene.objects[id]; if(o) o.edges=on; });
+  }
+
+  // Projeção ortográfica
+  if (localStorage.getItem("auria-ortho") === "1") {
+    document.getElementById("togOrtho").checked = true;
+    viewer.camera.projection = "ortho";
+  }
+
+  // Modo arame
+  if (localStorage.getItem("auria-wireframe") === "1") {
+    document.getElementById("togWireframe").checked = true;
+    viewer.scene.xrayMaterial.fillAlpha = 0.04;
+    viewer.scene.xrayMaterial.edgeAlpha = 1.0;
+    viewer.scene.xrayMaterial.edgeColor = [0.2, 0.6, 1.0];
+    viewer.scene.objectIds.forEach(id => {
+      const o = viewer.scene.objects[id];
+      if (o) { o.xrayed = true; o.edges = true; }
+    });
+  }
+}
 
 // ── Header ────────────────────────────────────────────────────────────────────
 function updateHeader() {
