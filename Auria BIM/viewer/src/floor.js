@@ -585,11 +585,12 @@ function updateVolumePanel() {
           }
         }
 
-        return `<div class="volume-row ${isNC ? "" : "volume-selectable"}" ${isNC ? "" : `data-sel-fck="${fck}"`}
-                     ${isNC ? "" : 'title="Clique para selecionar"'} style="${isNC ? "" : "cursor:pointer;"}flex-direction:column;align-items:stretch">
+        return `<div class="volume-row volume-selectable" data-sel-fck="${fck}"
+                     title="${isNC ? "Clique para destacar elementos sem classificação no modelo" : "Clique para selecionar"}"
+                     style="cursor:pointer;flex-direction:column;align-items:stretch">
           <div style="display:flex;align-items:center;justify-content:space-between">
-            <span class="volume-label"${isNC ? ' style="color:#64748b;font-style:italic"' : ""}>${label} ${isNC ? "" : '<span style="font-size:9px;opacity:.5">▶</span>'}</span>
-            <span class="volume-value" style="font-weight:700${isNC ? ";color:#64748b" : ""}">${v.toFixed(2)} m³</span>
+            <span class="volume-label"${isNC ? ' style="color:#f87171;font-style:italic"' : ""}>${label} <span style="font-size:9px;opacity:.5">▶</span></span>
+            <span class="volume-value" style="font-weight:700${isNC ? ";color:#f87171" : ""}">${v.toFixed(2)} m³</span>
           </div>
           ${detail}
         </div>`;
@@ -626,9 +627,35 @@ function updateVolumePanel() {
   });
   rows.querySelectorAll("[data-sel-fck]").forEach(row => {
     row.addEventListener("click", () => {
-      const fck     = row.dataset.selFck;
-      const scope2  = [...new Set(floorObjectIds || viewer.scene.objectIds)];
-      const targets = scope2.filter(id => getFck(viewer.metaScene.metaObjects[id]) === fck);
+      const fck    = row.dataset.selFck;
+      const scope2 = [...new Set(floorObjectIds || viewer.scene.objectIds)];
+      let targets;
+
+      if (fck === "NC") {
+        // Elementos de concreto sem fck reconhecido
+        targets = scope2.filter(id => {
+          const mo = viewer.metaScene.metaObjects[id];
+          return mo && CONCRETE.has(mo.type) && getFck(mo) === null;
+        });
+        // Log de debug: mostra as propriedades dos elementos sem classificação
+        console.group(`[Auria] Elementos sem classificação fck (${targets.length} encontrados)`);
+        targets.slice(0, 5).forEach(id => {
+          const mo = viewer.metaScene.metaObjects[id];
+          console.log(`${mo.type} | ${mo.name || id}`);
+          (mo.propertySets || []).forEach(ps => {
+            console.log(`  PropertySet: ${ps.name}`);
+            (ps.properties || []).forEach(p => {
+              const v = typeof p.value === "object" ? JSON.stringify(p.value) : p.value;
+              console.log(`    ${p.name} = ${v}`);
+            });
+          });
+        });
+        if (targets.length > 5) console.log(`  ... e mais ${targets.length - 5} elementos`);
+        console.groupEnd();
+      } else {
+        targets = scope2.filter(id => getFck(viewer.metaScene.metaObjects[id]) === fck);
+      }
+
       viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
       viewer.scene.setObjectsSelected(viewer.scene.selectedObjectIds, false);
       viewer.scene.setObjectsHighlighted(targets, true);
@@ -759,10 +786,12 @@ function updateSelVolume() {
           }
         }
 
-        return `<div class="volume-row" style="flex-direction:column;align-items:stretch">
+        return `<div class="volume-row volume-selectable" data-sel-fck="${fck}"
+                     title="${isNC ? "Clique para destacar elementos sem classificação" : "Clique para selecionar"}"
+                     style="cursor:pointer;flex-direction:column;align-items:stretch">
           <div style="display:flex;align-items:center;justify-content:space-between">
-            <span class="volume-label"${isNC ? ' style="color:#64748b;font-style:italic"' : ""}>${label}</span>
-            <span class="volume-value" style="font-weight:700${isNC ? ";color:#64748b" : ""}">${v.toFixed(2)} m³</span>
+            <span class="volume-label"${isNC ? ' style="color:#f87171;font-style:italic"' : ""}>${label} <span style="font-size:9px;opacity:.5">▶</span></span>
+            <span class="volume-value" style="font-weight:700${isNC ? ";color:#f87171" : ""}">${v.toFixed(2)} m³</span>
           </div>
           ${detail}
         </div>`;
@@ -784,6 +813,40 @@ function updateSelVolume() {
       viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
       viewer.scene.setObjectsHighlighted(ids, true);
       viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(ids), duration: 0.7 });
+    });
+  });
+
+  // Clique nas linhas fck → destaca no modelo (inclui NC)
+  selRows.querySelectorAll("[data-sel-fck]").forEach(row => {
+    row.addEventListener("click", () => {
+      const fck = row.dataset.selFck;
+      let targets;
+      if (fck === "NC") {
+        targets = result.elems
+          .filter(e => e.fck === null)
+          .map(e => e.id)
+          .filter(id => viewer.scene.objects[id]);
+        console.group(`[Auria] Elementos sem fck na seleção (${targets.length})`);
+        result.elems.filter(e => e.fck === null).slice(0, 5).forEach(e => {
+          console.log(`${e.mo.type} | ${e.mo.name || e.id}`);
+          (e.mo.propertySets || []).forEach(ps => {
+            console.log(`  PropertySet: ${ps.name}`);
+            (ps.properties || []).forEach(p => {
+              const v = typeof p.value === "object" ? JSON.stringify(p.value) : p.value;
+              console.log(`    ${p.name} = ${v}`);
+            });
+          });
+        });
+        console.groupEnd();
+      } else {
+        targets = result.elems
+          .filter(e => e.fck === fck)
+          .map(e => e.id)
+          .filter(id => viewer.scene.objects[id]);
+      }
+      viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
+      viewer.scene.setObjectsHighlighted(targets, true);
+      if (targets.length) viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(targets), duration: 0.7 });
     });
   });
 }
