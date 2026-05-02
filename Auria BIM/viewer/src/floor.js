@@ -1138,54 +1138,102 @@ document.getElementById("btnQRDownload").addEventListener("click", () => {
 });
 
 // ── Painéis ───────────────────────────────────────────────────────────────────
+const ALL_PANELS = ["propsPanel","filterPanel","vizPanel","panel4D"];
+
 function openPanel(which) {
-  document.getElementById("propsPanel").classList.toggle("open", which === "props");
-  document.getElementById("filterPanel").classList.toggle("open", which === "filter");
+  // Mapa: chave → id do painel
+  const PANEL_ID = { props:"propsPanel", filter:"filterPanel", viz:"vizPanel", "panel4D":"panel4D" };
+  const targetId = PANEL_ID[which] || which;
+  ALL_PANELS.forEach(id => document.getElementById(id)?.classList.toggle("open", id === targetId));
+  document.getElementById("btnProps")  ?.classList.toggle("active", which === "props");
+  document.getElementById("btnFilter") ?.classList.toggle("active", which === "filter");
+  document.getElementById("btnViz")    ?.classList.toggle("active", which === "viz");
+  document.getElementById("btn4D")     ?.classList.toggle("active", which === "panel4D");
 }
 function closeAllPanels() {
-  ["propsPanel","filterPanel"].forEach(id => document.getElementById(id).classList.remove("open"));
+  ALL_PANELS.forEach(id => document.getElementById(id)?.classList.remove("open"));
+  ["btnProps","btnFilter","btnViz","btn4D"].forEach(id =>
+    document.getElementById(id)?.classList.remove("active"));
 }
+
 document.getElementById("btnProps").addEventListener("click", () => {
   document.getElementById("propsPanel").classList.contains("open") ? closeAllPanels() : openPanel("props");
 });
 document.getElementById("btnFilter").addEventListener("click", () => {
   document.getElementById("filterPanel").classList.contains("open") ? closeAllPanels() : openPanel("filter");
 });
+document.getElementById("btnViz").addEventListener("click", () => {
+  document.getElementById("vizPanel").classList.contains("open") ? closeAllPanels() : openPanel("viz");
+});
 document.getElementById("propsClose").addEventListener("click", closeAllPanels);
 document.getElementById("filterClose").addEventListener("click", closeAllPanels);
+document.getElementById("vizClose").addEventListener("click", closeAllPanels);
 
-// ── Swipe-down para fechar painel no mobile ──────────────────────────────────
-["propsPanel","filterPanel"].forEach(panelId => {
+// ── Swipe-down para fechar painel no mobile ───────────────────────────────────
+ALL_PANELS.forEach(panelId => {
   const panel = document.getElementById(panelId);
+  if (!panel) return;
   let swipeStartY = null;
-  panel.addEventListener("touchstart", e => {
-    swipeStartY = e.touches[0].clientY;
-  }, { passive: true });
-  panel.addEventListener("touchend", e => {
+  panel.addEventListener("touchstart", e => { swipeStartY = e.touches[0].clientY; }, { passive: true });
+  panel.addEventListener("touchend",   e => {
     if (swipeStartY === null) return;
     const dy = e.changedTouches[0].clientY - swipeStartY;
     swipeStartY = null;
-    if (dy > 60) closeAllPanels(); // swipe para baixo > 60px fecha o painel
+    if (dy > 60) closeAllPanels();
   }, { passive: true });
 });
 
-// ── Cor de fundo ──────────────────────────────────────────────────────────────
-const BG = { bgDark:[0.06,0.07,0.09], bgGrey:[0.53,0.81,0.92], bgWhite:[0.94,0.94,0.94] };
+// ── Tema da interface (escuro / claro) ────────────────────────────────────────
+document.getElementById("themeDark").addEventListener("click", () => {
+  document.body.classList.remove("theme-light");
+  document.getElementById("themeDark").classList.add("active");
+  document.getElementById("themeLight").classList.remove("active");
+  localStorage.setItem("auria-theme", "dark");
+});
+document.getElementById("themeLight").addEventListener("click", () => {
+  document.body.classList.add("theme-light");
+  document.getElementById("themeLight").classList.add("active");
+  document.getElementById("themeDark").classList.remove("active");
+  localStorage.setItem("auria-theme", "light");
+});
+// Restaurar tema salvo
+if (localStorage.getItem("auria-theme") === "light") {
+  document.body.classList.add("theme-light");
+  document.getElementById("themeLight")?.classList.add("active");
+  document.getElementById("themeDark")?.classList.remove("active");
+}
+
+// ── Fundo do modelo 3D ────────────────────────────────────────────────────────
+const BG = { bgDark:[0.06,0.07,0.09], bgGrey:[0.29,0.31,0.36], bgWhite:[0.94,0.94,0.94] };
 ["bgDark","bgGrey","bgWhite"].forEach(bgId => {
-  document.getElementById(bgId).addEventListener("click", () => {
+  document.getElementById(bgId)?.addEventListener("click", () => {
     const c = BG[bgId];
     try { viewer.scene.canvas.backgroundColor = c; } catch(_) {}
     try { viewer.scene._renderer.setBackgroundColor(c); } catch(_) {}
-    // Força re-render: toca o estado de edges do primeiro objeto visível
     const firstId = (floorObjectIds || viewer.scene.objectIds)[0];
     const obj = firstId && viewer.scene.objects[firstId];
     if (obj) { const e = obj.edges; obj.edges = !e; obj.edges = e; }
-    document.querySelectorAll(".bg-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".swatch-btn").forEach(b => b.classList.remove("active"));
     document.getElementById(bgId).classList.add("active");
   });
 });
+
+// ── Arestas ───────────────────────────────────────────────────────────────────
 document.getElementById("togEdges").addEventListener("change", e => {
   viewer.scene.objectIds.forEach(id => { const o=viewer.scene.objects[id]; if(o) o.edges=e.target.checked; });
+});
+
+// ── Projeção ortográfica ──────────────────────────────────────────────────────
+document.getElementById("togOrtho").addEventListener("change", e => {
+  viewer.camera.projection = e.target.checked ? "ortho" : "perspective";
+});
+
+// ── Modo arame (wireframe) ────────────────────────────────────────────────────
+document.getElementById("togWireframe").addEventListener("change", e => {
+  viewer.scene.objectIds.forEach(id => {
+    const o = viewer.scene.objects[id];
+    if (o) { o.wireframe = e.target.checked; }
+  });
 });
 
 // ── Header ────────────────────────────────────────────────────────────────────
@@ -1633,21 +1681,14 @@ document.getElementById("btn4DSave").addEventListener("click", async () => {
 
 // Abertura do painel 4D
 document.getElementById("btn4D").addEventListener("click", () => {
-  const p = document.getElementById("panel4D");
-  if (p.classList.contains("open")) {
-    p.classList.remove("open");
-    document.getElementById("btn4D").classList.remove("active");
+  if (document.getElementById("panel4D").classList.contains("open")) {
+    closeAllPanels();
   } else {
-    ["propsPanel","filterPanel"].forEach(id => document.getElementById(id).classList.remove("open"));
-    p.classList.add("open");
-    document.getElementById("btn4D").classList.add("active");
+    openPanel("panel4D");
     load4D();
   }
 });
-document.getElementById("close4D").addEventListener("click", () => {
-  document.getElementById("panel4D").classList.remove("open");
-  document.getElementById("btn4D").classList.remove("active");
-});
+document.getElementById("close4D").addEventListener("click", closeAllPanels);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadModel();
