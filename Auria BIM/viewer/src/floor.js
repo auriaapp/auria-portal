@@ -409,55 +409,29 @@ function _setupOverlapClick(containerEl, result) {
   });
 }
 
-// Labels curtos para fontes de sobreposição
+// Labels para fontes de sobreposição
 const OVERLAP_SRC_LABEL = {
-  "col-beam":  "Pilar×Viga",
-  "col-slab":  "Pilar×Laje",
-  "beam-slab": "Viga×Laje",
+  "col-beam":  "Pilar × Viga",
+  "col-slab":  "Pilar × Laje",
+  "beam-slab": "Viga × Laje",
+};
+const OVERLAP_SRC_TARGET = {
+  "col-beam":  "das Vigas",
+  "col-slab":  "das Lajes",
+  "beam-slab": "das Lajes",
 };
 
-/** Renderiza uma linha de tipo com bruto → fontes de desconto → líquido */
-function _typeRowHtml(t, net, result, clickable = true) {
-  const bruto   = result.byTypeRaw[t] || net;
-  const sources = result.dedByTypeSource[t] || {};
-  const totalDed = Object.values(sources).reduce((a,b) => a+b, 0);
-
-  // Valor principal: equação bruto − desconto = líquido
-  let valueHtml;
-  if (totalDed > OVERLAP_MIN_M3) {
-    valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-      <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
-      <span style="color:#f87171;font-size:10px;font-weight:600">−${totalDed.toFixed(2)}</span>
-      <span style="color:#475569;font-size:10px">=</span>
-      <span style="color:#e2e8f0;font-weight:700">${net.toFixed(2)} m³</span>
-    </span>`;
-  } else {
-    valueHtml = `<span style="font-weight:700">${net.toFixed(2)} m³</span>`;
-  }
-
-  // Sub-linha com breakdown por fonte (só quando há ≥2 fontes)
-  const srcEntries = Object.entries(sources).filter(([,v]) => v > OVERLAP_MIN_M3);
-  const srcHtml = srcEntries.length > 1
-    ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:2px;padding-right:1px">
-        ${srcEntries.map(([k,v]) => `${OVERLAP_SRC_LABEL[k]||k}: <span style="color:#f87171">−${v.toFixed(2)}</span>`).join(" &nbsp;·&nbsp; ")} m³
-       </div>`
-    : "";
-
-  return `<div class="volume-row volume-selectable" data-sel-type="${t}"
-               title="Clique para selecionar no modelo"
-               style="cursor:pointer;flex-direction:column;align-items:stretch">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
-      <span style="flex:1;text-align:right">${valueHtml}</span>
-    </div>
-    ${srcHtml}
-  </div>`;
+function _sectionTitle(text, color = "#94a3b8") {
+  return `<div style="color:${color};font-size:10px;font-weight:700;letter-spacing:.1em;
+    margin-top:14px;margin-bottom:5px;padding-top:10px;border-top:1px solid #1e293b">${text}</div>`;
 }
 
 function updateVolumePanel() {
   const scope  = [...new Set(floorObjectIds || viewer.scene.objectIds)];
   const result = computeVolumeWithOverlaps(scope);
-  const { byType, byFck, total, totalRaw } = result;
+  const { byType, byTypeRaw, byFck, dedByFck, dedByTypeSource,
+          total, totalRaw, totalOverlap, overlapPairs,
+          pairsColBeam, pairsColSlab, pairsBeamSlab } = result;
 
   const rows = document.getElementById("volumeRows");
   if (!Object.keys(byType).length) {
@@ -465,48 +439,125 @@ function updateVolumePanel() {
     return;
   }
 
-  let html = Object.entries(byType)
-    .map(([t,v]) => _typeRowHtml(t, v, result))
-    .join("") + `<div class="volume-row volume-total">
-    <span class="volume-label">TOTAL CONCRETO</span>
-    <span class="volume-value" style="font-weight:700">${total.toFixed(2)} m³</span>
+  const hasOverlaps = totalOverlap > OVERLAP_MIN_M3;
+  let html = "";
+
+  // ═══ SEÇÃO 1: VOLUMES BRUTOS ═══
+  html += _sectionTitle("VOLUMES BRUTOS");
+  html += Object.entries(byTypeRaw).map(([t,v]) =>
+    `<div class="volume-row volume-selectable" data-sel-type="${t}" title="Clique para selecionar" style="cursor:pointer">
+      <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
+      <span class="volume-value">${v.toFixed(2)} m³</span>
+    </div>`
+  ).join("");
+  html += `<div class="volume-row" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px">
+    <span class="volume-label" style="font-weight:700">TOTAL BRUTO</span>
+    <span class="volume-value">${totalRaw.toFixed(2)} m³</span>
   </div>`;
 
-  html += _overlapWarningHtml(result, 2);
+  // ═══ SEÇÃO 2: DESCONTOS ═══
+  if (hasOverlaps) {
+    html += _sectionTitle("DESCONTOS (sobreposições)", "#f59e0b");
 
-  if (Object.keys(byFck).length) {
-    const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
-    html += `<div style="color:#f59e0b;font-size:11px;font-weight:700;letter-spacing:.08em;
-      margin-top:14px;margin-bottom:6px;padding-top:10px;border-top:1px solid #1e293b">
-      POR RESISTÊNCIA (fck)
+    // Cada tipo de sobreposição: Pilar×Viga, Pilar×Laje, Viga×Laje
+    const overlapTypes = [
+      { key: "col-beam",  pairs: pairsColBeam },
+      { key: "col-slab",  pairs: pairsColSlab },
+      { key: "beam-slab", pairs: pairsBeamSlab },
+    ];
+    // Soma total por cada tipo de overlap (col-beam, col-slab, beam-slab)
+    const volByOverlapType = {};
+    for (const [typeName, sources] of Object.entries(dedByTypeSource)) {
+      for (const [src, vol] of Object.entries(sources)) {
+        volByOverlapType[src] = (volByOverlapType[src] || 0) + vol;
+      }
+    }
+
+    for (const ot of overlapTypes) {
+      const vol = volByOverlapType[ot.key] || 0;
+      if (vol < OVERLAP_MIN_M3) continue;
+      html += `<div class="volume-row overlap-warn-card" style="cursor:pointer" data-overlap-type="${ot.key}"
+                    title="Clique para ver no modelo">
+        <span class="volume-label" style="font-size:12px">
+          ${OVERLAP_SRC_LABEL[ot.key]}
+          <span style="color:#475569;font-size:10px;margin-left:4px">(${ot.pairs} pares)</span>
+        </span>
+        <span class="volume-value" style="color:#f87171;font-weight:600">−${vol.toFixed(2)} m³</span>
+      </div>
+      <div style="font-size:9px;color:#475569;padding:0 4px 4px;margin-top:-2px">
+        descontado ${OVERLAP_SRC_TARGET[ot.key]}
+      </div>`;
+    }
+
+    html += `<div class="volume-row" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px">
+      <span class="volume-label" style="font-weight:700;color:#f59e0b">TOTAL DESCONTOS</span>
+      <span class="volume-value" style="color:#f87171;font-weight:700">−${totalOverlap.toFixed(2)} m³</span>
     </div>`;
+  }
+
+  // ═══ SEÇÃO 3: VOLUMES LÍQUIDOS ═══
+  html += _sectionTitle("VOLUMES LÍQUIDOS", "#34d399");
+  html += Object.entries(byType).map(([t,v]) => {
+    const bruto  = byTypeRaw[t] || v;
+    const sources = dedByTypeSource[t] || {};
+    const ded    = Object.values(sources).reduce((a,b) => a+b, 0);
+    const detail = ded > OVERLAP_MIN_M3
+      ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:1px">
+          ${bruto.toFixed(2)} − ${ded.toFixed(2)} = ${v.toFixed(2)} m³
+        </div>`
+      : "";
+    return `<div class="volume-row volume-selectable" data-sel-type="${t}" title="Clique para selecionar" style="cursor:pointer;flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span class="volume-label">${TYPE_LABELS[t]||t} <span style="font-size:9px;opacity:.5">▶</span></span>
+        <span class="volume-value" style="color:#34d399;font-weight:700">${v.toFixed(2)} m³</span>
+      </div>
+      ${detail}
+    </div>`;
+  }).join("");
+  html += `<div class="volume-row volume-total">
+    <span class="volume-label">TOTAL LÍQUIDO</span>
+    <span class="volume-value" style="color:#34d399;font-weight:700;font-size:15px">${total.toFixed(2)} m³</span>
+  </div>`;
+
+  // ═══ SEÇÃO 4: POR RESISTÊNCIA (fck) ═══
+  if (Object.keys(byFck).length) {
+    html += _sectionTitle("POR RESISTÊNCIA (fck)", "#f59e0b");
     html += Object.entries(byFck)
       .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0]))
       .map(([fck,v]) => {
-        const ded = result.dedByFck[fck] || 0;
-        let valueHtml;
-        if (ded > OVERLAP_MIN_M3) {
-          const bruto = v + ded;
-          // Equação: bruto − desconto = líquido m³
-          valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-            <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
-            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(2)}</span>
-            <span style="color:#475569;font-size:10px">=</span>
-            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(2)} m³</span>
-          </span>`;
-        } else {
-          valueHtml = `${v.toFixed(2)} m³`;
-        }
+        const ded = dedByFck[fck] || 0;
+        const detail = ded > OVERLAP_MIN_M3
+          ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:1px">
+              ${(v+ded).toFixed(2)} − ${ded.toFixed(2)} = ${v.toFixed(2)} m³
+            </div>`
+          : "";
         return `<div class="volume-row volume-selectable" data-sel-fck="${fck}"
-                     title="Clique para selecionar no modelo" style="cursor:pointer">
-          <span class="volume-label">C${fck} MPa <span style="font-size:9px;opacity:.5">▶</span></span>
-          <span class="volume-value" style="flex:1;text-align:right">${valueHtml}</span>
+                     title="Clique para selecionar" style="cursor:pointer;flex-direction:column;align-items:stretch">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span class="volume-label">C${fck} MPa <span style="font-size:9px;opacity:.5">▶</span></span>
+            <span class="volume-value" style="font-weight:700">${v.toFixed(2)} m³</span>
+          </div>
+          ${detail}
         </div>`;
       }).join("");
   }
+
   rows.innerHTML = html;
 
-  _setupOverlapClick(rows, result);
+  // Clique nos itens de desconto → destaca pares no modelo
+  rows.querySelectorAll("[data-overlap-type]").forEach(card => {
+    card.addEventListener("click", () => {
+      const otype = card.dataset.overlapType;
+      const ids = result.pairs
+        .filter(p => p.type === otype)
+        .flatMap(p => [p.higherId, p.lowerId])
+        .filter((id, i, arr) => arr.indexOf(id) === i && viewer.scene.objects[id]);
+      if (!ids.length) return;
+      viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
+      viewer.scene.setObjectsHighlighted(ids, true);
+      viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(ids), duration: 0.7 });
+    });
+  });
 
   rows.querySelectorAll("[data-sel-type]").forEach(row => {
     row.addEventListener("click", () => {
@@ -540,54 +591,127 @@ function updateSelVolume() {
 
   // skipTypeFilter=true: inclui elementos independente do filtro de visibilidade
   const result = computeVolumeWithOverlaps([...selElements], true);
-  const { elems, byType, byFck, total } = result;
+  const { elems, byType, byTypeRaw, byFck, dedByFck, dedByTypeSource,
+          total, totalRaw, totalOverlap,
+          pairsColBeam, pairsColSlab, pairsBeamSlab } = result;
   const names = elems.map(e => e.mo.name || e.id);
+  const hasOverlaps = totalOverlap > OVERLAP_MIN_M3;
 
   let html = `<div style="font-size:10px;color:#475569;margin-bottom:8px;line-height:1.5">
     ${names.join(" + ") || "—"}
   </div>`;
 
-  html += Object.entries(byType)
-    .map(([t, v]) => _typeRowHtml(t, v, result))
-    .join("");
-
-  html += `<div class="volume-row volume-total">
-    <span class="volume-label">TOTAL</span>
-    <span class="volume-value" style="font-weight:700">${total.toFixed(2)} m³</span>
+  // ═══ SEÇÃO 1: VOLUMES BRUTOS ═══
+  html += _sectionTitle("VOLUMES BRUTOS");
+  html += Object.entries(byTypeRaw).map(([t, v]) =>
+    `<div class="volume-row">
+      <span class="volume-label">${TYPE_LABELS[t]||t}</span>
+      <span class="volume-value">${v.toFixed(2)} m³</span>
+    </div>`
+  ).join("");
+  html += `<div class="volume-row" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px">
+    <span class="volume-label" style="font-weight:700">TOTAL BRUTO</span>
+    <span class="volume-value">${totalRaw.toFixed(2)} m³</span>
   </div>`;
 
-  html += _overlapWarningHtml(result, 2);
-
-  if (Object.keys(byFck).length) {
-    const hasOverlap = result.totalOverlap > OVERLAP_MIN_M3;
-    html += `<div style="color:#f59e0b;font-size:10px;font-weight:700;letter-spacing:.08em;
-      margin-top:10px;margin-bottom:5px;padding-top:8px;border-top:1px solid #1e293b">
-      POR RESISTÊNCIA (fck)
+  // ═══ SEÇÃO 2: DESCONTOS ═══
+  if (hasOverlaps) {
+    html += _sectionTitle("DESCONTOS (sobreposições)", "#f59e0b");
+    const overlapTypes = [
+      { key: "col-beam",  pairs: pairsColBeam },
+      { key: "col-slab",  pairs: pairsColSlab },
+      { key: "beam-slab", pairs: pairsBeamSlab },
+    ];
+    const volByOverlapType = {};
+    for (const [typeName, sources] of Object.entries(dedByTypeSource)) {
+      for (const [src, vol] of Object.entries(sources)) {
+        volByOverlapType[src] = (volByOverlapType[src] || 0) + vol;
+      }
+    }
+    for (const ot of overlapTypes) {
+      const vol = volByOverlapType[ot.key] || 0;
+      if (vol < OVERLAP_MIN_M3) continue;
+      html += `<div class="volume-row overlap-warn-card" style="cursor:pointer" data-overlap-type="${ot.key}"
+                    title="Clique para ver no modelo">
+        <span class="volume-label" style="font-size:12px">
+          ${OVERLAP_SRC_LABEL[ot.key]}
+          <span style="color:#475569;font-size:10px;margin-left:4px">(${ot.pairs} pares)</span>
+        </span>
+        <span class="volume-value" style="color:#f87171;font-weight:600">−${vol.toFixed(2)} m³</span>
+      </div>
+      <div style="font-size:9px;color:#475569;padding:0 4px 4px;margin-top:-2px">
+        descontado ${OVERLAP_SRC_TARGET[ot.key]}
+      </div>`;
+    }
+    html += `<div class="volume-row" style="border-top:1px solid #1e293b;margin-top:4px;padding-top:6px">
+      <span class="volume-label" style="font-weight:700;color:#f59e0b">TOTAL DESCONTOS</span>
+      <span class="volume-value" style="color:#f87171;font-weight:700">−${totalOverlap.toFixed(2)} m³</span>
     </div>`;
+  }
+
+  // ═══ SEÇÃO 3: VOLUMES LÍQUIDOS ═══
+  html += _sectionTitle("VOLUMES LÍQUIDOS", "#34d399");
+  html += Object.entries(byType).map(([t, v]) => {
+    const bruto  = byTypeRaw[t] || v;
+    const sources = dedByTypeSource[t] || {};
+    const ded    = Object.values(sources).reduce((a, b) => a + b, 0);
+    const detail = ded > OVERLAP_MIN_M3
+      ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:1px">
+          ${bruto.toFixed(2)} − ${ded.toFixed(2)} = ${v.toFixed(2)} m³
+        </div>`
+      : "";
+    return `<div class="volume-row" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span class="volume-label">${TYPE_LABELS[t]||t}</span>
+        <span class="volume-value" style="color:#34d399;font-weight:700">${v.toFixed(2)} m³</span>
+      </div>
+      ${detail}
+    </div>`;
+  }).join("");
+  html += `<div class="volume-row volume-total">
+    <span class="volume-label">TOTAL LÍQUIDO</span>
+    <span class="volume-value" style="color:#34d399;font-weight:700;font-size:15px">${total.toFixed(2)} m³</span>
+  </div>`;
+
+  // ═══ SEÇÃO 4: POR RESISTÊNCIA (fck) ═══
+  if (Object.keys(byFck).length) {
+    html += _sectionTitle("POR RESISTÊNCIA (fck)", "#f59e0b");
     html += Object.entries(byFck)
       .sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]))
       .map(([fck, v]) => {
-        const ded = result.dedByFck[fck] || 0;
-        let valueHtml;
-        if (ded > OVERLAP_MIN_M3) {
-          const bruto = v + ded;
-          valueHtml = `<span style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;justify-content:flex-end">
-            <span style="color:#64748b;font-size:10px">${bruto.toFixed(2)}</span>
-            <span style="color:#f87171;font-size:10px;font-weight:600">−${ded.toFixed(2)}</span>
-            <span style="color:#475569;font-size:10px">=</span>
-            <span style="color:#e2e8f0;font-weight:700">${v.toFixed(2)} m³</span>
-          </span>`;
-        } else {
-          valueHtml = `${v.toFixed(2)} m³`;
-        }
-        return `<div class="volume-row"><span class="volume-label">C${fck} MPa</span>
-         <span class="volume-value" style="flex:1;text-align:right">${valueHtml}</span></div>`;
+        const ded = dedByFck[fck] || 0;
+        const detail = ded > OVERLAP_MIN_M3
+          ? `<div style="font-size:9px;color:#475569;text-align:right;margin-top:1px">
+              ${(v + ded).toFixed(2)} − ${ded.toFixed(2)} = ${v.toFixed(2)} m³
+            </div>`
+          : "";
+        return `<div class="volume-row" style="flex-direction:column;align-items:stretch">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span class="volume-label">C${fck} MPa</span>
+            <span class="volume-value" style="font-weight:700">${v.toFixed(2)} m³</span>
+          </div>
+          ${detail}
+        </div>`;
       }).join("");
   }
 
   const selRows = document.getElementById("selVolumeRows");
   selRows.innerHTML = html;
-  _setupOverlapClick(selRows, result);
+
+  // Clique nos itens de desconto → destaca pares no modelo
+  selRows.querySelectorAll("[data-overlap-type]").forEach(card => {
+    card.addEventListener("click", () => {
+      const otype = card.dataset.overlapType;
+      const ids = result.pairs
+        .filter(p => p.type === otype)
+        .flatMap(p => [p.higherId, p.lowerId])
+        .filter((id, i, arr) => arr.indexOf(id) === i && viewer.scene.objects[id]);
+      if (!ids.length) return;
+      viewer.scene.setObjectsHighlighted(viewer.scene.highlightedObjectIds, false);
+      viewer.scene.setObjectsHighlighted(ids, true);
+      viewer.cameraFlight.flyTo({ aabb: viewer.scene.getAABB(ids), duration: 0.7 });
+    });
+  });
 }
 
 function toggleSelPick() {
