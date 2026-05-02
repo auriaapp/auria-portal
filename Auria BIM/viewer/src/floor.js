@@ -281,6 +281,21 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
     });
   }
 
+  // TQS exporta lajes nervuradas como múltiplos IfcSlab: o elemento principal
+  // carrega Material no TQS_Padrao, mas os componentes de nervura (mesmo nome,
+  // mesmo tipo) não carregam. Resolver fck lendo do elemento principal (mesmo nome).
+  const _fckByNameType = {};
+  for (const el of elems) {
+    if (el.fck && el.mo.name) {
+      _fckByNameType[`${el.mo.type}::${el.mo.name}`] = el.fck;
+    }
+  }
+  for (const el of elems) {
+    if (!el.fck && el.mo.name) {
+      el.fck = _fckByNameType[`${el.mo.type}::${el.mo.name}`] || null;
+    }
+  }
+
   // Três níveis de prioridade
   const tier1 = elems.filter(e => e.isPriority);   // Pilares, Fundações, Estacas
   const tier2 = elems.filter(e => e.isSecondary);  // Vigas, Membros
@@ -642,20 +657,6 @@ function updateVolumePanel() {
           const mo = viewer.metaScene.metaObjects[id];
           return mo && CONCRETE.has(mo.type) && getFck(mo) === null;
         });
-        // Log de debug: mostra as propriedades dos elementos sem classificação
-        console.group(`[Auria] Elementos sem classificação fck (${targets.length} encontrados)`);
-        targets.slice(0, 5).forEach(id => {
-          const mo = viewer.metaScene.metaObjects[id];
-          console.log(`${mo.type} | ${mo.name || id}`);
-          (mo.propertySets || []).forEach(ps => {
-            console.log(`  PropertySet: ${ps.name}`);
-            (ps.properties || []).forEach(p => {
-              const v = typeof p.value === "object" ? JSON.stringify(p.value) : p.value;
-              console.log(`    ${p.name} = ${v}`);
-            });
-          });
-        });
-        if (targets.length > 5) console.log(`  ... e mais ${targets.length - 5} elementos`);
         console.groupEnd();
       } else {
         targets = scope2.filter(id => getFck(viewer.metaScene.metaObjects[id]) === fck);
@@ -831,18 +832,6 @@ function updateSelVolume() {
           .filter(e => e.fck === null)
           .map(e => e.id)
           .filter(id => viewer.scene.objects[id]);
-        console.group(`[Auria] Elementos sem fck na seleção (${targets.length})`);
-        result.elems.filter(e => e.fck === null).slice(0, 5).forEach(e => {
-          console.log(`${e.mo.type} | ${e.mo.name || e.id}`);
-          (e.mo.propertySets || []).forEach(ps => {
-            console.log(`  PropertySet: ${ps.name}`);
-            (ps.properties || []).forEach(p => {
-              const v = typeof p.value === "object" ? JSON.stringify(p.value) : p.value;
-              console.log(`    ${p.name} = ${v}`);
-            });
-          });
-        });
-        console.groupEnd();
       } else {
         targets = result.elems
           .filter(e => e.fck === fck)
