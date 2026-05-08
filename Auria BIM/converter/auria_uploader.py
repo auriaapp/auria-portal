@@ -889,14 +889,12 @@ class AuriaUploader(ctk.CTk):
 
         for i, floor in enumerate(floors):
             floor_id   = slug(floor["name"])
+            # URL estável: apenas project + floor — xkt/meta resolvidos via Supabase
+            # Garante que QR codes impressos continuem válidos após atualização do modelo
             viewer_url = (
                 f"{PUBLIC_BASE}/floor.html"
                 f"?project={project_id}"
                 f"&floor={quote(floor['guid'], safe='')}"
-                f"&xkt={quote(xkt_url, safe='')}"
-                f"&meta={quote(meta_url, safe='')}"
-                f"&building={quote(building, safe='')}"
-                f"&obra={quote(obra_id, safe='')}"
             )
             sb.table("floors").upsert({
                 "id":         f"{project_id}-{floor_id}",

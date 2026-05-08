@@ -11,13 +11,46 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ── URL params ────────────────────────────────────────────────────────────────
-const params       = new URLSearchParams(location.search);
-const projectId    = params.get("project");
-const floorId      = params.get("floor");       // GUID do pavimento
-const xktUrl       = params.get("xkt");
-const metaUrl      = params.get("meta");
-const obraId       = params.get("obra") || projectId;
-const buildingName = decodeURIComponent(params.get("building") || projectId || "Auria BIM");
+const params    = new URLSearchParams(location.search);
+const projectId = params.get("project");
+const floorId   = params.get("floor");       // GUID do pavimento
+
+// xkt/meta podem estar na URL (compatibilidade) ou serem resolvidos via Supabase
+let xktUrl  = params.get("xkt");
+let metaUrl = params.get("meta");
+let obraId  = params.get("obra") || projectId;
+let buildingName = decodeURIComponent(params.get("building") || projectId || "Auria BIM");
+
+// URL canônica estável para QR codes — nunca inclui xkt/meta/building/obra
+const stableUrl = (() => {
+  const u = new URL(location.href);
+  u.search = "";
+  if (projectId) u.searchParams.set("project", projectId);
+  if (floorId)   u.searchParams.set("floor", floorId);
+  return u.toString();
+})();
+
+// Resolve xkt/meta/building via Supabase quando não fornecidos na URL
+let _projectResolved = false;
+async function resolveProjectUrls() {
+  if (_projectResolved) return;
+  _projectResolved = true;
+  if (xktUrl && metaUrl) return;   // já tem tudo da URL — não precisa consultar
+  if (!projectId) return;
+  try {
+    const { data } = await supabase
+      .from("projects")
+      .select("xkt_url,meta_url,building,obra_id")
+      .eq("id", projectId)
+      .single();
+    if (data) {
+      if (!xktUrl)  xktUrl  = data.xkt_url;
+      if (!metaUrl) metaUrl = data.meta_url;
+      if (data.building && !params.get("building")) buildingName = data.building;
+      if (data.obra_id  && !params.get("obra"))     obraId = data.obra_id;
+    }
+  } catch (_) {}
+}
 
 // ── Viewer ────────────────────────────────────────────────────────────────────
 const viewer = new Viewer({
@@ -85,6 +118,7 @@ async function loadModel() {
   const loadingEl   = document.getElementById("loadingOverlay");
   const loadingText = document.getElementById("loadingText");
   try {
+    await resolveProjectUrls();
     const src  = xktUrl  || `/models/${projectId}.xkt`;
     const meta = metaUrl || `/models/${projectId}-metadata.json`;
     const model = xktLoader.load({ id: projectId, src, metaModelSrc: meta, edges: true, saoEnabled: true });
@@ -1258,11 +1292,11 @@ function clearProperties() {
 // ── QR Code ───────────────────────────────────────────────────────────────────
 const qrModal = document.getElementById("qrModal");
 document.getElementById("btnQR").addEventListener("click", async () => {
-  await QRCode.toCanvas(document.getElementById("qrCanvas"), location.href,
+  await QRCode.toCanvas(document.getElementById("qrCanvas"), stableUrl,
     { width: 240, margin: 2, color: { dark: "#0f1117", light: "#ffffff" } });
   const mo = viewer.metaScene.metaObjects[floorId];
   document.getElementById("qrLabel").textContent = mo?.name || "Pavimento";
-  document.getElementById("qrUrlText").textContent = location.href;
+  document.getElementById("qrUrlText").textContent = stableUrl;
   qrModal.style.display = "flex";
 });
 document.getElementById("qrClose").addEventListener("click", () => { qrModal.style.display = "none"; });
