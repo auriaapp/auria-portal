@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Auria BIM — Pavimento</title>
+  <link rel="icon" href="/logo_symbol.png" type="image/png" />
+  <style>
+    /* ── Variáveis de tema ─────────────────────────────────────────────────── */
+    :root {
+      --bg-base:      #0f1117;
+      --bg-surface:   #1a1d27;
+      --bg-deep:      #0f1117;
+      --border:       #2a2d3a;
+      --border-sub:   #1e2130;
+      --text-1:       #e2e8f0;
+      --text-2:       #94a3b8;
+      --text-3:       #64748b;
+      --text-4:       #475569;
+    }
+    body.theme-light {
+      --bg-base:      #f1f5f9;
+      --bg-surface:   #ffffff;
+      --bg-deep:      #f8fafc;
+      --border:       #cbd5e1;
+      --border-sub:   #e2e8f0;
+      --text-1:       #1e293b;
+      --text-2:       #475569;
+      --text-3:       #64748b;
+      --text-4:       #94a3b8;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: var(--bg-base); color: var(--text-1);
+      height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    header {
+      background: var(--bg-surface); padding: 10px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border); flex-shrink: 0; z-index: 10;
+    }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .logo { width: 42px; height: 42px; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .logo img { width: 100%; height: 100%; object-fit: cover; }
+    .floor-name { font-size: 15px; font-weight: 600; color: var(--text-1); }
+    .project-name { font-size: 11px; color: #f97316; }
+    body.theme-light .project-name { color: var(--text-3); }
+    .header-actions { display: flex; gap: 6px; }
+    .btn-icon {
+      width: 34px; height: 34px;
+      background: var(--bg-deep); border: 1px solid var(--border);
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--text-2); font-size: 16px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      user-select: none;
+    }
+    .btn-icon:hover, .btn-icon.active { background: #1e3a5f; color: #3b82f6; border-color: #3b82f6; }
+
+    /* ── Canvas ─────────────────────────────────────────────────────────────── */
+    #viewerCanvas { flex: 1; width: 100%; display: block; touch-action: none; }
+
+    /* ── Painel lateral ──────────────────────────────────────────────────────  */
+    .side-panel {
+      position: absolute; top: 54px; right: 0;
+      width: 290px; height: calc(100vh - 54px);
+      background: var(--bg-surface); border-left: 1px solid var(--border);
+      overflow-y: auto; transform: translateX(100%);
+      transition: transform 0.25s ease; z-index: 20;
+    }
+    .side-panel.open { transform: translateX(0); }
+    .panel-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; color: var(--text-2);
+      display: flex; justify-content: space-between; align-items: center;
+      position: sticky; top: 0; background: var(--bg-surface); z-index: 1;
+    }
+    .panel-close { cursor: pointer; color: var(--text-4); font-size: 18px; line-height: 1; }
+    .panel-close:hover { color: var(--text-1); }
+
+    /* Props */
+    .prop-group { padding: 12px 16px; border-bottom: 1px solid var(--border-sub); }
+    .prop-group-title { font-size: 10px; font-weight: 700; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+    .prop-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    .prop-label { font-size: 12px; color: var(--text-3); }
+    .prop-value { font-size: 12px; color: var(--text-1); font-weight: 500; }
+    .prop-value.highlight { color: #60a5fa; }
+    .no-selection { padding: 40px 16px; text-align: center; color: var(--text-4); font-size: 13px; }
+    .no-selection span { display: block; font-size: 28px; margin-bottom: 8px; }
+
+    /* Filtros */
+    .filter-section { padding: 14px 16px; border-bottom: 1px solid var(--border-sub); }
+    .filter-title { font-size: 10px; font-weight: 700; color: #f59e0b; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
+    .filter-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .filter-label { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+    .filter-count { font-size: 10px; color: var(--text-4); }
+    .toggle-switch { position: relative; width: 32px; height: 18px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0; background: var(--border); border-radius: 9px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-track::before {
+      content: ""; position: absolute; width: 12px; height: 12px;
+      left: 3px; top: 3px; background: var(--text-4); border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track { background: #1e3a5f; }
+    .toggle-switch input:checked + .toggle-track::before { transform: translateX(14px); background: #3b82f6; }
+
+    /* Volume */
+    .volume-box {
+      margin: 10px 16px; padding: 12px;
+      background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .volume-title { font-size: 10px; font-weight: 700; color: #10b981; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+    .volume-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .volume-label { font-size: 11px; color: var(--text-3); }
+    .volume-value { font-size: 11px; color: #10b981; font-weight: 600; }
+    .volume-total { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+    .volume-total .volume-label { color: var(--text-2); font-weight: 600; }
+    .volume-total .volume-value { font-size: 13px; color: #34d399; }
+    .volume-selectable { cursor: pointer; }
+    .volume-selectable:hover { background: var(--border-sub); border-radius: 4px; }
+
+    /* Seção de Visualização (nova, no vizPanel) */
+    .viz-section { padding: 14px 16px; border-bottom: 1px solid var(--border-sub); }
+    .viz-title { font-size: 10px; font-weight: 700; color: #a78bfa; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
+
+    /* ── SVG de preview do plano de corte ───────────────────────────────── */
+    #sectionSvg {
+      position: fixed; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      pointer-events: none; z-index: 30; display: none;
+    }
+
+    /* Opções de botão com swatch */
+    .swatch-options { display: flex; gap: 8px; margin-bottom: 4px; }
+    .swatch-btn {
+      flex: 1; padding: 8px 4px; border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-deep);
+      cursor: pointer; font-size: 10px; text-align: center;
+      transition: border-color 0.15s, background 0.15s;
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+    }
+    .swatch-btn .swatch { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--border); }
+    .swatch-btn span { color: var(--text-3); font-size: 10px; }
+    .swatch-btn.active { border-color: #a78bfa; background: rgba(167,139,250,0.08); }
+    .swatch-btn.active span { color: #a78bfa; }
+
+    /* Tema claro/escuro — botões de tema maiores */
+    .theme-options { display: flex; gap: 8px; margin-bottom: 4px; }
+    .theme-btn {
+      flex: 1; padding: 10px 4px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg-deep);
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .theme-btn .theme-preview {
+      width: 36px; height: 24px; border-radius: 5px; border: 1px solid var(--border);
+      display: flex; overflow: hidden;
+    }
+    .theme-btn span { font-size: 10px; color: var(--text-3); }
+    .theme-btn.active { border-color: #a78bfa; background: rgba(167,139,250,0.08); }
+    .theme-btn.active span { color: #a78bfa; }
+
+    /* Botões de ação dentro de painéis */
+    .inp4d {
+      background: var(--bg-deep); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text-1); font-size: 12px; padding: 6px 10px; width: 100%; outline: none;
+      font-family: inherit;
+    }
+    .inp4d:focus { border-color: #3b82f6; }
+    .inp4d::placeholder { color: var(--text-4); }
+    .btn4d-primary {
+      background: #1e3a5f; color: #60a5fa; border: 1px solid #3b82f6; border-radius: 6px;
+      padding: 8px; font-size: 12px; cursor: pointer; width: 100%; font-weight: 600;
+      font-family: inherit;
+    }
+    .btn4d-primary:hover { background: #1d4ed8; color: #fff; }
+    .act-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; margin-left: 6px; }
+    .act-planejado   { background: #1e3a5f; color: #60a5fa; }
+    .act-em_execucao { background: #451a03; color: #fbbf24; }
+    .act-concluido   { background: #052e16; color: #4ade80; }
+    .act-atrasado    { background: #450a0a; color: #f87171; }
+
+    /* Slider 4D */
+    #slider4D {
+      -webkit-appearance: none; width: 100%; height: 4px;
+      background: linear-gradient(to right, #3b82f6 0%, #3b82f6 50%, var(--border) 50%);
+      border-radius: 2px; outline: none; margin: 10px 0;
+    }
+    #slider4D::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      background: #3b82f6; border-radius: 50%; cursor: pointer; border: 2px solid #fff;
+    }
+
+    /* ── Botão home mobile ──────────────────────────────────────────────────── */
+    #btnHomeMobile {
+      display: none;
+      position: absolute; bottom: 80px; right: 14px;
+      width: 46px; height: 46px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 12px; font-size: 22px; color: var(--text-2);
+      cursor: pointer; z-index: 25;
+      align-items: center; justify-content: center;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      transition: background 0.15s, color 0.15s;
+    }
+    #btnHomeMobile:active { background: #1e3a5f; color: #3b82f6; }
+
+    /* ── Drag handle ─────────────────────────────────────────────────────────── */
+    .drag-handle {
+      display: none; width: 36px; height: 4px;
+      background: var(--border); border-radius: 2px; margin: 10px auto 0;
+    }
+
+    /* ── Toolbar flutuante ───────────────────────────────────────────────────── */
+    #toolbar {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 14px; padding: 8px 12px; z-index: 20;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+    .tool-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      padding: 8px 12px; border-radius: 10px; cursor: pointer; color: var(--text-3);
+      font-size: 20px; transition: background 0.15s, color 0.15s; border: none; background: none;
+    }
+    .tool-btn span { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .tool-btn:hover { background: var(--bg-deep); color: var(--text-2); }
+    .tool-btn.active { background: #1e3a5f; color: #3b82f6; }
+    .tool-divider { width: 1px; background: var(--border); margin: 4px 0; }
+
+    /* ── Loading ─────────────────────────────────────────────────────────────── */
+    #loadingOverlay {
+      position: absolute; inset: 0; background: var(--bg-base);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 50; gap: 16px;
+    }
+    #loadingText { font-size: 14px; color: var(--text-3); }
+
+    /* ── Mobile ──────────────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .header-actions { gap: 4px; }
+      .btn-icon { width: 32px; height: 32px; font-size: 14px; }
+
+      .side-panel {
+        width: 100%; max-height: 55vh; height: auto;
+        top: auto; bottom: 0; right: 0;
+        transform: translateY(110%);
+        border-left: none; border-top: 1px solid var(--border);
+        border-radius: 16px 16px 0 0;
+      }
+      .side-panel.open { transform: translateY(0); }
+      .drag-handle { display: block; }
+      .side-panel.open ~ #toolbar { display: none; }
+      #toolbar { bottom: 16px; padding: 6px 8px; }
+      .tool-btn { padding: 6px 8px; font-size: 18px; }
+      .panel-header { border-radius: 16px 16px 0 0; }
+      #btnHomeMobile { display: flex; }
+      .side-panel.open ~ #btnHomeMobile { bottom: calc(55vh + 14px); }
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/floor-CxyuJRks.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/index-DnZfQelR.js">
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <a href="/" style="text-decoration:none;display:flex;">
+        <div class="logo"><img src="/logo_symbol.png" alt="Auria — Início" title="Voltar ao início" /></div>
+      </a>
+      <div>
+        <div class="floor-name" id="floorName">Carregando...</div>
+        <div class="project-name" id="projectName">Auria BIM</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="btn-icon" id="btnFitAll"   title="Enquadrar modelo">⊞</div>
+      <div class="btn-icon" id="btnFilter"   title="Volume de concreto" style="font-size:11px;font-weight:700;letter-spacing:-0.5px">m³</div>
+      <div class="btn-icon" id="btnViz"      title="Visualização">⚙</div>
+      <div class="btn-icon" id="btn4D"       title="BIM 4D — Cronograma">📅</div>
+      <div class="btn-icon" id="btnQR"       title="QR Code do pavimento">▣</div>
+      <div class="btn-icon" id="btnProps"    title="Propriedades">☰</div>
+    </div>
+  </header>
+
+  <canvas id="viewerCanvas"></canvas>
+
+  <!-- ── Painel de propriedades ──────────────────────────────────────────── -->
+  <div id="propsPanel" class="side-panel">
+    <div class="drag-handle"></div>
+    <div class="panel-header">
+      Propriedades
+      <span class="panel-close" id="propsClose">✕</span>
+    </div>
+    <div id="propsContent">
+      <div class="no-selection">
+        <span>☝</span>
+        Clique em um elemento para ver suas propriedades
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Painel de volume & filtros ──────────────────────────────────────── -->
+  <div id="filterPanel" class="side-panel">
+    <div class="drag-handle"></div>
+    <div class="panel-header">
+      m³ Volume &amp; Filtros
+      <span class="panel-close" id="filterClose">✕</span>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-title">Elementos estruturais</div>
+      <div class="filter-row">
+        <span class="filter-label">🟧 Pilares</span>
+        <label class="toggle-switch"><input type="checkbox" id="togPilares" checked data-types="IfcColumn" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">🟦 Vigas</span>
+        <label class="toggle-switch"><input type="checkbox" id="togVigas" checked data-types="IfcBeam,IfcMember" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">🟩 Lajes</span>
+        <label class="toggle-switch"><input type="checkbox" id="togLajes" checked data-types="IfcSlab" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">🟫 Fundações</span>
+        <label class="toggle-switch"><input type="checkbox" id="togFundacoes" checked data-types="IfcFooting,IfcPile" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">⬜ Paredes</span>
+        <label class="toggle-switch"><input type="checkbox" id="togParedes" checked data-types="IfcWall" /><span class="toggle-track"></span></label>
+      </div>
+    </div>
+
+    <div class="volume-box">
+      <div class="volume-title">Volume de Concreto</div>
+      <div id="volumeRows">
+        <div class="volume-row"><span class="volume-label">—</span><span class="volume-value">—</span></div>
+      </div>
+    </div>
+
+    <!-- Seleção manual de elementos -->
+    <div style="margin:-2px 16px 14px;display:flex;gap:6px">
+      <button id="btnSelPick" style="
+        flex:1;background:var(--bg-deep);color:#a78bfa;border:1px solid #4c1d95;
+        border-radius:6px;padding:7px 4px;font-size:11px;font-weight:600;
+        cursor:pointer;font-family:inherit;transition:background 0.15s,color 0.15s">
+        ☑ Selecionar
+      </button>
+      <button id="btnSelClear" title="Limpar seleção" style="
+        background:var(--bg-deep);color:var(--text-4);border:1px solid var(--border);
+        border-radius:6px;padding:7px 11px;font-size:13px;
+        cursor:pointer;font-family:inherit">✕</button>
+    </div>
+    <div class="volume-box" id="selVolumeBox" style="display:none;border-color:#4c1d95;margin-top:-6px">
+      <div class="volume-title" style="color:#a78bfa">✏ Seleção Manual</div>
+      <div id="selVolumeRows"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Painel de Visualização ───────────────────────────────────────────── -->
+  <div id="vizPanel" class="side-panel">
+    <div class="drag-handle"></div>
+    <div class="panel-header">
+      ⚙ Visualização
+      <span class="panel-close" id="vizClose">✕</span>
+    </div>
+
+    <!-- Disciplinas overlay (populado via JS) -->
+    <div class="viz-section" id="disciplineSec" style="display:none">
+      <div class="viz-title">Disciplinas</div>
+      <div id="disciplineButtons"></div>
+    </div>
+
+    <!-- Tema da interface -->
+    <div class="viz-section">
+      <div class="viz-title">Tema da interface</div>
+      <div class="theme-options">
+        <button class="theme-btn active" id="themeDark" title="Modo escuro">
+          <div class="theme-preview">
+            <div style="flex:1;background:#0f1117"></div>
+            <div style="flex:1;background:#1a1d27"></div>
+          </div>
+          <span>Escuro</span>
+        </button>
+        <button class="theme-btn" id="themeLight" title="Modo claro">
+          <div class="theme-preview">
+            <div style="flex:1;background:#f1f5f9"></div>
+            <div style="flex:1;background:#ffffff"></div>
+          </div>
+          <span>Claro</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Fundo do modelo 3D -->
+    <div class="viz-section">
+      <div class="viz-title">Fundo do modelo</div>
+      <div class="swatch-options">
+        <button class="swatch-btn active" id="bgDark" title="Fundo preto">
+          <div class="swatch" style="background:#0f1117"></div>
+          <span>Preto</span>
+        </button>
+        <button class="swatch-btn" id="bgBlue" title="Fundo azul (Solibri)">
+          <div class="swatch" style="background:#739ECC"></div>
+          <span>Azul</span>
+        </button>
+        <button class="swatch-btn" id="bgWhite" title="Fundo branco">
+          <div class="swatch" style="background:#f0f0f0;border-color:#ccc"></div>
+          <span>Branco</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Renderização -->
+    <div class="viz-section">
+      <div class="viz-title">Renderização</div>
+      <div class="filter-row">
+        <span class="filter-label">Mostrar arestas</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="togEdges" checked />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Projeção ortográfica</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="togOrtho" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Modo arame (wireframe)</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="togWireframe" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Painel BIM 4D ────────────────────────────────────────────────────── -->
+  <div id="panel4D" class="side-panel">
+    <div class="drag-handle"></div>
+    <div class="panel-header">
+      📅 BIM 4D — Cronograma
+      <span class="panel-close" id="close4D">✕</span>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-row">
+        <span class="filter-label" style="color:#a78bfa;font-weight:600">Modo 4D</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="tog4D" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div id="sec4DControls" style="display:none">
+        <div style="margin-top:12px">
+          <div style="font-size:22px;font-weight:700;color:#60a5fa;text-align:center" id="label4DDate">—</div>
+          <input type="range" id="slider4D" min="0" max="1" step="1" value="0" />
+          <div style="display:flex;justify-content:space-between">
+            <span id="label4DMin" style="font-size:10px;color:var(--text-4)">—</span>
+            <span id="label4DMax" style="font-size:10px;color:var(--text-4)">—</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px">
+          <span class="act-badge act-planejado">🔵 Planejado</span>
+          <span class="act-badge act-em_execucao">🟡 Em execução</span>
+          <span class="act-badge act-concluido">🟢 Concluído</span>
+          <span class="act-badge act-atrasado">🔴 Atrasado</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-title">Atividades</div>
+      <div id="list4D" style="display:flex;flex-direction:column;gap:6px">
+        <span style="color:var(--text-4);font-size:12px">Nenhuma atividade cadastrada.</span>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-title" style="color:#f59e0b">+ Nova atividade</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <input class="inp4d" id="inp4DName" placeholder="Nome da atividade (ex.: Concretagem Laje P3)" />
+        <div style="display:flex;gap:6px">
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--text-4);margin-bottom:3px">Início</div>
+            <input class="inp4d" id="inp4DStart" type="date" />
+          </div>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--text-4);margin-bottom:3px">Fim</div>
+            <input class="inp4d" id="inp4DEnd" type="date" />
+          </div>
+        </div>
+        <select class="inp4d" id="sel4DStatus">
+          <option value="planejado">🔵 Planejado</option>
+          <option value="em_execucao">🟡 Em execução</option>
+          <option value="concluido">🟢 Concluído</option>
+          <option value="atrasado">🔴 Atrasado</option>
+        </select>
+        <div style="font-size:11px;color:var(--text-3)">
+          Clique nos elementos do modelo para vinculá-los:
+        </div>
+        <div id="guids4DList" style="
+          background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;
+          padding:6px 10px;min-height:32px;font-size:10px;color:var(--text-4);
+          max-height:80px;overflow-y:auto;">Nenhum elemento selecionado</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn4d-primary" id="btn4DPickMode" style="flex:1;background:var(--bg-deep);color:var(--text-3);border-color:var(--border)">
+            ☑ Selecionar
+          </button>
+          <button class="btn4d-primary" id="btn4DClearGuids" style="flex:1;background:var(--bg-deep);color:#ef4444;border-color:#7f1d1d">
+            ✕ Limpar
+          </button>
+        </div>
+        <button class="btn4d-primary" id="btn4DSave">💾 Salvar atividade</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Botão home mobile -->
+  <button id="btnHomeMobile" title="Voltar ao modelo" aria-label="Voltar ao modelo">⊞</button>
+
+  <!-- SVG overlay para região poligonal -->
+  <svg id="regionSvg" xmlns="http://www.w3.org/2000/svg"
+    style="position:absolute;top:54px;left:0;width:100%;height:calc(100% - 54px);
+           pointer-events:none;z-index:8;overflow:visible;">
+    <polygon id="regionPoly" fill="rgba(59,130,246,0.12)" stroke="#3b82f6"
+      stroke-width="2" stroke-dasharray="8,4" points="" />
+    <g id="regionDots"></g>
+    <line id="regionActiveLine" stroke="#60a5fa" stroke-width="1.5" stroke-dasharray="5,3"
+      x1="0" y1="0" x2="0" y2="0" style="display:none" />
+  </svg>
+
+  <!-- Chip de resultado da região -->
+  <div id="regionResult" style="
+    display:none; position:absolute; top:62px; left:50%; transform:translateX(-50%);
+    background:var(--bg-surface); border:1px solid #3b82f6; border-radius:10px;
+    padding:8px 16px; z-index:30; font-size:12px; color:var(--text-1);
+    box-shadow:0 4px 16px rgba(0,0,0,0.3); white-space:nowrap; max-width:90vw; overflow-x:auto;
+  "></div>
+
+  <!-- Indicador hover para o corte (section) — SVG de plano 3D projetado -->
+  <svg id="sectionSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+
+  <!-- Toolbar flutuante -->
+  <div id="toolbar">
+    <button class="tool-btn active" id="toolOrbit">🔄 <span>Orbitar</span></button>
+    <div class="tool-divider"></div>
+    <button class="tool-btn" id="toolMeasure">📏 <span>Medir</span></button>
+    <div class="tool-divider"></div>
+    <button class="tool-btn" id="toolSection">✂ <span>Cortar</span></button>
+    <div class="tool-divider"></div>
+    <button class="tool-btn" id="toolRegion">📐 <span>Região</span></button>
+    <div class="tool-divider"></div>
+    <button class="tool-btn" id="toolClear">🗑 <span>Limpar</span></button>
+  </div>
+
+  <!-- Modal QR Code -->
+  <div id="qrModal" style="
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7);
+    z-index:100; align-items:center; justify-content:center; flex-direction:column; gap:16px;">
+    <div style="background:var(--bg-surface); border:1px solid var(--border); border-radius:16px; padding:28px; text-align:center; min-width:300px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text-2); margin-bottom:16px;">QR Code — Acesso direto ao pavimento</div>
+      <canvas id="qrCanvas" style="border-radius:8px; display:block; margin:0 auto;"></canvas>
+      <div id="qrLabel" style="margin-top:12px; font-size:14px; font-weight:600; color:var(--text-1);"></div>
+      <div style="font-size:11px; color:var(--text-4); margin-top:4px; word-break:break-all; max-width:260px; margin-left:auto; margin-right:auto;" id="qrUrlText"></div>
+      <div style="display:flex; gap:8px; margin-top:16px; justify-content:center;">
+        <button id="btnQRDownload" style="padding:8px 16px; background:#1e3a5f; color:#60a5fa; border:1px solid #3b82f6; border-radius:8px; cursor:pointer; font-size:13px;">⬇ Baixar PNG</button>
+        <button id="qrClose" style="padding:8px 16px; background:var(--bg-deep); color:var(--text-3); border:1px solid var(--border); border-radius:8px; cursor:pointer; font-size:13px;">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loadingOverlay">
+    <div id="loadingText">Carregando modelo...</div>
+  </div>
+
+</body>
+</html>

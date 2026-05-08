@@ -28,7 +28,8 @@ viewer.camera.eye  = [10, 10, 10];
 viewer.camera.look = [0, 0, 0];
 viewer.camera.up   = [0, 1, 0];
 
-new NavCubePlugin(viewer, { canvasId: "navCubeCanvas", visible: false });
+// NavCube desativado — canvas omitido do HTML (plugin inicializaria sem exibição)
+// new NavCubePlugin(viewer, { canvasId: "navCubeCanvas", visible: false });
 
 // ── Elimina drift no mobile ───────────────────────────────────────────────────
 viewer.cameraControl.inertia    = 0;   // inércia de rotação
@@ -66,7 +67,7 @@ function _scheduleAutoHome() {
   }, 600);
 }
 const xktLoader    = new XKTLoaderPlugin(viewer);
-const distMeas     = new DistanceMeasurementsPlugin(viewer, { defaultAxisVisible: true });
+const distMeas     = new DistanceMeasurementsPlugin(viewer, { defaultAxisVisible: false });
 const distCtrl     = new DistanceMeasurementsMouseControl(distMeas, { snapping: true });
 const sectionPlanes = new SectionPlanesPlugin(viewer, { overviewCanvasId: "sectionPlanesOverviewCanvas" });
 
@@ -154,43 +155,166 @@ const CONCRETE = new Set(["IfcColumn","IfcBeam","IfcSlab","IfcFooting","IfcPile"
 const TYPE_LABELS = { IfcColumn:"Pilares", IfcBeam:"Vigas", IfcMember:"Membros",
   IfcSlab:"Lajes", IfcFooting:"Fundações", IfcPile:"Estacas", IfcWall:"Paredes" };
 
-// ── Volume via teorema da divergência (geometria 3D exata) ────────────────────
-function computeEntityVolume(entity) {
-  if (!entity) return 0;
-  let total = 0;
-  const meshes = entity.meshes;
-  if (meshes?.length) {
-    for (const mesh of meshes) {
-      const g = mesh.geometry;
-      if (!g) continue;
-      let pos = g.positions;
-      // Descomprime posições quantizadas se necessário
-      if (!pos?.length && g.positionsCompressed?.length && g.positionsDecodeMatrix) {
-        const pc = g.positionsCompressed, dm = g.positionsDecodeMatrix;
-        pos = new Float32Array(pc.length);
-        for (let i = 0; i < pc.length; i += 3) {
-          pos[i]   = pc[i]   * dm[0]  + dm[12];
-          pos[i+1] = pc[i+1] * dm[5]  + dm[13];
-          pos[i+2] = pc[i+2] * dm[10] + dm[14];
+// ── DEBUG: inspeciona structure do metaobject para diagnóstico de volume ─────
+// Chamadas globais:
+//   window.debugElement(id)     — inspeciona elemento específico
+//   window.debugSelected()       — inspeciona elemento atualmente selecionado
+window.debugElement = function(objectId) {
+  const mo = viewer.metaScene.metaObjects[objectId];
+  if (!mo) {
+    console.error("Element not found:", objectId);
+    return;
+  }
+  console.group(`🔍 Element Debug: ${mo.name} (${mo.type})`);
+  console.log("GUID:", objectId);
+  console.log("Property sets found:", mo.propertySets?.length || 0);
+  if (mo.propertySets?.length) {
+    mo.propertySets.forEach((ps, idx) => {
+      console.group(`  [${idx}] ${ps.name}`);
+      if (ps.properties?.length) {
+        ps.properties.forEach(p => {
+          const val = typeof p.value === "object" ? JSON.stringify(p.value) : p.value;
+          console.log(`    ${p.name}: ${val}`);
+        });
+      } else {
+        console.log("    (no properties)");
+      }
+      console.groupEnd();
+    });
+  }
+  console.groupEnd();
+};
+
+window.debugSelected = function() {
+  const selected = viewer.scene.selectedObjectIds;
+  if (!selected?.length) {
+    console.error("No element selected. Click an element first.");
+    return;
+  }
+  window.debugElement(selected[0]);
+};
+
+// ── Busca volume nas quantidades IFC do metaobject ────────────────────────────
+// Percorre todos os property sets procurando NetVolume / GrossVolume / Volume.
+// O IFC exportado pelo software de projeto (TQS, Revit…) já contém o valor
+// calculado corretamente; preferimos esse dado ao cálculo 3D local.
+function getIfcVolume(mo) {
+  if (!mo) return null;
+  if (!mo.propertySets?.length) return null;
+
+  let found = null;
+  // Percorre todos os property sets procurando qualquer propriedade com "volume" no nome
+  for (const ps of mo.propertySets) {
+    for (const p of (ps.properties || [])) {
+      const pname = String(p.name || "").toLowerCase().trim();
+      const raw = typeof p.value === "object" ? p.value?.value : p.value;
+
+      // Busca: qualquer propriedade com "volume" no nome
+      if (pname.includes("volume") && typeof raw === "number" && raw > 0) {
+        // Normalização de unidades usando heurística:
+        // - IFC em mm → valor ~22560000 mm³ (para elemento de ~22.5 m³)
+        // - IFC em cm → valor ~22560 cm³
+        // - IFC em m → valor ~22.56 m³
+        let normalized = raw;
+        if (raw > 1e6) {
+          normalized = raw / 1e9; // mm³ → m³
+        } else if (raw > 1e3) {
+          normalized = raw / 1e6; // cm³ → m³
+        }
+
+        // Se ainda nenhum encontrado OU este tem nome mais específico, guarda
+        if (!found || pname === "netvolume" || pname === "grossvolume") {
+          found = { ps: ps.name, name: p.name, raw, normalized };
+          // Se foi específico, pode parar
+          if (pname === "netvolume" || pname === "grossvolume") break;
         }
       }
-      const idx = g.indices;
-      if (!pos?.length || !idx?.length) continue;
-      let vol = 0;
-      for (let k = 0; k < idx.length; k += 3) {
-        const a = idx[k]*3, b = idx[k+1]*3, c = idx[k+2]*3;
-        vol += (pos[a]*(pos[b+1]*pos[c+2] - pos[b+2]*pos[c+1])
-              + pos[b]*(pos[c+1]*pos[a+2] - pos[c+2]*pos[a+1])
-              + pos[c]*(pos[a+1]*pos[b+2] - pos[a+2]*pos[b+1])) / 6;
-      }
-      total += Math.abs(vol);
     }
-    if (total > 0) return total; // XKT em metros → resultado já em m³
+    if (found && (found.name.toLowerCase() === "netvolume" || found.name.toLowerCase() === "grossvolume")) break;
   }
-  // Fallback AABB — coordenadas em metros, volume direto em m³
-  const bb = entity.aabb;
-  if (bb) return Math.abs((bb[3]-bb[0]) * (bb[4]-bb[1]) * (bb[5]-bb[2]));
-  return 0;
+
+  return found?.normalized || null;
+}
+
+// ── Volume via teorema da divergência (geometria 3D — fallback) ───────────────
+// Usado apenas quando o IFC não contém quantidade de volume.
+//
+// IMPORTANTE:
+// 1. Centraliza todas as posições em torno da origem antes do cálculo.
+//    O XKT armazena posições em coordenadas de obra (absolutas), com valores
+//    potencialmente grandes (ex: UTM). Com coordenadas grandes, o produto
+//    escalar do teorema da divergência tem erros de ponto flutuante enormes
+//    em submeshes abertos. Centralizando, os erros desaparecem.
+// 2. Acumula os volumes ASSINADOS de todos os submeshes juntos e só ao final
+//    toma o módulo. Isso permite que faces abertas (topo, fundo, laterais
+//    em meshes separadas) se cancelem como se fossem uma malha única fechada.
+function _computeMeshVolume(entity) {
+  if (!entity) return 0;
+  const meshes = entity.meshes;
+  if (!meshes?.length) return 0;
+
+  // ── Passo 1: decodifica todas as posições de todos os submeshes ──────────
+  const allPos = [];   // [[Float32Array de posições, Uint32Array/Int32Array de índices], ...]
+  for (const mesh of meshes) {
+    const g = mesh.geometry;
+    if (!g) continue;
+    let pos = g.positions;
+    if (!pos?.length && g.positionsCompressed?.length && g.positionsDecodeMatrix) {
+      const pc = g.positionsCompressed, dm = g.positionsDecodeMatrix;
+      pos = new Float32Array(pc.length);
+      for (let i = 0; i < pc.length; i += 3) {
+        pos[i]   = pc[i]   * dm[0]  + dm[12];
+        pos[i+1] = pc[i+1] * dm[5]  + dm[13];
+        pos[i+2] = pc[i+2] * dm[10] + dm[14];
+      }
+    }
+    if (!pos?.length || !g.indices?.length) continue;
+    allPos.push({ pos, idx: g.indices });
+  }
+  if (!allPos.length) return 0;
+
+  // ── Passo 2: calcula centróide global para centralizar coordenadas ────────
+  // Sem centralizar, coordenadas de obra absolutas causam erros de float32
+  // que inflam o volume em centenas de vezes.
+  let cx = 0, cy = 0, cz = 0, total = 0;
+  for (const { pos } of allPos) {
+    for (let i = 0; i < pos.length; i += 3) {
+      cx += pos[i]; cy += pos[i+1]; cz += pos[i+2]; total++;
+    }
+  }
+  if (total === 0) return 0;
+  cx /= total; cy /= total; cz /= total;
+
+  // ── Passo 3: calcula volume assinado acumulado com posições centralizadas ─
+  let signed = 0;
+  for (const { pos, idx } of allPos) {
+    for (let k = 0; k < idx.length; k += 3) {
+      const a = idx[k]*3, b = idx[k+1]*3, c = idx[k+2]*3;
+      const ax = pos[a]   - cx, ay = pos[a+1] - cy, az = pos[a+2] - cz;
+      const bx = pos[b]   - cx, by = pos[b+1] - cy, bz = pos[b+2] - cz;
+      const ccx = pos[c]  - cx, ccy = pos[c+1] - cy, ccz = pos[c+2] - cz;
+      signed += (ax*(by*ccz - bz*ccy)
+               + bx*(ccy*az - ccz*ay)
+               + ccx*(ay*bz - az*by)) / 6;
+    }
+  }
+  return Math.abs(signed); // XKT em metros → resultado em m³
+}
+
+/**
+ * Volume principal: IFC quantity → fallback malha 3D.
+ * @param {SceneObject} entity
+ * @param {MetaObject}  mo   (opcional) — metaobject para busca de quantidades IFC
+ */
+function computeEntityVolume(entity, mo) {
+  if (!entity) return 0;
+  // 1. Preferência: valor fornecido pelo software de projeto no IFC
+  if (mo) {
+    const v = getIfcVolume(mo);
+    if (v != null) return v;
+  }
+  // 2. Fallback: divergência 3D (pode errar em geometrias complexas/abertas)
+  return _computeMeshVolume(entity);
 }
 
 function getFck(mo) {
@@ -271,7 +395,7 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
     if (!skipTypeFilter && !active.has(mo.type)) continue;
     const entity = viewer.scene.objects[id];
     if (!entity?.visible || !entity.aabb) continue;
-    const vol = computeEntityVolume(entity);
+    const vol = computeEntityVolume(entity, mo);
     if (vol <= 0) continue;
     elems.push({
       id, mo, entity, vol,
@@ -903,11 +1027,14 @@ async function loadDisciplines() {
           const m = xktLoader.load({ id: pid, src: xkt, metaModelSrc: meta, edges: true });
           loadedModels[pid] = m;
           m.on("loaded", () => {
-            // Aplica filtro do pavimento ao modelo carregado
-            if (floorObjectIds) {
-              viewer.scene.setObjectsVisible(m.objectIds, false);
-              const inFloor = m.objectIds.filter(id => floorObjectIds.includes(id));
-              viewer.scene.setObjectsVisible(inFloor.length ? inFloor : m.objectIds, true);
+            // SceneModel não tem .objectIds — busca os IDs pelo model.id no scene
+            const mIds = Object.values(viewer.scene.objects)
+              .filter(o => o.model && o.model.id === pid)
+              .map(o => o.id);
+            if (floorObjectIds && mIds.length) {
+              viewer.scene.setObjectsVisible(mIds, false);
+              const inFloor = mIds.filter(id => floorObjectIds.includes(id));
+              viewer.scene.setObjectsVisible(inFloor.length ? inFloor : mIds, true);
             }
           });
         }
@@ -1075,15 +1202,25 @@ function showProperties(objectId) {
   const mo = viewer.metaScene.metaObjects[objectId];
   if (!mo) return;
   openPanel("props");
-  // Volume 3D do elemento (só para concreto)
+  // Volume do elemento (só para concreto) — debug: mostra se é IFC ou Mesh
   const entity = viewer.scene.objects[objectId];
-  const vol = (entity && CONCRETE.has(mo.type)) ? computeEntityVolume(entity) : 0;
+  let vol = 0, volSource = "—";
+  if (entity && CONCRETE.has(mo.type)) {
+    const ifcVol = getIfcVolume(mo);
+    if (ifcVol != null) {
+      vol = ifcVol;
+      volSource = "IFC";
+    } else {
+      vol = _computeMeshVolume(entity);
+      volSource = "Mesh";
+    }
+  }
   const fck = getFck(mo);
   let html = `<div class="prop-group">
     <div class="prop-group-title">Elemento</div>
     <div class="prop-row"><span class="prop-label">Nome</span><span class="prop-value">${mo.name||objectId}</span></div>
     <div class="prop-row"><span class="prop-label">Tipo</span><span class="prop-value">${mo.type||"—"}</span></div>
-    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume (3D)</span><span class="prop-value highlight">${vol.toFixed(2)} m³</span></div>` : ""}
+    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume (${volSource})</span><span class="prop-value highlight">${vol.toFixed(2)} m³</span></div>` : ""}
     ${fck  ? `<div class="prop-row"><span class="prop-label">Resistência</span><span class="prop-value highlight">C${fck} MPa</span></div>` : ""}
     <div class="prop-row"><span class="prop-label">GUID</span><span class="prop-value" style="font-size:10px;color:#475569">${objectId}</span></div>
   </div>`;
@@ -1490,20 +1627,156 @@ cvs.addEventListener("dblclick", () => {
   if (activeTool === "region" && regionPoints.length >= 3) calcRegionVolume();
 });
 
-// ── Fit all / Section / Ferramentas ──────────────────────────────────────────
+// ── Fit all / Ferramentas ────────────────────────────────────────────────────
 document.getElementById("btnFitAll").addEventListener("click", () => _flyHome(0.8));
-let sectionActive = false;
-document.getElementById("btnSection").addEventListener("click", () => {
-  sectionActive = !sectionActive;
-  document.getElementById("btnSection").classList.toggle("active", sectionActive);
-  if (sectionActive) { sectionPlanes.createSectionPlane({ id:"sp1", pos:[0,0,0], dir:[0,-1,0] }); sectionPlanes.showControl("sp1"); }
-  else               { sectionPlanes.destroySectionPlane("sp1"); }
-});
+
+let sectionActive    = false;
+let _secHoverPos     = null;   // worldPos da superfície sob o cursor
+let _secHoverNormal  = null;   // worldNormal da superfície sob o cursor
+let _secLastPickMs   = 0;      // throttle do pick de hover
+
+// ── SVG de preview do plano de corte ─────────────────────────────────────────
+const _secSvg    = document.getElementById("sectionSvg");
+const _SVG_NS    = "http://www.w3.org/2000/svg";
+// Meia-largura do quadrado de preview: escala com a distância câmera→ponto
+// para ficar sempre visível independente do zoom
+function _secPlaneHalf(pos) {
+  const eye = viewer.camera.eye;
+  const d = Math.hypot(pos[0]-eye[0], pos[1]-eye[1], pos[2]-eye[2]);
+  return Math.max(0.4, d * 0.10); // 10% da distância, mínimo 0.4m
+}
+
+function _cross3(a, b) {
+  return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+}
+function _norm3(v) {
+  const l = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0]/l, v[1]/l, v[2]/l];
+}
+// Projeta ponto 3D (world) → coordenadas de tela (px)
+function _worldToScreen(w) {
+  const vm = viewer.camera.viewMatrix;   // Float64Array[16] column-major
+  const pm = viewer.camera.projMatrix;   // Float64Array[16] column-major
+  // View transform
+  const ex = vm[0]*w[0]+vm[4]*w[1]+vm[8]*w[2] +vm[12];
+  const ey = vm[1]*w[0]+vm[5]*w[1]+vm[9]*w[2] +vm[13];
+  const ez = vm[2]*w[0]+vm[6]*w[1]+vm[10]*w[2]+vm[14];
+  const ew = vm[3]*w[0]+vm[7]*w[1]+vm[11]*w[2]+vm[15];
+  // Projection transform
+  const cx = pm[0]*ex+pm[4]*ey+pm[8]*ez +pm[12]*ew;
+  const cy = pm[1]*ex+pm[5]*ey+pm[9]*ez +pm[13]*ew;
+  const cw = pm[3]*ex+pm[7]*ey+pm[11]*ez+pm[15]*ew;
+  if (Math.abs(cw) < 1e-6) return null;
+  const ndcX = cx/cw, ndcY = cy/cw;
+  const rect = cvs.getBoundingClientRect();
+  return [
+    (ndcX * 0.5 + 0.5) * rect.width  + rect.left,
+    (-ndcY * 0.5 + 0.5) * rect.height + rect.top,
+  ];
+}
+
+// Desenha o quadrado 3D projetado no SVG overlay
+function _updateSectionIndicator(pos, normal) {
+  const N = _norm3(normal);
+  let T1, T2;
+  if (Math.abs(N[1]) > 0.7) {
+    // Plano horizontal (laje/teto): tangentes ao longo dos eixos mundiais XZ
+    T1 = [1, 0, 0];
+    T2 = [0, 0, 1];
+  } else {
+    // Plano vertical (parede): T1 horizontal, T2 vertical
+    T1 = _norm3(_cross3([0, 1, 0], N));
+    T2 = [0, 1, 0];
+  }
+  const h = _secPlaneHalf(pos); // tamanho dinâmico em função da distância
+  const corners = [
+    [pos[0]+h*T1[0]+h*T2[0], pos[1]+h*T1[1]+h*T2[1], pos[2]+h*T1[2]+h*T2[2]],
+    [pos[0]-h*T1[0]+h*T2[0], pos[1]-h*T1[1]+h*T2[1], pos[2]-h*T1[2]+h*T2[2]],
+    [pos[0]-h*T1[0]-h*T2[0], pos[1]-h*T1[1]-h*T2[1], pos[2]-h*T1[2]-h*T2[2]],
+    [pos[0]+h*T1[0]-h*T2[0], pos[1]+h*T1[1]-h*T2[1], pos[2]+h*T1[2]-h*T2[2]],
+  ];
+  const pts = corners.map(_worldToScreen);
+  if (pts.some(p => p === null)) { _hideSectionIndicator(); return; }
+  const attr = pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  _secSvg.innerHTML = "";
+  const poly = document.createElementNS(_SVG_NS, "polygon");
+  poly.setAttribute("points", attr);
+  poly.setAttribute("fill",           "rgba(255,80,80,0.15)");
+  poly.setAttribute("stroke",         "#ff5050");
+  poly.setAttribute("stroke-width",   "2");
+  poly.setAttribute("stroke-dasharray", "8,4");
+  _secSvg.appendChild(poly);
+  _secSvg.style.display = "block";
+}
+
+function _hideSectionIndicator() {
+  _secSvg.innerHTML      = "";
+  _secSvg.style.display  = "none";
+  _secHoverPos    = null;
+  _secHoverNormal = null;
+}
+
+// Esconde apenas os eixos do gizmo — mantém o plano de corte ativo
+function _hideSection() {
+  try { sectionPlanes.hideControl(); } catch(_) {}
+  _hideSectionIndicator();
+}
+
+function _destroySection() {
+  if (sectionActive) {
+    try { sectionPlanes.destroySectionPlane("sp1"); } catch(_) {}
+    sectionActive = false;
+  }
+  _hideSectionIndicator();
+}
+
+// Cria (ou recria) o plano de corte na posição/normal de hover atual
+function _applySectionAtHover() {
+  if (!_secHoverPos || !_secHoverNormal) return;
+  const N = _norm3(_secHoverNormal);
+  const eye = viewer.camera.eye;
+  // dir aponta do ponto picado PARA a câmera.
+  // xeokit descarta onde dot(P-pos, dir) > 0 → descarta o lado da câmera,
+  // revelando o interior do outro lado. É o comportamento intuitivo de um corte.
+  const toCam = [
+    eye[0] - _secHoverPos[0],
+    eye[1] - _secHoverPos[1],
+    eye[2] - _secHoverPos[2],
+  ];
+  let dir;
+  if (Math.abs(N[1]) > 0.7) {
+    // Laje / teto: corte puramente horizontal, sentido da câmera
+    dir = [0, toCam[1] >= 0 ? 1 : -1, 0];
+  } else {
+    // Parede: projeta toCam no plano XZ (corte estritamente vertical)
+    const xzLen = Math.hypot(toCam[0], toCam[2]) || 1;
+    dir = [toCam[0] / xzLen, 0, toCam[2] / xzLen];
+  }
+  // Destroi plano anterior e cria novo
+  if (sectionActive) {
+    try { sectionPlanes.destroySectionPlane("sp1"); } catch(_) {}
+    sectionActive = false;
+  }
+  try {
+    sectionPlanes.createSectionPlane({ id: "sp1", pos: _secHoverPos.slice(), dir });
+    sectionPlanes.showControl("sp1");
+    sectionActive = true;
+  } catch(_) {}
+  _hideSectionIndicator();
+}
+
 function setTool(tool) {
+  // Ao sair do modo corte: esconde o gizmo mas MANTÉM o plano de corte
+  if (activeTool === "section" && tool !== "section") _hideSection();
+
   activeTool = tool;
   document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
   cvs.style.cursor = "";
-  distCtrl.deactivate();
+  // try/catch: bug xeokit — DistanceMeasurement.destroy() faz duplo-destroy nos
+  // Anchors internos (registrados em _cleanups E como filhos de Component),
+  // fazendo Marker.destroy() chamar _renderer.removeMarker() com _renderer já null.
+  try { distCtrl.deactivate(); } catch(_) {}
+
   if (tool === "measure") {
     distCtrl.activate();
     document.getElementById("toolMeasure").classList.add("active");
@@ -1511,16 +1784,113 @@ function setTool(tool) {
     clearRegion();
     cvs.style.cursor = "crosshair";
     document.getElementById("toolRegion").classList.add("active");
+  } else if (tool === "section") {
+    // Não cria o plano imediatamente — aguarda o usuário clicar na superfície
+    cvs.style.cursor = "crosshair";
+    document.getElementById("toolSection").classList.add("active");
+    // Se já existe um plano, reexibe o gizmo
+    if (sectionActive) {
+      try { sectionPlanes.showControl("sp1"); } catch(_) {}
+    }
   } else {
     document.getElementById("toolOrbit").classList.add("active");
   }
 }
+
 document.getElementById("toolOrbit").addEventListener("click",   () => setTool("orbit"));
 document.getElementById("toolMeasure").addEventListener("click", () => setTool("measure"));
+document.getElementById("toolSection").addEventListener("click", () => {
+  // Toggle: clicar de novo desativa o corte
+  setTool(activeTool === "section" ? "orbit" : "section");
+});
 document.getElementById("toolRegion").addEventListener("click",  () => setTool("region"));
-document.getElementById("toolClear").addEventListener("click",   () => { distMeas.clear(); clearRegion(); setTool("orbit"); });
+document.getElementById("toolClear").addEventListener("click",   () => {
+  // Cancela medição em progresso ANTES de clear() para evitar duplo-destroy
+  try { distCtrl.deactivate(); } catch(_) {}
+  distMeas.clear();
+  clearRegion();
+  _destroySection();
+  setTool("orbit");
+});
 document.getElementById("btnSelPick").addEventListener("click",  toggleSelPick);
 document.getElementById("btnSelClear").addEventListener("click", clearSelElements);
+
+// ── Hover e clique para o modo Corte (Section) ────────────────────────────────
+// Antes de colocar o corte: raycasting com throttle de 40 ms mostra o preview SVG.
+// Após colocar: preview some e o gizmo toma conta. Novo corte só após "Limpar" ou
+// re-entrar no modo (toggle do ícone tesoura).
+{
+  cvs.addEventListener("mousemove", e => {
+    if (activeTool !== "section") {
+      if (_secHoverPos) _hideSectionIndicator();
+      return;
+    }
+    // Se corte já colocado, não sobrescreve com hover — o gizmo é o controle
+    if (sectionActive) {
+      if (_secHoverPos) _hideSectionIndicator();
+      return;
+    }
+    // Throttle: máx ~25 picks/s para não sobrecarregar o GPU picking
+    const now = Date.now();
+    if (now - _secLastPickMs < 40) return;
+    _secLastPickMs = now;
+
+    const rect = cvs.getBoundingClientRect();
+    const hit  = viewer.scene.pick({
+      canvasPos: [e.clientX - rect.left, e.clientY - rect.top],
+      pickSurface: true,
+    });
+    if (hit?.worldPos && hit?.worldNormal) {
+      _secHoverPos    = hit.worldPos.slice();
+      _secHoverNormal = hit.worldNormal.slice();
+      _updateSectionIndicator(_secHoverPos, _secHoverNormal);
+    } else {
+      _hideSectionIndicator();
+    }
+  });
+
+  // Clique na superfície: aplica o corte apenas se nenhum corte existe ainda.
+  // Com corte ativo o usuário usa o gizmo para ajustar; para reposicionar clica em Limpar.
+  cvs.addEventListener("click", e => {
+    if (activeTool !== "section" || sectionActive || !_secHoverPos) return;
+    _applySectionAtHover();
+    cvs.style.cursor = "crosshair";
+  });
+}
+
+// ── Orbit durante medição ─────────────────────────────────────────────────────
+// O DistanceMeasurementsMouseControl captura mousedown/mouseup e bloqueia o
+// CameraControl ao orbitar. Detectamos drag (>8 px) em fase de captura e
+// desativamos temporariamente o distCtrl para que o orbit funcione normalmente.
+// O distCtrl é reativado no próximo frame após o pointerup, evitando que o
+// mouseup do mesmo gesto coloque um ponto de medição indesejado.
+{
+  let _mDrag = false, _mX0 = 0, _mY0 = 0;
+  const DRAG_PX = 8;
+
+  cvs.addEventListener("pointerdown", e => {
+    if (activeTool !== "measure" || e.button !== 0) return;
+    _mDrag = false;
+    _mX0 = e.clientX;
+    _mY0 = e.clientY;
+  }, true); // capture: dispara antes dos listeners do distCtrl
+
+  cvs.addEventListener("pointermove", e => {
+    if (activeTool !== "measure" || !(e.buttons & 1) || _mDrag) return;
+    if (Math.hypot(e.clientX - _mX0, e.clientY - _mY0) > DRAG_PX) {
+      _mDrag = true;
+      try { distCtrl.deactivate(); } catch(_) {} // bug xeokit: Anchor double-destroy
+    }
+  }, true);
+
+  cvs.addEventListener("pointerup", e => {
+    if (activeTool !== "measure" || e.button !== 0 || !_mDrag) return;
+    _mDrag = false;
+    // rAF garante que o mouseup deste gesto já foi processado antes de reativar
+    requestAnimationFrame(() => { if (activeTool === "measure") distCtrl.activate(); });
+    _scheduleAutoHome();
+  }, true);
+}
 
 // ── BIM 4D ───────────────────────────────────────────────────────────────────
 let d4Acts      = [];       // atividades do Supabase
