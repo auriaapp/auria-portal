@@ -166,17 +166,32 @@ function filterByFloor(storeyId) {
 // ── Filtros por tipo ──────────────────────────────────────────────────────────
 function getActiveTypes() {
   const s = new Set();
+  let outrosActive = false;
   document.querySelectorAll("[data-types]").forEach(inp => {
-    if (inp.checked) inp.dataset.types.split(",").forEach(t => s.add(t.trim()));
+    if (inp.checked) {
+      const types = inp.dataset.types.split(",").map(t => t.trim());
+      if (types.includes("__outros__")) {
+        outrosActive = true;
+      } else {
+        types.forEach(t => s.add(t));
+      }
+    }
   });
+  if (outrosActive) s.add("__outros__");
   return s;
+}
+function isTypeActive(moType, activeSet) {
+  if (activeSet.has(moType)) return true;
+  // "Outros": qualquer tipo que não é IfcBuildingStorey e não é KNOWN_TYPES
+  if (activeSet.has("__outros__") && !KNOWN_TYPES.has(moType) && moType !== "IfcBuildingStorey") return true;
+  return false;
 }
 function applyTypeFilters() {
   const active = getActiveTypes();
   const scope  = floorObjectIds || viewer.scene.objectIds;
   const show   = scope.filter(id => {
     const mo = viewer.metaScene.metaObjects[id];
-    return !mo || active.has(mo.type) || mo.type === "IfcBuildingStorey";
+    return !mo || isTypeActive(mo.type, active) || mo.type === "IfcBuildingStorey";
   });
   viewer.scene.setObjectsVisible(scope, false);
   viewer.scene.setObjectsVisible(show, true);
@@ -185,9 +200,15 @@ function applyTypeFilters() {
 document.querySelectorAll("[data-types]").forEach(i => i.addEventListener("change", applyTypeFilters));
 
 // ── Volume ────────────────────────────────────────────────────────────────────
-const CONCRETE = new Set(["IfcColumn","IfcBeam","IfcSlab","IfcFooting","IfcPile","IfcWall","IfcMember"]);
-const TYPE_LABELS = { IfcColumn:"Pilares", IfcBeam:"Vigas", IfcMember:"Membros",
-  IfcSlab:"Lajes", IfcFooting:"Fundações", IfcPile:"Estacas", IfcWall:"Paredes" };
+const CONCRETE = new Set(["IfcColumn","IfcBeam","IfcSlab","IfcFooting","IfcPile","IfcWall","IfcMember",
+  "IfcStair","IfcStairFlight","IfcRamp","IfcRampFlight","IfcPlate"]);
+const TYPE_LABELS = { IfcColumn:"Pilares", IfcBeam:"Vigas", IfcMember:"Vigas",
+  IfcSlab:"Lajes", IfcFooting:"Fundações", IfcPile:"Estacas", IfcWall:"Paredes",
+  IfcStair:"Escadas", IfcStairFlight:"Escadas", IfcRamp:"Rampas", IfcRampFlight:"Rampas",
+  IfcPlate:"Outros", "__outros__":"Outros" };
+// Tipos "conhecidos" que têm toggle próprio — tudo que não está aqui vai para "Outros"
+const KNOWN_TYPES = new Set(["IfcColumn","IfcBeam","IfcMember","IfcSlab","IfcFooting","IfcPile",
+  "IfcWall","IfcStair","IfcStairFlight","IfcRamp","IfcRampFlight"]);
 
 // ── DEBUG: inspeciona structure do metaobject para diagnóstico de volume ─────
 // Chamadas globais:
@@ -426,7 +447,7 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
   for (const id of elementIds) {
     const mo = viewer.metaScene.metaObjects[id];
     if (!mo || !CONCRETE.has(mo.type)) continue;
-    if (!skipTypeFilter && !active.has(mo.type)) continue;
+    if (!skipTypeFilter && !isTypeActive(mo.type, active)) continue;
     const entity = viewer.scene.objects[id];
     if (!entity?.visible || !entity.aabb) continue;
     const vol = computeEntityVolume(entity, mo);
@@ -526,10 +547,12 @@ function computeVolumeWithOverlaps(elementIds, skipTypeFilter = false) {
 
   for (const el of elems) {
     totalRaw += el.vol;
-    byTypeRaw[el.mo.type] = (byTypeRaw[el.mo.type] || 0) + el.vol;   // bruto por tipo
+    // Agrupa tipos sem toggle próprio em "Outros"
+    const typeKey = KNOWN_TYPES.has(el.mo.type) ? el.mo.type : "__outros__";
+    byTypeRaw[typeKey] = (byTypeRaw[typeKey] || 0) + el.vol;   // bruto por tipo
     const ded    = deductions[el.id] || 0;
     const adjVol = Math.max(0, el.vol - ded);
-    byType[el.mo.type] = (byType[el.mo.type] || 0) + adjVol;          // líquido por tipo
+    byType[typeKey] = (byType[typeKey] || 0) + adjVol;          // líquido por tipo
     total += adjVol;
     const fck = el.fck || "NC";   // "NC" = não classificado
     byFck[fck]    = (byFck[fck]    || 0) + adjVol;
@@ -1236,30 +1259,22 @@ function showProperties(objectId) {
   const mo = viewer.metaScene.metaObjects[objectId];
   if (!mo) return;
   openPanel("props");
-  // Volume do elemento (só para concreto) — debug: mostra se é IFC ou Mesh
+  // Volume do elemento — preferência: metadata parametrico (Auria_Quantities)
   const entity = viewer.scene.objects[objectId];
-  let vol = 0, volSource = "—";
-  if (entity && CONCRETE.has(mo.type)) {
-    const ifcVol = getIfcVolume(mo);
-    if (ifcVol != null) {
-      vol = ifcVol;
-      volSource = "IFC";
-    } else {
-      vol = _computeMeshVolume(entity);
-      volSource = "Mesh";
-    }
-  }
+  const vol = entity ? computeEntityVolume(entity, mo) : 0;
   const fck = getFck(mo);
   let html = `<div class="prop-group">
     <div class="prop-group-title">Elemento</div>
     <div class="prop-row"><span class="prop-label">Nome</span><span class="prop-value">${mo.name||objectId}</span></div>
     <div class="prop-row"><span class="prop-label">Tipo</span><span class="prop-value">${mo.type||"—"}</span></div>
-    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume (${volSource})</span><span class="prop-value highlight">${vol.toFixed(2)} m³</span></div>` : ""}
+    ${vol > 0 ? `<div class="prop-row"><span class="prop-label">Volume</span><span class="prop-value highlight">${vol.toFixed(2)} m³</span></div>` : ""}
     ${fck  ? `<div class="prop-row"><span class="prop-label">Resistência</span><span class="prop-value highlight">C${fck} MPa</span></div>` : ""}
     <div class="prop-row"><span class="prop-label">GUID</span><span class="prop-value" style="font-size:10px;color:#475569">${objectId}</span></div>
   </div>`;
   for (const ps of (mo.propertySets || [])) {
     if (!ps?.properties?.length) continue;
+    // Auria_Quantities já é mostrado no header como "Volume" — não duplicar
+    if (ps.name === "Auria_Quantities") continue;
     const rowsHtml = ps.properties.map(p => {
       const raw = typeof p.value === "object" ? p.value?.value : p.value;
       const val = fmtVal(p.name, raw);
@@ -1574,7 +1589,7 @@ function calcRegionVolume() {
 
   for (const id of scope) {
     const mo = viewer.metaScene.metaObjects[id];
-    if (!mo || !CONCRETE.has(mo.type) || !active.has(mo.type)) continue;
+    if (!mo || !CONCRETE.has(mo.type) || !isTypeActive(mo.type, active)) continue;
     const entity = viewer.scene.objects[id];
     if (!entity?.visible || !entity.aabb) continue;
     const aabb = entity.aabb;
