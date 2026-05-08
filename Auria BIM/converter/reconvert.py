@@ -58,10 +58,9 @@ r2 = boto3.client("s3", endpoint_url=R2_ENDPOINT,
 from auria_uploader import generate_metadata, extract_floors, patch_loaders_gl
 
 # ── 1. Metadata (sem calculo de volume - rapido) ──────────────────────────────
-print("\n[1/5] Gerando metadata...")
+print("\n[1/5] Gerando metadata + volumes parametricos...")
 model    = ifcopenshell.open(str(IFC_PATH))
-# skip_psets=False mas _volumes vazio = sem calculo de geometria
-metadata = generate_metadata(model, skip_psets=False)
+metadata = generate_metadata(model, skip_psets=False, calc_volumes=True)
 
 out_dir  = SCRIPT_DIR / "output" / PROJECT_ID
 out_dir.mkdir(parents=True, exist_ok=True)
