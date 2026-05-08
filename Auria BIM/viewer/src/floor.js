@@ -1,3 +1,4 @@
+// v2026-05-08-001: Escadas + Outros filters, parametric volume
 import {
   Viewer, XKTLoaderPlugin,
   DistanceMeasurementsPlugin, DistanceMeasurementsMouseControl,
