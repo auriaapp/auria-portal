@@ -89,6 +89,25 @@ tbody tr:hover td{background:#16263a}
 .kc .t{font-size:13px;font-weight:600;margin-bottom:5px}
 .kc .m{font-size:11px;color:#7FB3D3}
 .loading{color:#5A7A9A;padding:30px;text-align:center}
+tbody tr.clickable{cursor:pointer}
+/* modal detalhe apontamento */
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:300;align-items:center;justify-content:center;padding:20px}
+.modal-ov.on{display:flex}
+.modal{background:#16263a;border:1px solid #243447;border-radius:14px;width:640px;max-width:96vw;max-height:90vh;overflow-y:auto;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+.modal-h{padding:18px 22px;border-bottom:1px solid #243447;position:sticky;top:0;background:#16263a;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.modal-h h3{font-size:16px;margin-bottom:6px}
+.modal-h .meta{font-size:12px;color:#9FB4CC;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.modal-x{background:transparent;border:none;color:#7FB3D3;font-size:24px;cursor:pointer;line-height:1}
+.modal-b{padding:18px 22px}
+.sec-t{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#5A7A9A;margin:18px 0 8px}
+.desc{font-size:13px;color:#C4D2E0;line-height:1.55;white-space:pre-wrap}
+.chat{display:flex;flex-direction:column;gap:8px}
+.bub{max-width:82%;padding:9px 13px;border-radius:13px;font-size:13px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.bub .bh{font-size:10px;opacity:.75;margin-bottom:3px}
+.bub.proj{align-self:flex-start;background:#22384f;border-bottom-left-radius:3px}
+.bub.anal{align-self:flex-end;background:#1D4ED8;border-bottom-right-radius:3px}
+.bub.sug{align-self:flex-start;background:#5a3d0b;border:1px solid #E8960A;border-bottom-left-radius:3px}
+.no-msg{color:#5A7A9A;font-size:13px;font-style:italic;padding:6px 0}
 </style>
 </head>
 <body>
@@ -135,12 +154,17 @@ tbody tr:hover td{background:#16263a}
   </div>
 </div>
 
+<!-- Modal de detalhe do apontamento -->
+<div class="modal-ov" id="aptModal" onclick="if(event.target===this)closeApt()">
+  <div class="modal" id="aptModalBox"></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const SUPA_URL='https://sabzccokueowpromwxdg.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
 const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
-let USER=null, EMPS=[], PAGE='emp';
+let USER=null, EMPS=[], PAGE='emp', APT_LIST=[];
 const MESES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
 function showErr(m){const e=document.getElementById('loginErr');e.textContent=m;e.style.display='block';}
@@ -255,8 +279,9 @@ async function loadApontamentos(empNome){
   const prioCor=p=>(p||'').includes('Severa')?'#E74C3C':(p||'').includes('Importante')?'#E67E22':'#F1C40F';
   html+='<table><thead><tr><th>ID</th><th>Título</th><th>Disciplina</th><th>Prioridade</th><th>Status</th><th>Prazo</th></tr></thead><tbody>';
   iss.sort((a,b)=>(b.atrasado?1:0)-(a.atrasado?1:0));
-  iss.forEach(i=>{
-    html+=`<tr><td>${esc(i.id)}</td><td>${esc(i.titulo||'—')}</td><td>${esc(i.disciplina||'—')}</td>
+  APT_LIST=iss;
+  iss.forEach((i,idx)=>{
+    html+=`<tr class="clickable" onclick="verApt(${idx})"><td>${esc(i.id)}</td><td>${esc(i.titulo||'—')}</td><td>${esc(i.disciplina||'—')}</td>
       <td><span class="dot" style="background:${prioCor(i.prioridade)}"></span>${esc((i.prioridade||'').replace(/^[^\w]+/,''))||'—'}</td>
       <td><span class="pill ${stCls(i.status)}">${esc(i.status||'—')}</span></td>
       <td class="${i.atrasado?'atr':''}">${fmtBR(i.prazo_min)||'—'}${i.atrasado?' ⚠':''}</td></tr>`;
@@ -329,6 +354,49 @@ async function renderKanban(){
   html+='</div>';
   c.innerHTML=html;
 }
+
+function verApt(idx){
+  const i=APT_LIST[idx]; if(!i)return;
+  const stCls=s=>s==='Resolvido'?'st-resolvido':s==='Em análise'?'st-analise':'st-aberto';
+  const prioCor=p=>(p||'').includes('Severa')?'#E74C3C':(p||'').includes('Importante')?'#E67E22':'#F1C40F';
+  const msgs=Array.isArray(i.mensagens)?i.mensagens:[];
+  let chat;
+  if(msgs.length){
+    chat='<div class="chat">'+msgs.map(m=>{
+      const lado=(m.de==='projetista')?'proj':(m.tipo==='sugestao_prazo'?'sug':'anal');
+      const quem=esc(m.nome||m.email||(m.de==='projetista'?'Projetista':'Analista'));
+      let extra='';
+      if(m.tipo==='sugestao_prazo'&&m.prazo_sugerido) extra=`<div style="margin-top:5px;font-weight:700">📅 Prazo sugerido: ${esc(m.prazo_sugerido)}</div>`;
+      return `<div class="bub ${lado}"><div class="bh">[${esc(m.data||'')}] ${quem}</div>${esc(m.texto||'')}${extra}</div>`;
+    }).join('')+'</div>';
+  }else{
+    chat='<div class="no-msg">Nenhuma mensagem trocada com o projetista ainda.</div>';
+  }
+  const prazo = i.atrasado
+    ? `<span class="atr">${fmtBR(i.prazo_min)||'—'} ⚠</span>`
+    : (fmtBR(i.prazo_min)||'—');
+  document.getElementById('aptModalBox').innerHTML=`
+    <div class="modal-h">
+      <div>
+        <h3>${esc(i.id)} — ${esc(i.titulo||'Sem título')}</h3>
+        <div class="meta">
+          <span class="pill ${stCls(i.status)}">${esc(i.status||'')}</span>
+          <span><span class="dot" style="background:${prioCor(i.prioridade)}"></span>${esc((i.prioridade||'').replace(/^[^\w]+/,''))||'—'}</span>
+          <span>· ${esc(i.disciplina||'—')}</span>
+          <span>· Prazo: ${prazo}</span>
+        </div>
+      </div>
+      <button class="modal-x" onclick="closeApt()">×</button>
+    </div>
+    <div class="modal-b">
+      ${i.descricao?`<div class="sec-t">Descrição</div><div class="desc">${esc(i.descricao)}</div>`:''}
+      <div class="sec-t">Conversa com o projetista</div>
+      ${chat}
+    </div>`;
+  document.getElementById('aptModal').classList.add('on');
+}
+function closeApt(){document.getElementById('aptModal').classList.remove('on');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeApt();});
 
 // Sessão persistente
 (async()=>{ const {data}=await sb.auth.getSession(); if(data&&data.session){ await afterLogin(data.session.user); } })();
