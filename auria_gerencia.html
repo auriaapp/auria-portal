@@ -1176,15 +1176,21 @@ async function enviarConvite(){
 
   if(error){ showToast('Erro ao gerar convite: '+error.message,'red'); return; }
 
-  // Convida via Supabase Auth (envia e-mail automatico)
-  const { error:invErr } = await sb.auth.admin?.inviteUserByEmail?.(email, {
-    data:{ nome, empresa_id:EMPRESA.id }
+  // Envia o convite por e-mail via Edge Function (gera link + Resend)
+  const redirect = location.href.replace(/auria_gerencia\.html.*$/, 'ativar_conta.html');
+  const { data:fn, error:invErr } = await sb.functions.invoke('invite-analista', {
+    body:{ email, nome, empresa_id:EMPRESA.id, redirect_to:redirect }
   });
 
   closeModal('modalConvite');
   document.getElementById('conviteEmail').value='';
   document.getElementById('conviteNome').value='';
-  showToast('Convite enviado para '+email,'green');
+  if(!invErr && fn && fn.success){
+    showToast('Convite enviado para '+email,'green');
+  } else {
+    const msg = (fn && fn.error) || (invErr && invErr.message) || 'erro desconhecido';
+    showToast('Convite registrado, mas o e-mail falhou: '+msg,'red');
+  }
   await loadAnalistas();
   renderAnalistasPage();
 }
