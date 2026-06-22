@@ -640,6 +640,20 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           <span id="tipoCount" style="font-size:12px;color:var(--green);font-weight:700;margin-left:6px">&#8594; 1 tipo(s)</span>
         </div>
 
+        <!-- Nome do grupo (pav. tipo) -->
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">
+          <span style="font-size:13px;color:var(--text-mid);width:160px;flex-shrink:0">Nome do grupo (tipo):</span>
+          <input id="empTipoGrupo" type="text" value="Pavimentos Tipo" placeholder="Pavimentos Tipo"
+                 style="flex:1;padding:8px 12px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;outline:none">
+        </div>
+
+        <!-- Etapas -->
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+          <span style="font-size:13px;color:var(--text-mid);width:160px;flex-shrink:0">Etapas (vírgula):</span>
+          <input id="empEtapas" type="text" value="Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo"
+                 style="flex:1;padding:8px 12px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;outline:none">
+        </div>
+
         <!-- Checkboxes -->
         <div style="display:flex;gap:24px">
           <div class="check-row">
@@ -1301,6 +1315,8 @@ function resetFormEmp(){
   // Checkboxes
   document.getElementById('chkGaragem').checked = false;
   document.getElementById('chkEdicula').checked = false;
+  const _g=document.getElementById('empTipoGrupo'); if(_g) _g.value='Pavimentos Tipo';
+  const _e=document.getElementById('empEtapas'); if(_e) _e.value='Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo';
   // Logo
   const logoInp = document.getElementById('empLogoInput');
   if(logoInp) logoInp.value = '';
@@ -1321,19 +1337,34 @@ async function criarEmpreendimento(){
   btn.disabled = true; btn.textContent = 'Criando...';
 
   try{
+    // Config completa (espelha a configuração do app desktop)
+    const _grupo  = (document.getElementById('empTipoGrupo')?.value||'').trim() || 'Pavimentos Tipo';
+    const _etapas = (document.getElementById('empEtapas')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const _config = {
+      nome, cidade, estado,
+      tipo_empreendimento: document.getElementById('empTipo')?.value     || 'Residencial',
+      tipologia:           document.getElementById('empTipologia')?.value || 'Vertical',
+      n_pavimentos: _getPav(), tipo_de: _getDe(), tipo_ate: _getAte(),
+      n_tipo: Math.max(0, _getAte()-_getDe()+1),
+      tipo_grupo_nome: _grupo,
+      tem_garagem: document.getElementById('chkGaragem')?.checked || false,
+      tem_edicula: document.getElementById('chkEdicula')?.checked || false,
+      etapas: _etapas.length ? _etapas : ['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo']
+    };
     // 1. Inserir empreendimento e obter o ID
     const { data: empRow, error } = await sb.from('empreendimentos_auria').insert({
       nome, cidade, estado,
       empresa_id:          EMPRESA.id,
       criado_por:          USER.id,
       ativo:               true,
-      tipo_empreendimento: document.getElementById('empTipo')?.value     || 'Residencial',
-      tipologia:           document.getElementById('empTipologia')?.value || 'Vertical',
-      n_pavimentos:        _getPav(),
-      tipo_de:             _getDe(),
-      tipo_ate:            _getAte(),
-      tem_garagem:         document.getElementById('chkGaragem')?.checked || false,
-      tem_edicula:         document.getElementById('chkEdicula')?.checked || false
+      tipo_empreendimento: _config.tipo_empreendimento,
+      tipologia:           _config.tipologia,
+      n_pavimentos:        _config.n_pavimentos,
+      tipo_de:             _config.tipo_de,
+      tipo_ate:            _config.tipo_ate,
+      tem_garagem:         _config.tem_garagem,
+      tem_edicula:         _config.tem_edicula,
+      config:              _config
     }).select('id').single();
     if(error) throw error;
 
