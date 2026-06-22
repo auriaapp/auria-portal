@@ -828,10 +828,20 @@ async function loadMetrics(){
 }
 
 async function loadAnalistas(){
-  let q = sb.from('usuarios_auria').select('*, analista_empreendimento_auria(empreendimento_id, ativo)').eq('role','analista');
+  // Sem embed PostgREST (o relacionamento falha); busca os vínculos à parte.
+  let q = sb.from('usuarios_auria').select('*').eq('role','analista');
   if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
   const { data } = await q;
   ANALISTAS = data || [];
+  if(ANALISTAS.length){
+    const ids = ANALISTAS.map(a=>a.id);
+    const { data: aes } = await sb.from('analista_empreendimento_auria')
+      .select('analista_id, empreendimento_id, ativo')
+      .in('analista_id', ids);
+    const byA = {};
+    (aes||[]).forEach(r=>{ (byA[r.analista_id]=byA[r.analista_id]||[]).push(r); });
+    ANALISTAS.forEach(a=>{ a.analista_empreendimento_auria = byA[a.id] || []; });
+  }
 }
 
 async function refreshData(){
