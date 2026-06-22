@@ -1112,7 +1112,8 @@ function renderAnalistasPage(){
       </div>
       <div class="analista-card-actions">
         <button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button>
-        <button class="btn-sm danger" onclick="revogarAnalista('${a.id}','${esc(a.nome||a.email)}')">Revogar</button>
+        <button class="btn-sm" onclick="renomearAnalista('${a.id}')">Renomear</button>
+        <button class="btn-sm danger" onclick="excluirAnalista('${a.id}')">Excluir</button>
       </div>
     </div>`;
   }).join(''));
@@ -1485,6 +1486,33 @@ async function revogarAnalista(analistaId, nome){
   await sb.from('analista_empreendimento_auria').update({ativo:false}).eq('analista_id',analistaId);
   await sb.from('usuarios_auria').update({ativo:false}).eq('id',analistaId);
   showToast('Acesso revogado','red');
+  await loadAnalistas();
+  renderAnalistasPage();
+}
+
+async function renomearAnalista(id){
+  const a = ANALISTAS.find(x=>String(x.id)===String(id)); if(!a) return;
+  const novo = prompt('Novo nome para '+(a.nome||a.email)+':', a.nome||'');
+  if(novo===null) return;
+  const nm = novo.trim();
+  if(!nm){ showToast('Nome inválido','red'); return; }
+  showToast('Salvando...','');
+  const { data:fn, error } = await sb.functions.invoke('gerenciar-usuario',
+    { body:{ action:'rename', user_id:id, nome:nm } });
+  if(!error && fn && fn.success){ showToast('Nome atualizado — e-mail enviado ao usuário','green'); }
+  else { showToast('Erro: '+((fn&&fn.error)||(error&&error.message)||'falha'),'red'); }
+  await loadAnalistas();
+  renderAnalistasPage();
+}
+
+async function excluirAnalista(id){
+  const a = ANALISTAS.find(x=>String(x.id)===String(id)); if(!a) return;
+  if(!confirm('Excluir definitivamente '+(a.nome||a.email)+'?\n\nIsto remove a conta e todos os acessos. Esta ação não pode ser desfeita.')) return;
+  showToast('Excluindo...','');
+  const { data:fn, error } = await sb.functions.invoke('gerenciar-usuario',
+    { body:{ action:'delete', user_id:id } });
+  if(!error && fn && fn.success){ showToast('Usuário excluído','green'); }
+  else { showToast('Erro: '+((fn&&fn.error)||(error&&error.message)||'falha'),'red'); }
   await loadAnalistas();
   renderAnalistasPage();
 }
