@@ -114,6 +114,16 @@ tbody tr:hover td{background:#F5F9FE}
 .bub.anal{align-self:flex-end;background:#1D4ED8;color:#fff;border-bottom-right-radius:3px}
 .bub.sug{align-self:flex-start;background:#FEF5E7;color:#7a5300;border:1px solid #E8960A;border-bottom-left-radius:3px}
 .no-msg{color:#94A3B8;font-size:13px;font-style:italic;padding:6px 0}
+.prints img{cursor:pointer;transition:transform .1s}
+.prints img:hover{transform:scale(1.03)}
+/* lightbox de print */
+.lightbox{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:400;flex-direction:column}
+.lightbox.on{display:flex}
+.lb-bar{padding:14px 20px}
+.lb-back{background:rgba(255,255,255,.14);color:#fff;border:none;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600}
+.lb-back:hover{background:rgba(255,255,255,.26)}
+.lb-img{flex:1;display:flex;align-items:center;justify-content:center;padding:0 24px 24px;overflow:auto}
+.lb-img img{max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 12px 50px rgba(0,0,0,.55)}
 </style>
 </head>
 <body>
@@ -165,12 +175,18 @@ tbody tr:hover td{background:#F5F9FE}
   <div class="modal" id="aptModalBox"></div>
 </div>
 
+<!-- Visualizador de print (lightbox) -->
+<div class="lightbox" id="imgLightbox">
+  <div class="lb-bar"><button class="lb-back" onclick="fecharPrint()">← Voltar</button></div>
+  <div class="lb-img" onclick="if(event.target===this)fecharPrint()"><img id="lbImg" src="" alt="print"></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const SUPA_URL='https://sabzccokueowpromwxdg.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
 const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
-let USER=null, EMPS=[], PAGE='emp', APT_LIST=[];
+let USER=null, EMPS=[], PAGE='emp', APT_LIST=[], PRINTS=[];
 
 function showErr(m){const e=document.getElementById('loginErr');e.textContent=m;e.style.display='block';}
 function esc(s){return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -364,9 +380,10 @@ function verApt(idx){
   }else{ chat='<div class="no-msg">Nenhuma mensagem trocada com o projetista ainda.</div>'; }
   // Prints / anexos
   const imgs=Array.isArray(i.imagens_json)?i.imagens_json:[];
+  PRINTS=imgs;
   let prints='';
   if(imgs.length){
-    prints='<div class="sec-t">Prints / Anexos</div><div class="prints">'+imgs.map(u=>`<a href="${esc(u)}" target="_blank"><img src="${esc(u)}" alt="print"></a>`).join('')+'</div>';
+    prints='<div class="sec-t">Prints / Anexos</div><div class="prints">'+imgs.map((u,k)=>`<img src="${esc(u)}" alt="print" onclick="abrirPrint(${k})">`).join('')+'</div>';
   }
   const prazo=i.atrasado?`<span class="atr">${fmtBR(i.prazo_min)||'—'} ⚠</span>`:(fmtBR(i.prazo_min)||'—');
   document.getElementById('aptModalBox').innerHTML=`
@@ -391,7 +408,13 @@ function verApt(idx){
   document.getElementById('aptModal').classList.add('on');
 }
 function closeApt(){document.getElementById('aptModal').classList.remove('on');}
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeApt();});
+function abrirPrint(idx){const u=PRINTS[idx];if(!u)return;document.getElementById('lbImg').src=u;document.getElementById('imgLightbox').classList.add('on');}
+function fecharPrint(){document.getElementById('imgLightbox').classList.remove('on');}
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  if(document.getElementById('imgLightbox').classList.contains('on')) fecharPrint();
+  else closeApt();
+});
 
 (async()=>{ const {data}=await sb.auth.getSession(); if(data&&data.session){ await afterLogin(data.session.user); } })();
 </script>
