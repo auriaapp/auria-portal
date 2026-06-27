@@ -270,13 +270,14 @@ async function openEmp(id){
     </div>
     <div id="empView"><div class="loading">Carregando…</div></div>`;
   c.dataset.emp=emp.nome;
+  c.dataset.empid=emp.id;
   empTab('apt');
 }
 function empTab(t){
   document.getElementById('t-apt').classList.toggle('active',t==='apt');
   document.getElementById('t-cro').classList.toggle('active',t==='cro');
-  const emp=document.getElementById('content').dataset.emp;
-  if(t==='apt')loadApontamentos(emp); else loadCronograma(emp);
+  const ds=document.getElementById('content').dataset;
+  if(t==='apt')loadApontamentos(ds.emp); else loadCronograma(ds.empid);
 }
 
 async function loadApontamentos(empNome){
@@ -304,21 +305,57 @@ async function loadApontamentos(empNome){
   v.innerHTML=html;
 }
 
-async function loadCronograma(empNome){
+function _pdA(s){if(!s)return null;var p=String(s).split('-');return new Date(Date.UTC(+p[0],+p[1]-1,+p[2]));}
+function _todayA(){var d=new Date();return new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));}
+function cronStatus(t){
+  const p=t.progresso||0;
+  if(p>=100) return {bg:'#DCFCE7',fg:'#15803D',lbl:'Concluída'};
+  const td=_todayA(), a=_pdA(t.data_inicio), b=_pdA(t.data_fim);
+  if(t.tipo==='marco'){ if(b&&td>b)return{bg:'#FEE2E2',fg:'#B91C1C',lbl:'Atrasada'}; if(b&&td<b)return{bg:'#F1F5F9',fg:'#64748B',lbl:'Futura'}; return{bg:'#DBEAFE',fg:'#1D4ED8',lbl:'No prazo'}; }
+  if(!a||!b) return {bg:'#DBEAFE',fg:'#1D4ED8',lbl:'No prazo'};
+  if(td<a) return {bg:'#F1F5F9',fg:'#64748B',lbl:'Futura'};
+  if(td>b) return {bg:'#FEE2E2',fg:'#B91C1C',lbl:'Atrasada'};
+  return {bg:'#DBEAFE',fg:'#1D4ED8',lbl:'No prazo'};
+}
+function cronResumo(ts){
+  let wsum=0,psum=0,atras=0,concl=0;
+  ts.forEach(t=>{ if(t.tipo==='fase')return;
+    const dur=(t.data_inicio&&t.data_fim)?(Math.round((_pdA(t.data_fim)-_pdA(t.data_inicio))/86400000)+1):1;
+    wsum+=dur; psum+=(t.progresso||0)*dur;
+    if(cronStatus(t).lbl==='Atrasada')atras++; if((t.progresso||0)>=100)concl++; });
+  const leaves=ts.filter(t=>t.tipo!=='fase');
+  return {prog:wsum?psum/wsum:0, atras, concl, total:leaves.length};
+}
+function kpiC(l,val,col){return `<div class="kpi" style="border-left-color:${col}"><div class="v" style="color:${col}">${val}</div><div class="l">${l}</div></div>`;}
+function fmtDT(s){ if(!s)return ''; const d=new Date(s); if(isNaN(d))return esc(String(s)); const p=n=>('0'+n).slice(-2); return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' às '+p(d.getHours())+':'+p(d.getMinutes()); }
+
+async function loadCronograma(empId){
   const v=document.getElementById('empView'); v.innerHTML='<div class="loading">Carregando cronograma…</div>';
-  let data=null;
-  try{ const r=await sb.from('cronogramas').select('*').eq('empreendimento',empNome).maybeSingle(); data=r.data; }catch(e){ data=null; }
-  const tarefas=(data&&data.tarefas)?data.tarefas:[];
+  let tarefas=[];
+  try{ const r=await sb.from('cronograma_auria').select('*').eq('empreendimento_id',empId).order('ordem'); tarefas=r.data||[]; }catch(e){ tarefas=[]; }
   if(!tarefas.length){
-    v.innerHTML='<div class="empty"><div class="emoji">🗓</div><h3>Cronograma ainda não publicado na nuvem</h3><p>Importe o cronograma (MS Project) no app desktop e sincronize.<br>A visualização online aparecerá aqui.</p></div>';
+    v.innerHTML='<div class="empty"><div class="emoji">🗓</div><h3>Cronograma ainda não publicado na nuvem</h3><p>Importe o cronograma (MS Project) no app desktop e publique.<br>A visualização aparecerá aqui.</p></div>';
     return;
   }
-  let html='<div class="tbl-card"><table><thead><tr><th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Avanço</th><th>Tipo</th></tr></thead><tbody>';
+  let logHtml='';
+  try{
+    const lg=await sb.from('cronograma_log_auria').select('*').eq('empreendimento_id',empId).order('quando',{ascending:false}).limit(1);
+    if(lg.data&&lg.data.length){ const L=lg.data[0];
+      logHtml=`<div style="font-size:12px;color:#64748B;margin-bottom:10px">Última ${esc(L.acao||'publicação')}: <b>${esc(L.usuario_nome||L.usuario_email||'—')}</b> em ${fmtDT(L.quando)}</div>`; }
+  }catch(e){}
+  const r=cronResumo(tarefas);
+  let html=logHtml+`<div class="kpis">
+    ${kpiC('Avanço geral',Math.round(r.prog)+'%','#2980B9')}
+    ${kpiC('Concluídas',r.concl+'/'+r.total,'#27AE60')}
+    ${kpiC('Atrasadas',r.atras,r.atras?'#E74C3C':'#27AE60')}</div>`;
+  html+='<div class="tbl-card"><table><thead><tr><th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Avanço</th><th>Status</th><th>Tipo</th></tr></thead><tbody>';
   tarefas.forEach(t=>{
-    const tipo=t.marco?'Marco':(t.resumo?'Fase':'Tarefa');
+    const tipo=t.tipo==='marco'?'Marco':(t.tipo==='fase'?'Fase':'Tarefa');
     const ind=(t.nivel||0)*14;
-    html+=`<tr><td>${esc(t.wbs||'')}</td><td><span style="padding-left:${ind}px;${t.resumo?'font-weight:700':''};${t.marco?'color:#B9770E':''}">${esc(t.nome)}</span></td>
-      <td>${fmtBR(t.inicio)}</td><td>${fmtBR(t.fim)}</td><td>${t.marco?'—':(t.pct||0)+'%'}</td><td>${tipo}</td></tr>`;
+    const st=cronStatus(t);
+    html+=`<tr><td>${esc(t.wbs||'')}</td><td><span style="padding-left:${ind}px;${t.tipo==='fase'?'font-weight:700':''};${t.tipo==='marco'?'color:#B9770E':''}">${esc(t.nome)}</span></td>
+      <td>${fmtBR(t.data_inicio)}</td><td>${fmtBR(t.data_fim)}</td><td>${t.tipo==='marco'?'—':(t.progresso||0)+'%'}</td>
+      <td><span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:${st.bg};color:${st.fg}">${st.lbl}</span></td><td>${tipo}</td></tr>`;
   });
   html+='</tbody></table></div>';
   v.innerHTML=html;

@@ -17,6 +17,11 @@ create table if not exists public.cronograma_auria (
   atualizado_em     timestamptz default now()
 );
 
+-- Estrutura/hierarquia vinda do MS Project (preservada no painel)
+alter table public.cronograma_auria add column if not exists nivel int default 0;
+alter table public.cronograma_auria add column if not exists tipo  text default 'tarefa'; -- tarefa | fase | marco
+alter table public.cronograma_auria add column if not exists wbs   text;
+
 create index if not exists idx_cronograma_emp
   on public.cronograma_auria(empreendimento_id, ordem);
 
@@ -48,3 +53,40 @@ create policy "cron_ana_sel" on public.cronograma_auria for select using (
       and ae.ativo = true
   )
 );
+
+-- ============================================================
+-- LOG de publicações/edições do cronograma (quem e quando)
+-- ============================================================
+create table if not exists public.cronograma_log_auria (
+  id                uuid primary key default gen_random_uuid(),
+  empreendimento_id uuid not null references public.empreendimentos_auria(id) on delete cascade,
+  usuario_nome      text,
+  usuario_email     text,
+  acao              text default 'publicou',  -- publicou | editou
+  quando            timestamptz default now()
+);
+
+create index if not exists idx_cronlog_emp
+  on public.cronograma_log_auria(empreendimento_id, quando desc);
+
+alter table public.cronograma_log_auria enable row level security;
+
+drop policy if exists "cronlog_ger_all" on public.cronograma_log_auria;
+create policy "cronlog_ger_all" on public.cronograma_log_auria for all using (
+  exists (select 1 from public.empreendimentos_auria e
+    where e.id = empreendimento_id and e.empresa_id = public.minha_empresa())
+) with check (
+  exists (select 1 from public.empreendimentos_auria e
+    where e.id = empreendimento_id and e.empresa_id = public.minha_empresa())
+);
+
+drop policy if exists "cronlog_ana" on public.cronograma_log_auria;
+create policy "cronlog_ana" on public.cronograma_log_auria for all using (
+  exists (select 1 from public.analista_empreendimento_auria ae
+    where ae.analista_id = auth.uid() and ae.empreendimento_id = empreendimento_id and ae.ativo = true)
+) with check (
+  exists (select 1 from public.analista_empreendimento_auria ae
+    where ae.analista_id = auth.uid() and ae.empreendimento_id = empreendimento_id and ae.ativo = true)
+);
+
+NOTIFY pgrst, 'reload schema';

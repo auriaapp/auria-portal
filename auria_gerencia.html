@@ -766,7 +766,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   <div class="modal cron-modal" style="border-top:4px solid var(--blue)">
     <button class="modal-close" onclick="closeModal('modalCronograma')">&#215;</button>
     <div class="modal-title" style="font-size:18px">&#128197; Cronograma</div>
-    <div class="modal-sub" id="cronSub" style="margin-bottom:12px">&mdash;</div>
+    <div class="modal-sub" id="cronSub" style="margin-bottom:2px">&mdash;</div>
+    <div id="cronLogLine" style="font-size:12px;color:var(--text-soft);margin-bottom:12px"></div>
     <div class="cron-sum" id="cronResumo"></div>
     <div style="overflow-x:auto">
       <table class="cron-tbl" id="cronTbl">
@@ -1256,7 +1257,9 @@ async function renderCronogramaDetalhe(empId){
        <div style="font-size:12px;color:var(--text-soft)">${r.concl}/${r.total} concluídas
          ${r.atrasadas?`· <b style="color:var(--red)">${r.atrasadas} atrasada(s)</b>`:''}</div>
        <button class="btn-ver" onclick="abrirCronograma('${empId}')">&#9998; Editar</button>
-     </div>`);
+     </div>
+     <div id="cronLogDetalhe" style="font-size:12px;color:var(--text-soft);margin-top:8px"></div>`);
+  cronCarregarLog(empId,'cronLogDetalhe');
 }
 
 async function abrirCronograma(empId){
@@ -1277,6 +1280,27 @@ async function abrirCronograma(empId){
     progresso:t.progresso||0, ordem:t.ordem||0
   }));
   cronRender();
+  cronCarregarLog(empId,'cronLogLine');
+}
+
+function cronFmtDT(s){ if(!s)return ''; var d=new Date(s); if(isNaN(d))return s;
+  var p=function(n){return ('0'+n).slice(-2);};
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' às '+p(d.getHours())+':'+p(d.getMinutes()); }
+async function cronUltimoLog(empId){
+  try{ const r=await sb.from('cronograma_log_auria').select('*')
+      .eq('empreendimento_id',empId).order('quando',{ascending:false}).limit(1);
+    return (r.data&&r.data.length)?r.data[0]:null; }catch(e){ return null; }
+}
+async function cronCarregarLog(empId,elId){
+  const L=await cronUltimoLog(empId); const el=document.getElementById(elId); if(!el)return;
+  el.innerHTML = L
+    ? `Última ${esc(L.acao||'publicação')}: <b>${esc(L.usuario_nome||L.usuario_email||'—')}</b> em ${cronFmtDT(L.quando)}`
+    : 'Cronograma ainda não publicado pelo app desktop.';
+}
+async function cronRegistrarLog(empId,acao){
+  try{ await sb.from('cronograma_log_auria').insert({
+    empreendimento_id:empId, acao:acao,
+    usuario_nome:(USER&&(USER.nome||USER.email))||'', usuario_email:(USER&&USER.email)||'' }); }catch(e){}
 }
 
 function cronRender(){
@@ -1378,8 +1402,10 @@ async function cronSalvar(){
         }));
       }
     }
+    await cronRegistrarLog(CRON_EMP.id,'editou');
     showToast('Cronograma salvo','success');
     cronRender();
+    cronCarregarLog(CRON_EMP.id,'cronLogLine');
     renderCronogramaDetalhe(CRON_EMP.id);
   }catch(err){
     showToast('Erro ao salvar: '+(err.message||err),'error');
