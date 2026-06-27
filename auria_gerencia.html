@@ -215,6 +215,32 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .modal-close{position:absolute;top:16px;right:16px;background:none;border:none;
   font-size:20px;cursor:pointer;color:var(--text-soft)}
 .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+/* ── Cronograma ─────────────────────────────────────────── */
+.cron-modal{width:980px;max-width:97vw;max-height:92vh;overflow:auto;padding:24px}
+.cron-sum{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 16px}
+.cron-sum .s-card{background:var(--gray-light);border-radius:10px;padding:10px 14px;min-width:118px}
+.cron-sum .s-val{font-size:20px;font-weight:800}
+.cron-sum .s-lbl{font-size:11px;color:var(--text-soft)}
+.cron-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.cron-tbl th{text-align:left;color:var(--text-soft);font-weight:600;padding:6px 6px;border-bottom:1px solid var(--gray-border);white-space:nowrap}
+.cron-tbl td{padding:5px 6px;border-bottom:1px solid var(--gray-light);vertical-align:middle}
+.cron-tbl input{border:1px solid var(--gray-border);border-radius:6px;padding:5px 6px;font-size:12.5px;box-sizing:border-box;font-family:inherit}
+.cron-tbl input[type=date]{width:138px}
+.cron-tbl input.cron-prog{width:58px;text-align:center}
+.cron-tbl input.cron-nome{width:100%;min-width:150px}
+.cron-st{font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap}
+.st-ok{background:#DCFCE7;color:#15803D}
+.st-run{background:#DBEAFE;color:#1D4ED8}
+.st-late{background:#FEE2E2;color:#B91C1C}
+.st-idle{background:#F1F5F9;color:#64748B}
+.gantt-track{position:relative;height:14px;background:var(--gray-light);border-radius:7px;min-width:130px}
+.gantt-bar{position:absolute;top:0;height:14px;background:var(--blue-mid);border-radius:7px;overflow:hidden}
+.gantt-fill{height:100%;background:var(--blue);border-radius:7px 0 0 7px}
+.cron-del{background:none;border:none;color:var(--red);cursor:pointer;font-size:15px;line-height:1}
+.cron-prog-cell{display:flex;align-items:center;gap:6px}
+.cron-mini-bar{height:14px;border-radius:7px;overflow:hidden;background:var(--gray-light);flex:1;min-width:60px}
+.cron-mini-fill{height:100%;background:var(--blue)}
+.cron-detalhe-resumo{display:flex;align-items:center;gap:14px;margin-top:6px;flex-wrap:wrap}
 .btn-secondary{background:var(--gray-light);border:1px solid var(--gray-border);color:var(--text-mid);
   border-radius:9px;padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer}
 .btn-danger{background:var(--red);color:#fff;border:none;border-radius:9px;
@@ -436,6 +462,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           <div class="detalhe-header" id="detalheHeader"></div>
           <div class="detalhe-kpi" id="detalheKpi"></div>
           <div class="detalhe-section" id="detalheDisciplinas"></div>
+          <div class="detalhe-section" id="detalheCronograma"></div>
           <div class="detalhe-section" id="detalheAnalistas"></div>
         </div>
 
@@ -734,6 +761,43 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- CRONOGRAMA -->
+<div class="modal-bg" id="modalCronograma">
+  <div class="modal cron-modal" style="border-top:4px solid var(--blue)">
+    <button class="modal-close" onclick="closeModal('modalCronograma')">&#215;</button>
+    <div class="modal-title" style="font-size:18px">&#128197; Cronograma</div>
+    <div class="modal-sub" id="cronSub" style="margin-bottom:12px">&mdash;</div>
+    <div class="cron-sum" id="cronResumo"></div>
+    <div style="overflow-x:auto">
+      <table class="cron-tbl" id="cronTbl">
+        <thead>
+          <tr>
+            <th style="width:26%">Tarefa / Etapa</th>
+            <th>Início</th>
+            <th>Fim</th>
+            <th title="Dias">Dur.</th>
+            <th>Avanço</th>
+            <th title="Avanço esperado pela data">Planejado</th>
+            <th>Status</th>
+            <th style="min-width:140px">Linha do tempo</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="cronBody"></tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px">
+      <button class="btn-secondary" onclick="cronAddTarefa()">+ Adicionar tarefa</button>
+      <button class="btn-secondary" id="cronSeedBtn" onclick="cronSeedEtapas()"
+              style="display:none">&#9889; Gerar a partir das etapas</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalCronograma')">Fechar</button>
+      <button class="btn-primary" id="cronSalvarBtn" onclick="cronSalvar()">&#128190; Salvar cronograma</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -1008,6 +1072,7 @@ function buildCard(emp, adminMode=false){
       <div class="card-footer-btns">
         ${adminMode ? `<button class="btn-ver" onclick="abrirDeleteEmp('${emp.id}')"
           style="border-color:var(--red);color:var(--red);margin-right:auto">&#128465; Excluir</button>` : ''}
+        <button class="btn-ver" onclick="abrirCronograma('${emp.id}')">&#128197; Cronograma</button>
         <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
       </div>
     </div>
@@ -1099,6 +1164,228 @@ async function verDetalhe(empId){
       Baseado nos ultimos dados recebidos do app Auria
     </div>
   `);
+
+  renderCronogramaDetalhe(emp.id);
+}
+
+// ═══════════════════════════════════════════════════════
+// CRONOGRAMA (por empreendimento — online, editável)
+// ═══════════════════════════════════════════════════════
+let CRON_EMP   = null;   // empreendimento atual no editor
+let CRON_TAREFAS = [];   // tarefas em edição
+let CRON_REMOVIDAS = []; // ids removidos (para deletar no salvar)
+
+function _hoje0(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function _parseD(s){ if(!s) return null; const d=new Date(s+'T00:00:00'); return isNaN(d)?null:d; }
+function _dias(a,b){ return Math.round((b-a)/86400000); }
+function _fmtPct(n){ return Math.round(n)+'%'; }
+
+function cronCalc(t){
+  // Retorna {dur, planejado, status, cls}
+  const ini=_parseD(t.data_inicio), fim=_parseD(t.data_fim), hoje=_hoje0();
+  const prog=Math.max(0,Math.min(100,Number(t.progresso)||0));
+  let dur=0, plan=0;
+  if(ini&&fim){
+    dur=Math.max(1,_dias(ini,fim)+1);
+    if(hoje<=ini) plan=0;
+    else if(hoje>=fim) plan=100;
+    else plan=Math.round(_dias(ini,hoje)/Math.max(1,_dias(ini,fim))*100);
+  }
+  let status='Não iniciada', cls='st-idle';
+  if(prog>=100){ status='Concluída'; cls='st-ok'; }
+  else if(fim&&hoje>fim){ status='Atrasada'; cls='st-late'; }
+  else if(ini&&hoje>=ini){ status='Em andamento'; cls='st-run'; }
+  return {dur,plan,status,cls,prog,ini,fim};
+}
+
+function cronResumoCalc(tarefas){
+  let somaDur=0, somaProg=0, somaPlan=0, atrasadas=0, concl=0;
+  let minIni=null, maxFim=null;
+  tarefas.forEach(t=>{
+    const c=cronCalc(t);
+    const w=c.dur||1;
+    somaDur+=w; somaProg+=c.prog*w; somaPlan+=c.plan*w;
+    if(c.status==='Atrasada') atrasadas++;
+    if(c.prog>=100) concl++;
+    if(c.ini&&(!minIni||c.ini<minIni)) minIni=c.ini;
+    if(c.fim&&(!maxFim||c.fim>maxFim)) maxFim=c.fim;
+  });
+  const prog = somaDur? somaProg/somaDur : 0;
+  const plan = somaDur? somaPlan/somaDur : 0;
+  return {prog,plan,atrasadas,concl,total:tarefas.length,minIni,maxFim};
+}
+
+async function renderCronogramaDetalhe(empId){
+  setHTML('detalheCronograma',
+    `<div class="detalhe-section-title">Cronograma</div>
+     <div style="color:var(--text-soft);font-size:12px">Carregando…</div>`);
+  const { data, error } = await sb.from('cronograma_auria')
+    .select('*').eq('empreendimento_id', empId).order('ordem');
+  if(error){
+    setHTML('detalheCronograma',
+      `<div class="detalhe-section-title">Cronograma</div>
+       <div style="color:var(--red);font-size:12px">Erro ao carregar (rode supabase_cronograma.sql). </div>`);
+    return;
+  }
+  const tarefas = data||[];
+  if(!tarefas.length){
+    setHTML('detalheCronograma',
+      `<div class="detalhe-section-title">Cronograma</div>
+       <div class="cron-detalhe-resumo">
+         <span style="color:var(--text-soft);font-size:13px">Nenhuma tarefa definida.</span>
+         <button class="btn-ver" onclick="abrirCronograma('${empId}')">&#128197; Criar cronograma</button>
+       </div>`);
+    return;
+  }
+  const r=cronResumoCalc(tarefas);
+  const corPlan = r.prog+1 < r.plan ? 'var(--red)' : 'var(--green)';
+  setHTML('detalheCronograma',
+    `<div class="detalhe-section-title">Cronograma</div>
+     <div class="cron-detalhe-resumo">
+       <div style="flex:1;min-width:180px">
+         <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+           <span>Avanço geral</span><span style="font-weight:800;color:var(--blue)">${_fmtPct(r.prog)}</span>
+         </div>
+         <div style="height:10px;background:var(--gray-border);border-radius:10px;overflow:hidden">
+           <div style="height:100%;width:${Math.round(r.prog)}%;background:linear-gradient(90deg,var(--blue),#60A5FA)"></div>
+         </div>
+       </div>
+       <div style="font-size:12px;color:var(--text-soft)">
+         Planejado: <b style="color:${corPlan}">${_fmtPct(r.plan)}</b>
+       </div>
+       <div style="font-size:12px;color:var(--text-soft)">${r.concl}/${r.total} concluídas
+         ${r.atrasadas?`· <b style="color:var(--red)">${r.atrasadas} atrasada(s)</b>`:''}</div>
+       <button class="btn-ver" onclick="abrirCronograma('${empId}')">&#9998; Editar</button>
+     </div>`);
+}
+
+async function abrirCronograma(empId){
+  const emp = EMPS.find(e=>e.id===empId);
+  if(!emp){ showToast('Empreendimento não encontrado','error'); return; }
+  CRON_EMP = emp; CRON_REMOVIDAS = [];
+  document.getElementById('cronSub').textContent = emp.nome;
+  document.getElementById('modalCronograma').classList.add('open');
+  setHTML('cronBody','<tr><td colspan="9" style="color:var(--text-soft)">Carregando…</td></tr>');
+  const { data, error } = await sb.from('cronograma_auria')
+    .select('*').eq('empreendimento_id', empId).order('ordem');
+  if(error){
+    setHTML('cronBody','<tr><td colspan="9" style="color:var(--red)">Erro: rode supabase_cronograma.sql no Supabase.</td></tr>');
+    return;
+  }
+  CRON_TAREFAS = (data||[]).map(t=>({
+    id:t.id, nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'',
+    progresso:t.progresso||0, ordem:t.ordem||0
+  }));
+  cronRender();
+}
+
+function cronRender(){
+  const seedBtn = document.getElementById('cronSeedBtn');
+  if(seedBtn) seedBtn.style.display = CRON_TAREFAS.length ? 'none' : 'inline-block';
+  const r = cronResumoCalc(CRON_TAREFAS);
+  const corPlan = r.prog+1 < r.plan ? 'var(--red)' : 'var(--green)';
+  setHTML('cronResumo',
+    `<div class="s-card"><div class="s-val" style="color:var(--blue)">${_fmtPct(r.prog)}</div><div class="s-lbl">Avanço geral</div></div>
+     <div class="s-card"><div class="s-val" style="color:${corPlan}">${_fmtPct(r.plan)}</div><div class="s-lbl">Planejado (data)</div></div>
+     <div class="s-card"><div class="s-val">${r.concl}/${r.total}</div><div class="s-lbl">Concluídas</div></div>
+     <div class="s-card"><div class="s-val" style="color:${r.atrasadas?'var(--red)':'var(--green)'}">${r.atrasadas}</div><div class="s-lbl">Atrasadas</div></div>`);
+
+  const proj0 = r.minIni, proj1 = r.maxFim;
+  const projSpan = (proj0&&proj1)? Math.max(1,_dias(proj0,proj1)) : 0;
+  if(!CRON_TAREFAS.length){
+    setHTML('cronBody','<tr><td colspan="9" style="color:var(--text-soft)">Nenhuma tarefa. Adicione abaixo ou gere a partir das etapas.</td></tr>');
+    return;
+  }
+  setHTML('cronBody', CRON_TAREFAS.map((t,i)=>{
+    const c=cronCalc(t);
+    // Posição da barra Gantt
+    let gleft=0, gwidth=100;
+    if(c.ini&&c.fim&&projSpan){
+      gleft = _dias(proj0,c.ini)/projSpan*100;
+      gwidth = Math.max(3,(_dias(c.ini,c.fim)+1)/projSpan*100);
+    }
+    return `<tr>
+      <td><input class="cron-nome" value="${esc(t.nome)}" oninput="cronEdit(${i},'nome',this.value)"></td>
+      <td><input type="date" value="${t.data_inicio||''}" onchange="cronEdit(${i},'data_inicio',this.value)"></td>
+      <td><input type="date" value="${t.data_fim||''}" onchange="cronEdit(${i},'data_fim',this.value)"></td>
+      <td style="text-align:center;color:var(--text-soft)">${c.dur||'—'}</td>
+      <td><div class="cron-prog-cell">
+        <input class="cron-prog" type="number" min="0" max="100" value="${c.prog}" onchange="cronEdit(${i},'progresso',this.value)">
+        <span style="color:var(--text-soft)">%</span></div></td>
+      <td style="color:var(--text-soft)">${(t.data_inicio&&t.data_fim)?_fmtPct(c.plan):'—'}</td>
+      <td><span class="cron-st ${c.cls}">${c.status}</span></td>
+      <td><div class="gantt-track">
+        <div class="gantt-bar" style="left:${gleft}%;width:${gwidth}%">
+          <div class="gantt-fill" style="width:${c.prog}%"></div>
+        </div></div></td>
+      <td><button class="cron-del" title="Remover" onclick="cronRemover(${i})">&#128465;</button></td>
+    </tr>`;
+  }).join(''));
+}
+
+function cronEdit(i,campo,val){
+  if(!CRON_TAREFAS[i]) return;
+  if(campo==='progresso') val=Math.max(0,Math.min(100,parseInt(val)||0));
+  CRON_TAREFAS[i][campo]=val;
+  cronRender();
+}
+function cronAddTarefa(){
+  CRON_TAREFAS.push({nome:'Nova tarefa', data_inicio:'', data_fim:'', progresso:0, ordem:CRON_TAREFAS.length});
+  cronRender();
+}
+function cronRemover(i){
+  const t=CRON_TAREFAS[i];
+  if(t&&t.id) CRON_REMOVIDAS.push(t.id);
+  CRON_TAREFAS.splice(i,1);
+  cronRender();
+}
+function cronSeedEtapas(){
+  const etapas = (CRON_EMP && CRON_EMP.config && Array.isArray(CRON_EMP.config.etapas))
+    ? CRON_EMP.config.etapas : ['Estudo Preliminar','Anteprojeto','Projeto Executivo'];
+  CRON_TAREFAS = etapas.map((e,i)=>({nome:e, data_inicio:'', data_fim:'', progresso:0, ordem:i}));
+  cronRender();
+}
+
+async function cronSalvar(){
+  if(!CRON_EMP) return;
+  const btn=document.getElementById('cronSalvarBtn');
+  btn.disabled=true; const txt=btn.innerHTML; btn.innerHTML='Salvando…';
+  try{
+    // Remoções
+    if(CRON_REMOVIDAS.length){
+      const { error:eDel } = await sb.from('cronograma_auria').delete().in('id', CRON_REMOVIDAS);
+      if(eDel) throw eDel;
+      CRON_REMOVIDAS=[];
+    }
+    // Upserts (mantém id quando existe; ordem = posição)
+    const linhas = CRON_TAREFAS.map((t,i)=>{
+      const o={ empreendimento_id:CRON_EMP.id, nome:(t.nome||'').trim()||'Tarefa',
+        data_inicio:t.data_inicio||null, data_fim:t.data_fim||null,
+        progresso:Math.max(0,Math.min(100,Number(t.progresso)||0)), ordem:i,
+        atualizado_em:new Date().toISOString() };
+      if(t.id) o.id=t.id;
+      return o;
+    });
+    if(linhas.length){
+      const { data, error } = await sb.from('cronograma_auria')
+        .upsert(linhas).select();
+      if(error) throw error;
+      // Atualiza ids nas novas linhas
+      if(data){
+        CRON_TAREFAS = data.sort((a,b)=>a.ordem-b.ordem).map(t=>({
+          id:t.id, nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'',
+          progresso:t.progresso||0, ordem:t.ordem||0
+        }));
+      }
+    }
+    showToast('Cronograma salvo','success');
+    cronRender();
+    renderCronogramaDetalhe(CRON_EMP.id);
+  }catch(err){
+    showToast('Erro ao salvar: '+(err.message||err),'error');
+  }finally{
+    btn.disabled=false; btn.innerHTML=txt;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
