@@ -190,6 +190,8 @@
   .msg-it.sel{background:#EFF6FF;border-left:3px solid var(--blue)}
   .msg-it-tit{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px}
   .msg-it-dot{width:9px;height:9px;border-radius:50%;background:var(--red);flex-shrink:0}
+  .msg-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
+  .tag-apt{background:#DBEAFE;color:#1D4ED8}.tag-th{background:#FEF3C7;color:#92400E}
   .msg-it-sub{font-size:11px;color:var(--text-soft);margin-top:2px}
   .msg-conv{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .msg-conv-h{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px;flex-shrink:0}
@@ -612,28 +614,46 @@ function showMensagens(){
   document.getElementById('topbar-title').textContent='Mensagens';
   renderMsgInbox();
 }
+var MSG_LIST=[];
+function buildMsgList(){
+  MSG_LIST=[];
+  (MINE||[]).forEach(function(a){ var ms=a.mensagens||[]; if(ms.length){ var last=ms[ms.length-1]||{};
+    MSG_LIST.push({type:'apt',id:a.id,titulo:a.id+' — '+(a.titulo||'Sem título'),when:(last.data||''),unread:(last.de==='analista')}); } });
+  (THREADS||[]).forEach(function(t){ MSG_LIST.push({type:'thread',titulo:t.assunto||'(sem assunto)',when:t.atualizado_em||'',unread:(UNREAD[t.id]||0)>0,thread:t}); });
+  MSG_LIST.sort(function(a,b){ return (b.when||'').localeCompare(a.when||''); });
+}
 function renderMsgInbox(){
+  buildMsgList();
   var el=document.getElementById('msg-inbox');
-  if(!THREADS.length){ el.innerHTML='<div class="empty" style="padding:30px">Nenhuma mensagem.</div>'; return; }
-  el.innerHTML=THREADS.map(function(t,i){ var u=UNREAD[t.id]||0;
-    var dt=t.atualizado_em? t.atualizado_em.substring(0,10).split('-').reverse().join('/'):'';
-    return '<div class="msg-it" id="mit-'+i+'" onclick="openThread('+i+')"><div class="msg-it-tit">'+(u?'<span class="msg-it-dot"></span>':'')+escH(t.assunto||'(sem assunto)')+'</div><div class="msg-it-sub">'+escH(dt)+'</div></div>';
+  if(!MSG_LIST.length){ el.innerHTML='<div class="empty" style="padding:30px">Nenhuma mensagem.</div>'; return; }
+  el.innerHTML=MSG_LIST.map(function(it,i){
+    var tag=it.type==='apt'?'<span class="msg-tag tag-apt">Apontamento</span>':'<span class="msg-tag tag-th">Avulsa</span>';
+    return '<div class="msg-it" id="mit-'+i+'" onclick="abrirMsgItem('+i+')"><div class="msg-it-tit">'+(it.unread?'<span class="msg-it-dot"></span>':'')+escH(it.titulo)+'</div><div class="msg-it-sub">'+tag+'</div></div>';
   }).join('');
 }
-function openThread(i){
-  CUR_THREAD=THREADS[i];
+function abrirMsgItem(i){
+  var it=MSG_LIST[i]; if(!it)return;
   document.querySelectorAll('.msg-it').forEach(function(e){e.classList.remove('sel');});
   var el=document.getElementById('mit-'+i); if(el)el.classList.add('sel');
-  document.getElementById('msg-conv-h').textContent=CUR_THREAD.assunto||'(sem assunto)';
+  if(it.type==='apt'){
+    document.getElementById('msg-conv-f').style.display='none';
+    document.getElementById('msg-conv-h').textContent=it.titulo;
+    document.getElementById('msg-conv-b').innerHTML='<div class="empty">Detalhes e conversa do apontamento abertos.</div>';
+    abrirModal(it.id);
+  } else { openThreadObj(it.thread); }
+}
+function openThreadObj(t){
+  CUR_THREAD=t;
+  document.getElementById('msg-conv-h').textContent=t.assunto||'(sem assunto)';
   document.getElementById('msg-conv-b').innerHTML='<div class="loading">Carregando…</div>';
   document.getElementById('msg-conv-f').style.display='flex';
   P_ANEX=[]; renderStgP();
-  _supaGet('mensagens_auria?thread_id=eq.'+CUR_THREAD.id+'&order=criado_em').then(function(msgs){
+  _supaGet('mensagens_auria?thread_id=eq.'+t.id+'&order=criado_em').then(function(msgs){
     renderThread(msgs||[]);
-    if(UNREAD[CUR_THREAD.id]){
-      fetch(SUPA_URL+'/rest/v1/mensagens_auria?thread_id=eq.'+CUR_THREAD.id+'&de=eq.analista&lida_projetista=eq.false',
+    if(UNREAD[t.id]){
+      fetch(SUPA_URL+'/rest/v1/mensagens_auria?thread_id=eq.'+t.id+'&de=eq.analista&lida_projetista=eq.false',
         {method:'PATCH',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
-         body:JSON.stringify({lida_projetista:true})}).then(function(){ UNREAD[CUR_THREAD.id]=0; atualizarBadgeMsg(); var sel=document.getElementById('mit-'+i); renderMsgInbox(); var s2=document.getElementById('mit-'+i); if(s2)s2.classList.add('sel'); });
+         body:JSON.stringify({lida_projetista:true})}).then(function(){ UNREAD[t.id]=0; atualizarBadgeMsg(); });
     }
   });
 }
