@@ -660,7 +660,8 @@ function pEnviar(){
 }
 function fileToThumbP(file,cb){ var img=new Image(),url=URL.createObjectURL(file); img.onload=function(){var max=1000,w=img.width,h=img.height,sc=Math.min(1,max/Math.max(w,h));var c=document.createElement('canvas');c.width=Math.round(w*sc);c.height=Math.round(h*sc);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);cb(c.toDataURL('image/jpeg',0.72));};img.onerror=function(){URL.revokeObjectURL(url);};img.src=url; }
 function renderStgP(){ var el=document.getElementById('p-reply-stg'); if(!el)return; el.innerHTML=P_ANEX.map(function(a,i){return '<div class="th"><img src="'+a.data+'"><button class="x" data-pi="'+i+'">×</button></div>';}).join(''); }
-function anexHtmlP(anexos){ if(!anexos||!anexos.length)return ''; return '<div class="anx">'+anexos.map(function(a){ if(a.tipo==='img')return '<img class="anx-img" src="'+a.data+'" onclick="plight(this.src)">'; if(a.tipo==='prancha')return '<span class="anx-chip">📄 '+escH(a.nome)+'</span>'; if(a.tipo==='apontamento')return '<span class="anx-chip">📌 '+escH(a.id)+'</span>'; return ''; }).join('')+'</div>'; }
+function anexHtmlP(anexos){ if(!anexos||!anexos.length)return ''; return '<div class="anx">'+anexos.map(function(a){ if(a.tipo==='img')return '<img class="anx-img" src="'+a.data+'" onclick="plight(this.src)">'; if(a.tipo==='prancha')return '<span class="anx-chip">📄 '+escH(a.nome)+'</span>'; if(a.tipo==='apontamento')return '<span class="anx-chip anx-apt" data-aptid="'+escH(a.id)+'" title="Abrir apontamento" style="cursor:pointer">📌 '+escH(a.id)+(a.titulo?' — '+escH(a.titulo):'')+' ↗</span>'; return ''; }).join('')+'</div>'; }
+document.addEventListener('click',function(e){ var c=e.target; if(c&&c.classList&&c.classList.contains('anx-apt')){ var id=c.getAttribute('data-aptid'); if(id) abrirAptAnexo(id); } });
 function plight(src){ var lb=document.getElementById('lb'); document.getElementById('lb-img').src=src; lb.classList.add('on'); }
 document.addEventListener('paste',function(e){
   if(document.getElementById('view-msg').style.display!=='block')return;
@@ -867,8 +868,10 @@ function renderTabela(){
 }
 
 // ── Modal ─────────────────────────────────────────────────────
+function findApt(id){ return findApt(id)||ALL.find(x=>x.id===id)||MINE.find(x=>x.id===id); }
+function abrirAptAnexo(id){ if(findApt(id)){ abrirModal(id); } else { alert('Apontamento não encontrado ou sem acesso a este apontamento.'); } }
 function abrirModal(id){
-  const a=TODOS.find(x=>x.id===id);if(!a) return;
+  const a=findApt(id);if(!a) return;
   document.getElementById('modal-titulo').textContent=`📍 ${a.id} — ${a.titulo||'Sem título'}`;
   const atr=isAtrasado(a);
   const logs=(a.log_json||[]).filter(l=>l.tipo!=='sistema');
@@ -985,7 +988,7 @@ async function marcarResolvido(id){
   btn.disabled=true;btn.textContent='Salvando...';
   try {
     const hoje=new Date().toLocaleDateString('pt-BR');
-    const a=TODOS.find(x=>x.id===id);
+    const a=findApt(id);
     const logs=[...(a.log_json||[]),{data:hoje+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
       texto:`Apontamento marcado como Resolvido pelo projetista (${USER.email}).`,tipo:'sistema'}];
     const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
@@ -1014,7 +1017,7 @@ function podEditarMsg(m){
 }
 
 async function editarMsg(idx, issueId){
-  const a = TODOS.find(x=>x.id===issueId); if(!a) return;
+  const a = findApt(issueId); if(!a) return;
   const msg = (a.mensagens||[])[idx]; if(!msg) return;
   const novoTexto = prompt('Editar mensagem:', msg.texto);
   if(novoTexto === null || novoTexto.trim() === '') return;
@@ -1033,7 +1036,7 @@ async function editarMsg(idx, issueId){
 
 async function deletarMsg(idx, issueId){
   if(!confirm('Deletar esta mensagem?')) return;
-  const a = TODOS.find(x=>x.id===issueId); if(!a) return;
+  const a = findApt(issueId); if(!a) return;
   const msgs = (a.mensagens||[]).filter((_,i)=>i!==idx);
   try {
     const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
@@ -1060,7 +1063,7 @@ async function enviarSugestaoPrazo(id){
   const prazoFmt = `${d}/${m}/${y}`;
   const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
     new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const a = TODOS.find(x=>x.id===id); if(!a) return;
+  const a = findApt(id); if(!a) return;
   const msgs = [...(a.mensagens||[]), {
     de: 'projetista',
     tipo: 'sugestao_prazo',
@@ -1088,7 +1091,7 @@ async function enviarSugestaoPrazo(id){
 
 async function enviarCroqui(input, id){
   const file = input.files[0]; if(!file) return;
-  const a = TODOS.find(x=>x.id===id); if(!a) return;
+  const a = findApt(id); if(!a) return;
   // Compress image
   const canvas = document.createElement('canvas');
   const img = new Image();
@@ -1129,7 +1132,7 @@ async function enviarMensagem(id){
   const inp = document.getElementById('chat-inp');
   const texto = inp.value.trim();
   if(!texto) return;
-  const a = TODOS.find(x=>x.id===id);
+  const a = findApt(id);
   if(!a) return;
   const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
     new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
