@@ -132,6 +132,10 @@ tbody tr:hover td{background:#F5F9FE}
 .mc-inbox{width:320px;min-width:280px;border-right:1px solid #E2E8F0;overflow-y:auto}
 .mc-it{padding:12px 14px;border-bottom:1px solid #F1F5F9;cursor:pointer}
 .mc-it:hover{background:#F8FAFC}.mc-it.sel{background:#EFF6FF;border-left:3px solid #3B82F6}
+.emp-group-h{position:sticky;top:0;background:#1E2A3D;color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:7px 14px;z-index:1}
+.mc-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
+.t-ap{background:#DBEAFE;color:#1D4ED8}.t-th{background:#FEF3C7;color:#92400E}
+.mc-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#EF4444;margin-right:5px}
 .mc-it-t{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
 .mc-dot{width:9px;height:9px;border-radius:50%;background:#EF4444;flex-shrink:0}
 .mc-it-s{font-size:11px;color:#94A3B8;margin-top:2px}
@@ -433,8 +437,9 @@ async function renderKanban(){
   c.innerHTML=html;
 }
 
-function verApt(idx){
-  const i=APT_LIST[idx]; if(!i)return;
+function verApt(idx){ verAptObj(APT_LIST[idx]); }
+function verAptObj(i){
+  if(!i)return;
   const msgs=Array.isArray(i.mensagens)?i.mensagens:[];
   let chat;
   if(msgs.length){
@@ -487,12 +492,12 @@ document.addEventListener('keydown',e=>{
 (async()=>{ const {data}=await sb.auth.getSession(); if(data&&data.session){ await afterLogin(data.session.user); } })();
 
 // ── Central de mensagens (analista) ───────────────────────────
-var MC_THREADS=[], MC_CUR=null, MC_ANEX=[];
+var MC_ITEMS=[], MC_CUR=null, MC_ANEX=[];
 function renderMensagens(){
   const c=document.getElementById('content');
   c.innerHTML=`
     <div class="mc-head"><button class="mc-rf" onclick="mcLoad()">↻ Atualizar</button>
-      <span style="color:#94A3B8;font-size:12px">Conversas com projetistas</span></div>
+      <span style="color:#94A3B8;font-size:12px">Conversas por empreendimento (apontamentos + avulsas)</span></div>
     <div class="mc-wrap">
       <div class="mc-inbox" id="mc-inbox"><div class="loading">Carregando…</div></div>
       <div class="mc-conv">
@@ -508,26 +513,46 @@ function renderMensagens(){
   mcLoad();
 }
 async function mcLoad(){
-  const r=await sb.from('threads_auria').select('*').order('atualizado_em',{ascending:false}).limit(200);
-  MC_THREADS=r.data||[];
+  const empMap={}; (EMPS||[]).forEach(e=>empMap[e.id]=e.nome||'');
+  let threads=[], apts=[];
+  try{ const rt=await sb.from('threads_auria').select('*').order('atualizado_em',{ascending:false}).limit(200); threads=rt.data||[]; }catch(e){}
+  try{ const ra=await sb.from('apontamentos').select('id,titulo,empreendimento,mensagens,descricao,prioridade,status,disciplina,prazo_min,conclusao,atrasado,imagens_json').limit(500); apts=(ra.data||[]).filter(a=>Array.isArray(a.mensagens)&&a.mensagens.length); }catch(e){}
+  MC_ITEMS=[];
+  apts.forEach(a=>{ const last=a.mensagens[a.mensagens.length-1]||{}; MC_ITEMS.push({type:'apt',issue:a,titulo:a.id+' — '+(a.titulo||'Sem título'),emp:(a.empreendimento||'Sem empreendimento'),when:(last.data||''),unread:(last.de==='projetista'),sub:''}); });
+  threads.forEach(t=>{ MC_ITEMS.push({type:'thread',thread:t,titulo:t.assunto||'(sem assunto)',emp:(empMap[t.empreendimento_id]||'Sem empreendimento'),when:t.atualizado_em||'',sub:(t.projetista_email||''),unread:false}); });
+  MC_ITEMS.sort((a,b)=>(b.when||'').localeCompare(a.when||''));
   const el=document.getElementById('mc-inbox'); if(!el)return;
-  if(!MC_THREADS.length){ el.innerHTML='<div class="loading">Nenhuma conversa.</div>'; return; }
-  el.innerHTML=MC_THREADS.map((t,i)=>{
-    const dt=t.atualizado_em?t.atualizado_em.substring(0,10).split('-').reverse().join('/'):'';
-    return `<div class="mc-it" id="mci-${i}" onclick="mcOpen(${i})"><div class="mc-it-t">${esc(t.assunto||'(sem assunto)')}</div><div class="mc-it-s">${esc(t.projetista_email||'')} · ${dt}</div></div>`;
+  if(!MC_ITEMS.length){ el.innerHTML='<div class="loading">Nenhuma conversa.</div>'; return; }
+  const groups={}, order=[];
+  MC_ITEMS.forEach((it,i)=>{ const e=it.emp||'Sem empreendimento'; if(!groups[e]){groups[e]=[];order.push(e);} groups[e].push(i); });
+  el.innerHTML=order.map(emp=>{
+    const its=groups[emp].map(i=>{ const it=MC_ITEMS[i];
+      const tag=it.type==='apt'?'<span class="mc-tag t-ap">Apontamento</span>':'<span class="mc-tag t-th">Avulsa</span>';
+      return `<div class="mc-it" id="mci-${i}" onclick="mcOpenItem(${i})"><div class="mc-it-t">${it.unread?'<span class="mc-dot"></span>':''}${esc(it.titulo)}</div><div class="mc-it-s">${tag} ${esc(it.sub||'')}</div></div>`;
+    }).join('');
+    return `<div>${`<div class="emp-group-h">🏢 ${esc(emp)}</div>`}${its}</div>`;
   }).join('');
-  if(MC_CUR){ for(let j=0;j<MC_THREADS.length;j++){ if(MC_THREADS[j].id===MC_CUR.id){ const e=document.getElementById('mci-'+j); if(e)e.classList.add('sel'); break; } } }
+  if(MC_CUR){ for(let j=0;j<MC_ITEMS.length;j++){ const it=MC_ITEMS[j]; if(it.type==='thread'&&it.thread.id===MC_CUR.id){ const e=document.getElementById('mci-'+j); if(e)e.classList.add('sel'); break; } } }
 }
-async function mcOpen(i){
-  MC_CUR=MC_THREADS[i]; MC_ANEX=[]; mcRenderStg();
+function mcOpenItem(i){
+  const it=MC_ITEMS[i]; if(!it)return;
   document.querySelectorAll('.mc-it').forEach(e=>e.classList.remove('sel'));
   const el=document.getElementById('mci-'+i); if(el)el.classList.add('sel');
-  document.getElementById('mc-h').textContent=MC_CUR.assunto||'(sem assunto)';
+  if(it.type==='apt'){
+    document.getElementById('mc-f').style.display='none';
+    document.getElementById('mc-h').textContent=it.titulo;
+    document.getElementById('mc-b').innerHTML='<div style="margin:auto;color:#94A3B8">Detalhes e conversa do apontamento abertos.</div>';
+    verAptObj(it.issue);
+  } else { mcOpenThread(it.thread); }
+}
+async function mcOpenThread(t){
+  MC_CUR=t; MC_ANEX=[]; mcRenderStg();
+  document.getElementById('mc-h').textContent=t.assunto||'(sem assunto)';
   document.getElementById('mc-f').style.display='flex';
   document.getElementById('mc-b').innerHTML='<div class="loading">Carregando…</div>';
-  const r=await sb.from('mensagens_auria').select('*').eq('thread_id',MC_CUR.id).order('criado_em');
+  const r=await sb.from('mensagens_auria').select('*').eq('thread_id',t.id).order('criado_em');
   mcRender(r.data||[]);
-  try{ await sb.from('mensagens_auria').update({lida_analista:true}).eq('thread_id',MC_CUR.id).eq('de','projetista').eq('lida_analista',false); }catch(e){}
+  try{ await sb.from('mensagens_auria').update({lida_analista:true}).eq('thread_id',t.id).eq('de','projetista').eq('lida_analista',false); }catch(e){}
 }
 function mcRender(msgs){
   const b=document.getElementById('mc-b');
