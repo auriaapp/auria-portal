@@ -961,7 +961,11 @@ function abrirModal(id){
                 <div style="padding:8px 12px;border-radius:12px;font-size:13px;
                   background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
                   color:${m.de==='projetista'?'#fff':'#2C3E50'}">
-                  ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${m.texto}</span>`:m.tipo==='croqui'&&m.imagem?`<div>${m.texto}</div><img src="${m.imagem}" style="max-width:200px;border-radius:6px;margin-top:4px">`:m.texto}
+                  ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${m.texto}</span>${m.de==='analista'?`<div style="display:flex;gap:6px;margin-top:8px">
+                      <button onclick="aceitarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#27AE60;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✅ Aceitar</button>
+                      <button onclick="contraproporPrazo('${a.id}',${mIdx})" style="padding:5px 10px;background:#E8960A;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">🔁 Propor outro</button>
+                      <button onclick="recusarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#E74C3C;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">❌ Recusar</button>
+                    </div>`:''}`:m.tipo==='croqui'&&m.imagem?`<div>${m.texto}</div><img src="${m.imagem}" style="max-width:200px;border-radius:6px;margin-top:4px">`:m.tipo==='sistema'?`<i style="opacity:.75">${m.texto}</i>`:m.texto}
                   <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}${m.editado?' (editado)':''}</div>
                 </div>
               </div>
@@ -1115,6 +1119,60 @@ async function enviarSugestaoPrazo(id){
       alert(`✅ Sugestão de prazo enviada: ${prazoFmt}`);
     } else { alert('Erro ao enviar sugestão.'); }
   } catch(e){ alert('Erro de conexão.'); }
+}
+
+// ── Negociação de prazo: projetista responde à sugestão do analista ─────
+function _agoraBR(){
+  return new Date().toLocaleDateString('pt-BR')+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+async function _patchApt(id, payload){
+  return fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{method:'PATCH',
+    headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json','Prefer':'return=minimal'},
+    body:JSON.stringify(payload)});
+}
+async function aceitarPrazoAnalista(id, mIdx){
+  const a=findApt(id); if(!a) return;
+  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
+  const p=m.prazo_sugerido; const parts=a.participantes||{};
+  // Atualiza prazo do participante (projetista logado, se identificado; senão o primeiro)
+  const meu=(USER.email||'').toLowerCase();
+  let alvo=null;
+  for(const d in parts){ const e=(parts[d].emails||'').toLowerCase(); if(e.split(/[,;\s]+/).includes(meu)){ alvo=d; break; } }
+  if(!alvo) alvo=Object.keys(parts)[0]||null;
+  if(alvo){ parts[alvo].prazo=p; }
+  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:`✅ Prazo de ${p} aceito.`,data:_agoraBR()}];
+  try{
+    const r=await _patchApt(id,{mensagens:msgs, prazo_min:p, participantes:parts});
+    if(r.ok){ a.mensagens=msgs; a.participantes=parts; a.prazo_min=p; fecharModal(); abrirModal(id); }
+    else alert('Erro ao aceitar prazo.');
+  }catch(e){ alert('Erro de conexão.'); }
+}
+async function recusarPrazoAnalista(id, mIdx){
+  const a=findApt(id); if(!a) return;
+  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
+  const motivo=prompt('Motivo da recusa (opcional):','')||'';
+  const txt=`❌ Prazo de ${m.prazo_sugerido} recusado`+(motivo?` — ${motivo}`:'.');
+  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:txt,data:_agoraBR()}];
+  try{
+    const r=await _patchApt(id,{mensagens:msgs});
+    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+    else alert('Erro ao recusar.');
+  }catch(e){ alert('Erro de conexão.'); }
+}
+async function contraproporPrazo(id, mIdx){
+  const a=findApt(id); if(!a) return;
+  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
+  const v=prompt('Contraproposta — nova data (dd/mm/aaaa):','');
+  if(!v) return;
+  if(!/^\d{2}\/\d{2}\/\d{4}$/.test(v.trim())){ alert('Formato inválido. Use dd/mm/aaaa.'); return; }
+  const obs=prompt('Justificativa (opcional):','')||'';
+  const txt=`🔁 Contraproposta de prazo: ${v.trim()}`+(obs?` — ${obs}`:'');
+  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sugestao_prazo',nome:USER.nome,email:USER.email,texto:txt,prazo_sugerido:v.trim(),data:_agoraBR()}];
+  try{
+    const r=await _patchApt(id,{mensagens:msgs});
+    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+    else alert('Erro ao enviar contraproposta.');
+  }catch(e){ alert('Erro de conexão.'); }
 }
 
 async function enviarCroqui(input, id){
