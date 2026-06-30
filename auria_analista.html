@@ -236,6 +236,7 @@ tbody tr:hover td{background:#F5F9FE}
       <div class="nav-sec">Trabalho</div>
       <div class="nav-item active" id="nav-emp" onclick="goPage('emp')">🏢 Meus Empreendimentos</div>
       <div class="nav-item" id="nav-msg" onclick="goPage('msg')">✉ Mensagens</div>
+      <div class="nav-item" id="nav-forn" onclick="goPage('forn')">🏢 Fornecedores</div>
       <div class="nav-sec">Pessoal (todos os empreendimentos)</div>
       <div class="nav-item" id="nav-agenda" onclick="goPage('agenda')">📅 Agenda</div>
       <div class="nav-item" id="nav-kanban" onclick="goPage('kanban')">📋 Kanban</div>
@@ -425,10 +426,11 @@ async function loadEmpreendimentos(){
 
 function goPage(p){
   PAGE=p;
-  ['emp','msg','agenda','kanban'].forEach(x=>document.getElementById('nav-'+x).classList.toggle('active',x===p));
-  document.getElementById('pageTitle').textContent={emp:'Meus Empreendimentos',msg:'Mensagens',agenda:'Agenda',kanban:'Kanban'}[p];
+  ['emp','msg','forn','agenda','kanban'].forEach(x=>{var el=document.getElementById('nav-'+x); if(el) el.classList.toggle('active',x===p);});
+  document.getElementById('pageTitle').textContent={emp:'Meus Empreendimentos',msg:'Mensagens',forn:'Fornecedores',agenda:'Agenda',kanban:'Kanban'}[p];
   if(p==='emp')renderHome();
   else if(p==='msg')renderMensagens();
+  else if(p==='forn')renderFornecedoresPage();
   else if(p==='agenda')renderAgenda();
   else if(p==='kanban')renderKanban();
 }
@@ -457,6 +459,7 @@ async function openEmp(id){
       <div class="tab active" id="t-apt" onclick="empTab('apt')">📊 Apontamentos</div>
       <div class="tab" id="t-cro" onclick="empTab('cro')">🗓 Cronograma</div>
       <div class="tab" id="t-ctr" onclick="empTab('ctr')">💼 Contratos & Faturas</div>
+      <div class="tab" id="t-fin" onclick="empTab('fin')">💰 Financeiro</div>
     </div>
     <div id="empView"><div class="loading">Carregando…</div></div>`;
   c.dataset.emp=emp.nome;
@@ -464,11 +467,12 @@ async function openEmp(id){
   empTab('apt');
 }
 function empTab(t){
-  ['apt','cro','ctr'].forEach(x=>{var el=document.getElementById('t-'+x); if(el) el.classList.toggle('active',t===x);});
+  ['apt','cro','ctr','fin'].forEach(x=>{var el=document.getElementById('t-'+x); if(el) el.classList.toggle('active',t===x);});
   const ds=document.getElementById('content').dataset;
   if(t==='apt')loadApontamentos(ds.emp);
   else if(t==='cro')loadCronograma(ds.empid);
   else if(t==='ctr')loadContratos(ds.empid);
+  else if(t==='fin')loadFinanceiro(ds.empid);
 }
 
 async function loadApontamentos(empNome){
@@ -647,6 +651,182 @@ document.addEventListener('keydown',e=>{
 });
 
 (async()=>{ const {data}=await sb.auth.getSession(); if(data&&data.session){ await afterLogin(data.session.user); } })();
+
+// ── Painel financeiro consolidado (por empreendimento) ───────
+async function loadFinanceiro(empId){
+  const v=document.getElementById('empView'); v.innerHTML='<div class="loading">Carregando dados financeiros…</div>';
+  let contratos=[], parcelas=[], aditivos=[], eventos=[];
+  try{
+    const rc=await sb.from('contratos_auria').select('*').eq('empreendimento_id',empId);
+    contratos=rc.data||[];
+    if(contratos.length){
+      const ids=contratos.map(c=>c.id);
+      const rp=await sb.from('parcelas_auria').select('*').in('contrato_id',ids); parcelas=rp.data||[];
+      const ra=await sb.from('contrato_aditivos_auria').select('*').in('contrato_id',ids); aditivos=ra.data||[];
+      const parcIds=parcelas.map(p=>p.id);
+      if(parcIds.length){
+        const re_=await sb.from('parcela_eventos_auria').select('*').in('parcela_id',parcIds).order('quando',{ascending:false}).limit(20);
+        eventos=re_.data||[];
+      }
+    }
+  }catch(e){ console.error(e); }
+  renderFinanceiro(contratos,parcelas,aditivos,eventos);
+}
+
+function renderFinanceiro(contratos, parcelas, aditivos, eventos){
+  const v=document.getElementById('empView');
+  if(!contratos.length){
+    v.innerHTML='<div class="empty" style="background:#fff;padding:50px;border-radius:12px;text-align:center"><div style="font-size:36px">💰</div><h3 style="margin-top:8px">Sem dados financeiros</h3><p style="color:#94A3B8">Cadastre contratos na aba "Contratos & Faturas" para ver o resumo aqui.</p></div>';
+    return;
+  }
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const somaAdt = aditivos.reduce((s,a)=>s+Number(a.valor_adic||0),0);
+  const totContratado = contratos.reduce((s,c)=>s+Number(c.valor_total||0),0) + somaAdt;
+  const totFaturado = parcelas.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
+  const totPago     = parcelas.filter(p=>p.status==='paga').reduce((s,p)=>s+Number(p.valor||0),0);
+  const totSolicitada = parcelas.filter(p=>p.status==='solicitada').reduce((s,p)=>s+Number(p.valor||0),0);
+  const nSolicitadas  = parcelas.filter(p=>p.status==='solicitada').length;
+  const vencidas = parcelas.filter(p=>!['paga','cancelada','faturada'].includes(p.status) && p.vencimento && new Date(p.vencimento)<hoje);
+  const totVencidas = vencidas.reduce((s,p)=>s+Number(p.valor||0),0);
+  const pctExec = totContratado? (totFaturado/totContratado*100) : 0;
+  const totAFaturar = totContratado - totFaturado;
+  const totAPagar = totFaturado - totPago;
+
+  // por disciplina
+  const porDisc={};
+  contratos.forEach(c=>{
+    const d=c.disciplina||'Sem disciplina';
+    if(!porDisc[d]) porDisc[d]={ctr:0,total:0,faturado:0,parcs:0};
+    porDisc[d].ctr++;
+    porDisc[d].total+=Number(c.valor_total||0);
+    parcelas.filter(p=>p.contrato_id===c.id).forEach(p=>{
+      porDisc[d].parcs++;
+      if(['faturada','paga'].includes(p.status)) porDisc[d].faturado+=Number(p.valor||0);
+    });
+  });
+
+  // por fornecedor (projetista_nome ou email)
+  const porForn={};
+  contratos.forEach(c=>{
+    const k=c.projetista_nome||c.projetista_email||'—';
+    if(!porForn[k]) porForn[k]={total:0,faturado:0,ctr:0};
+    porForn[k].total+=Number(c.valor_total||0);
+    porForn[k].ctr++;
+    parcelas.filter(p=>p.contrato_id===c.id).forEach(p=>{
+      if(['faturada','paga'].includes(p.status)) porForn[k].faturado+=Number(p.valor||0);
+    });
+  });
+  const fornArr=Object.entries(porForn).map(([k,v])=>({nome:k,...v})).sort((a,b)=>b.total-a.total).slice(0,8);
+
+  // próximos vencimentos (30 dias)
+  const em30 = new Date(); em30.setDate(em30.getDate()+30);
+  const proximos = parcelas.filter(p=>!['paga','cancelada','faturada'].includes(p.status) && p.vencimento && new Date(p.vencimento)>=hoje && new Date(p.vencimento)<=em30)
+    .sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
+
+  const _kpi=(l,v,cor)=>`<div style="background:#fff;border-radius:10px;padding:14px 16px;border-top:3px solid ${cor};box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:22px;font-weight:800;color:${cor}">${v}</div><div style="font-size:10px;color:#94A3B8;text-transform:uppercase;letter-spacing:.04em">${l}</div></div>`;
+  const _ctr=fmtBRL;
+  function _ctrNome(c){ return contratos.find(x=>x.id===c)?.projetista_nome||contratos.find(x=>x.id===c)?.projetista_email||'—'; }
+
+  let html=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:14px">
+    ${_kpi('Contratado',_ctr(totContratado),'#3B82F6')}
+    ${_kpi('Faturado',_ctr(totFaturado),'#10B981')}
+    ${_kpi('A faturar',_ctr(totAFaturar),'#E8960A')}
+    ${_kpi('Pago',_ctr(totPago),'#15803D')}
+    ${_kpi('A pagar',_ctr(totAPagar),'#1D4ED8')}
+    ${_kpi('Vencidas',vencidas.length+' · '+_ctr(totVencidas),'#EF4444')}
+    ${_kpi('Solicitações',nSolicitadas+' · '+_ctr(totSolicitada),'#F59E0B')}
+    ${_kpi('% executado',pctExec.toFixed(1)+'%','#2563EB')}
+  </div>
+  <div style="background:#fff;border-radius:12px;padding:16px 18px;margin-top:14px">
+    <div style="font-size:13px;font-weight:800;margin-bottom:8px">📊 Por disciplina</div>
+    <table class="parc-tbl"><thead><tr><th>Disciplina</th><th style="width:60px">Ctr.</th><th>Contratado</th><th>Faturado</th><th>A faturar</th><th style="width:160px">% executado</th></tr></thead><tbody>
+    ${Object.entries(porDisc).sort((a,b)=>b[1].total-a[1].total).map(([d,v])=>{
+      const pct=v.total?(v.faturado/v.total*100):0;
+      const cor=pct>=70?'#10B981':pct>=40?'#F59E0B':'#EF4444';
+      return `<tr><td><b>${esc(d)}</b></td><td>${v.ctr}</td><td>${_ctr(v.total)}</td><td style="color:#10B981">${_ctr(v.faturado)}</td><td style="color:#E8960A">${_ctr(v.total-v.faturado)}</td><td><div style="height:8px;background:#EEF2F7;border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${cor}"></div></div><div style="font-size:10px;color:#94A3B8;margin-top:2px">${pct.toFixed(1)}%</div></td></tr>`;
+    }).join('')}
+    </tbody></table>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px">
+    <div style="background:#fff;border-radius:12px;padding:16px 18px">
+      <div style="font-size:13px;font-weight:800;margin-bottom:8px">🏆 Top fornecedores</div>
+      ${fornArr.length?`<table class="parc-tbl"><thead><tr><th>Projetista</th><th>Ctr.</th><th>Total</th><th>Faturado</th></tr></thead><tbody>
+        ${fornArr.map(f=>`<tr><td><b>${esc(f.nome)}</b></td><td>${f.ctr}</td><td>${_ctr(f.total)}</td><td style="color:#10B981">${_ctr(f.faturado)}</td></tr>`).join('')}
+      </tbody></table>`:'<div style="color:#94A3B8">Sem dados.</div>'}
+    </div>
+    <div style="background:#fff;border-radius:12px;padding:16px 18px">
+      <div style="font-size:13px;font-weight:800;margin-bottom:8px">📅 Próximos vencimentos (30 dias)</div>
+      ${proximos.length?`<table class="parc-tbl"><thead><tr><th>Vencimento</th><th>Projetista</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>
+        ${proximos.slice(0,10).map(p=>`<tr><td>${fmtDate(p.vencimento)}</td><td>${esc(_ctrNome(p.contrato_id))}</td><td>${p.numero} — ${esc((p.descricao||'').substring(0,30))}</td><td>${_ctr(p.valor)}</td></tr>`).join('')}
+      </tbody></table>`:'<div style="color:#94A3B8">Nenhum vencimento nos próximos 30 dias.</div>'}
+    </div>
+  </div>
+  ${vencidas.length?`<div style="background:#fff;border-radius:12px;padding:16px 18px;margin-top:14px;border-left:4px solid #EF4444">
+    <div style="font-size:13px;font-weight:800;margin-bottom:8px;color:#B91C1C">⚠ Parcelas vencidas (${vencidas.length})</div>
+    <table class="parc-tbl"><thead><tr><th>Venceu</th><th>Projetista</th><th>Parcela</th><th>Valor</th><th>Status</th></tr></thead><tbody>
+      ${vencidas.map(p=>`<tr><td style="color:#EF4444"><b>${fmtDate(p.vencimento)}</b></td><td>${esc(_ctrNome(p.contrato_id))}</td><td>${p.numero} — ${esc((p.descricao||'').substring(0,30))}</td><td>${_ctr(p.valor)}</td><td><span class="parc-st ${parcCls(p.status)}">${parcLbl(p.status)}</span></td></tr>`).join('')}
+    </tbody></table>
+  </div>`:''}
+  ${eventos.length?`<div style="background:#fff;border-radius:12px;padding:16px 18px;margin-top:14px">
+    <div style="font-size:13px;font-weight:800;margin-bottom:8px">📜 Últimos eventos (auditoria)</div>
+    <div style="max-height:240px;overflow-y:auto">
+      ${eventos.map(e=>{
+        const lbl={solicitou:'solicitou faturamento',autorizou:'autorizou',recusou:'recusou',faturou:'emitiu NF',paga:'marcou como paga',cancelou:'cancelou'}[e.evento]||e.evento;
+        const cor={solicitou:'#92400E',autorizou:'#1D4ED8',recusou:'#B91C1C',faturou:'#075985',paga:'#15803D',cancelou:'#64748B'}[e.evento]||'#475569';
+        const dt=e.quando?new Date(e.quando).toLocaleString('pt-BR'):'';
+        return `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:12px"><span style="color:#94A3B8;width:140px;flex-shrink:0">${dt}</span><span style="color:${cor};font-weight:700;width:160px;flex-shrink:0">${lbl}</span><span style="flex:1">${esc(e.por_nome||e.por_email||'—')}${e.observacao?(' — '+esc(e.observacao)):''}</span></div>`;
+      }).join('')}
+    </div>
+  </div>`:''}`;
+  v.innerHTML=html;
+}
+
+// ── Fornecedores (pagina propria, painel do analista) ────────
+async function renderFornecedoresPage(){
+  const c=document.getElementById('content');
+  c.innerHTML=`<div class="mc-head" style="margin-bottom:14px">
+    <button class="ctr-btn" onclick="abrirFornecedor()">＋ Novo fornecedor</button>
+    <button class="ctr-btn sec" onclick="renderFornecedoresPage()">↻ Atualizar</button>
+    <span style="color:#94A3B8;font-size:12px">Empresas projetistas e seus profissionais</span>
+  </div><div id="fn-list"><div class="loading">Carregando…</div></div>`;
+  let lista=[];
+  try{
+    const r=await sb.from('fornecedores_auria').select('*,projetistas_auria(*)').order('nome');
+    lista=r.data||[];
+  }catch(e){ lista=[]; }
+  FORNECEDORES=lista; PROJETISTAS=[];
+  lista.forEach(f=>(f.projetistas_auria||[]).forEach(p=>PROJETISTAS.push({...p, fornecedor_nome:f.nome})));
+  const el=document.getElementById('fn-list'); if(!el)return;
+  if(!lista.length){
+    el.innerHTML='<div class="empty" style="background:#fff;padding:40px;border-radius:12px"><div class="emoji">🏢</div><h3 style="margin-top:8px">Nenhum fornecedor</h3><p>Use "+ Novo fornecedor" para cadastrar empresas projetistas.</p></div>';
+    return;
+  }
+  el.innerHTML=lista.map(f=>{
+    const projs=(f.projetistas_auria||[]).filter(p=>p.ativo!==false);
+    const projHtml = projs.length
+      ? `<table class="parc-tbl" style="margin-top:8px"><thead><tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Disciplinas</th><th>RT</th></tr></thead><tbody>${projs.map(p=>{
+          const discs=(p.disciplinas||[]).map(d=>`<span style="background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;margin-right:3px">${esc(d)}</span>`).join('');
+          return `<tr><td>${esc(p.nome||'—')}</td><td>${esc(p.email||'')}</td><td>${esc(p.telefone||'—')}</td><td>${discs||'—'}</td><td>${p.eh_rt?'<span style="background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">RT</span>':'—'}</td></tr>`;
+        }).join('')}</tbody></table>`
+      : '<div style="color:#94A3B8;font-size:12px;margin-top:6px">Nenhum projetista cadastrado.</div>';
+    return `<div style="background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <div style="font-size:15px;font-weight:800">${esc(f.nome)}</div>
+          <div style="font-size:12px;color:#94A3B8;margin-top:2px">${f.cnpj?('CNPJ '+esc(f.cnpj)):''}${f.cnpj&&(f.telefone||f.email_contato)?' · ':''}${esc(f.telefone||'')}${f.telefone&&f.email_contato?' · ':''}${esc(f.email_contato||'')}</div>
+          ${f.observacao?`<div style="font-size:12px;color:#475569;margin-top:6px">${esc(f.observacao)}</div>`:''}
+        </div>
+        <button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" onclick="removerFornecedorPg('${f.id}')">🗑</button>
+      </div>
+      ${projHtml}
+    </div>`;
+  }).join('');
+}
+async function removerFornecedorPg(id){
+  if(!confirm('Remover este fornecedor e todos os seus projetistas?'))return;
+  try{ await sb.from('fornecedores_auria').delete().eq('id',id); renderFornecedoresPage(); }
+  catch(e){ alert('Erro: '+(e.message||e)); }
+}
 
 // ── Contratos & Faturas (analista) ────────────────────────────
 var CTR_EMP_ID=null, CTR_LIST=[], CTR_EDIT=null, CTR_DET=null, CRON_TASKS=[];
