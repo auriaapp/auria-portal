@@ -667,8 +667,8 @@ async function loadContratos(empId){
     CTR_LIST=r.data||[];
   }catch(e){ CTR_LIST=[]; }
   try{
-    const rc=await sb.from('cronograma_auria').select('id,nome,data_fim,tipo').eq('empreendimento_id',empId).order('ordem');
-    CRON_TASKS=rc.data||[];
+    const rc=await sb.from('cronograma_auria').select('*').eq('empreendimento_id',empId);
+    CRON_TASKS=(rc.data||[]).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
   }catch(e){ CRON_TASKS=[]; }
   try{
     const rf=await sb.from('fornecedores_auria').select('*,projetistas_auria(*)').order('nome');
@@ -947,6 +947,7 @@ function renderContratoDet(){
   document.getElementById('ctd-body').innerHTML=h;
 }
 
+function refreshDet(){ if(!CTR_DET)return; var id=CTR_DET.id; CTR_DET=CTR_LIST.find(x=>x.id===id)||null; if(CTR_DET) renderContratoDet(); else fecharContratoDet(); }
 async function addParcela(){
   if(!CTR_DET)return;
   const parcs=CTR_DET.parcelas_auria||[];
@@ -972,12 +973,12 @@ async function salvarParcela(pid){
     const r=await sb.from('parcelas_auria').update(obj).eq('id',pid);
     if(r.error) throw r.error;
     await loadContratos(CTR_EMP_ID);
-    CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet();
+    refreshDet();
   }catch(e){ alert('Erro: '+(e.message||e)); }
 }
 async function removerParcela(pid){
   if(!confirm('Remover esta parcela?'))return;
-  try{ await sb.from('parcelas_auria').delete().eq('id',pid); await loadContratos(CTR_EMP_ID); CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet(); }catch(e){ alert('Erro: '+e.message); }
+  try{ await sb.from('parcelas_auria').delete().eq('id',pid); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 async function _logEvento(pid,evento,obs){
   try{ await sb.from('parcela_eventos_auria').insert({parcela_id:pid,evento:evento,por_email:USER.email,por_nome:USER.nome||USER.email,por_role:'analista',observacao:obs||null}); }catch(e){}
@@ -987,7 +988,7 @@ async function autorizarRecusar(pid,acao){
   const obj=acao==='autorizar'
     ? {status:'autorizada',data_autorizacao:new Date().toISOString(),observacao:obs}
     : {status:'recusada',observacao:obs};
-  try{ await sb.from('parcelas_auria').update(obj).eq('id',pid); await _logEvento(pid,acao==='autorizar'?'autorizou':'recusou',obs); await loadContratos(CTR_EMP_ID); CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet(); }catch(e){ alert('Erro: '+e.message); }
+  try{ await sb.from('parcelas_auria').update(obj).eq('id',pid); await _logEvento(pid,acao==='autorizar'?'autorizou':'recusou',obs); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 function abrirFaturar(pid){
   FATURA_PARC=pid;
@@ -1020,25 +1021,25 @@ async function salvarFaturar(){
     await _logEvento(FATURA_PARC,'faturou', (num?('NF '+num):'')+(obs?(' — '+obs):''));
     fecharFaturar();
     await loadContratos(CTR_EMP_ID);
-    CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet();
+    refreshDet();
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
 }
 
 async function marcarPagar(pid){
   if(!confirm('Marcar parcela como paga?'))return;
-  try{ await sb.from('parcelas_auria').update({status:'paga',data_pagamento:new Date().toISOString()}).eq('id',pid); await _logEvento(pid,'paga'); await loadContratos(CTR_EMP_ID); CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet(); }catch(e){ alert('Erro: '+e.message); }
+  try{ await sb.from('parcelas_auria').update({status:'paga',data_pagamento:new Date().toISOString()}).eq('id',pid); await _logEvento(pid,'paga'); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 async function addAditivo(){
   if(!CTR_DET)return;
   const desc=prompt('Descrição do aditivo:',''); if(desc===null)return;
   const val=prompt('Valor adicional (R$):','0'); if(val===null)return;
   const data=prompt('Data (aaaa-mm-dd):',new Date().toISOString().substring(0,10)); if(data===null)return;
-  try{ await sb.from('contrato_aditivos_auria').insert({contrato_id:CTR_DET.id,descricao:desc,valor_adic:Number(val||0),data:data||null,criado_por:USER.id}); await loadContratos(CTR_EMP_ID); CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet(); }catch(e){ alert('Erro: '+e.message); }
+  try{ await sb.from('contrato_aditivos_auria').insert({contrato_id:CTR_DET.id,descricao:desc,valor_adic:Number(val||0),data:data||null,criado_por:USER.id}); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 async function removerAditivo(id){
   if(!confirm('Remover este aditivo?'))return;
-  try{ await sb.from('contrato_aditivos_auria').delete().eq('id',id); await loadContratos(CTR_EMP_ID); CTR_DET=CTR_LIST.find(x=>x.id===CTR_DET.id); renderContratoDet(); }catch(e){ alert('Erro: '+e.message); }
+  try{ await sb.from('contrato_aditivos_auria').delete().eq('id',id); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 
 // ── Central de mensagens (analista) ───────────────────────────
