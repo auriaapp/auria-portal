@@ -529,9 +529,14 @@ async function carregarApontamentos(){
     });
     await loadMsgData();
     try{
-      const rc=await sb.from('contratos_auria').select('*,parcelas_auria(*)');
-      P_CONTRATOS=rc.data||[]; atualizarBadgeContratos();
-    }catch(e){}
+      P_CONTRATOS=await _supaGet('contratos_auria?select=*');
+      const cids=P_CONTRATOS.map(c=>c.id);
+      if(cids.length){
+        const parcs=await _supaGet('parcelas_auria?contrato_id=in.('+cids.join(',')+')');
+        P_CONTRATOS.forEach(c=>{ c.parcelas_auria=(parcs||[]).filter(p=>p.contrato_id===c.id); });
+      }
+      atualizarBadgeContratos();
+    }catch(e){ console.error('load contratos',e); }
     renderHome();
   } catch(e){
     document.getElementById('home-cards').innerHTML='<div class="empty">Erro ao carregar dados.</div>';
@@ -677,20 +682,29 @@ async function showContratos(){
   document.getElementById('view-ctr').style.display='block';
   document.getElementById('topbar-title').textContent='Contratos & Faturas';
   document.getElementById('ctr-projetista-list').innerHTML='<div class="loading">Carregando contratos…</div>';
-  P_CONTRATOS=[]; let erroMsg='';
+  P_CONTRATOS=[];
   try{
-    // Tenta primeiro só os contratos (sem embed) p/ não falhar por RLS de parcelas
-    const r=await sb.from('contratos_auria').select('*').order('criado_em',{ascending:false});
-    if(r.error){ erroMsg='Erro Supabase (contratos): '+r.error.message; console.error('contratos:',r.error); }
-    else { P_CONTRATOS=(r.data||[]).map(c=>({...c,parcelas_auria:[]}));
-      // Agora busca parcelas de cada contrato
-      for(const c of P_CONTRATOS){
-        try{ const rp=await sb.from('parcelas_auria').select('*').eq('contrato_id',c.id).order('numero'); c.parcelas_auria=rp.data||[]; }catch(e){}
+    // Contratos (RLS filtra pelo e-mail do JWT via policy contr_projetista)
+    P_CONTRATOS=await _supaGet('contratos_auria?select=*&order=criado_em.desc');
+    if(P_CONTRATOS.length){
+      // Nome do empreendimento (se o projetista tiver leitura permitida)
+      const empIds=[...new Set(P_CONTRATOS.map(c=>c.empreendimento_id).filter(Boolean))];
+      let empMap={};
+      if(empIds.length){
+        try{
+          const emps=await _supaGet('empreendimentos_auria?select=id,nome&id=in.('+empIds.join(',')+')');
+          (emps||[]).forEach(e=>{ empMap[e.id]=e.nome||''; });
+        }catch(e){}
       }
+      P_CONTRATOS.forEach(c=>{ c._empNome = empMap[c.empreendimento_id] || 'Empreendimento'; });
+      // Parcelas
+      const cids=P_CONTRATOS.map(c=>c.id);
+      const parcs=await _supaGet('parcelas_auria?contrato_id=in.('+cids.join(',')+')&order=numero.asc');
+      P_CONTRATOS.forEach(c=>{ c.parcelas_auria=(parcs||[]).filter(p=>p.contrato_id===c.id); });
     }
-  }catch(e){ erroMsg='Erro: '+e.message; console.error(e); }
-  if(erroMsg && !P_CONTRATOS.length){
-    document.getElementById('ctr-projetista-list').innerHTML='<div class="empty" style="background:#fff;padding:30px;border-radius:12px"><div style="color:#EF4444;font-weight:700">'+escH(erroMsg)+'</div><div style="font-size:12px;color:#94A3B8;margin-top:8px">Verifique se você está logado com o mesmo e-mail cadastrado no contrato. JWT: '+escH(USER&&USER.email||'')+'</div></div>';
+  }catch(e){
+    console.error('contratos:',e);
+    document.getElementById('ctr-projetista-list').innerHTML='<div class="empty" style="background:#fff;padding:30px;border-radius:12px"><div style="color:#EF4444;font-weight:700">Erro ao carregar contratos: '+escH(e.message||e)+'</div><div style="font-size:12px;color:#94A3B8;margin-top:8px">Verifique se você está logado com o mesmo e-mail cadastrado no contrato. JWT: '+escH(USER&&USER.email||'')+'</div></div>';
     return;
   }
   renderContratosProjetista();
@@ -702,7 +716,14 @@ function renderContratosProjetista(){
     el.innerHTML='<div class="empty" style="background:#fff;padding:40px;border-radius:12px"><div style="font-size:34px">💼</div><h3 style="margin-top:8px">Nenhum contrato</h3><p style="color:#94A3B8">Você ainda não tem contratos cadastrados pela equipe.</p></div>';
     return;
   }
-  el.innerHTML=P_CONTRATOS.map((c,ci)=>{
+  // Agrupa por empreendimento → disciplina
+  const byEmp={}; const empOrder=[];
+  P_CONTRATOS.forEach((c,ci)=>{ c._ci=ci; const e=c._empNome||'Empreendimento';
+    if(!byEmp[e]){ byEmp[e]={}; empOrder.push(e); }
+    const d=c.disciplina||'Sem disciplina';
+    (byEmp[e][d]=byEmp[e][d]||[]).push(c);
+  });
+  function _cardHtml(c){
     const parcs=(c.parcelas_auria||[]).slice().sort((a,b)=>a.numero-b.numero);
     const tot=Number(c.valor_total||0);
     const faturado=parcs.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
@@ -710,8 +731,8 @@ function renderContratosProjetista(){
     return `<div class="pctr-card">
       <div class="pctr-card-h">
         <div>
-          <div class="pctr-nome">${escH(c.disciplina||c.objeto||'Contrato')}${c.numero?(' · '+escH(c.numero)):''}</div>
-          <div class="pctr-sub">${escH(c.objeto||'')}</div>
+          <div class="pctr-nome">${escH(c.objeto||c.disciplina||'Contrato')}${c.numero?(' · '+escH(c.numero)):''}</div>
+          <div class="pctr-sub">${escH(c.disciplina||'')}</div>
         </div>
         ${c.pdf_data?`<a class="pmini" href="${c.pdf_data}" download="${escH(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none">📄 Contrato</a>`:''}
       </div>
@@ -727,7 +748,7 @@ function renderContratosProjetista(){
           ${parcs.length?parcs.map(p=>{
             const podeSolic = p.status==='a_faturar' || p.status==='recusada';
             const acoes = [];
-            if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${ci}')">💵 Solicitar</button>`);
+            if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
             if(p.nf_pdf_data) acoes.push(`<a class="pmini" href="${p.nf_pdf_data}" download="${escH(p.nf_pdf_nome||'NF.pdf')}" style="text-decoration:none">📄 NF</a>`);
             return `<tr>
               <td>${p.numero}</td>
@@ -740,6 +761,27 @@ function renderContratosProjetista(){
           }).join(''):'<tr><td colspan="6" style="text-align:center;color:#94A3B8;padding:14px">Sem parcelas definidas.</td></tr>'}
         </tbody>
       </table>
+    </div>`;
+  }
+  el.innerHTML=empOrder.map(emp=>{
+    const discs=Object.keys(byEmp[emp]).sort();
+    // resumo do empreendimento
+    let tE=0,fE=0,nC=0;
+    discs.forEach(d=>byEmp[emp][d].forEach(c=>{ nC++; tE+=Number(c.valor_total||0);
+      (c.parcelas_auria||[]).filter(p=>['faturada','paga'].includes(p.status)).forEach(p=>fE+=Number(p.valor||0)); }));
+    const secoes=discs.map(d=>{
+      const cards=byEmp[emp][d].map(_cardHtml).join('');
+      return `<div style="margin-top:12px">
+        <div style="font-size:12px;font-weight:800;color:#1D4ED8;background:#EFF6FF;padding:6px 12px;border-radius:6px;letter-spacing:.03em">📐 ${escH(d)} · ${byEmp[emp][d].length} contrato(s)</div>
+        ${cards}
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;background:#1E2A3D;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase">
+        <span>🏢 ${escH(emp)}</span>
+        <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:12px">${nC} contrato(s) · ${pBRL(tE)} · faturado <b style="color:#34D399">${pBRL(fE)}</b></span>
+      </div>
+      ${secoes}
     </div>`;
   }).join('');
 }
@@ -770,10 +812,16 @@ async function enviarSolicitacao(){
     const upd={status:'solicitada', data_solicitacao:new Date().toISOString(),
       observacao:obs||null, atualizado_em:new Date().toISOString()};
     if(pdfData){ upd.nf_pdf_data=pdfData; upd.nf_pdf_nome=pdfNome; }
-    const r=await sb.from('parcelas_auria').update(upd).eq('id',P_SOL_PARC.parcId);
-    if(r.error) throw r.error;
-    try{ await sb.from('parcela_eventos_auria').insert({parcela_id:P_SOL_PARC.parcId,evento:'solicitou',
-      por_email:USER.email, por_nome:USER.nome||USER.email, por_role:'projetista', observacao:obs||null}); }catch(e){}
+    const r=await fetch(SUPA_URL+'/rest/v1/parcelas_auria?id=eq.'+P_SOL_PARC.parcId,
+      {method:'PATCH',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
+       body:JSON.stringify(upd)});
+    if(!r.ok){ const t=await r.text(); throw new Error(t||('HTTP '+r.status)); }
+    try{
+      await fetch(SUPA_URL+'/rest/v1/parcela_eventos_auria',
+        {method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
+         body:JSON.stringify({parcela_id:P_SOL_PARC.parcId,evento:'solicitou',
+           por_email:USER.email, por_nome:USER.nome||USER.email, por_role:'projetista', observacao:obs||null})});
+    }catch(e){}
     fecharSolicitar(); showContratos();
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
