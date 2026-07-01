@@ -2074,11 +2074,35 @@ async function salvarFornecedor(){
       if(p.id){ await sb.from('projetistas_auria').update(linha).eq('id',p.id); }
       else    { await sb.from('projetistas_auria').insert(linha); }
     }
+    // Convites automáticos só para projetistas NOVOS (sem id) — não reconvida na edição
+    const novos=validos.filter(p=>!p.id);
+    let res={enviados:0,existentes:0,falhas:0};
+    if(novos.length){ btn.textContent='Enviando convites…'; res=await _enviarConvitesProjetistas(novos, nome); }
     fecharFornecedor();
-    showToast('Fornecedor salvo.','success');
     renderFornecedoresPage();
+    showToast(_resumoConvites(res, nome, novos.length>0), res.falhas?'error':'success');
   }catch(e){ showToast('Erro: '+(e.message||e),'error'); }
   btn.disabled=false; btn.textContent=t;
+}
+async function _enviarConvitesProjetistas(lista, empresaNome){
+  let enviados=0, existentes=0, falhas=0;
+  for(const p of lista){
+    const email=(p.email||'').trim(); if(!email){ continue; }
+    try{
+      const r=await sb.functions.invoke('invite-projetista',{ body:{ email, nome:p.nome||'', empresa_nome:empresaNome||'' } });
+      if(r.error){ falhas++; console.warn('convite',email,r.error); }
+      else if(r.data && r.data.ja_existia){ existentes++; }
+      else { enviados++; }
+    }catch(e){ falhas++; console.warn('convite',email,e); }
+  }
+  return {enviados, existentes, falhas};
+}
+function _resumoConvites(res, nome, houveConvite){
+  const partes=[];
+  if(res.enviados)   partes.push(res.enviados+' convite(s) enviado(s)');
+  if(res.existentes) partes.push(res.existentes+' já tinha(m) conta');
+  if(res.falhas)     partes.push(res.falhas+' falha(s) no envio');
+  return 'Fornecedor "'+nome+'" salvo.'+(houveConvite&&partes.length?(' '+partes.join(' · ')):'');
 }
 async function removerFornecedor(i){
   const f=FORNECEDORES_LIST[i]; if(!f)return;

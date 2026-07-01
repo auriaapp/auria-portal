@@ -1126,14 +1126,42 @@ async function salvarFornecedor(){
       eh_rt:!!p.eh_rt, ativo:true}));
     const rp=await sb.from('projetistas_auria').insert(linhas);
     if(rp.error) throw rp.error;
+    // Convites automáticos aos projetistas (function ignora quem já tem conta)
+    btn.textContent='Enviando convites…';
+    const res=await _enviarConvitesProjetistas(validos, nome);
     fecharFornecedor();
     // Recarrega listas (mantém o modal de contrato aberto se estava)
     await loadContratos(CTR_EMP_ID);
     if(document.getElementById('contratoModal').classList.contains('on')){
       document.getElementById('ct-projetista').innerHTML=_projOptions();
     }
+    alert(_resumoConvites(res, nome));
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
+}
+
+// Dispara invite-projetista para cada projetista com e-mail. Tolerante a falhas.
+async function _enviarConvitesProjetistas(validos, empresaNome){
+  let enviados=0, existentes=0, falhas=0;
+  for(const p of validos){
+    const email=(p.email||'').trim(); if(!email){ continue; }
+    try{
+      const r=await sb.functions.invoke('invite-projetista',{ body:{ email, nome:p.nome||'', empresa_nome:empresaNome||'' } });
+      if(r.error){ falhas++; console.warn('convite',email,r.error); }
+      else if(r.data && r.data.ja_existia){ existentes++; }
+      else { enviados++; }
+    }catch(e){ falhas++; console.warn('convite',email,e); }
+  }
+  return {enviados, existentes, falhas};
+}
+function _resumoConvites(res, nome){
+  let m='Fornecedor "'+nome+'" salvo.';
+  const partes=[];
+  if(res.enviados)   partes.push(res.enviados+' convite(s) enviado(s)');
+  if(res.existentes) partes.push(res.existentes+' já tinha(m) conta');
+  if(res.falhas)     partes.push(res.falhas+' falha(s) no envio (a function invite-projetista está deployada?)');
+  if(partes.length)  m+='\n'+partes.join(' · ');
+  return m;
 }
 
 // ── Detalhe do contrato: parcelas + aditivos ──────────────────
