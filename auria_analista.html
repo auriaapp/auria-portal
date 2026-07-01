@@ -407,9 +407,27 @@ async function afterLogin(user){
   document.getElementById('app').style.display='grid';
   document.getElementById('hoje').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   await loadEmpreendimentos();
+  await loadSolicitacoes();
   goPage('emp');
 }
 async function doLogout(){await sb.auth.signOut();location.reload();}
+
+var SOLICIT_POR_EMP={};   // { empreendimento_id: qtd de parcelas 'solicitada' }
+async function loadSolicitacoes(){
+  SOLICIT_POR_EMP={};
+  try{
+    // contratos visíveis ao analista (RLS já filtra) → mapa contrato→empreendimento
+    const rc=await sb.from('contratos_auria').select('id,empreendimento_id');
+    const ctrs=rc.data||[]; if(!ctrs.length) return;
+    const map={}; ctrs.forEach(c=>{ map[c.id]=c.empreendimento_id; });
+    const rp=await sb.from('parcelas_auria').select('contrato_id,status').eq('status','solicitada');
+    (rp.data||[]).forEach(p=>{
+      const emp=map[p.contrato_id]; if(!emp) return;
+      SOLICIT_POR_EMP[emp]=(SOLICIT_POR_EMP[emp]||0)+1;
+    });
+  }catch(e){ console.error('solicitacoes',e); }
+}
+function totalSolicitacoes(){ return Object.values(SOLICIT_POR_EMP).reduce((s,n)=>s+n,0); }
 
 async function loadEmpreendimentos(){
   EMPS=[];
@@ -438,16 +456,30 @@ function goPage(p){
 function renderHome(){
   const c=document.getElementById('content');
   if(!EMPS.length){c.innerHTML='<div class="empty"><div class="emoji">🏗️</div><h3>Nenhum empreendimento atribuído</h3><p>Peça ao gestor para liberar seu acesso na Distribuição.</p></div>';return;}
-  c.innerHTML='<div class="grid">'+EMPS.map(e=>{
+  const totS=totalSolicitacoes();
+  const banner = totS>0 ? `<div onclick="abrirPrimeiraSolicitacao()" style="cursor:pointer;background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600">
+    <span style="font-size:18px">💵</span> Você tem <b>${totS}</b> solicitaç${totS>1?'ões':'ão'} de faturamento aguardando autorização. <span style="text-decoration:underline">Ver</span>
+  </div>` : '';
+  c.innerHTML=banner+'<div class="grid">'+EMPS.map(e=>{
     const logo=e.logo_url?`<img src="${esc(e.logo_url)}">`:'<div class="ph">🏢</div>';
     const loc=[e.cidade,e.estado].filter(Boolean).join(' / ');
-    return `<div class="emp-card" onclick="openEmp('${e.id}')">
+    const nS=SOLICIT_POR_EMP[e.id]||0;
+    const badge=nS>0?`<span style="position:absolute;top:10px;right:10px;background:#E8960A;color:#fff;font-size:11px;font-weight:800;padding:3px 9px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:2">💵 ${nS}</span>`:'';
+    return `<div class="emp-card" style="position:relative" onclick="openEmp('${e.id}')">
+      ${badge}
       <div class="emp-logo">${logo}</div>
       <div class="emp-body"><h3>${esc(e.nome)}</h3>
         <div class="loc">${esc(loc)||'—'}</div>
         <div class="tags"><span class="tag">${esc(e.tipo_empreendimento||'Projeto')}</span>${e.n_pavimentos?`<span class="tag">${e.n_pavimentos} pav.</span>`:''}</div>
       </div></div>`;
   }).join('')+'</div>';
+}
+function abrirPrimeiraSolicitacao(){
+  // abre o primeiro empreendimento com solicitação pendente, direto na aba Contratos
+  const empId=Object.keys(SOLICIT_POR_EMP).find(k=>SOLICIT_POR_EMP[k]>0);
+  if(!empId) return;
+  openEmp(empId);
+  setTimeout(()=>{ try{ empTab('ctr'); }catch(e){} }, 60);
 }
 
 async function openEmp(id){
@@ -458,7 +490,7 @@ async function openEmp(id){
     <div class="tabs">
       <div class="tab active" id="t-apt" onclick="empTab('apt')">📊 Apontamentos</div>
       <div class="tab" id="t-cro" onclick="empTab('cro')">🗓 Cronograma</div>
-      <div class="tab" id="t-ctr" onclick="empTab('ctr')">💼 Contratos & Faturas</div>
+      <div class="tab" id="t-ctr" onclick="empTab('ctr')">💼 Contratos & Faturas${(SOLICIT_POR_EMP[emp.id]||0)>0?` <span id="tab-ctr-badge" style="background:#E8960A;color:#fff;font-size:11px;font-weight:800;padding:1px 7px;border-radius:10px;margin-left:2px">${SOLICIT_POR_EMP[emp.id]}</span>`:''}</div>
       <div class="tab" id="t-fin" onclick="empTab('fin')">💰 Financeiro</div>
     </div>
     <div id="empView"><div class="loading">Carregando…</div></div>`;
@@ -856,6 +888,11 @@ async function loadContratos(empId){
     PROJETISTAS=[];
     FORNECEDORES.forEach(f=>(f.projetistas_auria||[]).forEach(p=>PROJETISTAS.push({...p, fornecedor_nome:f.nome})));
   }catch(e){ FORNECEDORES=[]; PROJETISTAS=[]; }
+  // recomputa contagem de solicitações pendentes deste empreendimento (mantém badge fiel)
+  const nS=CTR_LIST.reduce((s,c)=>s+(c.parcelas_auria||[]).filter(p=>p.status==='solicitada').length,0);
+  SOLICIT_POR_EMP[empId]=nS;
+  const tb=document.getElementById('t-ctr');
+  if(tb) tb.innerHTML='💼 Contratos & Faturas'+(nS>0?` <span style="background:#E8960A;color:#fff;font-size:11px;font-weight:800;padding:1px 7px;border-radius:10px;margin-left:2px">${nS}</span>`:'');
   renderContratos();
 }
 function renderContratos(){
@@ -880,7 +917,9 @@ function renderContratos(){
       const faturado=parcs.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
       const pct=tot?Math.round(faturado/tot*100):0;
       const venc=parcs.filter(p=>!['paga','cancelada','faturada'].includes(p.status)&&p.vencimento&&new Date(p.vencimento)<new Date()).length;
-      return `<div class="ctr-card">
+      const nSol=parcs.filter(p=>p.status==='solicitada').length;
+      return `<div class="ctr-card" style="${nSol?'border:1.5px solid #E8960A':''}">
+        ${nSol?`<div style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;margin-bottom:8px">💵 ${nSol} solicitaç${nSol>1?'ões':'ão'} de fatura aguardando você</div>`:''}
         <div class="ctr-nome">${esc(c.objeto||c.numero||'Contrato')}</div>
         <div class="ctr-sub">${esc(c.projetista_nome||c.projetista_email||'—')}${c.numero?(' · '+esc(c.numero)):''}</div>
         <div class="ctr-fin">
@@ -891,7 +930,7 @@ function renderContratos(){
         <div class="ctr-bar"><i style="width:${pct}%"></i></div>
         <div style="font-size:11px;color:#64748B;margin-top:4px">${pct}% faturado · ${parcs.length} parcela(s)${venc?' · <b style="color:#EF4444">'+venc+' vencida(s)</b>':''}</div>
         <div class="ctr-acoes">
-          <button class="mini" onclick="abrirContratoDet(${i})">📋 Parcelas / Aditivos</button>
+          <button class="mini" ${nSol?'style="background:#E8960A;color:#fff;border-color:#E8960A"':''} onclick="abrirContratoDet(${i})">📋 Parcelas / Aditivos${nSol?' ('+nSol+')':''}</button>
           ${c.pdf_data?`<a class="mini" href="${c.pdf_data}" download="${esc(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none">📄 PDF</a>`:''}
         </div>
       </div>`;
