@@ -731,8 +731,23 @@ async function showContratos(){
     document.getElementById('ctr-projetista-list').innerHTML='<div class="empty" style="background:#fff;padding:30px;border-radius:12px"><div style="color:#EF4444;font-weight:700">Erro ao carregar contratos</div><div style="font-size:12px;color:#94A3B8;margin-top:8px">Verifique se você está logado com o mesmo e-mail cadastrado no contrato.</div></div>';
     return;
   }
+  // NFs que eu mesmo enviei (decifradas via RPC; a tabela é cifrada e não
+  // tem RLS de leitura para o projetista, só via nf_minhas()).
+  NF_POR_PARCELA = {};
+  try{
+    const { data: minhasNfs } = await sb.rpc('nf_minhas', {});
+    (minhasNfs||[]).forEach(function(n){ NF_POR_PARCELA[n.parcela_id]=n; });
+  }catch(e){ console.error('nf_minhas:', e); }
   renderContratosProjetista();
   atualizarBadgeContratos();
+}
+var NF_POR_PARCELA = {};
+async function pVerNF(path){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
+    if(error) throw error;
+    window.open(data.signedUrl,'_blank');
+  }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
 }
 function renderContratosProjetista(){
   const el=document.getElementById('ctr-projetista-list');
@@ -771,16 +786,17 @@ function renderContratosProjetista(){
         <tbody>
           ${parcs.length?parcs.map(p=>{
             const podeSolic = p.status==='a_faturar' || p.status==='recusada';
+            const nf = NF_POR_PARCELA[p.id];
             const acoes = [];
             if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
             if(p.status==='autorizada') acoes.push(`<button class="pmini warn" onclick="abrirEnviarNF('${p.id}','${c._ci}')">📤 Enviar NF</button>`);
-            if(p.nf_pdf_data) acoes.push(`<a class="pmini" href="${p.nf_pdf_data}" download="${escH(p.nf_pdf_nome||'NF.pdf')}" style="text-decoration:none">📄 NF</a>`);
+            if(nf&&nf.pdf_path) acoes.push(`<button class="pmini" onclick="pVerNF('${escH(nf.pdf_path)}')">📄 NF</button>`);
             return `<tr>
               <td>${p.numero}</td>
               <td>${escH(p.descricao||'—')}</td>
               <td>${pBRL(p.valor)}</td>
               <td>${pFmtDt(p.vencimento)||'—'}</td>
-              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${p.data_faturamento?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">Fat. ${pFmtDt(p.data_faturamento)}${p.nf_numero?(' · NF '+escH(p.nf_numero)):''}</div>`:''}</td>
+              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${nf?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">${nf.emitida_em?('Fat. '+pFmtDt(nf.emitida_em)):''}${nf.nf_numero?(' · NF '+escH(nf.nf_numero)):''}</div>`:''}</td>
               <td>${acoes.join(' ')}</td>
             </tr>`;
           }).join(''):'<tr><td colspan="6" style="text-align:center;color:#94A3B8;padding:14px">Sem parcelas definidas.</td></tr>'}
