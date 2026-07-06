@@ -447,7 +447,11 @@ tr:hover td{background:var(--gray-light)}
 <script>
 const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
-const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+// Painel exclusivo do CEO: sessão ISOLADA (storageKey próprio) — não
+// compartilha login com o roteador nem com os outros painéis.
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY, {
+  auth: { storageKey: 'sb-auria-ceo-admin' }
+});
 
 let USER = null;
 let _NC  = {};  // new client data
@@ -456,10 +460,12 @@ async function init(){
   const today = new Date();
   document.getElementById('topbarDate').textContent =
     today.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  // Seguranca: CEO panel sempre exige login — nunca usa sessao salva
-  try{ await sb.auth.signOut(); }catch(e){}
-  document.getElementById('loginWrap').style.display = 'flex';
-  document.getElementById('app').style.display = 'none';
+  // Página administrativa exclusiva: login próprio (não passa pelo roteador).
+  // Aceita a sessão isolada se já existir; senão mostra o formulário de login.
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session){ await afterLogin(session.user); }
+  else { document.getElementById('loginWrap').style.display = 'flex';
+         document.getElementById('app').style.display = 'none'; }
 }
 
 async function doLogin(){
@@ -534,6 +540,7 @@ async function loadClientes(){
           <td style="font-size:12px;color:var(--text-soft)">${fmtDate(e.criado_em)}</td>
           <td><span class="badge badge-${e.ativo?'ativo':'inativo'}">${e.ativo?'Ativo':'Inativo'}</span></td>
           <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-sm" onclick="reenviarBoasVindas('${e.id}')" title="Reenviar e-mail de boas-vindas ao gerente">✉ Reenviar</button>
             <button class="btn-sm" onclick="toggleEmpresa('${e.id}',${!e.ativo})">${e.ativo?'Desativar':'Ativar'}</button>
             <button class="btn-sm danger" onclick="deletarEmpresa('${e.id}','${esc(e.nome)}')">Apagar</button>
           </td>
@@ -660,9 +667,11 @@ async function criarCliente(){
 
     // 3. Envia e-mail de boas-vindas via Edge Function
     btn.textContent='Enviando e-mail...';
+    const geMail = _NC.gerEmail;
+    let emailOk = false, emailMsg = '';
     try{
       const { data:{ session } } = await sb.auth.getSession();
-      await fetch(
+      const resp = await fetch(
         'https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',
         {
           method: 'POST',
@@ -679,11 +688,18 @@ async function criarCliente(){
           }),
         }
       );
+      emailOk = resp.ok;                              // fetch NÃO lança em 4xx/5xx: checar resp.ok
+      if(!resp.ok){ emailMsg = ('HTTP '+resp.status+' '+((await resp.text())||'')).slice(0,160); }
     }catch(emailErr){
-      console.warn('E-mail nao enviado:', emailErr);
+      emailMsg = String((emailErr&&emailErr.message)||emailErr);
     }
 
-    showToast('Cliente criado e e-mail de boas-vindas enviado para '+_NC.gerEmail,'green');
+    if(emailOk){
+      showToast('Cliente criado e e-mail de boas-vindas enviado para '+geMail,'green');
+    }else{
+      showToast('⚠️ Cliente criado, MAS o e-mail de boas-vindas FALHOU para '+geMail+'. Reenvie pela lista de clientes. ['+emailMsg+']','red');
+      console.warn('send-welcome-email falhou:', emailMsg);
+    }
     ['ncEmpNome','ncEmpCnpj','ncGerNome','ncGerEmail'].forEach(id=>document.getElementById(id).value='');
     _NC = {};
     stepAvanco(1);
@@ -704,6 +720,15 @@ async function toggleEmpresa(id, novoStatus){
 
 async function deletarEmpresa(id, nome){
   if(!confirm(`⚠️ Tem certeza que deseja APAGAR a empresa "${nome}"?\n\nIsso irá remover permanentemente:\n• Todos os dados da empresa\n• Todos os usuários vinculados\n• Todos os empreendimentos\n\nEsta ação não pode ser desfeita.`)) return;
+
+  // Segurança: exige a senha do CEO antes desta ação destrutiva (re-autenticação).
+  const pw = prompt(`Para confirmar, digite a SENHA da sua conta (${USER&&USER.email||''}):`);
+  if(pw===null) return;                                   // cancelou
+  if(!pw){ showToast('Senha obrigatória para apagar.','red'); return; }
+  try{
+    const { error: reErr } = await sb.auth.signInWithPassword({ email: USER.email, password: pw });
+    if(reErr){ showToast('Senha incorreta. Exclusão cancelada.','red'); return; }
+  }catch(e){ showToast('Não foi possível confirmar a senha.','red'); return; }
 
   try{
     // 1. Busca todos os usuários da empresa
@@ -731,6 +756,25 @@ async function deletarEmpresa(id, nome){
   }catch(e){
     showToast('Erro: '+e.message,'red');
   }
+}
+
+async function reenviarBoasVindas(empresaId){
+  try{
+    const { data: emp } = await sb.from('empresas_auria').select('nome,plano').eq('id',empresaId).maybeSingle();
+    const { data: convs } = await sb.from('convites_auria').select('email').eq('empresa_id',empresaId).eq('role','gerente').limit(1);
+    const conv = (convs&&convs[0])||null;
+    if(!emp || !conv || !conv.email){ showToast('Não encontrei o gerente/convite desta empresa.','red'); return; }
+    const { data:{ session } } = await sb.auth.getSession();
+    const resp = await fetch(
+      'https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',
+      { method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${session.access_token}`, 'apikey':SUPA_KEY },
+        body: JSON.stringify({ gerNome: conv.email.split('@')[0], gerEmail: conv.email, empNome: emp.nome, plano: emp.plano||'basic' }) }
+    );
+    if(resp.ok){ showToast('E-mail de boas-vindas reenviado para '+conv.email,'green'); }
+    else { const t=((await resp.text())||'').slice(0,180);
+           showToast('⚠️ Falha ao reenviar (HTTP '+resp.status+'): '+t,'red'); console.warn('reenviar welcome:',resp.status,t); }
+  }catch(e){ showToast('Erro ao reenviar: '+((e&&e.message)||e),'red'); }
 }
 
 async function fecharChamado(id){

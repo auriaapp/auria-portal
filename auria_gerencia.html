@@ -364,6 +364,28 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .cmodal-b textarea{height:60px;resize:vertical}
 .cmodal-b .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .cmodal-f{padding:12px 18px;border-top:1px solid var(--gray-border);display:flex;justify-content:flex-end;gap:10px}
+/* Financeiro (resumo, somente leitura) */
+.fin-filtros{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.fin-filtros label{display:block;font-size:11px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.fin-filtros input,.fin-filtros select{border:1.5px solid var(--gray-border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none}
+.fin-grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:800px){.fin-grid2{grid-template-columns:1fr}}
+.fin-card{background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:16px 18px}
+.fin-card h3{font-size:13px;color:var(--text);margin-bottom:12px;font-weight:800}
+.fin-bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12px}
+.fin-bar-row .nm{width:38%;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fin-bar-row .bar{flex:1;height:9px;background:var(--gray-light);border-radius:5px;overflow:hidden}
+.fin-bar-row .bar i{display:block;height:100%;background:var(--blue)}
+.fin-bar-row .vl{width:110px;text-align:right;color:var(--text);font-weight:700}
+.fin-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--gray-border);border-radius:12px;overflow:hidden;font-size:12.5px}
+.fin-table thead th{background:var(--gray-light);color:var(--text-mid);text-align:left;padding:10px 12px;font-weight:700;white-space:nowrap}
+.fin-table td{padding:9px 12px;border-top:1px solid var(--gray-border);color:var(--text-mid)}
+.fin-table tr:hover td{background:var(--gray-light)}
+.fin-st{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px}
+.fin-st-enviada{background:#DBEAFE;color:#1D4ED8}.fin-st-recebida{background:#FEF3C7;color:#92400E}
+.fin-st-encaminhada{background:#E0E7FF;color:#4338CA}.fin-st-paga{background:#DCFCE7;color:#166534}
+.fin-st-cancelada{background:#FEE2E2;color:#991B1B}
+.fin-empty{padding:26px;text-align:center;color:var(--text-soft);font-size:13px}
 </style>
 </head>
 <body>
@@ -420,6 +442,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         </a>
         <a class="sb-item" data-page="fornecedores" onclick="goPage('fornecedores')">
           <span class="sb-item-icon">&#127970;</span> Fornecedores
+        </a>
+        <div class="sb-section">Financeiro</div>
+        <a class="sb-item" data-page="financeiro" onclick="goPage('financeiro')">
+          <span class="sb-item-icon">&#128176;</span> Custos &amp; NFs
         </a>
       </nav>
       <div class="sb-user">
@@ -553,6 +579,46 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             Empresas projetistas e seus profissionais (com disciplinas). Acessível a todos os analistas e ao gestor.
           </div>
           <div id="fornList"><div class="loading-spinner"><div class="spinner"></div></div></div>
+        </div>
+
+        <!-- ══ PAGE: FINANCEIRO (resumo, somente leitura) ═══════════════ -->
+        <div class="page" id="pageFinanceiro">
+          <div style="font-size:13px;color:var(--text-soft);margin-bottom:16px">
+            Resumo das notas fiscais recebidas. A operação (marcar recebida/encaminhada/paga) é feita pelo time financeiro no painel próprio.
+          </div>
+          <div class="fin-filtros">
+            <div><label>De</label><input type="date" id="finDe"></div>
+            <div><label>Até</label><input type="date" id="finAte"></div>
+            <div><label>Empreendimento</label><select id="finEmp"><option value="">Todos</option></select></div>
+            <div><label>Status</label><select id="finSt">
+              <option value="">Todos</option><option value="enviada">Enviada</option>
+              <option value="recebida">Recebida</option><option value="encaminhada">Encaminhada</option>
+              <option value="paga">Paga</option><option value="cancelada">Cancelada</option>
+            </select></div>
+            <div><button class="btn-primary" onclick="finRender()">Aplicar</button></div>
+          </div>
+
+          <div class="kpi-row">
+            <div class="kpi-card"><div class="kpi-label">Notas no período</div><div class="kpi-value" id="finKNotas">0</div></div>
+            <div class="kpi-card kpi-ok"><div class="kpi-label">Valor recebido</div><div class="kpi-value" id="finKValor">R$ 0</div></div>
+            <div class="kpi-card kpi-alert"><div class="kpi-label">Aguardando encaminhar</div><div class="kpi-value" id="finKPend">0</div></div>
+            <div class="kpi-card kpi-ok"><div class="kpi-label">Pagas</div><div class="kpi-value" id="finKPagas">R$ 0</div></div>
+          </div>
+
+          <div class="fin-grid2">
+            <div class="fin-card"><h3>📊 Por empreendimento</h3><div id="finBiEmp"></div></div>
+            <div class="fin-card"><h3>📐 Por disciplina</h3><div id="finBiDisc"></div></div>
+          </div>
+
+          <div class="fin-card" style="margin-bottom:16px; padding:0; overflow:auto">
+            <table class="fin-table">
+              <thead><tr>
+                <th>Empreendimento</th><th>Disciplina</th><th>Projetista</th><th>Parc.</th>
+                <th>Nº NF</th><th>Valor</th><th>Emitida</th><th>Status</th><th>NF</th>
+              </tr></thead>
+              <tbody id="finTbody"><tr><td colspan="9" class="fin-empty">Carregando…</td></tr></tbody>
+            </table>
+          </div>
         </div>
 
       </div><!-- /content -->
@@ -906,7 +972,7 @@ async function init(){
 
   const { data:{ session } } = await sb.auth.getSession();
   if(session){ await afterLogin(session.user); }
-  else{ document.getElementById('loginWrap').style.display='flex'; hide('app'); }
+  else{ location.replace('./'); hide('app'); }
 }
 
 async function doLogin(){
@@ -925,9 +991,10 @@ async function afterLogin(user){
   const { data:profile, error } = await sb.from('usuarios_auria')
     .select('*, empresas_auria(*)').eq('id',user.id).single();
 
-  if(error || !profile || !['gerente','super_admin'].includes(profile.role)){
-    await sb.auth.signOut();
-    document.getElementById('loginWrap').style.display = 'flex';
+  // Painel exclusivo do gerente. super_admin administra pela página própria (CEO)
+  // e NÃO opera dentro dos painéis das empresas.
+  if(error || !profile || profile.role !== 'gerente'){
+    location.replace('./');   // sem signOut: não derruba a sessão em outras abas
     document.getElementById('app').style.display = 'none';
     return;
   }
@@ -942,7 +1009,7 @@ async function afterLogin(user){
 async function doLogout(){
   await sb.auth.signOut();
   USER=null; EMPRESA=null; EMPS=[]; METRICS=[];
-  hide('app'); document.getElementById('loginWrap').style.display='flex';
+  hide('app'); location.replace('./');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2117,19 +2184,22 @@ function goPage(name){
   const pageMap = {
     dashboard:'pageDashboard', detalhe:'pageDetalhe',
     empreendimentos:'pageEmpreendimentos', analistas:'pageAnalistas',
-    distribuicao:'pageDistribuicao', fornecedores:'pageFornecedores'
+    distribuicao:'pageDistribuicao', fornecedores:'pageFornecedores',
+    financeiro:'pageFinanceiro'
   };
   const titleMap = {
     dashboard:'Dashboard Geral', detalhe:'Detalhe',
     empreendimentos:'Empreendimentos', analistas:'Analistas',
-    distribuicao:'Distribuicao', fornecedores:'Fornecedores'
+    distribuicao:'Distribuicao', fornecedores:'Fornecedores',
+    financeiro:'Custos & NFs'
   };
   const subMap = {
     dashboard:'Todos os empreendimentos',
     empreendimentos:'Gerencie seus projetos',
     analistas:'Equipe de analistas',
     distribuicao:'Atribuicao de acessos',
-    fornecedores:'Empresas projetistas e seus profissionais'
+    fornecedores:'Empresas projetistas e seus profissionais',
+    financeiro:'Resumo de notas fiscais recebidas'
   };
   document.getElementById(pageMap[name]||'pageDashboard').classList.add('active');
   document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
@@ -2142,6 +2212,92 @@ function goPage(name){
   if(name==='distribuicao')    renderDistPage();
   if(name==='empreendimentos') renderEmpreendimentosPage();
   if(name==='fornecedores')    renderFornecedoresPage();
+  if(name==='financeiro')      finCarregar();
+}
+
+// ═══════════════════════════════════════════════════════
+// FINANCEIRO — resumo somente leitura (NFs); a operação do fluxo
+// (recebida/encaminhada/paga) é exclusiva do painel do financeiro.
+// ═══════════════════════════════════════════════════════
+let FIN_NFS = [];
+function finBrl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function finDbr(s){ if(!s) return '—'; const p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s; }
+function finStLbl(s){ return {enviada:'Enviada',recebida:'Recebida',encaminhada:'Encaminhada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
+
+async function finCarregar(){
+  const tbody=document.getElementById('finTbody');
+  try{
+    const { data, error } = await sb.rpc('nf_listar', {});
+    if(error) throw error;
+    FIN_NFS = data||[];
+    const emps=[...new Set(FIN_NFS.map(n=>n.empreendimento).filter(Boolean))].sort();
+    document.getElementById('finEmp').innerHTML='<option value="">Todos</option>'+emps.map(e=>`<option>${esc(e)}</option>`).join('');
+    if(!document.getElementById('finDe').value){
+      const hoje=new Date(); const ini=new Date(hoje.getFullYear(),hoje.getMonth(),1);
+      document.getElementById('finDe').value=ini.toISOString().slice(0,10);
+      document.getElementById('finAte').value=hoje.toISOString().slice(0,10);
+    }
+    finRender();
+  }catch(e){
+    tbody.innerHTML='<tr><td colspan="9" class="fin-empty">Erro: '+esc(e.message||e)+'</td></tr>';
+  }
+}
+
+function finFiltradas(){
+  const de=document.getElementById('finDe').value, ate=document.getElementById('finAte').value,
+        emp=document.getElementById('finEmp').value, st=document.getElementById('finSt').value;
+  return FIN_NFS.filter(n=>{
+    const d=(n.criado_em||'').slice(0,10);
+    if(de && d<de) return false;
+    if(ate && d>ate) return false;
+    if(emp && n.empreendimento!==emp) return false;
+    if(st && n.status!==st) return false;
+    return true;
+  });
+}
+
+function finBarras(el, mapa){
+  const arr=Object.keys(mapa).map(k=>({nome:k,...mapa[k]})).sort((a,b)=>b.valor-a.valor);
+  const max=Math.max(1,...arr.map(a=>a.valor));
+  el.innerHTML = arr.length ? arr.map(a=>`
+    <div class="fin-bar-row"><div class="nm" title="${esc(a.nome)}">${esc(a.nome)}</div>
+    <div class="bar"><i style="width:${Math.round(a.valor/max*100)}%"></i></div>
+    <div class="vl">${finBrl(a.valor)}<span style="color:var(--text-soft);font-weight:400"> · ${a.n}</span></div></div>`).join('')
+    : '<div class="fin-empty" style="padding:10px">Sem dados.</div>';
+}
+
+async function finVerPDF(path){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
+    if(error) throw error;
+    window.open(data.signedUrl,'_blank');
+  }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
+}
+
+function finRender(){
+  const rows=finFiltradas();
+  document.getElementById('finKNotas').textContent=rows.length;
+  document.getElementById('finKValor').textContent=finBrl(rows.reduce((s,n)=>s+Number(n.valor||0),0));
+  document.getElementById('finKPend').textContent=rows.filter(n=>['enviada','recebida'].includes(n.status)).length;
+  document.getElementById('finKPagas').textContent=finBrl(rows.filter(n=>n.status==='paga').reduce((s,n)=>s+Number(n.valor||0),0));
+
+  const gEmp={}, gDisc={};
+  rows.forEach(n=>{
+    const v=Number(n.valor||0);
+    (gEmp[n.empreendimento||'—']=gEmp[n.empreendimento||'—']||{n:0,valor:0}); gEmp[n.empreendimento||'—'].n++; gEmp[n.empreendimento||'—'].valor+=v;
+    (gDisc[n.disciplina||'—']=gDisc[n.disciplina||'—']||{n:0,valor:0}); gDisc[n.disciplina||'—'].n++; gDisc[n.disciplina||'—'].valor+=v;
+  });
+  finBarras(document.getElementById('finBiEmp'), gEmp);
+  finBarras(document.getElementById('finBiDisc'), gDisc);
+
+  document.getElementById('finTbody').innerHTML = rows.length ? rows.map(n=>`
+    <tr>
+      <td>${esc(n.empreendimento)}</td><td>${esc(n.disciplina||'—')}</td><td>${esc(n.projetista||'—')}</td>
+      <td>${n.parcela_numero||'—'}</td><td><b>${esc(n.nf_numero||'—')}</b></td>
+      <td style="font-weight:700">${finBrl(n.valor)}</td><td>${finDbr(n.emitida_em)}</td>
+      <td><span class="fin-st fin-st-${n.status}">${finStLbl(n.status)}</span></td>
+      <td>${n.pdf_path?`<a href="javascript:void(0)" onclick="finVerPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="9" class="fin-empty">Nenhuma NF no filtro.</td></tr>';
 }
 
 // ═══════════════════════════════════════════════════════

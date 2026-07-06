@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Painel de Custos</title>
+<link rel="icon" type="image/png" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#EEF2F7;color:#1A2F4A;min-height:100vh}
+  #loading{min-height:100vh;display:flex;align-items:center;justify-content:center;color:#64748B}
+  header{background:#1E2A3D;color:#fff;padding:14px 26px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+  header img{height:38px;object-fit:contain}
+  header h1{font-size:17px;font-weight:800;flex:1}
+  header .who{font-size:12px;color:#9FB4CC;text-align:right;line-height:1.3}
+  .btn-logout{background:rgba(255,255,255,.12);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-logout:hover{background:rgba(255,255,255,.22)}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px}
+  .filtros{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:14px 16px;margin-bottom:18px}
+  .filtros label{display:block;font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+  .filtros input,.filtros select{border:1.5px solid #E2E8F0;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none}
+  .filtros input:focus,.filtros select:focus{border-color:#3B82F6}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+  .kpi{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px}
+  .kpi .v{font-size:26px;font-weight:800;color:#1A2F4A}
+  .kpi .l{font-size:12px;color:#64748B;margin-top:2px}
+  .kpi.money .v{color:#0F9D58}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+  @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+  .card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px}
+  .card h3{font-size:13px;color:#1A2F4A;margin-bottom:12px;font-weight:800}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12px}
+  .bar-row .nm{width:38%;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar-row .bar{flex:1;height:9px;background:#EEF2F7;border-radius:5px;overflow:hidden}
+  .bar-row .bar i{display:block;height:100%;background:#3B82F6}
+  .bar-row .vl{width:110px;text-align:right;color:#1A2F4A;font-weight:700}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #E2E8F0;border-radius:12px;overflow:hidden;font-size:12.5px}
+  thead th{background:#F1F5F9;color:#475569;text-align:left;padding:10px 12px;font-weight:700;white-space:nowrap}
+  td{padding:9px 12px;border-top:1px solid #EEF2F7;color:#334155}
+  tr:hover td{background:#F8FAFC}
+  .st{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px}
+  .st-enviada{background:#DBEAFE;color:#1D4ED8}.st-recebida{background:#FEF3C7;color:#92400E}
+  .st-encaminhada{background:#E0E7FF;color:#4338CA}.st-paga{background:#DCFCE7;color:#166534}
+  .st-cancelada{background:#FEE2E2;color:#991B1B}
+  .mini{background:#F1F5F9;border:1px solid #E2E8F0;color:#334155;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+  .mini:hover{border-color:#3B82F6;color:#3B82F6}
+  .mini.go{background:#3B82F6;color:#fff;border:none}.mini.go:hover{background:#1D4ED8}
+  .empty{padding:26px;text-align:center;color:#94A3B8;font-size:13px}
+</style>
+</head>
+<body>
+<div id="loading">Carregando…</div>
+
+<div id="app" style="display:none">
+  <header>
+    <img src="logo_full.png" alt="Auria">
+    <h1>Painel de Custos</h1>
+    <div class="who"><span id="uName"></span><br><span id="uEmail" style="font-size:11px"></span></div>
+    <button class="btn-logout" onclick="sair()">Sair</button>
+  </header>
+
+  <div class="wrap">
+    <div class="filtros">
+      <div><label>De</label><input type="date" id="fDe"></div>
+      <div><label>Até</label><input type="date" id="fAte"></div>
+      <div><label>Empreendimento</label><select id="fEmp"><option value="">Todos</option></select></div>
+      <div><label>Status</label><select id="fSt">
+        <option value="">Todos</option><option value="enviada">Enviada</option>
+        <option value="recebida">Recebida</option><option value="encaminhada">Encaminhada</option>
+        <option value="paga">Paga</option><option value="cancelada">Cancelada</option>
+      </select></div>
+      <div><button class="mini go" style="padding:8px 16px" onclick="render()">Aplicar</button></div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="v" id="kNotas">0</div><div class="l">Notas no período</div></div>
+      <div class="kpi money"><div class="v" id="kValor">R$ 0</div><div class="l">Valor recebido</div></div>
+      <div class="kpi"><div class="v" id="kPend">0</div><div class="l">Aguardando encaminhar</div></div>
+      <div class="kpi money"><div class="v" id="kPagas">R$ 0</div><div class="l">Pagas</div></div>
+    </div>
+
+    <div class="grid2">
+      <div class="card"><h3>📊 Por empreendimento</h3><div id="biEmp"></div></div>
+      <div class="card"><h3>📐 Por disciplina</h3><div id="biDisc"></div></div>
+    </div>
+    <div class="card" style="margin-bottom:18px"><h3>🗓 Por mês</h3><div id="biMes"></div></div>
+
+    <div class="card" style="padding:0;overflow:auto">
+      <table>
+        <thead><tr>
+          <th>Empreendimento</th><th>Disciplina</th><th>Projetista</th><th>Parc.</th>
+          <th>Nº NF</th><th>Valor</th><th>Emitida</th><th>Status</th><th>NF</th><th>Ação</th>
+        </tr></thead>
+        <tbody id="tbody"><tr><td colspan="10" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+let NFS = [];   // todas as NFs (decifradas via RPC)
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function brl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function dbr(s){ if(!s)return '—'; var p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s; }
+function stLbl(s){ return {enviada:'Enviada',recebida:'Recebida',encaminhada:'Encaminhada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
+
+async function boot(){
+  let session=null;
+  try{ const r=await sb.auth.getSession(); session=r.data&&r.data.session; }catch(e){}
+  if(!session){ location.replace('./'); return; }
+  let role=null;
+  try{ const {data}=await sb.from('usuarios_auria').select('nome,email,role').eq('id',session.user.id).maybeSingle();
+       role=data&&data.role; $('uName').textContent=(data&&data.nome)||session.user.email; $('uEmail').textContent=session.user.email; }catch(e){}
+  // Painel exclusivo do financeiro. Gestor/CEO veem esses dados dentro do
+  // PRÓPRIO painel (widget/resumo), não abrindo esta página diretamente.
+  if(role !== 'financeiro'){ location.replace('./'); return; }  // sem acesso
+  // período padrão: mês corrente
+  const hoje=new Date(); const ini=new Date(hoje.getFullYear(),hoje.getMonth(),1);
+  $('fDe').value=ini.toISOString().slice(0,10); $('fAte').value=hoje.toISOString().slice(0,10);
+  $('loading').style.display='none'; $('app').style.display='block';
+  await carregar();
+}
+
+async function carregar(){
+  try{
+    const { data, error } = await sb.rpc('nf_listar', {});
+    if(error) throw error;
+    NFS = data||[];
+    // popula filtro de empreendimentos
+    const emps=[...new Set(NFS.map(n=>n.empreendimento).filter(Boolean))].sort();
+    $('fEmp').innerHTML='<option value="">Todos</option>'+emps.map(e=>`<option>${esc(e)}</option>`).join('');
+    render();
+  }catch(e){
+    $('tbody').innerHTML='<tr><td colspan="10" class="empty">Erro: '+esc(e.message||e)+'</td></tr>';
+  }
+}
+
+function filtradas(){
+  const de=$('fDe').value, ate=$('fAte').value, emp=$('fEmp').value, st=$('fSt').value;
+  return NFS.filter(n=>{
+    const d=(n.criado_em||'').slice(0,10);
+    if(de && d<de) return false;
+    if(ate && d>ate) return false;
+    if(emp && n.empreendimento!==emp) return false;
+    if(st && n.status!==st) return false;
+    return true;
+  });
+}
+
+function barras(el, mapa){
+  const arr=Object.keys(mapa).map(k=>({nome:k,...mapa[k]})).sort((a,b)=>b.valor-a.valor);
+  const max=Math.max(1,...arr.map(a=>a.valor));
+  el.innerHTML = arr.length ? arr.map(a=>`
+    <div class="bar-row"><div class="nm" title="${esc(a.nome)}">${esc(a.nome)}</div>
+    <div class="bar"><i style="width:${Math.round(a.valor/max*100)}%"></i></div>
+    <div class="vl">${brl(a.valor)}<span style="color:#94A3B8;font-weight:400"> · ${a.n}</span></div></div>`).join('')
+    : '<div class="empty" style="padding:10px">Sem dados.</div>';
+}
+
+function render(){
+  const rows=filtradas();
+  // KPIs
+  $('kNotas').textContent=rows.length;
+  $('kValor').textContent=brl(rows.reduce((s,n)=>s+Number(n.valor||0),0));
+  $('kPend').textContent=rows.filter(n=>['enviada','recebida'].includes(n.status)).length;
+  $('kPagas').textContent=brl(rows.filter(n=>n.status==='paga').reduce((s,n)=>s+Number(n.valor||0),0));
+  // BI
+  const gEmp={}, gDisc={}, gMes={};
+  rows.forEach(n=>{
+    const v=Number(n.valor||0);
+    (gEmp[n.empreendimento||'—']=gEmp[n.empreendimento||'—']||{n:0,valor:0}); gEmp[n.empreendimento||'—'].n++; gEmp[n.empreendimento||'—'].valor+=v;
+    (gDisc[n.disciplina||'—']=gDisc[n.disciplina||'—']||{n:0,valor:0}); gDisc[n.disciplina||'—'].n++; gDisc[n.disciplina||'—'].valor+=v;
+    const m=(n.criado_em||'').slice(0,7)||'—';
+    (gMes[m]=gMes[m]||{n:0,valor:0}); gMes[m].n++; gMes[m].valor+=v;
+  });
+  barras($('biEmp'),gEmp); barras($('biDisc'),gDisc); barras($('biMes'),gMes);
+  // Tabela
+  $('tbody').innerHTML = rows.length ? rows.map(n=>{
+    const acoes=[];
+    if(n.status==='enviada')     acoes.push(`<button class="mini go" onclick="mudar('${n.id}','recebida')">Marcar recebida</button>`);
+    else if(n.status==='recebida')    acoes.push(`<button class="mini go" onclick="mudar('${n.id}','encaminhada')">Encaminhar</button>`);
+    else if(n.status==='encaminhada') acoes.push(`<button class="mini go" onclick="mudar('${n.id}','paga')">Marcar paga</button>`);
+    return `<tr>
+      <td>${esc(n.empreendimento)}</td><td>${esc(n.disciplina||'—')}</td><td>${esc(n.projetista||'—')}</td>
+      <td>${n.parcela_numero||'—'}</td><td><b>${esc(n.nf_numero||'—')}</b></td>
+      <td style="font-weight:700">${brl(n.valor)}</td><td>${dbr(n.emitida_em)}</td>
+      <td><span class="st st-${n.status}">${stLbl(n.status)}</span></td>
+      <td>${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'—'}</td>
+      <td>${acoes.join(' ')||'—'}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="10" class="empty">Nenhuma NF no filtro.</td></tr>';
+}
+
+async function verPDF(path){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
+    if(error) throw error;
+    window.open(data.signedUrl,'_blank');
+  }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
+}
+
+async function mudar(id, novo){
+  const patch={status:novo};
+  if(novo==='recebida') patch.recebida_em=new Date().toISOString();
+  if(novo==='encaminhada') patch.encaminhada_em=new Date().toISOString();
+  try{
+    const { error } = await sb.from('notas_fiscais_auria').update(patch).eq('id',id);
+    if(error) throw error;
+    const nf=NFS.find(x=>x.id===id); if(nf) nf.status=novo;
+    render();
+  }catch(e){ alert('Erro ao atualizar status: '+(e.message||e)); }
+}
+
+async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
+
+boot();
+</script>
+</body>
+</html>

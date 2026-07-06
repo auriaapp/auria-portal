@@ -2,1533 +2,168 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Auria — Painel do Projetista</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Acesso</title>
 <link rel="icon" type="image/png" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Segoe UI',system-ui,sans-serif;background:#EEF2F7;min-height:100vh;color:#1E293B}
-  /* Paleta padronizada (igual aos painéis de gestão/analista) */
-  :root{--navy:#1E2A3D;--blue:#3B82F6;--blue-dark:#1D4ED8;--gold:#3B82F6;
-        --red:#EF4444;--green:#10B981;--gray:#F8FAFC;--border:#E2E8F0;
-        --text:#1E293B;--text-soft:#94A3B8}
-
-  /* LOGIN */
-  #tela-login{display:flex;align-items:center;justify-content:center;min-height:100vh;
+  body{font-family:'Segoe UI',system-ui,sans-serif;color:#1E293B}
+  #wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
     background:linear-gradient(135deg,#0F172A 0%,#1E3A5F 60%,#1D4ED8 100%)}
-  .login-card{background:#fff;border-radius:20px;padding:44px 40px;width:400px;
+  .card{background:#fff;border-radius:20px;padding:44px 40px;width:400px;max-width:94vw;
     box-shadow:0 20px 60px rgba(0,0,0,.4);text-align:center}
-  .login-card img{height:160px;object-fit:contain;margin-bottom:14px}
-  .login-card .login-badge{display:inline-block;margin-bottom:14px;font-size:11px;letter-spacing:1px;background:#1E3A5F;color:#fff;border-radius:5px;padding:4px 12px;font-weight:700}
-  .login-card h2{color:var(--navy);font-size:22px;margin-bottom:4px}
-  .login-card p{color:#7A9AB8;font-size:12px;margin-bottom:24px}
-  .field-lbl{text-align:left;font-size:12px;color:var(--navy);font-weight:600;margin-bottom:4px;margin-top:12px}
-  .field-inp{width:100%;padding:10px 14px;border:1.5px solid #E2E8F0;border-radius:9px;
-    font-size:14px;outline:none;transition:border .2s}
-  .field-inp:focus{border-color:var(--blue)}
-  .btn-primary{width:100%;padding:12px;background:var(--gold);color:#fff;border:none;
-    border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:20px;transition:background .2s}
-  .btn-primary:hover{background:var(--blue-dark)}
-  .login-err{color:#E74C3C;font-size:12px;margin-top:10px;min-height:18px}
-  .tabs{display:flex;gap:8px;margin-bottom:8px}
-  .tab{flex:1;padding:8px;border-radius:8px;border:1.5px solid #E2E8F0;background:#fff;
-    font-size:13px;cursor:pointer;font-weight:600;color:#7A9AB8;transition:all .2s}
-  .tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
-
-  /* PORTAL */
-  #tela-portal{display:none}
-  .topbar{background:var(--navy);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;
-    box-shadow:0 2px 12px rgba(0,0,0,.15)}
-  .topbar img{height:100px}
-  .topbar-title{color:#fff;font-size:16px;font-weight:700;flex:1}
-  .topbar-user{color:#7A9AB8;font-size:12px;text-align:right}
-  .topbar-user span{display:block;color:#AED6F1;font-size:11px}
-  .btn-logout{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);
-    padding:6px 14px;border-radius:7px;font-size:12px;cursor:pointer}
-  .btn-logout:hover{background:rgba(255,255,255,.2)}
-
-  .container{max-width:1100px;margin:0 auto;padding:24px 16px}
-
-  /* KPIs */
-  .kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-  .kpi{background:#fff;border-radius:12px;padding:16px;text-align:center;
-    box-shadow:0 2px 8px rgba(0,0,0,.06);transition:all .15s}
-  .kpi:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.12)}
-  .kpi.active{outline:2.5px solid currentColor;transform:translateY(-2px)}
-  .kpi-num{font-size:28px;font-weight:700;margin-bottom:2px}
-  .kpi-lbl{font-size:11px;color:#7A9AB8;text-transform:uppercase;letter-spacing:.05em}
-  .kpi-blue .kpi-num{color:#185FA5}
-  .kpi-orange .kpi-num{color:#854F0B}
-  .kpi-green .kpi-num{color:#1E8449}
-  .kpi-red .kpi-num{color:#A32D2D}
-
-  /* FILTROS */
-  .filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
-  .filter-sel{padding:8px 14px;border:1.5px solid #E2E8F0;border-radius:8px;
-    background:#fff;font-size:13px;color:var(--navy);outline:none;cursor:pointer}
-  .filter-sel:focus{border-color:var(--blue)}
-  .search-inp{flex:1;min-width:200px;padding:8px 14px;border:1.5px solid #E2E8F0;
-    border-radius:8px;font-size:13px;outline:none}
-  .search-inp:focus{border-color:var(--blue)}
-
-  /* TABELA */
-  .table-wrap{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);overflow:hidden}
-  .table-header{padding:14px 20px;border-bottom:1px solid #EEF2F7;display:flex;
-    justify-content:space-between;align-items:center}
-  .table-header h3{color:var(--navy);font-size:15px}
-  .table-count{color:#7A9AB8;font-size:12px}
-  table{width:100%;border-collapse:collapse}
-  th{background:#F8F9FB;padding:10px 14px;text-align:left;font-size:11px;
-    color:#7A9AB8;text-transform:uppercase;letter-spacing:.06em;font-weight:700;
-    border-bottom:1px solid #EEF2F7}
-  td{padding:12px 14px;font-size:13px;color:#2C3E50;border-bottom:1px solid #F5F7FA}
-  tr:hover td{background:#FAFBFC;cursor:pointer}
-  tr.late td{background:#FFF5F5}
-  tr.resolved td{background:#F0FFF4}
-
-  .badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600}
-  .badge-open{background:#FEF9EC;color:#854F0B}
-  .badge-resolved{background:#EAF3DE;color:#1E8449}
-  .badge-late{background:#FCEBEB;color:#A32D2D}
-  .badge-sev{background:#FCEBEB;color:#A32D2D}
-  .badge-imp{background:#FEF9EC;color:#854F0B}
-  .badge-obs{background:#EAF3DE;color:#1E8449}
-
-  /* MODAL */
-  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
-    z-index:1000;align-items:center;justify-content:center}
-  .modal-overlay.open{display:flex}
-  .modal{background:#fff;border-radius:16px;width:640px;max-width:95vw;max-height:88vh;
-    overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
-  .modal-header{background:var(--navy);padding:18px 24px;border-radius:16px 16px 0 0;
-    display:flex;justify-content:space-between;align-items:center}
-  .modal-header h3{color:#fff;font-size:16px}
-  .modal-close{background:rgba(255,255,255,.15);color:#fff;border:none;
-    width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:16px}
-  .modal-body{padding:24px}
-  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px}
-  .field-group label{font-size:11px;color:#7A9AB8;text-transform:uppercase;
-    letter-spacing:.06em;font-weight:700;display:block;margin-bottom:4px}
-  .field-group p{font-size:14px;color:#2C3E50;font-weight:500}
-  .field-full{margin-bottom:14px}
-  .field-full label{font-size:11px;color:#7A9AB8;text-transform:uppercase;
-    letter-spacing:.06em;font-weight:700;display:block;margin-bottom:4px}
-  .field-full p{font-size:14px;color:#2C3E50;line-height:1.6}
-  .btn-resolver{width:100%;padding:12px;background:var(--green);color:#fff;border:none;
-    border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-top:16px;transition:background .2s}
-  .btn-resolver:hover{background:#1E8449}
-  .btn-resolver:disabled{background:#ccc;cursor:not-allowed}
-  .log-list{list-style:none;max-height:160px;overflow-y:auto}
-  .log-list li{padding:6px 0;border-bottom:1px solid #F5F7FA;font-size:12px;color:#555}
-  .log-list li span{color:#7A9AB8;font-size:11px;margin-right:8px}
-  .img-grid{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .img-grid img{width:120px;height:90px;object-fit:cover;border-radius:8px;
-    border:1px solid #eee;cursor:pointer}
-
-  /* ATRASADOS */
-  .late-bar{background:#FCEBEB;border:1px solid #F7C1C1;border-radius:12px;
-    padding:14px 18px;margin-bottom:16px}
-  .late-bar h4{color:#A32D2D;font-size:13px;font-weight:700;margin-bottom:8px}
-  .late-item{display:flex;align-items:center;gap:12px;padding:6px 0;
-    border-bottom:1px solid #F9D0D0}
-  .late-item:last-child{border-bottom:none}
-  .late-id{font-weight:700;color:#E24B4A;font-size:13px;min-width:60px}
-  .late-title{flex:1;font-size:13px;color:#2C3E50}
-  .late-days{font-size:12px;font-weight:700;color:#A32D2D}
-
-  .empty{text-align:center;padding:48px;color:#7A9AB8}
-  .loading{text-align:center;padding:48px;color:#7A9AB8;font-size:14px}
-
-  /* HOME — cards de empreendimentos + ranking */
-  .home-sec-title{font-size:13px;font-weight:800;color:var(--text);text-transform:uppercase;
-    letter-spacing:.05em;margin:18px 2px 10px}
-  .emp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
-  .ec{background:#fff;border-radius:14px;padding:16px 18px;box-shadow:0 2px 8px rgba(0,0,0,.06);
-    cursor:pointer;transition:transform .15s,box-shadow .15s;position:relative;border-top:3px solid var(--blue)}
-  .ec:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.12)}
-  .ec-nome{font-size:15px;font-weight:800;color:var(--text);margin-bottom:2px;padding-right:30px}
-  .ec-loc{font-size:11px;color:var(--text-soft);margin-bottom:12px}
-  .ec-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0;
-    border-bottom:1px solid #F1F5F9}
-  .ec-row:last-of-type{border-bottom:none}
-  .ec-lbl{color:var(--text-soft)}
-  .ec-val{font-weight:800}
-  .ec-score{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #EEF2F7}
-  .ec-score-num{font-size:24px;font-weight:800}
-  .ec-trend{font-size:16px;font-weight:800}
-  .ec-rank{margin-left:auto;font-size:11px;color:var(--text-soft);text-align:right}
-  .ec-badge{position:absolute;top:14px;right:14px;min-width:22px;height:22px;border-radius:11px;
-    background:var(--red);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;
-    justify-content:center;padding:0 6px;box-shadow:0 2px 6px rgba(239,68,68,.4)}
-  /* Card geral (resumo do projetista) */
-  .geral-card{background:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 2px 8px rgba(0,0,0,.06);
-    display:flex;align-items:center;gap:24px;flex-wrap:wrap;border-left:4px solid var(--blue)}
-  .geral-score{font-size:40px;font-weight:800;line-height:1}
-  .geral-lbl{font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.06em;font-weight:700}
-  .geral-rank{font-size:13px;color:var(--text);background:var(--gray);border:1px solid var(--border);
-    border-radius:10px;padding:8px 14px}
-  .geral-rank b{color:var(--blue);font-size:16px}
-  /* Drill-in header */
-  .emp-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap}
-  .btn-voltar{background:none;border:1.5px solid var(--blue);color:var(--blue);border-radius:9px;
-    padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer}
-  .btn-voltar:hover{background:var(--blue);color:#fff}
-  .emp-head h2{font-size:18px;color:var(--text)}
-  /* Botão/badge de mensagens no topo */
-  .btn-msg{position:relative;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);
-    width:38px;height:34px;border-radius:8px;font-size:16px;cursor:pointer;margin-right:8px}
-  .btn-msg:hover{background:rgba(255,255,255,.2)}
-  .msg-badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--red);
-    color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 5px}
-  /* View de mensagens */
-  .msg-wrap{display:flex;gap:0;background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);
-    overflow:hidden;height:calc(100vh - 180px);min-height:420px}
-  .msg-inbox{width:320px;min-width:280px;border-right:1px solid var(--border);overflow-y:auto}
-  .msg-it{padding:12px 14px;border-bottom:1px solid #F1F5F9;cursor:pointer}
-  .msg-it:hover{background:#F8FAFC}
-  .msg-it.sel{background:#EFF6FF;border-left:3px solid var(--blue)}
-  .msg-it-tit{font-size:13px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px}
-  .msg-it-dot{width:9px;height:9px;border-radius:50%;background:var(--red);flex-shrink:0}
-  .msg-tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
-  .tag-apt{background:#DBEAFE;color:#1D4ED8}.tag-th{background:#FEF3C7;color:#92400E}
-  .emp-group-h{position:sticky;top:0;background:#1E2A3D;color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:7px 14px;z-index:1}
-  .msg-it-sub{font-size:11px;color:var(--text-soft);margin-top:2px}
-  .msg-conv{flex:1;display:flex;flex-direction:column;overflow:hidden}
-  .msg-conv-h{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px;flex-shrink:0}
-  .msg-conv-b{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:#F8FAFC}
-  .pbub{max-width:74%;padding:9px 13px;border-radius:12px;font-size:13px;line-height:1.4}
-  .pbub .who{font-size:10px;color:var(--text-soft);margin-bottom:3px}
-  .pb-me{align-self:flex-end;background:var(--blue);color:#fff;border-bottom-right-radius:3px}
-  .pb-me .who{color:#DBEAFE}
-  .pb-an{align-self:flex-start;background:#fff;border:1px solid var(--border);border-bottom-left-radius:3px}
-  .msg-conv-f{padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0}
-  .msg-conv-f textarea{flex:1;border:1px solid #CBD5E1;border-radius:9px;padding:9px 12px;font-size:13px;
-    font-family:inherit;resize:none;height:42px;outline:none}
-  .msg-conv-f textarea:focus{border-color:var(--blue)}
-  .btn-send{background:var(--blue);color:#fff;border:none;border-radius:9px;padding:0 18px;font-weight:700;cursor:pointer}
-  .btn-send:hover{background:var(--blue-dark)}
-  .stg{display:flex;gap:6px;flex-wrap:wrap}
-  .stg .th{position:relative}.stg img{width:50px;height:40px;object-fit:cover;border-radius:5px;border:1px solid #CBD5E1}
-  .stg .x{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1}
-  .anx{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
-  .anx-img{width:72px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer}
-  .anx-chip{font-size:11px;font-weight:600;background:#F1F5F9;border:1px solid var(--border);color:#334155;border-radius:14px;padding:2px 9px}
-  .pb-me .anx-chip{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.35);color:#fff}
-  .lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:2000;align-items:center;justify-content:center;cursor:zoom-out}
-  .lb.on{display:flex}.lb img{max-width:92vw;max-height:92vh;border-radius:8px}
-  /* Contratos (projetista) */
-  .pctr-card{background:#fff;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;margin-bottom:14px}
-  .pctr-card-h{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px}
-  .pctr-nome{font-size:15px;font-weight:800;color:var(--text)}
-  .pctr-sub{font-size:12px;color:var(--text-soft);margin-top:2px}
-  .pctr-fin{display:flex;gap:18px;margin-top:8px;padding-top:8px;border-top:1px solid #EEF2F7}
-  .pctr-fin .v{font-size:16px;font-weight:800;color:#1D4ED8}
-  .pctr-fin .l{font-size:10px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.04em}
-  .pctr-bar{height:8px;background:#EEF2F7;border-radius:6px;overflow:hidden;margin-top:6px}
-  .pctr-bar i{display:block;height:100%;background:linear-gradient(90deg,#10B981,#34D399);border-radius:6px}
-  .pctr-parc{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
-  .pctr-parc th{text-align:left;color:var(--text-soft);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--gray-border)}
-  .pctr-parc td{padding:6px 8px;border-bottom:1px solid #F1F5F9;vertical-align:middle}
-  .pctr-st{font-size:11px;font-weight:700;padding:2px 9px;border-radius:14px;white-space:nowrap}
-  .pst-af{background:#F1F5F9;color:#64748B}.pst-so{background:#FEF3C7;color:#92400E}
-  .pst-au{background:#DBEAFE;color:#1D4ED8}.pst-re{background:#FEE2E2;color:#B91C1C}
-  .pst-fa{background:#E0F2FE;color:#075985}.pst-pg{background:#DCFCE7;color:#15803D}
-  .pmini{background:none;border:1px solid var(--gray-border);color:var(--text-mid);border-radius:8px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer}
-  .pmini:hover{border-color:var(--blue);color:var(--blue)}
-  .pmini.warn{background:#E8960A;color:#fff;border:none}.pmini.warn:hover{background:#BA7517}
-  /* Modal contratos (projetista) */
-  .cmodal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:flex-start;justify-content:center;padding:30px 16px;overflow-y:auto}
-  .cmodal-ov.on{display:flex}
-  .cmodal{background:#fff;border-radius:14px;width:520px;max-width:96vw;box-shadow:0 20px 60px rgba(0,0,0,.25)}
-  .cmodal-h{padding:14px 18px;border-bottom:1px solid var(--gray-border);display:flex;justify-content:space-between;align-items:center;font-weight:800}
-  .cmodal-x{background:none;border:none;font-size:22px;color:var(--text-soft);cursor:pointer}
-  .cmodal-b{padding:16px 18px}
-  .cmodal-b label{font-size:11px;font-weight:700;color:var(--text-mid);text-transform:uppercase;letter-spacing:.04em;display:block;margin:10px 0 4px}
-  .cmodal-b input,.cmodal-b textarea{width:100%;border:1px solid var(--gray-border);border-radius:9px;padding:9px 12px;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box}
-  .cmodal-b textarea{height:60px;resize:vertical}
-  .cmodal-f{padding:12px 18px;border-top:1px solid var(--gray-border);display:flex;justify-content:flex-end;gap:10px}
-  .btn-sec{background:#F1F5F9;border:1px solid var(--gray-border);color:#334155;border-radius:9px;padding:9px 16px;font-weight:600;cursor:pointer}
-  .btn{background:var(--blue);color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:700;cursor:pointer}
-  .btn:hover{background:var(--blue-dark)}
-  @media(max-width:640px){
-    .kpi-row{grid-template-columns:1fr 1fr}
-    .field-row{grid-template-columns:1fr}
-    th:nth-child(n+4),td:nth-child(n+4){display:none}
-  }
+  .card img{height:150px;object-fit:contain;margin-bottom:14px}
+  .badge{display:inline-block;margin-bottom:16px;font-size:11px;letter-spacing:1px;background:#1E3A5F;
+    color:#fff;border-radius:5px;padding:4px 12px;font-weight:700}
+  h2{font-size:16px;color:#1A2F4A;margin-bottom:4px;text-align:left}
+  .sub{font-size:13px;color:#94A3B8;margin-bottom:22px;text-align:left}
+  label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:5px;text-align:left}
+  input{width:100%;border:1.5px solid #E2E8F0;border-radius:9px;padding:11px 13px;font-size:14px;
+    outline:none;background:#FAFAFA;margin-bottom:14px;transition:border .15s}
+  input:focus{border-color:#3B82F6;background:#fff}
+  .btn{width:100%;background:#3B82F6;color:#fff;border:none;border-radius:9px;padding:12px;
+    font-size:14px;font-weight:700;cursor:pointer;transition:background .15s;margin-top:2px}
+  .btn:hover{background:#1D4ED8}
+  .btn[disabled]{opacity:.6;cursor:default}
+  .err{background:#FEF2F2;color:#EF4444;border-radius:8px;padding:9px 12px;font-size:13px;
+    margin-bottom:12px;display:none;text-align:left}
+  .msg{background:#ECFDF5;color:#059669;border-radius:8px;padding:9px 12px;font-size:13px;
+    margin-bottom:12px;display:none;text-align:left}
+  .linkline{margin-top:18px;font-size:12.5px;color:#64748B}
+  .linkline a{color:#2563EB;text-decoration:none;font-weight:600;cursor:pointer}
+  .linkline a:hover{text-decoration:underline}
+  #loading{color:#fff;font-size:14px;text-align:center}
+  .hide{display:none}
 </style>
 </head>
 <body>
-
-<!-- TELA DE LOGIN -->
-<div id="tela-login">
-  <div class="login-card">
+<div id="wrap">
+  <div class="card" id="card">
     <img src="logo_full.png" alt="Auria">
-    <div class="login-badge">PAINEL DO PROJETISTA</div>
-    <h2>Acesse sua conta</h2>
-    <p>Acesso para projetistas e fornecedores</p>
-    <div class="tabs">
-      <button class="tab active" onclick="setModo('login')">Entrar</button>
-      <button class="tab" onclick="setModo('cadastro')">Criar conta</button>
-    </div>
-    <div id="campo-nome" style="display:none">
-      <div class="field-lbl">Nome completo</div>
-      <input class="field-inp" id="inp-nome" placeholder="Ex: Eng. Carlos Silva">
-    </div>
-    <div class="field-lbl">E-mail</div>
-    <input class="field-inp" id="inp-email" type="email" placeholder="seu@email.com">
-    <div class="field-lbl">Senha</div>
-    <input class="field-inp" id="inp-senha" type="password" placeholder="Sua senha">
-    <button class="btn-primary" onclick="acao()" id="btn-acao">Entrar →</button>
-    <div class="login-err" id="login-err"></div>
-  </div>
-</div>
+    <div class="badge">ACESSO</div>
 
-<!-- TELA PORTAL -->
-<div id="tela-portal">
-  <div class="topbar">
-    <img src="Gemini_Generated_Image_enohj2enohj2enoh-Photoroom.png" alt="Auria">
-    <div class="topbar-title" id="topbar-title">Painel do Projetista</div>
-    <div class="topbar-user">
-      <span id="user-nome"></span>
-      <span id="user-email"></span>
-    </div>
-    <button class="btn-msg" id="btn-msg" onclick="showMensagens()" title="Mensagens">✉<span class="msg-badge" id="msg-badge" style="display:none">0</span></button>
-    <button class="btn-msg" id="btn-ctr" onclick="showContratos()" title="Contratos & Faturas">&#128188;<span class="msg-badge" id="ctr-badge" style="display:none">0</span></button>
-    <button class="btn-logout" onclick="logout()">Sair</button>
-  </div>
-  <div class="container">
-    <!-- ══ HOME: cards de empreendimentos ══ -->
-    <div id="view-home">
-      <div id="home-geral"></div>
-      <div class="home-sec-title">Meus empreendimentos</div>
-      <div id="home-cards" class="emp-cards"><div class="loading">Carregando...</div></div>
+    <!-- LOGIN -->
+    <div id="viewLogin">
+      <h2 id="loginTitle">Entrar</h2>
+      <div class="sub">Acesse com seu e-mail e senha</div>
+      <div class="err" id="err"></div>
+      <div class="msg" id="msg"></div>
+      <label>E-mail</label>
+      <input id="email" type="email" placeholder="voce@email.com" autocomplete="email">
+      <label>Senha</label>
+      <input id="senha" type="password" placeholder="Sua senha" autocomplete="current-password">
+      <button class="btn" id="btnEntrar" onclick="entrar()">Entrar &rarr;</button>
+      <div class="linkline">É projetista e ainda não tem acesso?
+        <a onclick="mostrar('cadastro')">Solicitar cadastro de projetista</a>
+      </div>
     </div>
 
-    <!-- ══ DRILL-IN: um empreendimento ══ -->
-    <div id="view-emp" style="display:none">
-      <div class="emp-head">
-        <button class="btn-voltar" onclick="showHome()">← Voltar aos empreendimentos</button>
-        <h2 id="emp-titulo"></h2>
-      </div>
-    <!-- PONTUAÇÃO DO FORNECEDOR -->
-<div id="score-section" style="margin-bottom:16px;display:none">
-  <div style="background:#fff;border-radius:12px;padding:16px 20px;
-    box-shadow:0 2px 8px rgba(0,0,0,.06);display:flex;align-items:center;gap:20px">
-    <div>
-      <div style="font-size:11px;color:#7A9AB8;text-transform:uppercase;
-        letter-spacing:.06em;font-weight:700;margin-bottom:4px">Sua Pontuação</div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <span id="score-num" style="font-size:36px;font-weight:700;color:#1A2F4A">—</span>
-        <span id="score-arrow" style="font-size:24px"></span>
-      </div>
-      <div id="score-trend" style="font-size:11px;color:#7A9AB8;margin-top:2px"></div>
-    </div>
-    <div style="flex:1;border-left:1px solid #EEF2F7;padding-left:20px">
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-        <div style="text-align:center">
-          <div style="font-size:18px;font-weight:700;color:#185FA5" id="sc-eng">—</div>
-          <div style="font-size:10px;color:#7A9AB8">Engajamento</div>
-        </div>
-        <div style="text-align:center">
-          <div style="font-size:18px;font-weight:700;color:#854F0B" id="sc-prazo">—</div>
-          <div style="font-size:10px;color:#7A9AB8">Prazo</div>
-        </div>
-        <div style="text-align:center">
-          <div style="font-size:18px;font-weight:700;color:#1E8449" id="sc-assert">—</div>
-          <div style="font-size:10px;color:#7A9AB8">Assertividade</div>
-        </div>
-      </div>
+    <!-- CADASTRO (projetista) -->
+    <div id="viewCadastro" class="hide">
+      <h2>Solicitar cadastro</h2>
+      <div class="sub">Para projetistas e fornecedores. Após criar, o analista vincula você aos empreendimentos.</div>
+      <div class="err" id="errC"></div>
+      <div class="msg" id="msgC"></div>
+      <label>Nome completo</label>
+      <input id="cNome" placeholder="Ex.: Eng. Carlos Silva" autocomplete="name">
+      <label>E-mail</label>
+      <input id="cEmail" type="email" placeholder="voce@email.com" autocomplete="email">
+      <label>Senha</label>
+      <input id="cSenha" type="password" placeholder="Crie uma senha" autocomplete="new-password">
+      <button class="btn" id="btnCad" onclick="solicitar()">Solicitar cadastro</button>
+      <div class="linkline"><a onclick="mostrar('login')">&larr; Voltar para o login</a></div>
     </div>
   </div>
-</div>
 
-<div class="kpi-row">
-      <div class="kpi kpi-blue" id="kpi-card-total" onclick="filtrarKpi('')" style="cursor:pointer" title="Mostrar todos"><div class="kpi-num" id="kpi-total">—</div><div class="kpi-lbl">Total</div></div>
-      <div class="kpi kpi-orange" id="kpi-card-aberto" onclick="filtrarKpi('Em aberto')" style="cursor:pointer" title="Filtrar em aberto"><div class="kpi-num" id="kpi-aberto">—</div><div class="kpi-lbl">Em aberto</div></div>
-      <div class="kpi kpi-green" id="kpi-card-resolvido" onclick="filtrarKpi('Resolvido')" style="cursor:pointer" title="Filtrar resolvidos"><div class="kpi-num" id="kpi-resolvido">—</div><div class="kpi-lbl">Resolvidos</div></div>
-      <div class="kpi kpi-red" id="kpi-card-atraso" onclick="filtrarKpi('atraso')" style="cursor:pointer" title="Filtrar atrasados"><div class="kpi-num" id="kpi-atraso">—</div><div class="kpi-lbl">Atrasados</div></div>
-    </div>
-    <div id="late-section"></div>
-    <div class="filters">
-      <input class="search-inp" id="busca" placeholder="🔍 Buscar apontamento..." oninput="filtrar()">
-      <select class="filter-sel" id="fil-status" onchange="filtrar()">
-        <option value="">Todos os status</option>
-        <option>Em aberto</option>
-        <option>Resolvido</option>
-      </select>
-      <select class="filter-sel" id="fil-crit" onchange="filtrar()">
-        <option value="">Todas as criticidades</option>
-        <option>Severa / Imediata</option>
-        <option>Importante / Programada</option>
-        <option>Observação / Atenção</option>
-      </select>
-      <select class="filter-sel" id="fil-emp" onchange="filtrar()">
-        <option value="">Todos os empreendimentos</option>
-      </select>
-    </div>
-    <div class="table-wrap">
-      <div class="table-header">
-        <h3>Meus Apontamentos</h3>
-        <span class="table-count" id="count-txt"></span>
-      </div>
-      <div id="tabela-body"><div class="loading">Carregando...</div></div>
-    </div>
-    </div><!-- /view-emp -->
-
-    <!-- ══ MENSAGENS ══ -->
-    <div id="view-msg" style="display:none">
-      <div class="emp-head">
-        <button class="btn-voltar" onclick="showHome()">← Voltar</button>
-        <h2>Mensagens</h2>
-      </div>
-      <div class="msg-wrap">
-        <div class="msg-inbox" id="msg-inbox"><div class="loading">Carregando…</div></div>
-        <div class="msg-conv">
-          <div class="msg-conv-h" id="msg-conv-h">Selecione uma conversa</div>
-          <div class="msg-conv-b" id="msg-conv-b"><div class="empty">Escolha uma conversa à esquerda.</div></div>
-          <div class="stg" id="p-reply-stg" style="padding:0 12px 6px"></div>
-          <div class="msg-conv-f" id="msg-conv-f" style="display:none">
-            <textarea id="p-msg-txt" placeholder="Escreva uma resposta... (Ctrl+V cola prints)"></textarea>
-            <button class="btn-send" onclick="pEnviar()">Enviar</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ══ CONTRATOS (projetista) ══ -->
-    <div id="view-ctr" style="display:none">
-      <div class="emp-head">
-        <button class="btn-voltar" onclick="showHome()">← Voltar</button>
-        <h2>Contratos & Faturas</h2>
-      </div>
-      <div id="ctr-projetista-list"><div class="loading">Carregando…</div></div>
-    </div>
-  </div>
-</div>
-
-<!-- Modal: solicitar fatura -->
-<div class="cmodal-ov" id="solicitarModal" onclick="if(event.target===this)fecharSolicitar()">
-  <div class="cmodal">
-    <div class="cmodal-h"><span>Solicitar faturamento</span><button class="cmodal-x" onclick="fecharSolicitar()">&times;</button></div>
-    <div class="cmodal-b">
-      <div id="sol-info" style="font-size:13px;color:#475569;margin-bottom:10px"></div>
-      <label>Observação ao analista (opcional)</label>
-      <textarea id="sol-obs" placeholder="Ex.: etapa entregue conforme cronograma"></textarea>
-      <label>Anexar prévia da NF (PDF, opcional)</label>
-      <input id="sol-pdf" type="file" accept="application/pdf">
-    </div>
-    <div class="cmodal-f">
-      <button class="btn-sec" onclick="fecharSolicitar()">Cancelar</button>
-      <button class="btn" id="sol-save" onclick="enviarSolicitacao()">Enviar solicitação</button>
-    </div>
-  </div>
-</div>
-
-<!-- LIGHTBOX -->
-<div class="lb" id="lb" onclick="this.classList.remove('on')"><img id="lb-img"></div>
-
-<!-- MODAL DETALHE -->
-<div class="modal-overlay" id="modal">
-  <div class="modal">
-    <div class="modal-header">
-      <h3 id="modal-titulo">Apontamento</h3>
-      <button class="modal-close" onclick="fecharModal()">×</button>
-    </div>
-    <div class="modal-body" id="modal-body"></div>
-  </div>
+  <div id="loading" class="hide">Carregando…</div>
 </div>
 
 <script>
 const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
-const SUPA_KEY = 'sb_publishable_Cpa8142-Z91liTnnqJfopw_dux2jbVY';
-let TOKEN = null, USER = null, TODOS = [], FILTRADOS = [];
-let ALL = [], MINE = [], CUR_EMP = '', EMP_NOMES = [];
-let MODO = 'login';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
-// ── Auth ──────────────────────────────────────────────────────
-function setModo(m) {
-  MODO = m;
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&m==='login')||(i===1&&m==='cadastro')));
-  document.getElementById('campo-nome').style.display = m==='cadastro'?'block':'none';
-  document.getElementById('btn-acao').textContent = m==='login'?'Entrar →':'Criar conta →';
-  document.getElementById('login-err').textContent='';
+function $(id){ return document.getElementById(id); }
+function showErr(el,txt){ el.textContent=txt; el.style.display=txt?'block':'none'; }
+function mostrar(v){
+  $('viewLogin').classList.toggle('hide', v!=='login');
+  $('viewCadastro').classList.toggle('hide', v!=='cadastro');
+  showErr($('err'),''); showErr($('msg'),''); showErr($('errC'),''); showErr($('msgC'),'');
 }
 
-async function acao() {
-  const email = document.getElementById('inp-email').value.trim();
-  const senha = document.getElementById('inp-senha').value.trim();
-  const nome  = document.getElementById('inp-nome').value.trim();
-  const err   = document.getElementById('login-err');
-  if(!email||!senha){err.textContent='Preencha e-mail e senha.';return}
-  err.textContent='Aguarde...';err.style.color='#7A9AB8';
-  const endpoint = MODO==='login'
-    ? `${SUPA_URL}/auth/v1/token?grant_type=password`
-    : `${SUPA_URL}/auth/v1/signup`;
-  const body = MODO==='login'
-    ? {email,password:senha}
-    : {email,password:senha,data:{nome}};
-  try {
-    const r = await fetch(endpoint,{method:'POST',
-      headers:{'apikey':SUPA_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
-    const d = await r.json();
-    if(d.access_token){
-      TOKEN=d.access_token;
-      USER={id:d.user.id,email:d.user.email,nome:d.user.user_metadata?.nome||email.split('@')[0]};
-      localStorage.setItem('auria_token',TOKEN);
-      localStorage.setItem('auria_user',JSON.stringify(USER));
-      entrar();
-    } else {
-      const msg = d.error_description||d.message||'Erro ao autenticar';
-      err.textContent = msg.includes('Invalid')?'E-mail ou senha incorretos.':msg;
-      err.style.color='#E74C3C';
-    }
-  } catch(e){err.textContent='Sem conexão com o servidor.';err.style.color='#E74C3C';}
-}
-
-function logout(){
-  localStorage.removeItem('auria_token');localStorage.removeItem('auria_user');
-  TOKEN=null;USER=null;TODOS=[];
-  document.getElementById('tela-portal').style.display='none';
-  document.getElementById('tela-login').style.display='flex';
-}
-
-function entrar(){
-  document.getElementById('tela-login').style.display='none';
-  document.getElementById('tela-portal').style.display='block';
-  document.getElementById('user-nome').textContent=USER.nome;
-  document.getElementById('user-email').textContent=USER.email;
-  console.log('Token:', TOKEN ? TOKEN.substring(0,20)+'...' : 'NULL');
-  console.log('User:', USER);
-  carregarApontamentos();
-}
-
-// ── Dados ─────────────────────────────────────────────────────
-async function carregarApontamentos(){
-  document.getElementById('tabela-body').innerHTML='<div class="loading">Carregando seus apontamentos...</div>';
-  try {
-    // Busca apontamentos onde o e-mail do usuário aparece nos participantes
-    const r = await fetch(
-      `${SUPA_URL}/rest/v1/apontamentos?select=*&order=atualizado_em.desc`,
-      {headers:{
-        'apikey': SUPA_KEY,
-        'Authorization': `Bearer ${TOKEN}`,
-        'Accept': 'application/json'
-      }});
-    if(r.status===401){logout();return;}
-    ALL = await r.json();
-    // MINE = apontamentos onde o e-mail do usuário aparece nos participantes
-    // (ou onde é o analista dono). ALL é usado para os rankings.
-    const meu = (USER.email||'').toLowerCase();
-    MINE = ALL.filter(a=>{
-      if(a.user_id === USER.id) return true;
-      const p = a.participantes||{};
-      return Object.values(p).some(v=>
-        (v.emails||'').toLowerCase().split(/[,;\s]+/).map(s=>s.trim()).includes(meu)
-      );
-    });
-    await loadMsgData();
-    try{
-      P_CONTRATOS=await _supaGet('contratos_auria?select=*');
-      const cids=P_CONTRATOS.map(c=>c.id);
-      if(cids.length){
-        const parcs=await _supaGet('parcelas_auria?contrato_id=in.('+cids.join(',')+')');
-        P_CONTRATOS.forEach(c=>{ c.parcelas_auria=(parcs||[]).filter(p=>p.contrato_id===c.id); });
-      }
-      atualizarBadgeContratos();
-    }catch(e){ console.error('load contratos',e); }
-    renderHome();
-  } catch(e){
-    document.getElementById('home-cards').innerHTML='<div class="empty">Erro ao carregar dados.</div>';
-  }
-}
-
-// ── Helpers de score/tendência/ranking (cálculo no navegador) ──
-function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-// Só aceita URLs de imagem seguras (https ou data:image) para uso em src=""; senão, vazio.
-function safeImg(u){u=String(u||'');return /^(https:\/\/|data:image\/)/i.test(u)?escH(u):'';}
-function scoreCor(s){return s>=70?'#1E8449':s>=40?'#854F0B':'#A32D2D';}
-function trendIcon(t){return t==='up'?'▲':t==='down'?'▼':'▬';}
-function trendCor(t){return t==='up'?'#27AE60':t==='down'?'#E74C3C':'#7A9AB8';}
-function empNomes(){return [...new Set(MINE.map(a=>a.empreendimento).filter(Boolean))].sort();}
-
-function computeScore(apts){
-  if(!apts||!apts.length) return {total:0,prazo:0,eng:0,assert:0};
-  let ptPrazo=100;
-  apts.forEach(a=>{ const dias=diasAtraso(a);
-    if(dias>0) ptPrazo-=dias*3;
-    else if(a.status==='Resolvido'&&a.prazo_min&&a.conclusao){ try{
-      const [pd,pm,py]=a.prazo_min.split('/'); const [cd,cm,cy]=a.conclusao.split('/');
-      const diff=Math.floor((new Date(py,pm-1,pd)-new Date(cy,cm-1,cd))/86400000);
-      if(diff>0) ptPrazo+=diff*2; }catch(e){} }
-    if(a.status==='Resolvido'&&diasAtraso(a)===0) ptPrazo+=10;
-  });
-  ptPrazo=Math.max(0,Math.min(100,Math.round(ptPrazo)));
-  let ptEng=100;
-  apts.forEach(a=>{ const meus=(a.mensagens||[]).filter(m=>m.de==='projetista').length;
-    if(a.visibilidade==='Público'&&meus===0) ptEng-=5; else if(meus>0) ptEng+=3; });
-  ptEng=Math.max(0,Math.min(100,Math.round(ptEng)));
-  let ptAssert=100;
-  apts.forEach(a=>{ const tipo=(a.tipo||'').toLowerCase();
-    if(tipo.includes('interferência')||tipo.includes('interferencia')) ptAssert-=10;
-    else if(tipo.includes('norma')||tipo.includes('diretriz')) ptAssert-=10;
-    else if(tipo.includes('ausência')||tipo.includes('ausencia')||tipo.includes('detalhe')) ptAssert-=5;
-    if(a.status==='Resolvido') ptAssert+=2; });
-  ptAssert=Math.max(0,Math.min(100,Math.round(ptAssert)));
-  return {total:Math.round(ptPrazo*0.4+ptEng*0.3+ptAssert*0.3),prazo:ptPrazo,eng:ptEng,assert:ptAssert};
-}
-
-function _concDate(a){ if(a.status!=='Resolvido'||!a.conclusao) return null;
-  const [d,m,y]=a.conclusao.split('/'); const dt=new Date(y,m-1,d); return isNaN(dt)?null:dt; }
-function _onTime(a){ if(!a.prazo_min||!a.conclusao) return null;
-  const [pd,pm,py]=a.prazo_min.split('/'); const [cd,cm,cy]=a.conclusao.split('/');
-  return new Date(cy,cm-1,cd)<=new Date(py,pm-1,pd); }
-function trendOf(apts){
-  const now=Date.now(), D=86400000;
-  function rate(fromD,toD){ let ok=0,n=0; apts.forEach(a=>{ const c=_concDate(a); if(!c) return;
-    const age=(now-c.getTime())/D; if(age>=fromD&&age<toD){ const ot=_onTime(a); if(ot!==null){n++; if(ot)ok++;} } });
-    return n?ok/n:null; }
-  const rec=rate(0,30), prev=rate(30,90);
-  if(rec===null||prev===null) return 'flat';
-  if(rec>prev+0.05) return 'up'; if(rec<prev-0.05) return 'down'; return 'flat';
-}
-function notifOf(apts){ let n=0; (apts||[]).forEach(a=>{ const m=a.mensagens||[];
-  if(m.length){ const last=m[m.length-1]; if(last&&last.de==='analista') n++; } }); return n; }
-
-function _projsMap(apts){
-  const map={};
-  (apts||[]).forEach(a=>{ const p=a.participantes||{}; const set=new Set();
-    Object.values(p).forEach(v=>{ (v.emails||'').toLowerCase().split(/[,;\s]+/).forEach(e=>{e=e.trim(); if(e)set.add(e);}); });
-    set.forEach(e=>{ (map[e]=map[e]||[]).push(a); });
-  });
-  return map;
-}
-function rankingPos(apts){
-  const map=_projsMap(apts); const me=(USER.email||'').toLowerCase();
-  const arr=Object.keys(map).map(e=>({e,score:computeScore(map[e]).total}));
-  if(!arr.length||!map[me]) return null;
-  arr.sort((a,b)=>b.score-a.score);
-  return {pos:arr.findIndex(x=>x.e===me)+1, total:arr.length, score:computeScore(map[me]).total};
-}
-
-// ── Navegação Home / Empreendimento ───────────────────────────
-function renderHome(){
-  document.getElementById('view-home').style.display='block';
-  document.getElementById('view-emp').style.display='none';
-  var vm=document.getElementById('view-msg'); if(vm)vm.style.display='none';
-  var vc=document.getElementById('view-ctr'); if(vc)vc.style.display='none';
-  document.getElementById('topbar-title').textContent='Painel do Projetista';
-  EMP_NOMES = empNomes();
-  // Card geral
-  const g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(ALL);
-  document.getElementById('home-geral').innerHTML=`<div class="geral-card">
-    <div><div class="geral-lbl">Sua nota geral</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span class="geral-score" style="color:${scoreCor(g)}">${g}</span>
-        <span class="ec-trend" style="color:${trendCor(tg)}">${trendIcon(tg)}</span></div></div>
-    ${rg?`<div class="geral-rank">Ranking geral: <b>${rg.pos}º</b> de ${rg.total}</div>`:''}
-    <div class="geral-rank">Empreendimentos: <b>${EMP_NOMES.length}</b></div>
-  </div>`;
-  // Cards por empreendimento
-  const cards=EMP_NOMES.map((nome,i)=>{
-    const apts=MINE.filter(a=>a.empreendimento===nome);
-    const ab=apts.filter(a=>a.status==='Em aberto').length;
-    const at=apts.filter(a=>isAtrasado(a)).length;
-    const sc=computeScore(apts).total, td=trendOf(apts);
-    const rk=rankingPos(ALL.filter(a=>a.empreendimento===nome));
-    const nf=notifOf(apts);
-    return `<div class="ec" onclick="openEmpIdx(${i})">
-      ${nf?`<div class="ec-badge" title="Interações novas">${nf}</div>`:''}
-      <div class="ec-nome">${escH(nome)}</div>
-      <div class="ec-loc">${apts.length} apontamento(s)</div>
-      <div class="ec-row"><span class="ec-lbl">Em aberto</span><span class="ec-val" style="color:#854F0B">${ab}</span></div>
-      <div class="ec-row"><span class="ec-lbl">Em atraso</span><span class="ec-val" style="color:${at?'#A32D2D':'#1E8449'}">${at}</span></div>
-      <div class="ec-score">
-        <span class="ec-score-num" style="color:${scoreCor(sc)}">${sc}</span>
-        <span class="ec-trend" style="color:${trendCor(td)}">${trendIcon(td)}</span>
-        ${rk?`<span class="ec-rank">${rk.pos}º de ${rk.total}</span>`:''}
-      </div></div>`;
-  }).join('');
-  document.getElementById('home-cards').innerHTML=cards||'<div class="empty">Nenhum empreendimento atribuído.</div>';
-}
-function openEmpIdx(i){ openEmp(EMP_NOMES[i]); }
-function openEmp(nome){
-  CUR_EMP=nome;
-  TODOS=MINE.filter(a=>a.empreendimento===nome);
-  document.getElementById('view-home').style.display='none';
-  document.getElementById('view-emp').style.display='block';
-  var vm2=document.getElementById('view-msg'); if(vm2)vm2.style.display='none';
-  document.getElementById('emp-titulo').textContent=nome;
-  document.getElementById('topbar-title').textContent=nome;
-  _kpi_ativo=''; _filtro_atraso=false;
-  ['busca','fil-status','fil-crit'].forEach(id=>{const el=document.getElementById(id); if(el)el.value='';});
-  const fe=document.getElementById('fil-emp'); if(fe) fe.style.display='none';
-  ['kpi-card-total','kpi-card-aberto','kpi-card-resolvido','kpi-card-atraso']
-    .forEach(id=>document.getElementById(id)?.classList.remove('active'));
-  atualizarKPIs(); filtrar();
-}
-function showHome(){ renderHome(); }
-
-// ── Contratos & Faturas (projetista) ────────────────────────────
-var P_CONTRATOS=[], P_SOL_PARC=null;
-function pBRL(v){ v=Number(v||0); try{return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}catch(e){return 'R$ '+v.toFixed(2);} }
-function pFmtDt(s){ if(!s)return ''; var p=String(s).split('T')[0].split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
-function pClsSt(s){return {a_faturar:'pst-af',solicitada:'pst-so',autorizada:'pst-au',recusada:'pst-re',faturada:'pst-fa',paga:'pst-pg',cancelada:'pst-af'}[s]||'pst-af';}
-function pLblSt(s){return {a_faturar:'A faturar',solicitada:'Solicitada',autorizada:'Autorizada',recusada:'Recusada',faturada:'Faturada',paga:'Paga',cancelada:'Cancelada'}[s]||s;}
-function _fileToDataURLp(file){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsDataURL(file); }); }
-
-async function showContratos(){
-  document.getElementById('view-home').style.display='none';
-  document.getElementById('view-emp').style.display='none';
-  var vm=document.getElementById('view-msg'); if(vm)vm.style.display='none';
-  document.getElementById('view-ctr').style.display='block';
-  document.getElementById('topbar-title').textContent='Contratos & Faturas';
-  document.getElementById('ctr-projetista-list').innerHTML='<div class="loading">Carregando contratos…</div>';
-  P_CONTRATOS=[];
+// Descobre o papel e redireciona para o painel certo.
+async function rotear(user){
+  $('card').classList.add('hide'); $('loading').classList.remove('hide');
+  let role = null;
   try{
-    // Contratos (RLS filtra pelo e-mail do JWT via policy contr_projetista)
-    P_CONTRATOS=await _supaGet('contratos_auria?select=*&order=criado_em.desc');
-    if(P_CONTRATOS.length){
-      // Nome do empreendimento (se o projetista tiver leitura permitida)
-      const empIds=[...new Set(P_CONTRATOS.map(c=>c.empreendimento_id).filter(Boolean))];
-      let empMap={};
-      if(empIds.length){
-        try{
-          const emps=await _supaGet('empreendimentos_auria?select=id,nome&id=in.('+empIds.join(',')+')');
-          (emps||[]).forEach(e=>{ empMap[e.id]=e.nome||''; });
-        }catch(e){}
-      }
-      P_CONTRATOS.forEach(c=>{ c._empNome = empMap[c.empreendimento_id] || 'Empreendimento'; });
-      // Parcelas
-      const cids=P_CONTRATOS.map(c=>c.id);
-      const parcs=await _supaGet('parcelas_auria?contrato_id=in.('+cids.join(',')+')&order=numero.asc');
-      P_CONTRATOS.forEach(c=>{ c.parcelas_auria=(parcs||[]).filter(p=>p.contrato_id===c.id); });
-    }
+    const { data } = await sb.from('usuarios_auria').select('role').eq('id', user.id).maybeSingle();
+    role = data && data.role ? data.role : null;
+  }catch(e){}
+  // CEO tem página exclusiva e sessão isolada: o roteador NÃO mantém sessão de
+  // admin. Se for super_admin, desloga daqui e manda para a página do CEO
+  // (que exige o próprio login).
+  if(role==='super_admin'){ try{ await sb.auth.signOut(); }catch(e){} location.replace('auria_ceo.html'); return; }
+  const dest = role==='gerente'    ? 'auria_gerencia.html'
+             : role==='analista'   ? 'auria_analista.html'
+             : role==='financeiro' ? 'auria_custos.html'
+             : 'projetista.html';   // projetista ou sem papel definido
+  location.replace(dest);
+}
+
+async function entrar(){
+  const email=$('email').value.trim(), senha=$('senha').value.trim();
+  showErr($('err'),''); showErr($('msg'),'');
+  if(!email||!senha){ showErr($('err'),'Preencha e-mail e senha.'); return; }
+  $('btnEntrar').disabled=true; $('btnEntrar').textContent='Entrando…';
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({ email, password:senha });
+    if(error) throw error;
+    await rotear(data.user);
   }catch(e){
-    console.error('contratos:',e);
-    document.getElementById('ctr-projetista-list').innerHTML='<div class="empty" style="background:#fff;padding:30px;border-radius:12px"><div style="color:#EF4444;font-weight:700">Erro ao carregar contratos</div><div style="font-size:12px;color:#94A3B8;margin-top:8px">Verifique se você está logado com o mesmo e-mail cadastrado no contrato.</div></div>';
-    return;
+    const m=(e&&e.message)||'';
+    showErr($('err'), m.toLowerCase().includes('invalid') ? 'E-mail ou senha incorretos.' : (m||'Falha ao entrar.'));
+    $('btnEntrar').disabled=false; $('btnEntrar').innerHTML='Entrar &rarr;';
   }
-  renderContratosProjetista();
-  atualizarBadgeContratos();
-}
-function renderContratosProjetista(){
-  const el=document.getElementById('ctr-projetista-list');
-  if(!P_CONTRATOS.length){
-    el.innerHTML='<div class="empty" style="background:#fff;padding:40px;border-radius:12px"><div style="font-size:34px">💼</div><h3 style="margin-top:8px">Nenhum contrato</h3><p style="color:#94A3B8">Você ainda não tem contratos cadastrados pela equipe.</p></div>';
-    return;
-  }
-  // Agrupa por empreendimento → disciplina
-  const byEmp={}; const empOrder=[];
-  P_CONTRATOS.forEach((c,ci)=>{ c._ci=ci; const e=c._empNome||'Empreendimento';
-    if(!byEmp[e]){ byEmp[e]={}; empOrder.push(e); }
-    const d=c.disciplina||'Sem disciplina';
-    (byEmp[e][d]=byEmp[e][d]||[]).push(c);
-  });
-  function _cardHtml(c){
-    const parcs=(c.parcelas_auria||[]).slice().sort((a,b)=>a.numero-b.numero);
-    const tot=Number(c.valor_total||0);
-    const faturado=parcs.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
-    const pct=tot?Math.round(faturado/tot*100):0;
-    return `<div class="pctr-card">
-      <div class="pctr-card-h">
-        <div>
-          <div class="pctr-nome">${escH(c.objeto||c.disciplina||'Contrato')}${c.numero?(' · '+escH(c.numero)):''}</div>
-          <div class="pctr-sub">${escH(c.disciplina||'')}</div>
-        </div>
-        ${c.pdf_data?`<a class="pmini" href="${c.pdf_data}" download="${escH(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none">📄 Contrato</a>`:''}
-      </div>
-      <div class="pctr-fin">
-        <div><div class="v">${pBRL(tot)}</div><div class="l">Total</div></div>
-        <div><div class="v" style="color:#10B981">${pBRL(faturado)}</div><div class="l">Faturado</div></div>
-        <div><div class="v" style="color:#E8960A">${pBRL(tot-faturado)}</div><div class="l">A faturar</div></div>
-      </div>
-      <div class="pctr-bar"><i style="width:${pct}%"></i></div>
-      <table class="pctr-parc">
-        <thead><tr><th style="width:30px">#</th><th>Descrição</th><th style="width:110px">Valor</th><th style="width:100px">Vencimento</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-          ${parcs.length?parcs.map(p=>{
-            const podeSolic = p.status==='a_faturar' || p.status==='recusada';
-            const acoes = [];
-            if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
-            if(p.nf_pdf_data) acoes.push(`<a class="pmini" href="${p.nf_pdf_data}" download="${escH(p.nf_pdf_nome||'NF.pdf')}" style="text-decoration:none">📄 NF</a>`);
-            return `<tr>
-              <td>${p.numero}</td>
-              <td>${escH(p.descricao||'—')}</td>
-              <td>${pBRL(p.valor)}</td>
-              <td>${pFmtDt(p.vencimento)||'—'}</td>
-              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${p.data_faturamento?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">Fat. ${pFmtDt(p.data_faturamento)}${p.nf_numero?(' · NF '+escH(p.nf_numero)):''}</div>`:''}</td>
-              <td>${acoes.join(' ')}</td>
-            </tr>`;
-          }).join(''):'<tr><td colspan="6" style="text-align:center;color:#94A3B8;padding:14px">Sem parcelas definidas.</td></tr>'}
-        </tbody>
-      </table>
-    </div>`;
-  }
-  el.innerHTML=empOrder.map(emp=>{
-    const discs=Object.keys(byEmp[emp]).sort();
-    // resumo do empreendimento
-    let tE=0,fE=0,nC=0;
-    discs.forEach(d=>byEmp[emp][d].forEach(c=>{ nC++; tE+=Number(c.valor_total||0);
-      (c.parcelas_auria||[]).filter(p=>['faturada','paga'].includes(p.status)).forEach(p=>fE+=Number(p.valor||0)); }));
-    const secoes=discs.map(d=>{
-      const cards=byEmp[emp][d].map(_cardHtml).join('');
-      return `<div style="margin-top:12px">
-        <div style="font-size:12px;font-weight:800;color:#1D4ED8;background:#EFF6FF;padding:6px 12px;border-radius:6px;letter-spacing:.03em">📐 ${escH(d)} · ${byEmp[emp][d].length} contrato(s)</div>
-        ${cards}
-      </div>`;
-    }).join('');
-    return `<div style="margin-bottom:20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;background:#1E2A3D;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase">
-        <span>🏢 ${escH(emp)}</span>
-        <span style="font-weight:500;text-transform:none;letter-spacing:0;font-size:12px">${nC} contrato(s) · ${pBRL(tE)} · faturado <b style="color:#34D399">${pBRL(fE)}</b></span>
-      </div>
-      ${secoes}
-    </div>`;
-  }).join('');
 }
 
-function abrirSolicitar(parcId, ctrIdx){
-  P_SOL_PARC={parcId:parcId, ctrIdx:+ctrIdx};
-  const c=P_CONTRATOS[+ctrIdx]; const p=(c.parcelas_auria||[]).find(x=>x.id===parcId);
-  document.getElementById('sol-info').innerHTML = p
-    ? `<b>${escH(c.disciplina||'Contrato')}</b> · Parcela <b>${p.numero}</b> — ${escH(p.descricao||'')} — <b>${pBRL(p.valor)}</b>`
-    : '';
-  document.getElementById('sol-obs').value='';
-  document.getElementById('sol-pdf').value='';
-  document.getElementById('solicitarModal').classList.add('on');
-}
-function fecharSolicitar(){ document.getElementById('solicitarModal').classList.remove('on'); P_SOL_PARC=null; }
-
-async function enviarSolicitacao(){
-  if(!P_SOL_PARC) return;
-  const obs=(document.getElementById('sol-obs').value||'').trim();
-  const f=document.getElementById('sol-pdf').files[0];
-  let pdfData=null, pdfNome=null;
-  if(f){
-    if(f.size>8*1024*1024){ alert('PDF muito grande (máx ~8 MB).'); return; }
-    try{ pdfData=await _fileToDataURLp(f); pdfNome=f.name; }catch(e){ alert('Falha ao ler o PDF.'); return; }
-  }
-  const btn=document.getElementById('sol-save'); btn.disabled=true; const t=btn.textContent; btn.textContent='Enviando…';
+async function solicitar(){
+  const nome=$('cNome').value.trim(), email=$('cEmail').value.trim(), senha=$('cSenha').value.trim();
+  showErr($('errC'),''); showErr($('msgC'),'');
+  if(!nome||!email||!senha){ showErr($('errC'),'Preencha todos os campos.'); return; }
+  if(senha.length<6){ showErr($('errC'),'A senha deve ter ao menos 6 caracteres.'); return; }
+  $('btnCad').disabled=true; $('btnCad').textContent='Enviando…';
   try{
-    const upd={status:'solicitada', data_solicitacao:new Date().toISOString(),
-      observacao:obs||null, atualizado_em:new Date().toISOString()};
-    if(pdfData){ upd.nf_pdf_data=pdfData; upd.nf_pdf_nome=pdfNome; }
-    const r=await fetch(SUPA_URL+'/rest/v1/parcelas_auria?id=eq.'+P_SOL_PARC.parcId,
-      {method:'PATCH',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
-       body:JSON.stringify(upd)});
-    if(!r.ok){ const t=await r.text(); throw new Error(t||('HTTP '+r.status)); }
-    try{
-      await fetch(SUPA_URL+'/rest/v1/parcela_eventos_auria',
-        {method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
-         body:JSON.stringify({parcela_id:P_SOL_PARC.parcId,evento:'solicitou',
-           por_email:USER.email, por_nome:USER.nome||USER.email, por_role:'projetista', observacao:obs||null})});
-    }catch(e){}
-    // Avisa o analista/gestor por e-mail (não bloqueia; ignora se a function não estiver deployada)
-    try{
-      await fetch(SUPA_URL+'/functions/v1/notify-fatura-solicitada',
-        {method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'},
-         body:JSON.stringify({parcela_id:P_SOL_PARC.parcId})});
-    }catch(e){ console.warn('notify falhou (function deployada?):',e); }
-    fecharSolicitar(); showContratos();
-  }catch(e){ alert('Erro: '+(e.message||e)); }
-  btn.disabled=false; btn.textContent=t;
-}
-
-function atualizarBadgeContratos(){
-  // Conta parcelas em status que exigem atenção do projetista (autorizada = pode emitir NF)
-  let n=0;
-  (P_CONTRATOS||[]).forEach(c=>(c.parcelas_auria||[]).forEach(p=>{ if(p.status==='autorizada') n++; }));
-  const b=document.getElementById('ctr-badge'); if(!b)return;
-  b.textContent=n; b.style.display=n>0?'flex':'none';
-}
-
-// ── Mensagens (portal do projetista) ──────────────────────────
-var THREADS=[], UNREAD={}, CUR_THREAD=null, P_ANEX=[], EMP_MAP={};
-function _supaGet(path){ return fetch(SUPA_URL+'/rest/v1/'+path,{headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Accept':'application/json'}}).then(function(r){return r.ok?r.json():[];}); }
-async function loadMsgData(){
-  try{
-    THREADS=await _supaGet('threads_auria?order=atualizado_em.desc&limit=200');
-    var un=await _supaGet('mensagens_auria?select=thread_id&de=eq.analista&lida_projetista=eq.false');
-    UNREAD={}; (un||[]).forEach(function(m){ UNREAD[m.thread_id]=(UNREAD[m.thread_id]||0)+1; });
-    var emps=await _supaGet('empreendimentos_auria?select=id,nome');
-    EMP_MAP={}; (emps||[]).forEach(function(e){ EMP_MAP[e.id]=e.nome||''; });
-  }catch(e){ THREADS=[]; UNREAD={}; }
-  atualizarBadgeMsg();
-}
-function totalUnread(){ var t=0; for(var k in UNREAD) t+=UNREAD[k]; return t; }
-function atualizarBadgeMsg(){ var b=document.getElementById('msg-badge'); if(!b)return; var t=totalUnread(); b.textContent=t; b.style.display=t>0?'flex':'none'; }
-function showMensagens(){
-  document.getElementById('view-home').style.display='none';
-  document.getElementById('view-emp').style.display='none';
-  document.getElementById('view-msg').style.display='block';
-  document.getElementById('topbar-title').textContent='Mensagens';
-  renderMsgInbox();
-}
-var MSG_LIST=[];
-function buildMsgList(){
-  MSG_LIST=[];
-  (MINE||[]).forEach(function(a){ var ms=a.mensagens||[]; if(ms.length){ var last=ms[ms.length-1]||{};
-    MSG_LIST.push({type:'apt',id:a.id,titulo:a.id+' — '+(a.titulo||'Sem título'),emp:(a.empreendimento||'Sem empreendimento'),when:(last.data||''),unread:(last.de==='analista')}); } });
-  (THREADS||[]).forEach(function(t){ MSG_LIST.push({type:'thread',titulo:t.assunto||'(sem assunto)',emp:(EMP_MAP[t.empreendimento_id]||'Sem empreendimento'),when:t.atualizado_em||'',unread:(UNREAD[t.id]||0)>0,thread:t}); });
-  MSG_LIST.sort(function(a,b){ return (b.when||'').localeCompare(a.when||''); });
-}
-function renderMsgInbox(){
-  buildMsgList();
-  var el=document.getElementById('msg-inbox');
-  if(!MSG_LIST.length){ el.innerHTML='<div class="empty" style="padding:30px">Nenhuma mensagem.</div>'; return; }
-  var groups={}, order=[];
-  MSG_LIST.forEach(function(it,i){ var e=it.emp||'Sem empreendimento'; if(!groups[e]){groups[e]=[]; order.push(e);} groups[e].push(i); });
-  el.innerHTML=order.map(function(emp){
-    var its=groups[emp].map(function(i){ var it=MSG_LIST[i];
-      var tag=it.type==='apt'?'<span class="msg-tag tag-apt">Apontamento</span>':'<span class="msg-tag tag-th">Avulsa</span>';
-      return '<div class="msg-it" id="mit-'+i+'" onclick="abrirMsgItem('+i+')"><div class="msg-it-tit">'+(it.unread?'<span class="msg-it-dot"></span>':'')+escH(it.titulo)+'</div><div class="msg-it-sub">'+tag+'</div></div>';
-    }).join('');
-    return '<div class="emp-group"><div class="emp-group-h">🏢 '+escH(emp)+'</div>'+its+'</div>';
-  }).join('');
-}
-function abrirMsgItem(i){
-  var it=MSG_LIST[i]; if(!it)return;
-  document.querySelectorAll('.msg-it').forEach(function(e){e.classList.remove('sel');});
-  var el=document.getElementById('mit-'+i); if(el)el.classList.add('sel');
-  if(it.type==='apt'){
-    document.getElementById('msg-conv-f').style.display='none';
-    document.getElementById('msg-conv-h').textContent=it.titulo;
-    document.getElementById('msg-conv-b').innerHTML='<div class="empty">Detalhes e conversa do apontamento abertos.</div>';
-    abrirModal(it.id);
-  } else { openThreadObj(it.thread); }
-}
-function openThreadObj(t){
-  CUR_THREAD=t;
-  document.getElementById('msg-conv-h').textContent=t.assunto||'(sem assunto)';
-  document.getElementById('msg-conv-b').innerHTML='<div class="loading">Carregando…</div>';
-  document.getElementById('msg-conv-f').style.display='flex';
-  P_ANEX=[]; renderStgP();
-  _supaGet('mensagens_auria?thread_id=eq.'+t.id+'&order=criado_em').then(function(msgs){
-    renderThread(msgs||[]);
-    if(UNREAD[t.id]){
-      fetch(SUPA_URL+'/rest/v1/mensagens_auria?thread_id=eq.'+t.id+'&de=eq.analista&lida_projetista=eq.false',
-        {method:'PATCH',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
-         body:JSON.stringify({lida_projetista:true})}).then(function(){ UNREAD[t.id]=0; atualizarBadgeMsg(); });
+    const { data, error } = await sb.auth.signUp({ email, password:senha, options:{ data:{ nome } } });
+    if(error) throw error;
+    // Supabase devolve identities:[] quando o e-mail JÁ existe (proteção anti-enumeração).
+    if(data.user && Array.isArray(data.user.identities) && data.user.identities.length===0){
+      showErr($('errC'),'Este e-mail já possui cadastro. Volte e faça login.');
+      $('btnCad').disabled=false; $('btnCad').textContent='Solicitar cadastro'; return;
     }
-  });
+    // SEGURANÇA: cadastro NUNCA loga nem roteia automaticamente. Encerra qualquer
+    // sessão que o signUp tenha criado — o usuário precisa fazer login depois.
+    try{ await sb.auth.signOut(); }catch(e){}
+    showErr($('msgC'),'Cadastro solicitado! Faça login para entrar. (Se pedir confirmação, verifique seu e-mail antes.)');
+    $('btnCad').disabled=false; $('btnCad').textContent='Solicitar cadastro';
+  }catch(e){
+    const m=(e&&e.message)||'';
+    showErr($('errC'), m.toLowerCase().includes('registered') ? 'Este e-mail já tem cadastro. Volte e faça login.' : (m||'Falha no cadastro.'));
+    $('btnCad').disabled=false; $('btnCad').textContent='Solicitar cadastro';
+  }
 }
-function renderThread(msgs){
-  var b=document.getElementById('msg-conv-b');
-  if(!msgs.length){ b.innerHTML='<div class="empty">Sem mensagens.</div>'; return; }
-  b.innerHTML=msgs.map(function(m){ var me=m.de==='projetista'; var cls=me?'pb-me':'pb-an';
-    var dt=m.criado_em?(' · '+m.criado_em.substring(0,16).replace('T',' ')):'';
-    var who=(me?'Você':(m.autor_nome||'Analista'))+dt;
-    return '<div class="pbub '+cls+'"><div class="who">'+escH(who)+'</div>'+escH(m.texto||'')+anexHtmlP(m.anexos)+'</div>';
-  }).join('');
-  b.scrollTop=b.scrollHeight;
-}
-function pEnviar(){
-  if(!CUR_THREAD)return; var t=document.getElementById('p-msg-txt'); var texto=t.value.trim();
-  if(!texto && !P_ANEX.length)return; var anexos=P_ANEX.slice(); t.value=''; t.disabled=true;
-  fetch(SUPA_URL+'/rest/v1/mensagens_auria',{method:'POST',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},
-    body:JSON.stringify({thread_id:CUR_THREAD.id,de:'projetista',autor_email:USER.email,autor_nome:USER.nome,texto:texto,anexos:anexos,lida_projetista:true})})
-   .then(function(){
-     fetch(SUPA_URL+'/rest/v1/threads_auria?id=eq.'+CUR_THREAD.id,{method:'PATCH',headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify({atualizado_em:new Date().toISOString()})});
-     t.disabled=false; t.focus(); P_ANEX=[]; renderStgP();
-     _supaGet('mensagens_auria?thread_id=eq.'+CUR_THREAD.id+'&order=criado_em').then(renderThread);
-   }).catch(function(){ t.disabled=false; alert('Erro ao enviar.'); });
-}
-function fileToThumbP(file,cb){ var img=new Image(),url=URL.createObjectURL(file); img.onload=function(){var max=1000,w=img.width,h=img.height,sc=Math.min(1,max/Math.max(w,h));var c=document.createElement('canvas');c.width=Math.round(w*sc);c.height=Math.round(h*sc);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);cb(c.toDataURL('image/jpeg',0.72));};img.onerror=function(){URL.revokeObjectURL(url);};img.src=url; }
-function renderStgP(){ var el=document.getElementById('p-reply-stg'); if(!el)return; el.innerHTML=P_ANEX.map(function(a,i){return '<div class="th"><img src="'+a.data+'"><button class="x" data-pi="'+i+'">×</button></div>';}).join(''); }
-function anexHtmlP(anexos){ if(!anexos||!anexos.length)return ''; return '<div class="anx">'+anexos.map(function(a){ if(a.tipo==='img')return '<img class="anx-img" src="'+a.data+'" onclick="plight(this.src)">'; if(a.tipo==='prancha')return '<span class="anx-chip">📄 '+escH(a.nome)+'</span>'; if(a.tipo==='apontamento')return '<span class="anx-chip anx-apt" data-aptid="'+escH(a.id)+'" title="Abrir apontamento" style="cursor:pointer">📌 '+escH(a.id)+(a.titulo?' — '+escH(a.titulo):'')+' ↗</span>'; if(a.tipo==='pdf')return '<a class="anx-chip" href="'+a.data+'" download="'+escH(a.nome||'relatorio.pdf')+'" style="text-decoration:none">📄 '+escH(a.nome||'Relatório')+' ⬇</a>'; return ''; }).join('')+'</div>'; }
-document.addEventListener('click',function(e){ var c=e.target; if(c&&c.classList&&c.classList.contains('anx-apt')){ var id=c.getAttribute('data-aptid'); if(id) abrirAptAnexo(id); } });
-function plight(src){ var lb=document.getElementById('lb'); document.getElementById('lb-img').src=src; lb.classList.add('on'); }
-document.addEventListener('paste',function(e){
-  if(document.getElementById('view-msg').style.display!=='block')return;
-  var items=((e.clipboardData||window.clipboardData)||{}).items||[];
-  for(var i=0;i<items.length;i++){ if(items[i].type&&items[i].type.indexOf('image')===0){ var f=items[i].getAsFile(); if(!f)continue; fileToThumbP(f,function(d){P_ANEX.push({tipo:'img',data:d});renderStgP();}); e.preventDefault(); } }
+
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter') return;
+  if(!$('viewCadastro').classList.contains('hide')) solicitar(); else entrar();
 });
-document.addEventListener('click',function(e){ var b=e.target; if(b&&b.classList&&b.classList.contains('x')&&b.hasAttribute('data-pi')){ P_ANEX.splice(+b.getAttribute('data-pi'),1); renderStgP(); } });
 
-function isAtrasado(a){
-  if(a.status==='Resolvido') return false;
-  if(!a.prazo_min) return false;
-  const [d,m,y]=a.prazo_min.split('/');
-  return new Date(y,m-1,d)<new Date();
-}
-
-function diasAtraso(a){
-  if(!a.prazo_min) return 0;
-  const [d,m,y]=a.prazo_min.split('/');
-  const diff=Math.floor((new Date()-new Date(y,m-1,d))/86400000);
-  return diff>0?diff:0;
-}
-
-function stripEmoji(p){return (p||'').replace(/🔴 |🟠 |🟡 /g,'').trim();}
-
-function atualizarKPIs(){
-  const total=TODOS.length;
-  const aberto=TODOS.filter(a=>a.status==='Em aberto').length;
-  const resolvido=TODOS.filter(a=>a.status==='Resolvido').length;
-  const atraso=TODOS.filter(a=>isAtrasado(a)).length;
-  document.getElementById('kpi-total').textContent=total;
-  document.getElementById('kpi-aberto').textContent=aberto;
-  document.getElementById('kpi-resolvido').textContent=resolvido;
-  document.getElementById('kpi-atraso').textContent=atraso;
-  calcularPontuacao();
-  // Seção atrasados
-  const atrasados=TODOS.filter(a=>isAtrasado(a)).sort((a,b)=>diasAtraso(b)-diasAtraso(a));
-  const sec=document.getElementById('late-section');
-  if(atrasados.length){
-    sec.innerHTML=`<div class="late-bar"><h4>⏰ Apontamentos atrasados (${atrasados.length})</h4>`+
-      atrasados.map(a=>`<div class="late-item" onclick="abrirModal('${a.id}')" style="cursor:pointer">
-        <span class="late-id">${a.id}</span>
-        <span class="late-title">${escH(a.titulo)||'Sem título'}</span>
-        <span class="late-days">+${diasAtraso(a)} dias</span>
-      </div>`).join('')+'</div>';
-  } else sec.innerHTML='';
-}
-
-function calcularPontuacao(){
-  if(!TODOS.length) return;
-  document.getElementById('score-section').style.display='block';
-
-  // ── Prazo (40%) ──────────────────────────────────────────
-  let ptPrazo = 100;
-  TODOS.forEach(a=>{
-    const dias = diasAtraso(a);
-    if(dias > 0) ptPrazo -= dias * 3;
-    else if(a.status==='Resolvido' && a.prazo_min && a.conclusao){
-      try{
-        const [pd,pm,py]=a.prazo_min.split('/');
-        const [cd,cm,cy]=a.conclusao.split('/');
-        const diff=Math.floor((new Date(py,pm-1,pd)-new Date(cy,cm-1,cd))/86400000);
-        if(diff>0) ptPrazo += diff*2;
-      }catch(e){}
-    }
-    if(a.status==='Resolvido' && diasAtraso(a)===0) ptPrazo += 10;
-  });
-  ptPrazo = Math.max(0, Math.min(100, Math.round(ptPrazo)));
-
-  // ── Engajamento (30%) ─────────────────────────────────────
-  let ptEng = 100;
-  TODOS.forEach(a=>{
-    const msgs = a.mensagens||[];
-    const meusMsgs = msgs.filter(m=>m.de==='projetista').length;
-    if(a.visibilidade==='Público' && meusMsgs===0) ptEng -= 5;
-    else if(meusMsgs > 0) ptEng += 3;
-  });
-  ptEng = Math.max(0, Math.min(100, Math.round(ptEng)));
-
-  // ── Assertividade (30%) ───────────────────────────────────
-  let ptAssert = 100;
-  TODOS.forEach(a=>{
-    const tipo = (a.tipo||'').toLowerCase();
-    if(tipo.includes('interferência') || tipo.includes('interferencia')) ptAssert -= 10;
-    else if(tipo.includes('norma') || tipo.includes('diretriz')) ptAssert -= 10;
-    else if(tipo.includes('ausência') || tipo.includes('ausencia') || tipo.includes('detalhe')) ptAssert -= 5;
-    if(a.status==='Resolvido') ptAssert += 2;
-  });
-  ptAssert = Math.max(0, Math.min(100, Math.round(ptAssert)));
-
-  // ── Total ponderado ───────────────────────────────────────
-  const total = Math.round(ptPrazo*0.4 + ptEng*0.3 + ptAssert*0.3);
-
-  // ── Tendência diária ─────────────────────────────────────
-  // Compara score de hoje com score de ontem (baseado em apontamentos com conclusao)
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
-  function scoreData(data){
-    let s=0;
-    TODOS.forEach(a=>{
-      if(a.status==='Resolvido' && a.conclusao){
-        try{
-          const [d,m,y]=a.conclusao.split('/');
-          const dt=new Date(y,m-1,d);
-          if(dt<=data) s+=3;
-        }catch(e){}
-      }
-      if(isAtrasado(a)) s-=diasAtraso(a)*3;
-    });
-    return s;
-  }
-  const scoreHoje = scoreData(hoje);
-  const scoreOntem = scoreData(ontem);
-  const tendencia = scoreHoje > scoreOntem ? 'up' : scoreHoje < scoreOntem ? 'down' : 'neutral';
-
-  // ── Exibe ─────────────────────────────────────────────────
-  document.getElementById('score-num').textContent = total;
-  document.getElementById('score-num').style.color =
-    total>=70?'#1E8449':total>=40?'#854F0B':'#A32D2D';
-  document.getElementById('score-arrow').textContent =
-    tendencia==='up'?'↑':tendencia==='down'?'↓':'→';
-  document.getElementById('score-arrow').style.color =
-    tendencia==='up'?'#27AE60':tendencia==='down'?'#E74C3C':'#7A9AB8';
-  document.getElementById('score-trend').textContent =
-    tendencia==='up'?'Tendência de melhora':
-    tendencia==='down'?'Tendência de queda':'Estável';
-  document.getElementById('sc-eng').textContent = ptEng;
-  document.getElementById('sc-prazo').textContent = ptPrazo;
-  document.getElementById('sc-assert').textContent = ptAssert;
-}
-
-let _kpi_ativo = "";  // rastreia qual KPI está selecionado
-
-function filtrarKpi(tipo){
-  // Toggle: se clicar no mesmo KPI, desfaz o filtro
-  if(_kpi_ativo === tipo){
-    _kpi_ativo = "";
-    document.getElementById("fil-status").value = "";
-    // Remove active de todos
-    ["kpi-card-total","kpi-card-aberto","kpi-card-resolvido","kpi-card-atraso"]
-      .forEach(id=>document.getElementById(id)?.classList.remove("active"));
-  } else {
-    _kpi_ativo = tipo;
-    // Aplica filtro
-    if(tipo === "") document.getElementById("fil-status").value = "";
-    else if(tipo === "atraso") document.getElementById("fil-status").value = "";
-    else document.getElementById("fil-status").value = tipo;
-    // Marca card ativo
-    ["kpi-card-total","kpi-card-aberto","kpi-card-resolvido","kpi-card-atraso"]
-      .forEach(id=>document.getElementById(id)?.classList.remove("active"));
-    const cardMap = {"":"kpi-card-total","Em aberto":"kpi-card-aberto",
-                     "Resolvido":"kpi-card-resolvido","atraso":"kpi-card-atraso"};
-    document.getElementById(cardMap[tipo])?.classList.add("active");
-  }
-  // Força filtro especial para atrasados
-  _filtro_atraso = (_kpi_ativo === "atraso");
-  filtrar();
-}
-
-let _filtro_atraso = false;
-
-function filtrar(){
-  const busca=(document.getElementById('busca').value||'').toLowerCase();
-  const st=document.getElementById('fil-status').value;
-  const cr=document.getElementById('fil-crit').value;
-  const emp=document.getElementById('fil-emp').value;
-  FILTRADOS=TODOS.filter(a=>{
-    if(_filtro_atraso && !isAtrasado(a)) return false;
-    if(!_filtro_atraso && st&&a.status!==st) return false;
-    if(cr&&stripEmoji(a.prioridade)!==cr) return false;
-    if(emp&&a.empreendimento!==emp) return false;
-    if(busca&&!(a.titulo||'').toLowerCase().includes(busca)&&
-       !(a.descricao||'').toLowerCase().includes(busca)&&
-       !(a.id||'').toLowerCase().includes(busca)) return false;
-    return true;
-  });
-  renderTabela();
-}
-
-function renderTabela(){
-  const el=document.getElementById('tabela-body');
-  document.getElementById('count-txt').textContent=`${FILTRADOS.length} apontamento(s)`;
-  if(!FILTRADOS.length){el.innerHTML='<div class="empty">Nenhum apontamento encontrado.</div>';return;}
-  el.innerHTML=`<table>
-    <thead><tr>
-      <th>ID</th><th>Título</th><th>Empreendimento</th>
-      <th>Status</th><th>Criticidade</th><th>Prazo</th>
-    </tr></thead>
-    <tbody>${FILTRADOS.map(a=>{
-      const atr=isAtrasado(a);
-      const statusTxt=atr?'Em atraso':a.status;
-      const statusBadge=atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open';
-      const crit=stripEmoji(a.prioridade);
-      const critBadge=crit.startsWith('Severa')?'badge-sev':crit.startsWith('Imp')?'badge-imp':'badge-obs';
-      return `<tr class="${atr?'late':a.status==='Resolvido'?'resolved':''}" onclick="abrirModal('${a.id}')">
-        <td><strong>${a.id}</strong></td>
-        <td>${escH(a.titulo)||'—'}</td>
-        <td>${escH(a.empreendimento)||'—'}</td>
-        <td><span class="badge ${statusBadge}">${escH(statusTxt)}</span></td>
-        <td><span class="badge ${critBadge}">${escH(crit)||'—'}</span></td>
-        <td>${a.prazo_min||'—'}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table>`;
-}
-
-// ── Modal ─────────────────────────────────────────────────────
-function findApt(id){ function m(x){return x.id===id;} return (TODOS||[]).find(m)||(ALL||[]).find(m)||(MINE||[]).find(m); }
-function abrirAptAnexo(id){ if(findApt(id)){ abrirModal(id); } else { alert('Apontamento não encontrado ou sem acesso a este apontamento.'); } }
-function abrirModal(id){
-  const a=findApt(id);if(!a) return;
-  document.getElementById('modal-titulo').textContent=`📍 ${a.id} — ${a.titulo||'Sem título'}`;
-  const atr=isAtrasado(a);
-  const logs=(a.log_json||[]).filter(l=>l.tipo!=='sistema');
-  const logsSist=(a.log_json||[]).filter(l=>l.tipo==='sistema');
-  document.getElementById('modal-body').innerHTML=`
-    <div class="field-row">
-      <div class="field-group"><label>Empreendimento</label><p>${escH(a.empreendimento)||'—'}</p></div>
-      <div class="field-group"><label>Disciplina</label><p>${escH(a.disciplina)||'—'}</p></div>
-    </div>
-    ${a.prancha_nome?`<div class="field-full"><label>Prancha</label><p>📄 ${escH(a.prancha_nome)}</p></div>`:''}
-    <div class="field-row">
-      <div class="field-group"><label>Status</label>
-        <p><span class="badge ${atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open'}">${atr?'Em atraso':a.status}</span></p>
-      </div>
-      <div class="field-group"><label>Criticidade</label><p>${escH(stripEmoji(a.prioridade))||'—'}</p></div>
-    </div>
-    <div class="field-row">
-      <div class="field-group"><label>Prazo</label><p>${a.prazo_min||'—'}</p></div>
-      <div class="field-group"><label>Conclusão</label><p>${a.conclusao||'—'}</p></div>
-    </div>
-    <div class="field-row">
-      <div class="field-group"><label>Tipo</label><p>${escH(a.tipo)||'—'}</p></div>
-      <div class="field-group"><label>Etapa</label><p>${escH(a.etapa)||'—'}</p></div>
-    </div>
-    <div class="field-full"><label>Descrição</label><p>${escH(a.descricao)||'—'}</p></div>
-
-    ${(a.obs_coord&&a.obs_coord.length)?`
-    <div class="field-full">
-      <label>Comentários da coordenação</label>
-      <ul class="log-list">
-        ${a.obs_coord.map(l=>`<li><span>${escH(l.data)}</span>${escH(l.texto)}</li>`).join('')}
-      </ul>
-    </div>`:''}
-
-    ${(a.log_json&&a.log_json.filter(l=>l.tipo==='sistema').length)?`
-    <div class="field-full"><label>Histórico do sistema</label>
-      <ul class="log-list">
-        ${a.log_json.filter(l=>l.tipo==='sistema').map(l=>`<li><span>${escH(l.data)}</span>${escH(l.texto)}</li>`).join('')}
-      </ul>
-    </div>`:''}
-
-    <!-- CHAT -->
-    <div class="field-full" style="margin-top:16px">
-      <label>💬 Chat com a coordenação</label>
-      <div id="chat-msgs" style="max-height:180px;overflow-y:auto;border:1px solid #EEF2F7;
-        border-radius:8px;padding:10px;margin:8px 0;background:#FAFBFC">
-        ${((a.mensagens||[]).length===0)?'<p style="color:#7A9AB8;font-size:12px;text-align:center">Nenhuma mensagem ainda.</p>':
-          (a.mensagens||[]).map((m,mIdx)=>`
-          <div style="margin-bottom:10px" id="msg-${mIdx}-${a.id}">
-            <div style="display:flex;justify-content:${m.de==='projetista'?'flex-end':'flex-start'}">
-              <div style="max-width:80%">
-                <div style="font-size:10px;color:#7A9AB8;margin-bottom:2px;text-align:${m.de==='projetista'?'right':'left'}">
-                  ${escH(m.nome||m.email||'Projetista')}
-                  ${m.de==='projetista'&&m.email===USER.email&&podEditarMsg(m)?`
-                    <span onclick="editarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:6px;color:#7A9AB8" title="Editar">✏️</span>
-                    <span onclick="deletarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:4px;color:#E74C3C" title="Deletar">🗑</span>
-                  `:''}
-                </div>
-                <div style="padding:8px 12px;border-radius:12px;font-size:13px;
-                  background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
-                  color:${m.de==='projetista'?'#fff':'#2C3E50'}">
-                  ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${escH(m.texto)}</span>${m.de==='analista'?`<div style="display:flex;gap:6px;margin-top:8px">
-                      <button onclick="aceitarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#27AE60;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✅ Aceitar</button>
-                      <button onclick="contraproporPrazo('${a.id}',${mIdx})" style="padding:5px 10px;background:#E8960A;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">🔁 Propor outro</button>
-                      <button onclick="recusarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#E74C3C;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">❌ Recusar</button>
-                    </div>`:''}`:m.tipo==='croqui'&&m.imagem?`<div>${escH(m.texto)}</div>${safeImg(m.imagem)?`<img src="${safeImg(m.imagem)}" style="max-width:200px;border-radius:6px;margin-top:4px">`:''}`:m.tipo==='sistema'?`<i style="opacity:.75">${escH(m.texto)}</i>`:escH(m.texto)}
-                  <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}${m.editado?' (editado)':''}</div>
-                </div>
-              </div>
-            </div>
-          </div>`).join('')
-        }
-      </div>
-      ${a.status!=='Resolvido'?`
-      <div style="display:flex;gap:6px;margin-bottom:6px">
-        <button onclick="abrirSugestaoPrazo('${a.id}')"
-          style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #E2E8F0;
-          border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">📅 Sugerir prazo</button>
-        <label style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #E2E8F0;
-          border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">
-          🖼 Croqui
-          <input type="file" accept="image/*" style="display:none" onchange="enviarCroqui(this,'${a.id}')">
-        </label>
-      </div>
-      <div id="prazo-picker-${a.id}" style="display:none;background:#F8F9FB;border:1.5px solid #E2E8F0;
-        border-radius:9px;padding:10px;margin-bottom:8px">
-        <div style="font-size:12px;font-weight:600;color:#1A2F4A;margin-bottom:6px">Sugerir novo prazo:</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="prazo-date-${a.id}"
-            style="padding:8px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:13px;flex:1">
-          <button onclick="enviarSugestaoPrazo('${a.id}')"
-            style="padding:8px 14px;background:#1A2F4A;color:#fff;border:none;
-            border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">Enviar</button>
-          <button onclick="document.getElementById('prazo-picker-${a.id}').style.display='none'"
-            style="padding:8px;background:transparent;border:none;cursor:pointer;color:#7A9AB8">✕</button>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <input id="chat-inp" placeholder="Digite sua mensagem..." 
-          style="flex:1;padding:10px 14px;border:1.5px solid #E2E8F0;border-radius:9px;font-size:13px;outline:none"
-          onkeydown="if(event.key==='Enter')enviarMensagem('${a.id}')">
-        <button onclick="enviarMensagem('${a.id}')"
-          style="padding:10px 18px;background:#3B82F6;color:#fff;border:none;border-radius:9px;
-          font-size:13px;font-weight:700;cursor:pointer">Enviar</button>
-      </div>`:''}
-    </div>
-
-    ${a.status==='Resolvido'?'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>':''}
-  `;
-  document.getElementById('modal').classList.add('open');
-}
-
-function fecharModal(){document.getElementById('modal').classList.remove('open');}
-document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')fecharModal();});
-
-async function marcarResolvido(id){
-  const btn=document.getElementById(`btn-res-${id}`);
-  btn.disabled=true;btn.textContent='Salvando...';
-  try {
-    const hoje=new Date().toLocaleDateString('pt-BR');
-    const a=findApt(id);
-    const logs=[...(a.log_json||[]),{data:hoje+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
-      texto:`Apontamento marcado como Resolvido pelo projetista (${USER.email}).`,tipo:'sistema'}];
-    const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({status:'Resolvido',conclusao:hoje,log_json:logs})});
-    if(r.ok){
-      a.status='Resolvido';a.conclusao=hoje;a.log_json=logs;
-      atualizarKPIs();filtrar();fecharModal();
-    } else {btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro ao salvar.');}
-  } catch(e){btn.disabled=false;btn.textContent='✅ Marcar como Resolvido';alert('Erro de conexão.');}
-}
-
-// ── Chat ─────────────────────────────────────────────────────
-function podEditarMsg(m){
-  // Verifica se a mensagem foi criada há menos de 15 minutos
-  if(!m.data) return false;
-  try {
-    const [datePart, timePart] = m.data.split(' ');
-    const [d,mo,y] = datePart.split('/');
-    const [h,min] = timePart.split(':');
-    const msgDate = new Date(y, mo-1, d, h, min);
-    return (new Date() - msgDate) < 15*60*1000;
-  } catch(e){ return false; }
-}
-
-async function editarMsg(idx, issueId){
-  const a = findApt(issueId); if(!a) return;
-  const msg = (a.mensagens||[])[idx]; if(!msg) return;
-  const novoTexto = prompt('Editar mensagem:', msg.texto);
-  if(novoTexto === null || novoTexto.trim() === '') return;
-  const msgs = [...(a.mensagens||[])];
-  msgs[idx] = {...msg, texto: novoTexto.trim(), editado: true};
-  try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs, log_json: logJson})});
-    if(r.ok){ a.mensagens=msgs; a.log_json=logJson; fecharModal(); abrirModal(issueId); }
-    else { alert('Erro ao editar.'); }
-  } catch(e){ alert('Erro de conexão.'); }
-}
-
-async function deletarMsg(idx, issueId){
-  if(!confirm('Deletar esta mensagem?')) return;
-  const a = findApt(issueId); if(!a) return;
-  const msgs = (a.mensagens||[]).filter((_,i)=>i!==idx);
-  try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
-    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(issueId); }
-    else { alert('Erro ao deletar.'); }
-  } catch(e){ alert('Erro de conexão.'); }
-}
-
-
-function abrirSugestaoPrazo(id){
-  const picker = document.getElementById(`prazo-picker-${id}`);
-  if(picker) picker.style.display = picker.style.display==='none'?'block':'none';
-}
-
-async function enviarSugestaoPrazo(id){
-  const dateInp = document.getElementById(`prazo-date-${id}`);
-  if(!dateInp || !dateInp.value){ alert('Selecione uma data.'); return; }
-  // Convert yyyy-mm-dd to dd/mm/yyyy
-  const [y,m,d] = dateInp.value.split('-');
-  const prazoFmt = `${d}/${m}/${y}`;
-  const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
-    new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const a = findApt(id); if(!a) return;
-  const msgs = [...(a.mensagens||[]), {
-    de: 'projetista',
-    tipo: 'sugestao_prazo',
-    nome: USER.nome,
-    email: USER.email,
-    texto: `📅 Sugestão de novo prazo: ${prazoFmt}`,
-    prazo_sugerido: prazoFmt,
-    data: agora
-  }];
-  try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
-    if(r.ok){
-      a.mensagens = msgs;
-      document.getElementById(`prazo-picker-${id}`).style.display='none';
-      // Reload modal
-      fecharModal(); abrirModal(id);
-      alert(`✅ Sugestão de prazo enviada: ${prazoFmt}`);
-    } else { alert('Erro ao enviar sugestão.'); }
-  } catch(e){ alert('Erro de conexão.'); }
-}
-
-// ── Negociação de prazo: projetista responde à sugestão do analista ─────
-function _agoraBR(){
-  return new Date().toLocaleDateString('pt-BR')+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-}
-async function _patchApt(id, payload){
-  return fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{method:'PATCH',
-    headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json','Prefer':'return=minimal'},
-    body:JSON.stringify(payload)});
-}
-async function aceitarPrazoAnalista(id, mIdx){
-  const a=findApt(id); if(!a) return;
-  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
-  const p=m.prazo_sugerido; const parts=a.participantes||{};
-  // Atualiza prazo do participante (projetista logado, se identificado; senão o primeiro)
-  const meu=(USER.email||'').toLowerCase();
-  let alvo=null;
-  for(const d in parts){ const e=(parts[d].emails||'').toLowerCase(); if(e.split(/[,;\s]+/).includes(meu)){ alvo=d; break; } }
-  if(!alvo) alvo=Object.keys(parts)[0]||null;
-  if(alvo){ parts[alvo].prazo=p; }
-  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:`✅ Prazo de ${p} aceito.`,data:_agoraBR()}];
+// Se já estiver logado, roteia direto (pula o login).
+(async function(){
   try{
-    const r=await _patchApt(id,{mensagens:msgs, prazo_min:p, participantes:parts});
-    if(r.ok){ a.mensagens=msgs; a.participantes=parts; a.prazo_min=p; fecharModal(); abrirModal(id); }
-    else alert('Erro ao aceitar prazo.');
-  }catch(e){ alert('Erro de conexão.'); }
-}
-async function recusarPrazoAnalista(id, mIdx){
-  const a=findApt(id); if(!a) return;
-  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
-  const motivo=prompt('Motivo da recusa (opcional):','')||'';
-  const txt=`❌ Prazo de ${m.prazo_sugerido} recusado`+(motivo?` — ${motivo}`:'.');
-  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:txt,data:_agoraBR()}];
-  try{
-    const r=await _patchApt(id,{mensagens:msgs});
-    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
-    else alert('Erro ao recusar.');
-  }catch(e){ alert('Erro de conexão.'); }
-}
-async function contraproporPrazo(id, mIdx){
-  const a=findApt(id); if(!a) return;
-  const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
-  const v=prompt('Contraproposta — nova data (dd/mm/aaaa):','');
-  if(!v) return;
-  if(!/^\d{2}\/\d{2}\/\d{4}$/.test(v.trim())){ alert('Formato inválido. Use dd/mm/aaaa.'); return; }
-  const obs=prompt('Justificativa (opcional):','')||'';
-  const txt=`🔁 Contraproposta de prazo: ${v.trim()}`+(obs?` — ${obs}`:'');
-  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sugestao_prazo',nome:USER.nome,email:USER.email,texto:txt,prazo_sugerido:v.trim(),data:_agoraBR()}];
-  try{
-    const r=await _patchApt(id,{mensagens:msgs});
-    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
-    else alert('Erro ao enviar contraproposta.');
-  }catch(e){ alert('Erro de conexão.'); }
-}
-
-async function enviarCroqui(input, id){
-  const file = input.files[0]; if(!file) return;
-  const a = findApt(id); if(!a) return;
-  // Compress image
-  const canvas = document.createElement('canvas');
-  const img = new Image();
-  img.onload = async function(){
-    const maxW = 800, maxH = 800;
-    let w=img.width, h=img.height;
-    if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
-    if(h>maxH){w=Math.round(w*maxH/h);h=maxH;}
-    canvas.width=w; canvas.height=h;
-    canvas.getContext('2d').drawImage(img,0,0,w,h);
-    const base64 = canvas.toDataURL('image/jpeg',0.6);
-    const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
-      new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    const msgs = [...(a.mensagens||[]), {
-      de: 'projetista',
-      tipo: 'croqui',
-      nome: USER.nome,
-      email: USER.email,
-      texto: '🖼 Croqui enviado',
-      imagem: base64,
-      data: agora
-    }];
-    try {
-      const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-        method:'PATCH',
-        headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-          'Content-Type':'application/json','Prefer':'return=minimal'},
-        body:JSON.stringify({mensagens: msgs})});
-      if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
-      else { alert('Erro ao enviar croqui.'); }
-    } catch(e){ alert('Erro de conexão.'); }
-  };
-  img.src = URL.createObjectURL(file);
-}
-
-
-async function enviarMensagem(id){
-  const inp = document.getElementById('chat-inp');
-  const texto = inp.value.trim();
-  if(!texto) return;
-  const a = findApt(id);
-  if(!a) return;
-  const agora = new Date().toLocaleDateString('pt-BR') + ' ' +
-    new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const logEntry = {
-    de: 'sistema',
-    tipo: 'sistema',
-    texto: `Mensagem recebida de ${USER.nome||USER.email} (portal).`,
-    data: agora
-  };
-  const msgs = [...(a.mensagens||[]), {
-    de: 'projetista',
-    nome: USER.nome,
-    email: USER.email,
-    texto,
-    data: agora
-  }];
-  // Also add to log_json
-  const logJson = [...(a.log_json||[]), logEntry];
-  inp.value='';
-  try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
-    const respText = await r.text();
-    console.log('PATCH status:', r.status, respText);
-    if(r.ok){
-      a.mensagens = msgs;
-      // Atualiza chat sem fechar modal
-      const chatDiv = document.getElementById('chat-msgs');
-      if(chatDiv){
-        chatDiv.innerHTML += `
-          <div style="margin-bottom:10px">
-            <div style="display:flex;justify-content:flex-end">
-              <div style="max-width:80%">
-                <div style="font-size:10px;color:#7A9AB8;margin-bottom:2px;text-align:right">
-                  ${escH(USER.nome||USER.email)}
-                </div>
-                <div style="padding:8px 12px;border-radius:12px;font-size:13px;
-                  background:#3B82F6;color:#fff">
-                  ${escH(texto)}
-                  <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${agora}</div>
-                </div>
-              </div>
-            </div>
-          </div>`;
-        chatDiv.scrollTop = chatDiv.scrollHeight;
-      }
-    } else { alert('Erro ao enviar mensagem.'); }
-  } catch(e){ alert('Erro de conexão.'); }
-}
-
-// ── Init ─────────────────────────────────────────────────────
-window.addEventListener('keydown',e=>{if(e.key==='Enter')acao();});
-(function init(){
-  const t=localStorage.getItem('auria_token');
-  const u=localStorage.getItem('auria_user');
-  if(t&&u){
-    TOKEN=t;USER=JSON.parse(u);
-    entrar();
-  }
+    const { data:{ session } } = await sb.auth.getSession();
+    if(session) rotear(session.user);
+  }catch(e){}
 })();
 </script>
 </body>
