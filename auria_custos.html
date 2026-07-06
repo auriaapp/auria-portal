@@ -183,9 +183,17 @@ function render(){
   // Tabela
   $('tbody').innerHTML = rows.length ? rows.map(n=>{
     const acoes=[];
-    if(n.status==='enviada')     acoes.push(`<button class="mini go" onclick="mudar('${n.id}','recebida')">Marcar recebida</button>`);
-    else if(n.status==='recebida')    acoes.push(`<button class="mini go" onclick="mudar('${n.id}','encaminhada')">Encaminhar</button>`);
-    else if(n.status==='encaminhada') acoes.push(`<button class="mini go" onclick="mudar('${n.id}','paga')">Marcar paga</button>`);
+    if(n.status==='enviada'){
+      acoes.push(`<button class="mini go" onclick="mudar('${n.id}','recebida')">Marcar recebida</button>`);
+    } else if(n.status==='recebida'){
+      acoes.push(`<button class="mini" title="Desfazer (voltar para Enviada)" onclick="mudar('${n.id}','enviada')">↩ Voltar</button>`);
+      acoes.push(`<button class="mini go" onclick="mudar('${n.id}','encaminhada')">Encaminhar</button>`);
+    } else if(n.status==='encaminhada'){
+      acoes.push(`<button class="mini" title="Desfazer (voltar para Recebida)" onclick="mudar('${n.id}','recebida')">↩ Voltar</button>`);
+      acoes.push(`<button class="mini go" onclick="mudar('${n.id}','paga')">Marcar paga</button>`);
+    } else if(n.status==='paga'){
+      acoes.push(`<button class="mini" title="Desfazer (voltar para Encaminhada)" onclick="mudar('${n.id}','encaminhada')">↩ Voltar</button>`);
+    }
     return `<tr>
       <td>${esc(n.empreendimento)}</td><td>${esc(n.disciplina||'—')}</td><td>${esc(n.projetista||'—')}</td>
       <td>${n.parcela_numero||'—'}</td><td><b>${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</b></td>
@@ -207,8 +215,10 @@ async function verPDF(path){
 
 async function mudar(id, novo){
   const patch={status:novo};
-  if(novo==='recebida') patch.recebida_em=new Date().toISOString();
-  if(novo==='encaminhada') patch.encaminhada_em=new Date().toISOString();
+  // Datas sempre refletem o status final (avançando OU voltando).
+  if(novo==='enviada'){ patch.recebida_em=null; patch.encaminhada_em=null; }
+  if(novo==='recebida'){ patch.recebida_em=new Date().toISOString(); patch.encaminhada_em=null; }
+  if(novo==='encaminhada'){ patch.encaminhada_em=new Date().toISOString(); }
   try{
     const { error } = await sb.from('notas_fiscais_auria').update(patch).eq('id',id);
     if(error) throw error;
