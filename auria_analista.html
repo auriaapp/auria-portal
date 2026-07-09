@@ -468,6 +468,7 @@ function renderHome(){
     const badge=nS>0?`<span style="position:absolute;top:10px;right:10px;background:#E8960A;color:#fff;font-size:11px;font-weight:800;padding:3px 9px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:2">💵 ${nS}</span>`:'';
     return `<div class="emp-card" style="position:relative" onclick="openEmp('${e.id}')">
       ${badge}
+      <button title="Trocar logo" onclick="anEditarLogo(event,'${e.id}')" style="position:absolute;top:10px;left:10px;z-index:3;background:rgba(255,255,255,.92);border:1px solid #E2E8F0;border-radius:8px;width:28px;height:28px;cursor:pointer;font-size:13px;line-height:1">✎</button>
       <div class="emp-logo">${logo}</div>
       <div class="emp-body"><h3>${esc(e.nome)}</h3>
         <div class="loc">${esc(loc)||'—'}</div>
@@ -481,6 +482,30 @@ function abrirPrimeiraSolicitacao(){
   if(!empId) return;
   openEmp(empId);
   setTimeout(()=>{ try{ empTab('ctr'); }catch(e){} }, 60);
+}
+
+// Analista sobe/troca a logo APENAS dos empreendimentos que lhe foram liberados.
+// A tabela não permite UPDATE ao analista — a gravação vai pela RPC emp_set_logo
+// (SECURITY DEFINER, que confere a atribuição ativa).
+async function anEditarLogo(ev, empId){
+  ev.stopPropagation();
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+  inp.onchange=async ()=>{
+    const f=inp.files&&inp.files[0]; if(!f) return;
+    try{
+      const ext=(f.name.split('.').pop()||'png').toLowerCase();
+      const path='empreendimentos/'+empId+'/logo.'+ext;
+      const up=await sb.storage.from('logos').upload(path,f,{upsert:true});
+      if(up.error) throw up.error;
+      const url=sb.storage.from('logos').getPublicUrl(path).data.publicUrl;
+      const { error }=await sb.rpc('emp_set_logo',{ p_emp:empId, p_logo:url });
+      if(error) throw error;
+      const emp=EMPS.find(x=>String(x.id)===String(empId)); if(emp) emp.logo_url=url;
+      renderHome();
+      alert('Logo atualizada!');
+    }catch(e){ alert('Não foi possível salvar a logo: '+(e.message||e)); }
+  };
+  inp.click();
 }
 
 async function openEmp(id){

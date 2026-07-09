@@ -433,6 +433,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <a class="sb-item" data-page="empreendimentos" onclick="goPage('empreendimentos')">
           <span class="sb-item-icon">&#9679;</span> Empreendimentos
         </a>
+        <a class="sb-item" data-page="empresas" onclick="goPage('empresas')">
+          <span class="sb-item-icon">&#127970;</span> Empresas
+        </a>
         <div class="sb-section">Equipe</div>
         <a class="sb-item" data-page="analistas" onclick="goPage('analistas')">
           <span class="sb-item-icon">&#9786;</span> Analistas
@@ -497,6 +500,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
               <span class="toolbar-count" id="empCount">0 ativos</span>
             </div>
             <div style="display:flex;gap:8px">
+              <select class="sel-sort" id="filterEmpresa" onchange="filtrarPorEmpresa()">
+                <option value="">Todas as empresas</option>
+              </select>
               <input class="inp-search" id="searchInp" placeholder="Buscar..." oninput="filterCards()">
               <select class="sel-sort" id="sortSel" onchange="sortCards()">
                 <option value="criticos">Mais criticos primeiro</option>
@@ -535,13 +541,23 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           </div>
         </div>
 
+        <!-- ══ PAGE: EMPRESAS (construtoras) ═══════════ -->
+        <div class="page" id="pageEmpresas">
+          <div id="empresasList">
+            <div class="loading-spinner"><div class="spinner"></div></div>
+          </div>
+        </div>
+
         <!-- ══ PAGE: ANALISTAS ═════════════════════════ -->
         <div class="page" id="pageAnalistas">
           <div class="toolbar">
             <div class="toolbar-left">
               <div class="toolbar-title">Analistas</div>
             </div>
-            <button class="btn-primary" onclick="openModalConvite()">+ Convidar Analista</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn-secondary" onclick="openModalGestor()">+ Adicionar Gestor</button>
+              <button class="btn-primary" onclick="openModalConvite()">+ Convidar Analista</button>
+            </div>
           </div>
           <div class="analistas-grid" id="analistasList">
             <div class="loading-spinner"><div class="spinner"></div></div>
@@ -647,6 +663,59 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- MODAL: Empresa (construtora) -->
+<div class="modal-bg" id="modalEmpresa">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalEmpresa')">&#215;</button>
+    <div class="modal-title" id="empresaModalTitle">Nova Empresa</div>
+    <div class="modal-sub">Construtora-filha do seu grupo (nome e logotipo)</div>
+    <div style="display:flex;align-items:flex-start;gap:16px;margin:6px 0 4px">
+      <div style="flex-shrink:0">
+        <label class="form-label">Logo</label>
+        <div onclick="document.getElementById('empresaLogoInput').click()"
+             style="width:68px;height:68px;border-radius:10px;border:2px dashed var(--gray-border);
+                    background:var(--gray-light);display:flex;align-items:center;justify-content:center;
+                    overflow:hidden;cursor:pointer">
+          <img id="empresaLogoImg" style="display:none;width:100%;height:100%;object-fit:contain">
+          <span id="empresaLogoIcon" style="font-size:26px">&#128247;</span>
+        </div>
+        <input type="file" id="empresaLogoInput" accept="image/*" style="display:none" onchange="previewEmpresaLogo(this)">
+      </div>
+      <div style="flex:1">
+        <div class="form-group">
+          <label class="form-label">Nome da empresa <span style="color:var(--red)">*</span></label>
+          <input class="form-inp" id="empresaNome" placeholder="Ex: Construtora Alpha">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalEmpresa')">Cancelar</button>
+      <button class="btn-primary" id="btnSalvarEmpresa" onclick="salvarEmpresa()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Adicionar Gestor global -->
+<div class="modal-bg" id="modalGestor">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalGestor')">&#215;</button>
+    <div class="modal-title">Adicionar Gestor</div>
+    <div class="modal-sub">Novo acesso de nível Gestão para todo o grupo. Um e-mail de boas-vindas será enviado.</div>
+    <div class="form-group">
+      <label class="form-label">Nome completo</label>
+      <input class="form-inp" id="gestorNome" placeholder="Nome do gestor">
+    </div>
+    <div class="form-group">
+      <label class="form-label">E-mail profissional</label>
+      <input class="form-inp" id="gestorEmail" type="email" placeholder="gestor@empresa.com">
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeModal('modalGestor')">Cancelar</button>
+      <button class="btn-primary" id="btnConviteGestor" onclick="enviarConviteGestor()">Convidar Gestor</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="modalNovoEmp">
   <div class="modal" style="width:620px;max-width:97vw;max-height:93vh;overflow-y:auto;padding:28px 28px 22px">
     <button class="modal-close" onclick="closeModal('modalNovoEmp')">&#215;</button>
@@ -689,6 +758,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <div class="form-group">
               <label class="form-label">Nome do empreendimento <span style="color:var(--red)">*</span></label>
               <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista, Torre A">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Empresa (construtora) <span style="color:var(--red)">*</span></label>
+              <select class="form-inp" id="empEmpresa"></select>
             </div>
             <div style="display:grid;grid-template-columns:1fr 80px;gap:10px">
               <div class="form-group" style="margin-bottom:0">
@@ -961,6 +1034,8 @@ let EMPS       = [];
 let METRICS    = [];
 let ANALISTAS  = [];
 let DIST_EMP   = null;   // empreendimento selecionado na distribuicao
+let CONSTRUTORAS = [];   // "Empresas" (construtoras-filhas) do grupo
+let DASH_EMPRESA = '';   // filtro de Empresa no dashboard (construtora_id)
 
 // ═══════════════════════════════════════════════════════
 // INIT
@@ -1016,8 +1091,23 @@ async function doLogout(){
 // DATA LOADING
 // ═══════════════════════════════════════════════════════
 async function loadAll(){
-  await Promise.all([ loadEmpreendimentos(), loadMetrics(), loadAnalistas() ]);
+  await Promise.all([ loadConstrutoras(), loadEmpreendimentos(), loadMetrics(), loadAnalistas() ]);
+  preencherFiltroEmpresas();
   renderDashboard();
+}
+
+async function loadConstrutoras(){
+  // RLS já escopa pelo grupo (minha_empresa()). Ordena por nome.
+  const { data, error } = await sb.from('construtoras_auria')
+    .select('*').eq('ativo',true).order('nome');
+  if(error) console.error('loadConstrutoras:', error.message);
+  CONSTRUTORAS = data || [];
+}
+
+// Nome da Empresa (construtora) a partir do construtora_id
+function nomeEmpresa(cid){
+  const c = CONSTRUTORAS.find(x=>x.id===cid);
+  return c ? c.nome : '';
 }
 
 async function loadEmpreendimentos(){
@@ -1072,6 +1162,215 @@ async function refreshData(){
 }
 
 // ═══════════════════════════════════════════════════════
+// EMPRESAS (construtoras-filhas) + GRUPO + GESTOR GLOBAL
+// ═══════════════════════════════════════════════════════
+
+// Helper genérico de upload de logo (bucket público "logos").
+async function uploadLogoGenerico(file, prefixo, id){
+  const ext  = (file.name.split('.').pop()||'png').toLowerCase();
+  const path = `${prefixo}/${id}/logo.${ext}`;
+  const { error } = await sb.storage.from('logos').upload(path, file, { upsert:true });
+  if(error) throw new Error('Erro no upload da logo: '+error.message);
+  return sb.storage.from('logos').getPublicUrl(path).data.publicUrl;
+}
+
+function preencherFiltroEmpresas(){
+  const sel = document.getElementById('filterEmpresa');
+  if(sel){
+    const atual = DASH_EMPRESA;
+    sel.innerHTML = '<option value="">Todas as empresas</option>'
+      + CONSTRUTORAS.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('');
+    sel.value = atual;
+  }
+  const selEmp = document.getElementById('empEmpresa');   // seletor no modal de empreendimento
+  if(selEmp){
+    selEmp.innerHTML = CONSTRUTORAS.length
+      ? CONSTRUTORAS.map(c=>`<option value="${c.id}">${esc(c.nome)}</option>`).join('')
+      : '<option value="">— crie uma Empresa antes —</option>';
+  }
+}
+
+function filtrarPorEmpresa(){
+  DASH_EMPRESA = document.getElementById('filterEmpresa').value || '';
+  renderDashboard();
+}
+
+function empsFiltradas(){
+  return DASH_EMPRESA ? EMPS.filter(e=>e.construtora_id===DASH_EMPRESA) : EMPS;
+}
+
+// ── PAGE: EMPRESAS ─────────────────────────────────────
+function renderEmpresasPage(){
+  // Cartão do GRUPO (nome + logo editáveis)
+  const g = EMPRESA || {};
+  const gLogo = g.logo_url
+    ? `<img src="${g.logo_url}" alt="logo" style="width:100%;height:100%;object-fit:contain">`
+    : `<span style="font-size:26px">&#127970;</span>`;
+  const grupoCard = `
+    <div class="toolbar"><div class="toolbar-left"><div class="toolbar-title">Meu Grupo</div></div></div>
+    <div class="analista-card" style="margin-bottom:22px">
+      <div id="grupoLogoWrap" onclick="document.getElementById('grupoLogoInput').click()"
+           style="width:64px;height:64px;border-radius:12px;border:2px dashed var(--gray-border);
+                  background:var(--gray-light);display:flex;align-items:center;justify-content:center;
+                  overflow:hidden;cursor:pointer;flex-shrink:0">${gLogo}</div>
+      <input type="file" id="grupoLogoInput" accept="image/*" style="display:none" onchange="salvarGrupoLogo(this)">
+      <div class="analista-card-info" style="flex:1">
+        <label class="form-label">Nome do grupo</label>
+        <input class="form-inp" id="grupoNomeInp" value="${esc(g.nome||'')}" style="max-width:420px">
+      </div>
+      <div class="analista-card-actions">
+        <button class="btn-primary" onclick="salvarGrupoNome()">Salvar</button>
+      </div>
+    </div>`;
+
+  // Lista de EMPRESAS (construtoras)
+  const lista = CONSTRUTORAS.length
+    ? `<div class="cards-grid">${CONSTRUTORAS.map(c=>{
+        const nEmp = EMPS.filter(e=>e.construtora_id===c.id).length;
+        const logo = c.logo_url
+          ? `<img src="${c.logo_url}" alt="${esc(c.nome)}">`
+          : `<div class="card-logo-ph">${(c.nome||'?')[0].toUpperCase()}</div>`;
+        return `<div class="emp-card">
+          <div class="card-head">
+            <div class="card-logo">${logo}</div>
+            <div class="card-meta">
+              <div class="card-nome">${esc(c.nome)}</div>
+              <div class="card-loc">${nEmp} empreendimento${nEmp!==1?'s':''}</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;padding:12px 14px;border-top:1px solid var(--gray-border)">
+            <button class="btn-sm" onclick="openModalEmpresa('${c.id}')">Editar</button>
+            <button class="btn-sm danger" onclick="inativarEmpresa('${c.id}','${esc(c.nome)}')">Inativar</button>
+          </div>
+        </div>`;
+      }).join('')}</div>`
+    : '<div class="empty-state"><div class="empty-state-icon">&#127970;</div><div class="empty-state-txt">Nenhuma empresa (construtora) cadastrada.<br>Clique em &ldquo;+ Nova Empresa&rdquo;.</div></div>';
+
+  setHTML('empresasList', grupoCard
+    + `<div class="toolbar"><div class="toolbar-left"><div class="toolbar-title">Empresas (construtoras)</div></div>
+       <button class="btn-primary" onclick="openModalEmpresa()">+ Nova Empresa</button></div>`
+    + lista);
+}
+
+async function salvarGrupoNome(){
+  const nome = (document.getElementById('grupoNomeInp').value||'').trim();
+  if(!nome){ showToast('Informe o nome do grupo','red'); return; }
+  const { error } = await sb.from('empresas_auria').update({ nome }).eq('id', EMPRESA.id);
+  if(error){ showToast('Erro: '+error.message,'red'); return; }
+  EMPRESA.nome = nome;
+  showToast('Nome do grupo atualizado','green');
+}
+
+async function salvarGrupoLogo(input){
+  const file = input.files?.[0]; if(!file) return;
+  try{
+    const url = await uploadLogoGenerico(file, 'grupos', EMPRESA.id);
+    const { error } = await sb.from('empresas_auria').update({ logo_url:url }).eq('id', EMPRESA.id);
+    if(error) throw error;
+    EMPRESA.logo_url = url;
+    showToast('Logo do grupo atualizada','green');
+    renderEmpresasPage();
+  }catch(e){ showToast('Erro ao salvar logo: '+(e.message||e),'red'); }
+}
+
+// ── EMPRESA (construtora) CRUD ─────────────────────────
+let EMPRESA_EDIT = null;
+function openModalEmpresa(id){
+  EMPRESA_EDIT = id ? CONSTRUTORAS.find(c=>c.id===id) : null;
+  document.getElementById('empresaModalTitle').textContent = EMPRESA_EDIT?'Editar Empresa':'Nova Empresa';
+  document.getElementById('empresaNome').value = EMPRESA_EDIT?.nome || '';
+  const img = document.getElementById('empresaLogoImg');
+  const ic  = document.getElementById('empresaLogoIcon');
+  if(EMPRESA_EDIT?.logo_url){ img.src=EMPRESA_EDIT.logo_url; img.style.display='block'; ic.style.display='none'; }
+  else { img.src=''; img.style.display='none'; ic.style.display=''; }
+  document.getElementById('empresaLogoInput').value = '';
+  document.getElementById('modalEmpresa').classList.add('open');
+}
+
+function previewEmpresaLogo(input){
+  const f=input.files?.[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=e=>{ const img=document.getElementById('empresaLogoImg'); img.src=e.target.result; img.style.display='block'; document.getElementById('empresaLogoIcon').style.display='none'; };
+  r.readAsDataURL(f);
+}
+
+async function salvarEmpresa(){
+  const nome=(document.getElementById('empresaNome').value||'').trim();
+  if(!nome){ showToast('Informe o nome da empresa','red'); return; }
+  const btn=document.getElementById('btnSalvarEmpresa'); btn.disabled=true; btn.textContent='Salvando...';
+  try{
+    let id = EMPRESA_EDIT?.id;
+    if(id){
+      const { error } = await sb.from('construtoras_auria').update({ nome }).eq('id', id);
+      if(error) throw error;
+    }else{
+      const { data, error } = await sb.from('construtoras_auria')
+        .insert({ nome, grupo_id:EMPRESA.id, criado_por:USER.id }).select('id').single();
+      if(error) throw error;
+      id = data.id;
+    }
+    const logoFile = document.getElementById('empresaLogoInput').files?.[0];
+    if(logoFile){
+      btn.textContent='Enviando logo...';
+      try{
+        const url = await uploadLogoGenerico(logoFile, 'construtoras', id);
+        await sb.from('construtoras_auria').update({ logo_url:url }).eq('id', id);
+      }catch(le){ showToast('Empresa salva, mas a logo falhou: '+le.message,''); }
+    }
+    closeModal('modalEmpresa');
+    showToast('Empresa salva com sucesso!','green');
+    await loadConstrutoras(); preencherFiltroEmpresas(); renderEmpresasPage();
+  }catch(e){ showToast('Erro: '+e.message,'red'); }
+  finally{ btn.disabled=false; btn.textContent='Salvar'; }
+}
+
+async function inativarEmpresa(id, nome){
+  const nEmp = EMPS.filter(e=>e.construtora_id===id).length;
+  const aviso = nEmp ? `\n\nAtenção: ${nEmp} empreendimento(s) ficarão sem empresa até serem realocados.` : '';
+  if(!confirm(`Inativar a empresa "${nome}"?${aviso}`)) return;
+  const { error } = await sb.from('construtoras_auria').update({ ativo:false }).eq('id', id);
+  if(error){ showToast('Erro: '+error.message,'red'); return; }
+  showToast('Empresa inativada','');
+  await loadConstrutoras(); preencherFiltroEmpresas(); renderEmpresasPage();
+}
+
+// ── GESTOR GLOBAL (2º acesso nível gestão) ─────────────
+function openModalGestor(){
+  document.getElementById('gestorNome').value='';
+  document.getElementById('gestorEmail').value='';
+  document.getElementById('modalGestor').classList.add('open');
+}
+
+async function enviarConviteGestor(){
+  const nome=(document.getElementById('gestorNome').value||'').trim();
+  const email=(document.getElementById('gestorEmail').value||'').trim();
+  if(!nome||!email){ showToast('Informe nome e e-mail do gestor','red'); return; }
+  const btn=document.getElementById('btnConviteGestor'); btn.disabled=true; btn.textContent='Enviando...';
+  try{
+    // Convite role='gerente' para o próprio grupo (RLS conv_ger_insere_gestor).
+    const { error:convErr } = await sb.from('convites_auria')
+      .insert({ email, role:'gerente', empresa_id:EMPRESA.id, convidado_por:USER.id });
+    if(convErr) throw convErr;
+    // Mesmo e-mail de boas-vindas do CEO (send-welcome-email).
+    let emailOk=false, emailMsg='';
+    try{
+      const { data:{ session } } = await sb.auth.getSession();
+      const resp = await fetch('https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',{
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${session.access_token}`, 'apikey':SUPA_KEY },
+        body: JSON.stringify({ gerNome:nome, gerEmail:email, empNome:(EMPRESA?.nome||''), plano:(EMPRESA?.plano||'basic') })
+      });
+      emailOk = resp.ok;
+      if(!resp.ok) emailMsg = ('HTTP '+resp.status+' '+((await resp.text())||'')).slice(0,160);
+    }catch(ee){ emailMsg = String((ee&&ee.message)||ee); }
+    closeModal('modalGestor');
+    if(emailOk) showToast('Gestor convidado e e-mail enviado para '+email,'green');
+    else showToast('⚠️ Gestor convidado, MAS o e-mail falhou para '+email+'. ['+emailMsg+']','red');
+  }catch(e){ showToast('Erro ao convidar gestor: '+e.message,'red'); }
+  finally{ btn.disabled=false; btn.textContent='Convidar Gestor'; }
+}
+
+// ═══════════════════════════════════════════════════════
 // TRENDS
 // ═══════════════════════════════════════════════════════
 function calcTrend(rows, field, goodDir){
@@ -1105,15 +1404,16 @@ function trendHTML(t){
 // DASHBOARD
 // ═══════════════════════════════════════════════════════
 function renderDashboard(){
-  // KPI totais
+  // KPI totais (respeitando o filtro de Empresa)
+  const vis = empsFiltradas();
   const latest = {};
-  EMPS.forEach(e=>{
+  vis.forEach(e=>{
     const rows = METRICS.filter(m=>m.empreendimento_id===e.id)
       .sort((a,b)=>new Date(b.data)-new Date(a.data));
     latest[e.id] = rows[0]||{total_abertos:0,total_em_atraso:0,total_resolvidos:0,indice_resposta:0};
   });
   const sum = (f)=>Object.values(latest).reduce((s,r)=>s+(r[f]||0),0);
-  const avgResp = EMPS.length ? Math.round(sum('indice_resposta')/EMPS.length) : 0;
+  const avgResp = vis.length ? Math.round(sum('indice_resposta')/vis.length) : 0;
 
   // Tendencias globais
   const tAbertos   = calcTrend(METRICS,'total_abertos','down');
@@ -1136,7 +1436,7 @@ function renderDashboard(){
 let _empDataCache = [];
 function renderCards(){
   const search = v('searchInp').toLowerCase();
-  let list = EMPS.filter(e=> !search || e.nome.toLowerCase().includes(search));
+  let list = empsFiltradas().filter(e=> !search || e.nome.toLowerCase().includes(search));
   list = sortEmpList(list);
   _empDataCache = list;
 
@@ -1786,8 +2086,10 @@ async function criarEmpreendimento(){
   const nome   = v('empNome').trim();
   const cidade = v('empCidade').trim();
   const estado = v('empEstado').trim().toUpperCase().slice(0,2);
+  const construtoraId = v('empEmpresa') || null;
   if(!nome){ showToast('Informe o nome do empreendimento','red'); return; }
   if(!EMPRESA || !EMPRESA.id){ showToast('Erro: empresa não vinculada a este usuário.','red'); return; }
+  if(!construtoraId){ showToast('Selecione a Empresa (construtora). Crie uma em "Empresas" se ainda não houver.','red'); return; }
 
   const btn = document.getElementById('btnCriarEmp');
   btn.disabled = true; btn.textContent = 'Criando...';
@@ -1811,6 +2113,7 @@ async function criarEmpreendimento(){
     const { data: empRow, error } = await sb.from('empreendimentos_auria').insert({
       nome, cidade, estado,
       empresa_id:          EMPRESA.id,
+      construtora_id:      construtoraId,
       criado_por:          USER.id,
       ativo:               true,
       tipo_empreendimento: _config.tipo_empreendimento,
@@ -2183,19 +2486,20 @@ function goPage(name){
   document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
   const pageMap = {
     dashboard:'pageDashboard', detalhe:'pageDetalhe',
-    empreendimentos:'pageEmpreendimentos', analistas:'pageAnalistas',
+    empreendimentos:'pageEmpreendimentos', empresas:'pageEmpresas', analistas:'pageAnalistas',
     distribuicao:'pageDistribuicao', fornecedores:'pageFornecedores',
     financeiro:'pageFinanceiro'
   };
   const titleMap = {
     dashboard:'Dashboard Geral', detalhe:'Detalhe',
-    empreendimentos:'Empreendimentos', analistas:'Analistas',
+    empreendimentos:'Empreendimentos', empresas:'Empresas', analistas:'Analistas',
     distribuicao:'Distribuicao', fornecedores:'Fornecedores',
     financeiro:'Custos & NFs'
   };
   const subMap = {
     dashboard:'Todos os empreendimentos',
     empreendimentos:'Gerencie seus projetos',
+    empresas:'Grupo, construtoras e logotipos',
     analistas:'Equipe de analistas',
     distribuicao:'Atribuicao de acessos',
     fornecedores:'Empresas projetistas e seus profissionais',
@@ -2208,6 +2512,7 @@ function goPage(name){
     document.getElementById('topbarSub').textContent   = subMap[name]||'';
   }
   if(name==='dashboard')       renderDashboard();
+  if(name==='empresas')        renderEmpresasPage();
   if(name==='analistas')       renderAnalistasPage();
   if(name==='distribuicao')    renderDistPage();
   if(name==='empreendimentos') renderEmpreendimentosPage();
@@ -2304,7 +2609,7 @@ function finRender(){
 // MODAIS
 // ═══════════════════════════════════════════════════════
 function openModalConvite(){ document.getElementById('modalConvite').classList.add('open'); }
-function openModalNovoEmp(){ resetFormEmp(); document.getElementById('modalNovoEmp').classList.add('open'); }
+function openModalNovoEmp(){ resetFormEmp(); preencherFiltroEmpresas(); document.getElementById('modalNovoEmp').classList.add('open'); }
 function closeModal(id){ document.getElementById(id).classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════════
