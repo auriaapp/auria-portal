@@ -85,10 +85,12 @@
 
     <div id="viewDash">
     <div class="filtros">
-      <div><label>De</label><input type="date" id="fDe"></div>
-      <div><label>Até</label><input type="date" id="fAte"></div>
-      <div><label>Empreendimento</label><select id="fEmp"><option value="">Todos</option></select></div>
-      <div><label>Status</label><select id="fSt">
+      <div><label>De</label><input type="date" id="fDe" onchange="render()"></div>
+      <div><label>Até</label><input type="date" id="fAte" onchange="render()"></div>
+      <div><label>Empresa</label><select id="fEmpc" onchange="popEmpOptions();render()"><option value="">Todas</option></select></div>
+      <div><label>Empreendimento</label><select id="fEmp" onchange="render()"><option value="">Todos</option></select></div>
+      <div><label>Disciplina</label><select id="fDisc" onchange="render()"><option value="">Todas</option></select></div>
+      <div><label>Status</label><select id="fSt" onchange="render()">
         <option value="">Todos</option><option value="enviada">Enviada</option>
         <option value="recebida">Recebida</option><option value="encaminhada">Encaminhada</option>
         <option value="paga">Paga</option><option value="cancelada">Cancelada</option>
@@ -167,9 +169,12 @@ async function carregar(){
     const { data, error } = await sb.rpc('nf_listar', {});
     if(error) throw error;
     NFS = data||[];
-    // popula filtro de empreendimentos
-    const emps=[...new Set(NFS.map(n=>n.empreendimento).filter(Boolean))].sort();
-    $('fEmp').innerHTML='<option value="">Todos</option>'+emps.map(e=>`<option>${esc(e)}</option>`).join('');
+    // popula filtros (Empresa → Empreendimento em cascata, Disciplina)
+    const empcs=[...new Set(NFS.map(n=>n.construtora||'Sem empresa'))].sort();
+    $('fEmpc').innerHTML='<option value="">Todas</option>'+empcs.map(e=>`<option>${esc(e)}</option>`).join('');
+    const discs=[...new Set(NFS.map(n=>n.disciplina).filter(Boolean))].sort();
+    $('fDisc').innerHTML='<option value="">Todas</option>'+discs.map(d=>`<option>${esc(d)}</option>`).join('');
+    popEmpOptions();
     render();
     if($('viewPastas').style.display!=='none') renderPastas();
   }catch(e){
@@ -177,13 +182,25 @@ async function carregar(){
   }
 }
 
+// Opções de empreendimento respeitam a Empresa escolhida (cascata)
+function popEmpOptions(){
+  const empc=$('fEmpc').value, atual=$('fEmp').value;
+  const base=empc ? NFS.filter(n=>(n.construtora||'Sem empresa')===empc) : NFS;
+  const emps=[...new Set(base.map(n=>n.empreendimento).filter(Boolean))].sort();
+  $('fEmp').innerHTML='<option value="">Todos</option>'+emps.map(e=>`<option>${esc(e)}</option>`).join('');
+  if(emps.includes(atual)) $('fEmp').value=atual;   // preserva se ainda válido
+}
+
 function filtradas(){
-  const de=$('fDe').value, ate=$('fAte').value, emp=$('fEmp').value, st=$('fSt').value;
+  const de=$('fDe').value, ate=$('fAte').value, empc=$('fEmpc').value,
+        emp=$('fEmp').value, disc=$('fDisc').value, st=$('fSt').value;
   return NFS.filter(n=>{
     const d=(n.criado_em||'').slice(0,10);
     if(de && d<de) return false;
     if(ate && d>ate) return false;
+    if(empc && (n.construtora||'Sem empresa')!==empc) return false;
     if(emp && n.empreendimento!==emp) return false;
+    if(disc && n.disciplina!==disc) return false;
     if(st && n.status!==st) return false;
     return true;
   });
