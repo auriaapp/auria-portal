@@ -6,6 +6,7 @@
 <title>Auria — Painel de Custos</title>
 <link rel="icon" type="image/png" href="logo_symbol.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',system-ui,sans-serif;background:#EEF2F7;color:#1A2F4A;min-height:100vh}
@@ -47,6 +48,22 @@
   .mini:hover{border-color:#3B82F6;color:#3B82F6}
   .mini.go{background:#3B82F6;color:#fff;border:none}.mini.go:hover{background:#1D4ED8}
   .empty{padding:26px;text-align:center;color:#94A3B8;font-size:13px}
+  /* Abas Dashboard / Pastas */
+  .tabs{display:flex;gap:8px;margin-bottom:16px}
+  .tab{background:#fff;border:1px solid #E2E8F0;border-radius:10px;padding:9px 18px;font-size:13px;font-weight:700;color:#64748B;cursor:pointer}
+  .tab:hover{border-color:#3B82F6;color:#3B82F6}
+  .tab.active{background:#1E2A3D;color:#fff;border-color:#1E2A3D}
+  /* Árvore de pastas */
+  details.pasta{border:1px solid #EEF2F7;border-radius:10px;margin-bottom:6px;background:#fff}
+  details.pasta>summary{list-style:none;display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;font-size:13px;font-weight:700;color:#334155}
+  details.pasta>summary::-webkit-details-marker{display:none}
+  details.pasta>summary .car{transition:transform .15s;font-size:10px;color:#94A3B8;flex-shrink:0}
+  details.pasta[open]>summary .car{transform:rotate(90deg)}
+  details.pasta>summary .cnt{font-size:11px;color:#64748B;font-weight:400;flex:1}
+  details.pasta>.inner{padding:2px 8px 8px 24px}
+  .nf-row{display:flex;align-items:center;gap:12px;padding:7px 10px;border-top:1px solid #F1F5F9;font-size:12.5px;flex-wrap:wrap}
+  .nf-row .num{font-weight:700;min-width:90px}
+  .nf-row .mut{color:#64748B}
 </style>
 </head>
 <body>
@@ -61,6 +78,12 @@
   </header>
 
   <div class="wrap">
+    <div class="tabs">
+      <button class="tab active" id="tabDash" onclick="verAba('dash')">📊 Dashboard</button>
+      <button class="tab" id="tabPastas" onclick="verAba('pastas')">🗂 Pastas de NFs</button>
+    </div>
+
+    <div id="viewDash">
     <div class="filtros">
       <div><label>De</label><input type="date" id="fDe"></div>
       <div><label>Até</label><input type="date" id="fAte"></div>
@@ -94,6 +117,18 @@
         </tr></thead>
         <tbody id="tbody"><tr><td colspan="10" class="empty">Carregando…</td></tr></tbody>
       </table>
+    </div>
+    </div><!-- /viewDash -->
+
+    <!-- Pastas: Empresa → Ano → Mês → Empreendimento → NFs -->
+    <div id="viewPastas" style="display:none">
+      <div class="card" style="padding:14px 16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <h3 style="margin:0">🗂 Arquivo de Notas Fiscais</h3>
+          <span style="font-size:12px;color:#64748B">Organizado por Empresa → Ano → Mês (de envio) → Empreendimento. Qualquer pasta pode ser baixada em .zip.</span>
+        </div>
+        <div id="pastasTree"><div class="empty">Carregando…</div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -136,6 +171,7 @@ async function carregar(){
     const emps=[...new Set(NFS.map(n=>n.empreendimento).filter(Boolean))].sort();
     $('fEmp').innerHTML='<option value="">Todos</option>'+emps.map(e=>`<option>${esc(e)}</option>`).join('');
     render();
+    if($('viewPastas').style.display!=='none') renderPastas();
   }catch(e){
     $('tbody').innerHTML='<tr><td colspan="10" class="empty">Erro: '+esc(e.message||e)+'</td></tr>';
   }
@@ -225,6 +261,144 @@ async function mudar(id, novo){
     const nf=NFS.find(x=>x.id===id); if(nf) nf.status=novo;
     render();
   }catch(e){ alert('Erro ao atualizar status: '+(e.message||e)); }
+}
+
+// ═══ PASTAS DE NFs (Empresa → Ano → Mês → Empreendimento) + ZIP ═══
+const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+let PASTAS_NODES=[];   // parâmetros de cada botão de ZIP (evita aspas em onclick)
+
+function verAba(a){
+  $('viewDash').style.display   = a==='dash'  ? 'block':'none';
+  $('viewPastas').style.display = a==='pastas'? 'block':'none';
+  $('tabDash').classList.toggle('active', a==='dash');
+  $('tabPastas').classList.toggle('active', a==='pastas');
+  if(a==='pastas') renderPastas();
+}
+
+function sanit(s){ return String(s||'').replace(/[\\/:*?"<>|]/g,'-').trim()||'—'; }
+function mesLbl(m){ const i=parseInt(m,10)-1; return (MESES[i]?m+' · '+MESES[i]:m); }
+
+// Filtra as NFs de um nó (null = nível não fixado)
+function coletar(empresa, ano, mes, emp){
+  return NFS.filter(n=>{
+    const d=(n.criado_em||'').slice(0,10);
+    if(empresa!==null && (n.construtora||'Sem empresa')!==empresa) return false;
+    if(ano!==null && d.slice(0,4)!==ano) return false;
+    if(mes!==null && d.slice(5,7)!==mes) return false;
+    if(emp!==null && (n.empreendimento||'—')!==emp) return false;
+    return true;
+  });
+}
+
+function btnZip(empresa, ano, mes, emp){
+  const idx=PASTAS_NODES.push({empresa, ano, mes, emp})-1;
+  return `<button class="mini" title="Baixar esta pasta em .zip"
+    onclick="event.preventDefault();event.stopPropagation();baixarZip(this,${idx})">⬇ ZIP</button>`;
+}
+
+function pastaSummary(icone, nome, nfs){
+  const tot=nfs.reduce((s,n)=>s+Number(n.valor||0),0);
+  return `<span class="car">▶</span><span>${icone}</span><span>${esc(nome)}</span>
+    <span class="cnt">${nfs.length} NF${nfs.length!==1?'s':''} · ${brl(tot)}</span>`;
+}
+
+function renderPastas(){
+  const el=$('pastasTree');
+  PASTAS_NODES=[];
+  if(!NFS.length){ el.innerHTML='<div class="empty">Nenhuma NF no arquivo ainda.</div>'; return; }
+
+  // Monta a árvore
+  const tree={};
+  NFS.forEach(n=>{
+    const empc=n.construtora||'Sem empresa';
+    const d=(n.criado_em||'').slice(0,10);
+    const ano=d.slice(0,4)||'—', mes=d.slice(5,7)||'—';
+    const emp=n.empreendimento||'—';
+    tree[empc]=tree[empc]||{};
+    tree[empc][ano]=tree[empc][ano]||{};
+    tree[empc][ano][mes]=tree[empc][ano][mes]||{};
+    (tree[empc][ano][mes][emp]=tree[empc][ano][mes][emp]||[]).push(n);
+  });
+
+  let html='';
+  Object.keys(tree).sort().forEach(empresa=>{
+    const nfsE=coletar(empresa,null,null,null);
+    let hAnos='';
+    Object.keys(tree[empresa]).sort().reverse().forEach(ano=>{      // anos mais recentes primeiro
+      const nfsA=coletar(empresa,ano,null,null);
+      let hMeses='';
+      Object.keys(tree[empresa][ano]).sort().reverse().forEach(mes=>{
+        const nfsM=coletar(empresa,ano,mes,null);
+        let hEmps='';
+        Object.keys(tree[empresa][ano][mes]).sort().forEach(emp=>{
+          const nfs=tree[empresa][ano][mes][emp];
+          const linhas=nfs.map(n=>`
+            <div class="nf-row">
+              <span class="num">${n.nf_numero?('NF '+esc(n.nf_numero)):'NF —'}</span>
+              <span class="mut">Parc. ${n.parcela_numero||'—'}</span>
+              <span style="font-weight:700">${brl(n.valor)}</span>
+              <span class="mut">${dbr(n.criado_em)}</span>
+              <span class="st st-${n.status}">${stLbl(n.status)}</span>
+              <span class="mut">${esc(n.projetista||'')}</span>
+              ${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'<span class="mut">sem PDF</span>'}
+            </div>`).join('');
+          hEmps+=`<details class="pasta"><summary>${pastaSummary('🏗️',emp,nfs)}${btnZip(empresa,ano,mes,emp)}</summary>
+            <div class="inner">${linhas}</div></details>`;
+        });
+        hMeses+=`<details class="pasta"><summary>${pastaSummary('📁',mesLbl(mes),nfsM)}${btnZip(empresa,ano,mes,null)}</summary>
+          <div class="inner">${hEmps}</div></details>`;
+      });
+      hAnos+=`<details class="pasta"><summary>${pastaSummary('📁',ano,nfsA)}${btnZip(empresa,ano,null,null)}</summary>
+        <div class="inner">${hMeses}</div></details>`;
+    });
+    html+=`<details class="pasta" open><summary>${pastaSummary('🏢',empresa,nfsE)}${btnZip(empresa,null,null,null)}</summary>
+      <div class="inner">${hAnos}</div></details>`;
+  });
+  el.innerHTML=html;
+}
+
+async function baixarZip(btn, idx){
+  const nd=PASTAS_NODES[idx]; if(!nd) return;
+  const nfs=coletar(nd.empresa, nd.ano, nd.mes, nd.emp).filter(n=>n.pdf_path);
+  if(!nfs.length){ alert('Nenhum PDF nesta pasta.'); return; }
+  if(nfs.length>200 && !confirm('São '+nfs.length+' arquivos — o download pode demorar. Continuar?')) return;
+  const orig=btn.textContent; btn.disabled=true;
+  let falhas=0;
+  try{
+    const zip=new JSZip();
+    // profundidade do nó: os níveis já fixados não viram pastas dentro do zip
+    const depth=(nd.empresa!==null?1:0)+(nd.ano!==null?1:0)+(nd.mes!==null?1:0)+(nd.emp!==null?1:0);
+    let i=0;
+    for(const n of nfs){
+      i++; btn.textContent='⬇ '+i+'/'+nfs.length;
+      try{
+        const {data,error}=await sb.storage.from('notas-fiscais').createSignedUrl(n.pdf_path,300);
+        if(error) throw error;
+        const resp=await fetch(data.signedUrl);
+        if(!resp.ok) throw new Error('HTTP '+resp.status);
+        const blob=await resp.blob();
+        const d=(n.criado_em||'').slice(0,10);
+        const partes=[sanit(n.construtora||'Sem empresa'), d.slice(0,4)||'—',
+                      sanit(mesLbl(d.slice(5,7)||'—').replace(' · ',' - ')), sanit(n.empreendimento||'—')];
+        const rel=partes.slice(depth).join('/');
+        const nome='NF '+sanit(n.nf_numero||String(n.id).slice(0,8))
+                  +(n.parcela_numero?(' - Parcela '+n.parcela_numero):'')+'.pdf';
+        zip.file((rel?rel+'/':'')+nome, blob);
+      }catch(fe){ falhas++; console.warn('Falhou:', n.pdf_path, fe.message||fe); }
+    }
+    if(falhas===nfs.length) throw new Error('nenhum arquivo pôde ser baixado');
+    btn.textContent='Compactando…';
+    const blob=await zip.generateAsync({type:'blob'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    const rotulo=[nd.empresa, nd.ano, nd.mes&&mesLbl(nd.mes).replace(' · ',' - '), nd.emp]
+      .filter(Boolean).map(sanit).join(' - ')||'todas';
+    a.download='NFs - '+rotulo+'.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    if(falhas>0) alert('ZIP gerado, mas '+falhas+' arquivo(s) falharam no download.');
+  }catch(e){ alert('Falha ao gerar o ZIP: '+(e.message||e)); }
+  finally{ btn.disabled=false; btn.textContent=orig; }
 }
 
 async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
