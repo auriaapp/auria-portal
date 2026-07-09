@@ -64,6 +64,19 @@
   .nf-row{display:flex;align-items:center;gap:12px;padding:7px 10px;border-top:1px solid #F1F5F9;font-size:12.5px;flex-wrap:wrap}
   .nf-row .num{font-weight:700;min-width:90px}
   .nf-row .mut{color:#64748B}
+  /* Cards de empreendimentos + modal do contrato */
+  .emps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+  .emp-card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;cursor:pointer;transition:box-shadow .15s,border .15s}
+  .emp-card:hover{border-color:#3B82F6;box-shadow:0 4px 14px rgba(59,130,246,.12)}
+  .emp-card h4{font-size:14px;margin-bottom:2px}
+  .emp-card .sub{font-size:11px;color:#64748B;margin-bottom:10px}
+  .pbar{height:8px;background:#EEF2F7;border-radius:5px;overflow:hidden;margin-top:8px}
+  .pbar i{display:block;height:100%;background:linear-gradient(90deg,#10B981,#34D399)}
+  .modalbg{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:flex-start;justify-content:center;z-index:60;padding:40px 16px;overflow:auto}
+  .modalbg.on{display:flex}
+  .modalcard{background:#fff;border-radius:14px;max-width:780px;width:100%;padding:22px;position:relative}
+  .modalcard .x{position:absolute;top:10px;right:14px;font-size:20px;color:#94A3B8;cursor:pointer;border:none;background:none}
+  .pst{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;color:#fff}
 </style>
 </head>
 <body>
@@ -80,6 +93,7 @@
   <div class="wrap">
     <div class="tabs">
       <button class="tab active" id="tabDash" onclick="verAba('dash')">📊 Dashboard</button>
+      <button class="tab" id="tabEmps" onclick="verAba('emps')">🏗 Empreendimentos</button>
       <button class="tab" id="tabPastas" onclick="verAba('pastas')">🗂 Pastas de NFs</button>
     </div>
 
@@ -122,6 +136,11 @@
     </div>
     </div><!-- /viewDash -->
 
+    <!-- Empreendimentos: cards → contratos por disciplina -->
+    <div id="viewEmps" style="display:none">
+      <div id="empsBody"><div class="empty">Carregando…</div></div>
+    </div>
+
     <!-- Pastas: Empresa → Ano → Mês → Empreendimento → NFs -->
     <div id="viewPastas" style="display:none">
       <div class="card" style="padding:14px 16px">
@@ -132,6 +151,14 @@
         <div id="pastasTree"><div class="empty">Carregando…</div></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- MODAL: resumo do contrato (todas as parcelas) -->
+<div class="modalbg" id="modalCtr" onclick="if(event.target===this)fecharResumo()">
+  <div class="modalcard">
+    <button class="x" onclick="fecharResumo()">&times;</button>
+    <div id="modalCtrBody"></div>
   </div>
 </div>
 
@@ -247,12 +274,13 @@ function render(){
     } else if(n.status==='paga'){
       acoes.push(`<button class="mini" title="Desfazer (voltar para Encaminhada)" onclick="mudar('${n.id}','encaminhada')">↩ Voltar</button>`);
     }
+    if(n.contrato_id) acoes.push(`<button class="mini" title="Resumo do contrato (todas as parcelas)" onclick="abrirResumoContrato('${n.contrato_id}')">📋</button>`);
     return `<tr>
       <td>${esc(n.empreendimento)}</td><td>${esc(n.disciplina||'—')}</td><td>${esc(n.projetista||'—')}</td>
       <td>${n.parcela_numero||'—'}</td><td><b>${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</b></td>
       <td style="font-weight:700">${brl(n.valor)}</td><td>${dbr(n.emitida_em)}</td>
       <td><span class="st st-${n.status}">${stLbl(n.status)}</span></td>
-      <td>${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'—'}</td>
+      <td style="white-space:nowrap">${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')" title="Visualizar em nova aba">📄 Ver</a> <a class="mini" onclick="baixarPDF('${esc(n.pdf_path)}','NF ${esc(n.nf_numero||'')}.pdf')" title="Baixar">⬇</a>`:'—'}</td>
       <td>${acoes.join(' ')||'—'}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="10" class="empty">Nenhuma NF no filtro.</td></tr>';
@@ -264,6 +292,13 @@ async function verPDF(path){
     if(error) throw error;
     window.open(data.signedUrl,'_blank');
   }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
+}
+async function baixarPDF(path, nome){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120, { download: nome||true });
+    if(error) throw error;
+    const a=document.createElement('a'); a.href=data.signedUrl; document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ alert('Não foi possível baixar o PDF: '+(e.message||e)); }
 }
 
 async function mudar(id, novo){
@@ -286,11 +321,120 @@ let PASTAS_NODES=[];   // parâmetros de cada botão de ZIP (evita aspas em oncl
 
 function verAba(a){
   $('viewDash').style.display   = a==='dash'  ? 'block':'none';
+  $('viewEmps').style.display   = a==='emps'  ? 'block':'none';
   $('viewPastas').style.display = a==='pastas'? 'block':'none';
   $('tabDash').classList.toggle('active', a==='dash');
+  $('tabEmps').classList.toggle('active', a==='emps');
   $('tabPastas').classList.toggle('active', a==='pastas');
   if(a==='pastas') renderPastas();
+  if(a==='emps') renderEmpDash();
 }
+
+// ═══ CONTRATOS (RPC fin_contratos) — dashboard por empreendimento + resumo ═══
+let FIN_CTRS=null, EMP_SEL=null;
+function pstLbl(s){ return {a_faturar:'A faturar',solicitada:'Solicitada',autorizada:'Autorizada',recusada:'Recusada',faturada:'Faturada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
+function pstCor(s){ return {a_faturar:'#94A3B8',solicitada:'#E8960A',autorizada:'#3B82F6',recusada:'#EF4444',faturada:'#8B5CF6',paga:'#10B981',cancelada:'#64748B'}[s]||'#94A3B8'; }
+
+async function carregarContratosFin(){
+  if(FIN_CTRS) return FIN_CTRS;
+  const { data, error } = await sb.rpc('fin_contratos', {});
+  if(error) throw error;
+  FIN_CTRS=(data||[]).map(c=>({ ...c, parcelas: Array.isArray(c.parcelas)?c.parcelas:JSON.parse(c.parcelas||'[]') }));
+  return FIN_CTRS;
+}
+function ctrFaturado(c){ return (c.parcelas||[]).filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0); }
+
+async function renderEmpDash(){
+  const el=$('empsBody');
+  try{ await carregarContratosFin(); }
+  catch(e){ el.innerHTML='<div class="empty">Erro ao carregar contratos: '+esc(e.message||e)+'</div>'; return; }
+  if(!FIN_CTRS.length){ el.innerHTML='<div class="empty">Nenhum contrato cadastrado.</div>'; return; }
+  if(EMP_SEL){ renderEmpDet(el); return; }
+  // Cards por empreendimento
+  const byEmp={};
+  FIN_CTRS.forEach(c=>{ (byEmp[c.empreendimento_id]=byEmp[c.empreendimento_id]||[]).push(c); });
+  el.innerHTML='<div class="emps-grid">'+Object.keys(byEmp).map(eid=>{
+    const cs=byEmp[eid]; const nome=cs[0].empreendimento, constr=cs[0].construtora||'';
+    const tot=cs.reduce((s,c)=>s+Number(c.valor_total||0),0);
+    const fat=cs.reduce((s,c)=>s+ctrFaturado(c),0);
+    const pct=tot?Math.round(fat/tot*100):0;
+    const discs=[...new Set(cs.map(c=>c.disciplina).filter(Boolean))];
+    return `<div class="emp-card" onclick="abrirEmpDet('${eid}')">
+      <h4>${esc(nome)}</h4>
+      <div class="sub">${esc(constr)}</div>
+      <div style="font-size:12px;color:#334155">${cs.length} contrato(s) · ${discs.length} disciplina(s)</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:8px">
+        <span><b>${brl(tot)}</b> total</span><span style="color:#10B981"><b>${brl(fat)}</b> faturado</span></div>
+      <div class="pbar"><i style="width:${pct}%"></i></div>
+      <div style="font-size:11px;color:#64748B;margin-top:4px">${pct}% executado</div>
+    </div>`;
+  }).join('')+'</div>';
+}
+function abrirEmpDet(eid){ EMP_SEL=eid; renderEmpDash(); }
+function voltarEmps(){ EMP_SEL=null; renderEmpDash(); }
+
+function renderEmpDet(el){
+  const cs=FIN_CTRS.filter(c=>c.empreendimento_id===EMP_SEL);
+  if(!cs.length){ EMP_SEL=null; renderEmpDash(); return; }
+  const nome=cs[0].empreendimento;
+  // agrupa por disciplina
+  const byDisc={}; const ordem=[];
+  cs.forEach(c=>{ const d=c.disciplina||'Sem disciplina'; if(!byDisc[d]){byDisc[d]=[];ordem.push(d);} byDisc[d].push(c); });
+  ordem.sort();
+  let html=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+    <a class="mini" onclick="voltarEmps()">← Voltar</a>
+    <h3 style="margin:0;font-size:16px">🏗 ${esc(nome)}</h3>
+    <span style="font-size:12px;color:#64748B">${esc(cs[0].construtora||'')}</span></div>`;
+  ordem.forEach(d=>{
+    const lst=byDisc[d];
+    const tot=lst.reduce((s,c)=>s+Number(c.valor_total||0),0);
+    const fat=lst.reduce((s,c)=>s+ctrFaturado(c),0);
+    html+=`<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;background:#1E2A3D;color:#fff;padding:9px 15px;font-size:12px;font-weight:800">
+        <span>📐 ${esc(d)}</span>
+        <span style="font-weight:500">${lst.length} contrato(s) · ${brl(tot)} · <span style="color:#34D399">faturado ${brl(fat)}</span></span>
+      </div>
+      ${lst.map(c=>{
+        const f=ctrFaturado(c); const t=Number(c.valor_total||0); const pct=t?Math.round(f/t*100):0;
+        return `<div style="padding:12px 15px;border-top:1px solid #EEF2F7;cursor:pointer" onclick="abrirResumoContrato('${c.contrato_id}')" title="Ver todas as parcelas">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;flex-wrap:wrap;gap:6px">
+          <span><b>${esc(c.objeto||c.numero||'Contrato')}</b> <span style="color:#64748B;font-size:11px">· ${esc(c.projetista||'—')}</span></span>
+          <span>${brl(t)} · <span style="color:#10B981">${pct}%</span></span></div>
+        <div class="pbar" style="margin-top:6px"><i style="width:${pct}%"></i></div>
+      </div>`;}).join('')}
+    </div>`;
+  });
+  el.innerHTML=html;
+}
+
+// Resumo do contrato: TODAS as parcelas (status + data prevista p/ fatura)
+async function abrirResumoContrato(ctrId){
+  try{ await carregarContratosFin(); }catch(e){ alert('Erro: '+(e.message||e)); return; }
+  const c=FIN_CTRS.find(x=>x.contrato_id===ctrId);
+  if(!c){ alert('Contrato não encontrado (verifique seu acesso).'); return; }
+  const parcs=(c.parcelas||[]).slice().sort((a,b)=>(a.numero||0)-(b.numero||0));
+  const tot=Number(c.valor_total||0), fat=ctrFaturado(c);
+  $('modalCtrBody').innerHTML=`
+    <h3 style="margin-bottom:2px">📋 ${esc(c.objeto||c.numero||'Contrato')}</h3>
+    <div style="font-size:12px;color:#64748B;margin-bottom:12px">
+      ${esc(c.empreendimento)} · ${esc(c.disciplina||'—')} · ${esc(c.projetista||'—')}</div>
+    <div style="display:flex;gap:18px;font-size:13px;margin-bottom:12px;flex-wrap:wrap">
+      <span><b>${brl(tot)}</b> <span style="color:#64748B">total</span></span>
+      <span style="color:#10B981"><b>${brl(fat)}</b> <span style="color:#64748B">faturado</span></span>
+      <span style="color:#E8960A"><b>${brl(tot-fat)}</b> <span style="color:#64748B">a faturar</span></span></div>
+    <table style="border-radius:8px">
+      <thead><tr><th style="width:34px">#</th><th>Descrição</th><th>Valor</th><th>Prevista p/ fatura</th><th>Status</th></tr></thead>
+      <tbody>${parcs.length?parcs.map(p=>`<tr>
+        <td>${p.numero||'—'}</td>
+        <td>${esc(p.descricao||'—')}</td>
+        <td style="font-weight:700">${brl(p.valor)}</td>
+        <td>${dbr(p.vencimento)}</td>
+        <td><span class="pst" style="background:${pstCor(p.status)}">${pstLbl(p.status)}</span></td>
+      </tr>`).join(''):'<tr><td colspan="5" class="empty">Sem parcelas.</td></tr>'}</tbody>
+    </table>`;
+  $('modalCtr').classList.add('on');
+}
+function fecharResumo(){ $('modalCtr').classList.remove('on'); }
 
 function sanit(s){ return String(s||'').replace(/[\\/:*?"<>|]/g,'-').trim()||'—'; }
 function mesLbl(m){ const i=parseInt(m,10)-1; return (MESES[i]?m+' · '+MESES[i]:m); }
@@ -357,7 +501,7 @@ function renderPastas(){
               <span class="mut">${dbr(n.criado_em)}</span>
               <span class="st st-${n.status}">${stLbl(n.status)}</span>
               <span class="mut">${esc(n.projetista||'')}</span>
-              ${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'<span class="mut">sem PDF</span>'}
+              ${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')" title="Visualizar em nova aba">📄 Ver</a> <a class="mini" onclick="baixarPDF('${esc(n.pdf_path)}','NF ${esc(n.nf_numero||'')}.pdf')" title="Baixar">⬇</a>`:'<span class="mut">sem PDF</span>'}
             </div>`).join('');
           hEmps+=`<details class="pasta"><summary>${pastaSummary('🏗️',emp,nfs)}${btnZip(empresa,ano,mes,emp)}</summary>
             <div class="inner">${linhas}</div></details>`;

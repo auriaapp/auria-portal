@@ -888,8 +888,29 @@ async function removerFornecedorPg(id){
 
 // ── Contratos & Faturas (analista) ────────────────────────────
 var CTR_EMP_ID=null, CTR_LIST=[], CTR_EDIT=null, CTR_DET=null, CRON_TASKS=[];
+var A_NFS_PARC={};   // NF real (notas_fiscais_auria) por parcela_id — via nf_listar
+async function verNFst(path){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
+    if(error) throw error;
+    window.open(data.signedUrl,'_blank');
+  }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
+}
+async function baixarNFst(path, nome){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120, { download: nome||true });
+    if(error) throw error;
+    const a=document.createElement('a'); a.href=data.signedUrl; document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ alert('Não foi possível baixar o PDF: '+(e.message||e)); }
+}
 var FORNECEDORES=[], PROJETISTAS=[], CT_PARCS_BUF=[], FN_PROJS_BUF=[], FATURA_PARC=null;
-var DISC_OPTS=["Ambientação","Arquitetura","Automação","Elétrica","Esquadrias","Estrutura Concreto","Estrutura Metálica","Fachada","Heliponto","Hidrossanitário","Infraestrutura","Luminotécnico","Paisagismo","PCI/SPDA/Gás","Segurança Patrimonial"];
+// Lista OFICIAL de disciplinas do sistema (mesma da Gestão — não editar à mão)
+var DISC_OPTS=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
+  'Instalações Hidrossanitárias','Instalações Elétricas','Instalações PCI/SPDA/Gás',
+  'Instalações Automação','Infraestrutura','Topografia / Sondagem','Ambientação',
+  'Paisagismo','Luminotécnico','Esquadrias','Fachada','Heliponto','Segurança',
+  'Sinalização / Comunicação Visual','ETA / ETE','Climatização / Pressurização / Exaustão',
+  'Fundação','Contenção'];
 function fmtBRL(v){ v=Number(v||0); try{return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}catch(e){return 'R$ '+v.toFixed(2);} }
 function fmtDate(s){ if(!s)return ''; var p=String(s).split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
 function parcCls(s){ return {a_faturar:'st-af',solicitada:'st-so',autorizada:'st-au',recusada:'st-re',faturada:'st-fa',paga:'st-pg',cancelada:'st-cn'}[s]||'st-af'; }
@@ -904,6 +925,12 @@ async function loadContratos(empId){
       .eq('empreendimento_id',empId).order('criado_em',{ascending:false});
     CTR_LIST=r.data||[];
   }catch(e){ CTR_LIST=[]; }
+  // NFs reais (decifradas) deste empreendimento, indexadas por parcela
+  A_NFS_PARC={};
+  try{
+    const rn=await sb.rpc('nf_listar',{ p_empreendimento_id:empId });
+    if(!rn.error) (rn.data||[]).forEach(n=>{ if(n.parcela_id) A_NFS_PARC[n.parcela_id]=n; });
+  }catch(e){ console.warn('nf_listar (analista):', e.message||e); }
   try{
     const rc=await sb.from('cronograma_auria').select('*').eq('empreendimento_id',empId);
     CRON_TASKS=(rc.data||[]).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
@@ -957,7 +984,7 @@ function renderContratos(){
         <div style="font-size:11px;color:#64748B;margin-top:4px">${pct}% faturado · ${parcs.length} parcela(s)${venc?' · <b style="color:#EF4444">'+venc+' vencida(s)</b>':''}</div>
         <div class="ctr-acoes">
           <button class="mini" ${nSol?'style="background:#E8960A;color:#fff;border-color:#E8960A"':''} onclick="abrirContratoDet(${i})">📋 Parcelas / Aditivos${nSol?' ('+nSol+')':''}</button>
-          ${c.pdf_data?`<a class="mini" href="${c.pdf_data}" download="${esc(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none">📄 PDF</a>`:''}
+          ${c.pdf_data?`<button class="mini" onclick="abrirPdfData(CTR_LIST[${i}].pdf_data)" title="Visualizar em nova aba">📄 PDF</button> <a class="mini" href="${c.pdf_data}" download="${esc(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none" title="Baixar">⬇</a>`:''}
         </div>
       </div>`;
     }).join('');
@@ -1102,16 +1129,44 @@ function abrirFornecedor(){
 function fecharFornecedor(){ document.getElementById('fornecedorModal').classList.remove('on'); }
 function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}); renderFnProjs(); }
 function rmProjetistaLinha(i){ FN_PROJS_BUF.splice(i,1); renderFnProjs(); }
+// Abre um PDF salvo como data-URL em NOVA ABA (navegador bloqueia data: direto)
+function abrirPdfData(dataUrl){
+  try{
+    const byteStr=atob(dataUrl.split(',')[1]);
+    const arr=new Uint8Array(byteStr.length);
+    for(let i=0;i<byteStr.length;i++)arr[i]=byteStr.charCodeAt(i);
+    const u=URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));
+    window.open(u,'_blank'); setTimeout(function(){URL.revokeObjectURL(u);},60000);
+  }catch(e){ alert('Não foi possível abrir o PDF.'); }
+}
+function _discList(p){ return (p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean); }
+function addDisc(sel){
+  const i=+sel.getAttribute('data-i'); const d=sel.value; if(!d||!FN_PROJS_BUF[i])return;
+  const arr=_discList(FN_PROJS_BUF[i]); if(!arr.includes(d)) arr.push(d);
+  FN_PROJS_BUF[i].disciplinas=arr.join(', ');
+  renderFnProjs();
+}
+function rmDisc(i,d){
+  if(!FN_PROJS_BUF[i])return;
+  FN_PROJS_BUF[i].disciplinas=_discList(FN_PROJS_BUF[i]).filter(x=>x!==d).join(', ');
+  renderFnProjs();
+}
 function renderFnProjs(){
   const tb=document.getElementById('fn-proj-body');
-  tb.innerHTML=FN_PROJS_BUF.map((p,i)=>`<tr>
+  tb.innerHTML=FN_PROJS_BUF.map((p,i)=>{
+    const discs=_discList(p);
+    const chips=discs.map(d=>`<span style="background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;margin-right:3px;white-space:nowrap;display:inline-block;margin-bottom:2px">${esc(d)} <a onclick="rmDisc(${i},'${esc(d)}')" style="cursor:pointer;font-weight:800">&times;</a></span>`).join(' ');
+    const opts=DISC_OPTS.filter(d=>!discs.includes(d)).map(d=>`<option>${esc(d)}</option>`).join('');
+    return `<tr>
     <td><input data-pj="nome" data-i="${i}" value="${esc(p.nome||'')}"></td>
     <td><input data-pj="email" data-i="${i}" value="${esc(p.email||'')}"></td>
     <td><input data-pj="telefone" data-i="${i}" value="${esc(p.telefone||'')}"></td>
-    <td><input data-pj="disciplinas" data-i="${i}" placeholder="ex.: Estrutura Concreto, Hidrossanitário" value="${esc(p.disciplinas||'')}"></td>
+    <td style="min-width:200px">${chips}
+      <select data-i="${i}" onchange="addDisc(this)" style="font-size:11px;padding:3px 6px;border:1px solid #E2E8F0;border-radius:6px;max-width:150px">
+        <option value="">+ disciplina…</option>${opts}</select></td>
     <td style="text-align:center"><input data-pj="eh_rt" data-i="${i}" type="checkbox" ${p.eh_rt?'checked':''}></td>
     <td style="white-space:nowrap"><button class="mini" title="Enviar convite de acesso" onclick="convidarProjetista(${i})">✉</button> <button class="mini" onclick="rmProjetistaLinha(${i})">🗑</button></td>
-  </tr>`).join('');
+  </tr>`;}).join('');
 }
 async function convidarProjetista(i){
   const p=FN_PROJS_BUF[i]; if(!p)return;
@@ -1199,6 +1254,7 @@ function renderContratoDet(){
   const c=CTR_DET;
   const parcs=(c.parcelas_auria||[]).slice().sort((a,b)=>a.numero-b.numero);
   const adits=(c.contrato_aditivos_auria||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  window.CTR_ADITS_VIEW=adits;   // p/ abrir o PDF do aditivo por índice (visualização)
   const tot=Number(c.valor_total||0);
   const somaParcs=parcs.reduce((s,p)=>s+Number(p.valor||0),0);
   const faturado=parcs.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
@@ -1221,7 +1277,14 @@ function renderContratoDet(){
       <td><input data-f="valor" type="number" step="0.01" value="${p.valor||0}"></td>
       <td><input data-f="vencimento" type="date" value="${p.vencimento||''}"></td>
       <td><select data-f="marco_cron_id"><option value="">—</option>${marcosHtml.replace('value="'+p.marco_cron_id+'"','value="'+p.marco_cron_id+'" selected')}</select></td>
-      <td><span class="parc-st ${parcCls(p.status)}">${parcLbl(p.status)}</span>${p.nf_pdf_data?` <a class="mini" href="${p.nf_pdf_data}" download="${esc(p.nf_pdf_nome||'NF.pdf')}" style="text-decoration:none" title="Baixar NF">📄 NF</a>`:''}${p.data_faturamento?`<div style="font-size:10px;color:#64748B;margin-top:2px">Faturada em ${fmtDate((p.data_faturamento||'').substring(0,10))}${p.nf_numero?(' · NF '+esc(p.nf_numero)):''}</div>`:''}</td>
+      <td>${(function(){
+        const nf=A_NFS_PARC[p.id];
+        let s='<span class="parc-st '+parcCls(p.status)+'">'+parcLbl(p.status)+'</span>';
+        if(nf&&nf.pdf_path) s+=' <a class="mini" onclick="verNFst(\''+esc(nf.pdf_path)+'\')" title="Visualizar em nova aba">📄 NF</a> <a class="mini" onclick="baixarNFst(\''+esc(nf.pdf_path)+'\',\'NF '+esc(nf.nf_numero||'')+'.pdf\')" title="Baixar">⬇</a>';
+        else if(p.nf_pdf_data) s+=' <a class="mini" href="'+p.nf_pdf_data+'" download="'+esc(p.nf_pdf_nome||'NF.pdf')+'" style="text-decoration:none" title="Baixar NF">📄 NF</a>';
+        if(nf) s+='<div style="font-size:10px;color:#64748B;margin-top:2px">'+(nf.emitida_em?('Emitida '+fmtDate(String(nf.emitida_em).substring(0,10))):'')+(nf.nf_numero?(' · NF '+esc(nf.nf_numero)):'')+(nf.valor?(' · '+fmtBRL(nf.valor)):'')+'</div>';
+        else if(p.data_faturamento) s+='<div style="font-size:10px;color:#64748B;margin-top:2px">Faturada em '+fmtDate((p.data_faturamento||'').substring(0,10))+(p.nf_numero?(' · NF '+esc(p.nf_numero)):'')+'</div>';
+        return s; })()}</td>
       <td><button class="mini" onclick="salvarParcela('${p.id}')">💾</button> <button class="mini" onclick="autorizarRecusar('${p.id}','autorizar')" ${p.status==='solicitada'?'':'style=display:none'}>✅</button> <button class="mini" onclick="autorizarRecusar('${p.id}','recusar')" ${p.status==='solicitada'?'':'style=display:none'}>❌</button> <button class="mini" onclick="abrirFaturar('${p.id}')" ${['faturada','paga','cancelada'].includes(p.status)?'style=display:none':''}>💵 Faturar</button> <button class="mini" onclick="marcarPagar('${p.id}')" ${p.status==='faturada'?'':'style=display:none'}>💰 Pagar</button> <button class="mini" onclick="removerParcela('${p.id}')">🗑</button></td>
     </tr>`;
   });
@@ -1229,7 +1292,7 @@ function renderContratoDet(){
   // Aditivos
   h+=`<div style="display:flex;align-items:center;gap:8px;margin:18px 0 6px"><b style="font-size:13px">Aditivos</b><button class="ctr-btn sec" style="font-size:11px;padding:4px 10px" onclick="addAditivo()">＋ Aditivo</button></div>`;
   if(!adits.length) h+='<div style="color:#94A3B8;font-size:12px">Nenhum aditivo.</div>';
-  else h+=adits.map(a=>`<div class="aditivo-row"><span style="flex:1">${esc(a.descricao||'(sem descrição)')} ${a.data?(' · '+fmtDate(a.data)):''}</span><span class="vlr">${fmtBRL(a.valor_adic)}</span>${a.pdf_data?`<a class="mini" href="${a.pdf_data}" download="${esc(a.pdf_nome||'aditivo.pdf')}" style="text-decoration:none">📄</a>`:''}<button class="mini" onclick="removerAditivo('${a.id}')">🗑</button></div>`).join('');
+  else h+=adits.map((a,ai)=>`<div class="aditivo-row"><span style="flex:1">${esc(a.descricao||'(sem descrição)')} ${a.data?(' · '+fmtDate(a.data)):''}</span><span class="vlr">${fmtBRL(a.valor_adic)}</span>${a.pdf_data?`<button class="mini" onclick="abrirPdfData(CTR_ADITS_VIEW[${ai}].pdf_data)" title="Visualizar em nova aba">📄</button> <a class="mini" href="${a.pdf_data}" download="${esc(a.pdf_nome||'aditivo.pdf')}" style="text-decoration:none" title="Baixar">⬇</a>`:''}<button class="mini" onclick="removerAditivo('${a.id}')">🗑</button></div>`).join('');
   document.getElementById('ctd-body').innerHTML=h;
 }
 

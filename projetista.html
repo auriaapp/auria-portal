@@ -749,6 +749,23 @@ async function pVerNF(path){
     window.open(data.signedUrl,'_blank');
   }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
 }
+async function pBaixarNF(path, nome){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120, { download: nome||true });
+    if(error) throw error;
+    const a=document.createElement('a'); a.href=data.signedUrl; document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ alert('Não foi possível baixar o PDF: '+(e.message||e)); }
+}
+// Abre um PDF salvo como data-URL em NOVA ABA (navegador bloqueia data: direto)
+function pAbrirPdfData(dataUrl){
+  try{
+    const byteStr=atob(dataUrl.split(',')[1]);
+    const arr=new Uint8Array(byteStr.length);
+    for(let i=0;i<byteStr.length;i++)arr[i]=byteStr.charCodeAt(i);
+    const u=URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));
+    window.open(u,'_blank'); setTimeout(function(){URL.revokeObjectURL(u);},60000);
+  }catch(e){ alert('Não foi possível abrir o PDF.'); }
+}
 function renderContratosProjetista(){
   const el=document.getElementById('ctr-projetista-list');
   if(!P_CONTRATOS.length){
@@ -773,7 +790,7 @@ function renderContratosProjetista(){
           <div class="pctr-nome">${escH(c.objeto||c.disciplina||'Contrato')}${c.numero?(' · '+escH(c.numero)):''}</div>
           <div class="pctr-sub">${escH(c.disciplina||'')}</div>
         </div>
-        ${c.pdf_data?`<a class="pmini" href="${c.pdf_data}" download="${escH(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none">📄 Contrato</a>`:''}
+        ${c.pdf_data?`<span style="white-space:nowrap"><button class="pmini" onclick="pAbrirPdfData(P_CONTRATOS[${c._ci}].pdf_data)" title="Visualizar em nova aba">📄 Contrato</button> <a class="pmini" href="${c.pdf_data}" download="${escH(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none" title="Baixar">⬇</a></span>`:''}
       </div>
       <div class="pctr-fin">
         <div><div class="v">${pBRL(tot)}</div><div class="l">Total</div></div>
@@ -790,7 +807,10 @@ function renderContratosProjetista(){
             const acoes = [];
             if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
             if(p.status==='autorizada') acoes.push(`<button class="pmini warn" onclick="abrirEnviarNF('${p.id}','${c._ci}')">📤 Enviar NF</button>`);
-            if(nf&&nf.pdf_path) acoes.push(`<button class="pmini" onclick="pVerNF('${escH(nf.pdf_path)}')">📄 NF</button>`);
+            if(nf&&nf.pdf_path){
+              acoes.push(`<button class="pmini" onclick="pVerNF('${escH(nf.pdf_path)}')" title="Visualizar em nova aba">📄 NF</button>`);
+              acoes.push(`<button class="pmini" onclick="pBaixarNF('${escH(nf.pdf_path)}','NF ${escH(nf.nf_numero||'')}.pdf')" title="Baixar">⬇</button>`);
+            }
             return `<tr>
               <td>${p.numero}</td>
               <td>${escH(p.descricao||'—')}</td>

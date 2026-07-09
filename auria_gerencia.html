@@ -1005,7 +1005,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px">RT</th><th></th></tr></thead>
         <tbody id="fn-proj-body"></tbody>
       </table>
-      <div style="font-size:10px;color:var(--text-soft);margin-top:4px">Separe múltiplas disciplinas por vírgula. Ex.: "Estrutura Concreto, Hidrossanitário"</div>
+      <div style="font-size:10px;color:var(--text-soft);margin-top:4px">Escolha as disciplinas na lista padrão do sistema (uma ou mais por pessoa).</div>
     </div>
     <div class="cmodal-f">
       <button class="btn-secondary" onclick="fecharFornecedor()">Cancelar</button>
@@ -2377,16 +2377,42 @@ function editarFornecedor(i){
 function fecharFornecedor(){ document.getElementById('fornecedorModal').classList.remove('on'); }
 function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}); renderFnProjs(); }
 function rmProjetistaLinha(i){ FN_PROJS_BUF.splice(i,1); if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}]; renderFnProjs(); }
+// Disciplinas previstas pelo sistema (padroniza cadastro e BI — nada de campo livre)
+const DISCIPLINAS_PADRAO=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
+  'Instalações Hidrossanitárias','Instalações Elétricas','Instalações PCI/SPDA/Gás',
+  'Instalações Automação','Infraestrutura','Topografia / Sondagem','Ambientação',
+  'Paisagismo','Luminotécnico','Esquadrias','Fachada','Heliponto','Segurança',
+  'Sinalização / Comunicação Visual','ETA / ETE','Climatização / Pressurização / Exaustão',
+  'Fundação','Contenção'];
+
+function _discList(p){ return (p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean); }
+function addDisc(sel){
+  const i=+sel.getAttribute('data-i'); const d=sel.value; if(!d||!FN_PROJS_BUF[i])return;
+  const arr=_discList(FN_PROJS_BUF[i]); if(!arr.includes(d)) arr.push(d);
+  FN_PROJS_BUF[i].disciplinas=arr.join(', ');
+  renderFnProjs();
+}
+function rmDisc(i,d){
+  if(!FN_PROJS_BUF[i])return;
+  FN_PROJS_BUF[i].disciplinas=_discList(FN_PROJS_BUF[i]).filter(x=>x!==d).join(', ');
+  renderFnProjs();
+}
 function renderFnProjs(){
   const tb=document.getElementById('fn-proj-body');
-  tb.innerHTML=FN_PROJS_BUF.map((p,i)=>`<tr>
+  tb.innerHTML=FN_PROJS_BUF.map((p,i)=>{
+    const discs=_discList(p);
+    const chips=discs.map(d=>`<span class="fn-disc-chip">${escF(d)} <a onclick="rmDisc(${i},'${escF(d)}')" style="cursor:pointer;font-weight:800">&times;</a></span>`).join(' ');
+    const opts=DISCIPLINAS_PADRAO.filter(d=>!discs.includes(d)).map(d=>`<option>${escF(d)}</option>`).join('');
+    return `<tr>
     <td><input data-pj="nome" data-i="${i}" value="${escF(p.nome||'')}"></td>
     <td><input data-pj="email" data-i="${i}" value="${escF(p.email||'')}"></td>
     <td><input data-pj="telefone" data-i="${i}" value="${escF(p.telefone||'')}"></td>
-    <td><input data-pj="disciplinas" data-i="${i}" placeholder="ex.: Estrutura Concreto, Hidrossanitário" value="${escF(p.disciplinas||'')}"></td>
+    <td style="min-width:200px">${chips}
+      <select data-i="${i}" onchange="addDisc(this)" style="font-size:11px;padding:3px 6px;border:1px solid var(--gray-border);border-radius:6px;max-width:150px">
+        <option value="">+ disciplina…</option>${opts}</select></td>
     <td style="text-align:center"><input data-pj="eh_rt" data-i="${i}" type="checkbox" ${p.eh_rt?'checked':''}></td>
     <td style="white-space:nowrap"><button class="fn-mini" type="button" title="Enviar convite de acesso" onclick="convidarProjetista(${i})">&#9993;</button> <button class="fn-mini danger" type="button" onclick="rmProjetistaLinha(${i})">&#128465;</button></td>
-  </tr>`).join('');
+  </tr>`;}).join('');
 }
 async function convidarProjetista(i){
   const p=FN_PROJS_BUF[i]; if(!p)return;
@@ -2578,6 +2604,13 @@ async function finVerPDF(path){
     window.open(data.signedUrl,'_blank');
   }catch(e){ alert('Não foi possível abrir o PDF: '+(e.message||e)); }
 }
+async function finBaixarPDF(path, nome){
+  try{
+    const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120, { download: nome||true });
+    if(error) throw error;
+    const a=document.createElement('a'); a.href=data.signedUrl; document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ alert('Não foi possível baixar o PDF: '+(e.message||e)); }
+}
 
 function finRender(){
   const rows=finFiltradas();
@@ -2601,7 +2634,7 @@ function finRender(){
       <td>${n.parcela_numero||'—'}</td><td><b>${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</b></td>
       <td style="font-weight:700">${finBrl(n.valor)}</td><td>${finDbr(n.emitida_em)}</td>
       <td><span class="fin-st fin-st-${n.status}">${finStLbl(n.status)}</span></td>
-      <td>${n.pdf_path?`<a href="javascript:void(0)" onclick="finVerPDF('${esc(n.pdf_path)}')">📄 Ver</a>`:'—'}</td>
+      <td style="white-space:nowrap">${n.pdf_path?`<a href="javascript:void(0)" onclick="finVerPDF('${esc(n.pdf_path)}')" title="Visualizar em nova aba">📄 Ver</a> <a href="javascript:void(0)" onclick="finBaixarPDF('${esc(n.pdf_path)}','NF ${esc(n.nf_numero||'')}.pdf')" title="Baixar">⬇</a>`:'—'}</td>
     </tr>`).join('') : '<tr><td colspan="9" class="fin-empty">Nenhuma NF no filtro.</td></tr>';
 }
 
