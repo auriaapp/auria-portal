@@ -107,10 +107,16 @@ const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
 let USER=null, EMPS=[], EMP=null, PRANCHA=null;
-// Estado do visualizador — render por VIEWPORT (canvas do tamanho da janela;
-// só a região visível é rasterizada — zoom alto não custa memória, diferente
-// do bitmap de página inteira do app desktop).
-const V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0, rendering:false, renderPend:false };
+// Estado do visualizador — render por VIEWPORT com double-buffering:
+//  • V = vista atual (zoom/pan que o usuário quer ver AGORA)
+//  • F = último quadro rasterizado (com MARGEM além da janela)
+// Durante a interação o quadro F é reposicionado/escalado por CSS (instantâneo,
+// nunca some da tela); o raster novo é feito num canvas invisível e trocado
+// de forma síncrona quando fica pronto — zero "piscada".
+const V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
+const F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false };
+const MARGEM = 0.45;          // fração da janela rasterizada além de cada borda
+let _renderJob=0, _renderTimer=null, _rendering=false;
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -164,6 +170,7 @@ async function abrirPdfLocal(file){
     const hash=await sha256Hex(buf);                       // hash ANTES (pdf.js consome o buffer)
     V.doc=await pdfjsLib.getDocument({data:buf}).promise;
     V.pageNum=1;
+    F.valido=false;                                      // documento novo: descarta quadro antigo
     await carregarPagina();
     fitPage();
     $('dropHint').style.display='none';
@@ -214,29 +221,69 @@ function pageSizePx(){
   return { w:(x2-x1)*V.zoom, h:(y2-y1)*V.zoom };
 }
 
+// Reposiciona o ÚLTIMO quadro rasterizado conforme a vista atual (CSS puro —
+// instantâneo; a imagem pode ficar levemente esticada até o raster novo chegar,
+// mas NUNCA some da tela).
+function updateCss(){
+  if(!F.valido) return;
+  const canvas=$('pdfCanvas');
+  const k=V.zoom/F.zoom;
+  canvas.style.transformOrigin='0 0';
+  canvas.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
+  $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
+}
+
+// O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
+function frameCobre(){
+  if(!F.valido || F.zoom!==V.zoom) return false;
+  const stage=$('stage');
+  return V.panX>=F.panX && V.panY>=F.panY
+      && V.panX+stage.clientWidth  <= F.panX+F.cssW
+      && V.panY+stage.clientHeight <= F.panY+F.cssH;
+}
+
+function scheduleRender(delay){
+  clearTimeout(_renderTimer);
+  _renderTimer=setTimeout(render, delay==null?120:delay);
+}
+
 async function render(){
   if(!V.page) return;
-  if(V.rendering){ V.renderPend=true; return; }
-  V.rendering=true;
+  if(_rendering){ scheduleRender(80); return; }
+  if(frameCobre()){ updateCss(); return; }               // margem ainda cobre — nada a fazer
+  _rendering=true;
+  const job=++_renderJob;
   try{
-    const stage=$('stage'), canvas=$('pdfCanvas'), dpr=window.devicePixelRatio||1;
+    const stage=$('stage'), dpr=window.devicePixelRatio||1;
     const cw=stage.clientWidth, ch=stage.clientHeight;
-    canvas.width=Math.round(cw*dpr); canvas.height=Math.round(ch*dpr);
-    canvas.style.width=cw+'px'; canvas.style.height=ch+'px';
-    canvas.style.transform='';                             // limpa preview CSS
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='#8B99AC'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    const viewport=V.page.getViewport({ scale:V.zoom*dpr });
-    // desloca o conteúdo pela panorâmica (viewport clip: só o visível rasteriza)
+    const mx=Math.round(cw*MARGEM), my=Math.round(ch*MARGEM);
+    // parâmetros capturados no início (a vista pode mudar durante o raster)
+    const zoom=V.zoom, panX=V.panX-mx, panY=V.panY-my;
+    const cssW=cw+2*mx, cssH=ch+2*my;
+
+    // rasteriza num canvas INVISÍVEL (double-buffer)
+    const off=document.createElement('canvas');
+    off.width=Math.round(cssW*dpr); off.height=Math.round(cssH*dpr);
+    const octx=off.getContext('2d');
+    octx.fillStyle='#8B99AC'; octx.fillRect(0,0,off.width,off.height);
+    const viewport=V.page.getViewport({ scale:zoom*dpr });
     await V.page.render({
-      canvasContext:ctx, viewport,
-      transform:[1,0,0,1, -V.panX*dpr, -V.panY*dpr],
+      canvasContext:octx, viewport,
+      transform:[1,0,0,1, -panX*dpr, -panY*dpr],
       background:'#FFFFFF'
     }).promise;
+    if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }  // vista mudou muito — refaz
+
+    // troca SÍNCRONA: redimensiona + copia no mesmo frame de pintura (sem branco)
+    const canvas=$('pdfCanvas'), ctx=canvas.getContext('2d');
+    canvas.width=off.width; canvas.height=off.height;
+    canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+    ctx.drawImage(off,0,0);
+    F.zoom=zoom; F.panX=panX; F.panY=panY; F.cssW=cssW; F.cssH=cssH; F.valido=true;
+    updateCss();
   }catch(e){ if(!String(e).includes('cancelled')) console.error('render:',e); }
-  V.rendering=false;
-  if(V.renderPend){ V.renderPend=false; render(); }
-  $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
+  _rendering=false;
+  if(!frameCobre()) scheduleRender(60);                  // usuário continuou mexendo
 }
 
 function fitPage(){
@@ -247,17 +294,20 @@ function fitPage(){
   const sz=pageSizePx();
   V.panX=-(stage.clientWidth-sz.w)/2;
   V.panY=-(stage.clientHeight-sz.h)/2;
+  updateCss();
   render();
 }
 
 function zoomAt(fator, cx, cy){
-  // zoom ancorado no ponto (cx,cy) da tela — o ponto sob o cursor não se move
+  // zoom ancorado no ponto (cx,cy) da tela — o ponto sob o cursor não se move.
+  // Preview por CSS na hora; raster nítido chega logo depois (debounce).
   const novo=Math.min(20, Math.max(0.05, V.zoom*fator));
   const k=novo/V.zoom;
   V.panX=(V.panX+cx)*k-cx;
   V.panY=(V.panY+cy)*k-cy;
   V.zoom=novo;
-  render();
+  updateCss();
+  scheduleRender(140);
 }
 function zoomStep(dir){
   const stage=$('stage');
@@ -269,6 +319,7 @@ async function mudarPagina(delta){
   const n=V.pageNum+delta;
   if(n<1||n>V.doc.numPages) return;
   V.pageNum=n;
+  F.valido=false;                                        // página nova: quadro antigo não vale
   await carregarPagina();
   fitPage();
 }
@@ -292,14 +343,13 @@ async function mudarPagina(delta){
   window.addEventListener('mousemove', function(e){
     if(!drag) return;
     const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
-    // preview instantâneo por CSS; o raster real vem no mouseup
-    document.getElementById('pdfCanvas').style.transform='translate('+dx+'px,'+dy+'px)';
     V.panX=drag.px-dx; V.panY=drag.py-dy;
+    updateCss();                                         // segue o mouse (a margem cobre)
   });
   window.addEventListener('mouseup', function(){
     if(!drag) return;
     drag=null; stage.classList.remove('panning');
-    render();
+    scheduleRender(0);                                   // recompleta a margem se precisar
   });
 
   // Arrastar-e-soltar PDF
