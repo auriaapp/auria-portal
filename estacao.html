@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Estação de Pranchas</title>
+<link rel="icon" type="image/png" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#EEF2F7;color:#1A2F4A;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  #loading{height:100vh;display:flex;align-items:center;justify-content:center;color:#64748B}
+
+  header{background:#1E2A3D;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:14px;flex-shrink:0}
+  header img{height:34px;object-fit:contain}
+  header h1{font-size:15px;font-weight:800;flex:1}
+  header .who{font-size:11px;color:#9FB4CC;text-align:right;line-height:1.3}
+  .btn-logout{background:rgba(255,255,255,.12);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer}
+  .btn-logout:hover{background:rgba(255,255,255,.22)}
+
+  .main{flex:1;display:flex;overflow:hidden}
+
+  /* Sidebar */
+  .side{width:250px;min-width:250px;background:#fff;border-right:1px solid #E2E8F0;display:flex;flex-direction:column;padding:14px;gap:10px;overflow-y:auto}
+  .side label{font-size:10px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:.05em}
+  .side select{width:100%;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none}
+  .btn{background:#3B82F6;color:#fff;border:none;border-radius:9px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;width:100%}
+  .btn:hover{background:#1D4ED8}
+  .btn[disabled]{opacity:.5;cursor:default}
+  .pr-card{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:10px 12px;font-size:12px}
+  .pr-card .nm{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pr-card .st{font-size:10.5px;color:#64748B;margin-top:3px}
+  .pr-card .tag{display:inline-block;font-size:9.5px;font-weight:800;border-radius:8px;padding:1px 7px;margin-top:5px}
+  .tag.nova{background:#DBEAFE;color:#1D4ED8}
+  .tag.reconhecida{background:#DCFCE7;color:#166534}
+  .hint{font-size:11px;color:#94A3B8;line-height:1.5}
+
+  /* Viewer */
+  .viewer-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .toolbar{background:#fff;border-bottom:1px solid #E2E8F0;padding:7px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .tb{background:#F1F5F9;border:1px solid #E2E8F0;color:#334155;border-radius:7px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer}
+  .tb:hover{border-color:#3B82F6;color:#3B82F6}
+  .tb-info{font-size:12px;color:#64748B;font-weight:600;min-width:52px;text-align:center}
+  .sep{width:1px;height:20px;background:#E2E8F0}
+  #stage{flex:1;position:relative;overflow:hidden;background:#8B99AC;cursor:grab}
+  #stage.panning{cursor:grabbing}
+  #pdfCanvas{position:absolute;top:0;left:0;will-change:transform}
+  #dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#E8EDF5;gap:10px;pointer-events:none}
+  #dropHint .big{font-size:44px}
+  #dropHint p{font-size:13.5px;max-width:400px;text-align:center;line-height:1.6}
+  #stage.dragover{outline:3px dashed #3B82F6;outline-offset:-8px}
+</style>
+</head>
+<body>
+<div id="loading">Carregando…</div>
+
+<div id="app" style="display:none;height:100vh;flex-direction:column">
+  <header>
+    <img src="logo_full.png" alt="Auria">
+    <h1>Estação de Pranchas</h1>
+    <div class="who"><span id="uName"></span><br><span id="uEmail" style="font-size:10px"></span></div>
+    <button class="btn-logout" onclick="sair()">Sair</button>
+  </header>
+
+  <div class="main">
+    <aside class="side">
+      <div>
+        <label>Empreendimento</label>
+        <select id="selEmp" onchange="trocarEmp()"></select>
+      </div>
+      <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0])">
+      <button class="btn" id="btnAbrir" onclick="document.getElementById('pdfInput').click()" disabled>📂 Abrir prancha (PDF)</button>
+      <div id="prInfo"></div>
+      <div class="hint">O PDF fica no seu computador — a estação registra a identidade da prancha e
+        guardará pins, apontamentos e calibração no Auria. Abrir o mesmo arquivo em qualquer
+        máquina recupera tudo.</div>
+    </aside>
+
+    <div class="viewer-wrap">
+      <div class="toolbar">
+        <button class="tb" onclick="zoomStep(-1)">−</button>
+        <span class="tb-info" id="zoomLbl">—</span>
+        <button class="tb" onclick="zoomStep(1)">+</button>
+        <button class="tb" onclick="fitPage()">⤢ Ajustar</button>
+        <span class="sep"></span>
+        <button class="tb" onclick="mudarPagina(-1)">◀</button>
+        <span class="tb-info" id="pageLbl">—</span>
+        <button class="tb" onclick="mudarPagina(1)">▶</button>
+      </div>
+      <div id="stage">
+        <canvas id="pdfCanvas"></canvas>
+        <div id="dropHint">
+          <div class="big">🗺️</div>
+          <p><b>Nenhuma prancha aberta.</b><br>Selecione o empreendimento e clique em
+          “Abrir prancha”, ou arraste um PDF para cá.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+let USER=null, EMPS=[], EMP=null, PRANCHA=null;
+// Estado do visualizador — render por VIEWPORT (canvas do tamanho da janela;
+// só a região visível é rasterizada — zoom alto não custa memória, diferente
+// do bitmap de página inteira do app desktop).
+const V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0, rendering:false, renderPend:false };
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Boot: sessão compartilhada do SDK + guard de papel (só analista) ─────────
+async function boot(){
+  let session=null;
+  try{ const r=await sb.auth.getSession(); session=r.data&&r.data.session; }catch(e){}
+  if(!session){ location.replace('./'); return; }
+  let perfil=null;
+  try{
+    const { data }=await sb.from('usuarios_auria').select('nome,email,role').eq('id',session.user.id).maybeSingle();
+    perfil=data;
+  }catch(e){}
+  if(!perfil || perfil.role!=='analista'){ location.replace('./'); return; }
+  USER={ id:session.user.id, nome:perfil.nome||session.user.email, email:session.user.email };
+  $('uName').textContent=USER.nome; $('uEmail').textContent=USER.email;
+
+  // Empreendimentos atribuídos (mesmo embed do painel do analista)
+  try{
+    const { data }=await sb.from('analista_empreendimento_auria')
+      .select('ativo, empreendimentos_auria(*)').eq('analista_id',USER.id).eq('ativo',true);
+    EMPS=(data||[]).map(r=>r.empreendimentos_auria).filter(e=>e&&!e.deleted_at);
+  }catch(e){ EMPS=[]; }
+  $('selEmp').innerHTML = EMPS.length
+    ? '<option value="">— selecione —</option>'+EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('')
+    : '<option value="">Nenhum empreendimento atribuído</option>';
+  $('loading').style.display='none'; $('app').style.display='flex';
+}
+
+function trocarEmp(){
+  EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
+  $('btnAbrir').disabled = !EMP;
+}
+
+// ── Abrir PDF local: hash → registro → render ────────────────────────────────
+async function sha256Hex(buf){
+  const h=await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function abrirPdfLocal(file){
+  if(!file) return;
+  if(!EMP){ alert('Selecione o empreendimento antes de abrir a prancha.'); return; }
+  if(file.type!=='application/pdf' && !file.name.toLowerCase().endsWith('.pdf')){
+    alert('Abra um arquivo PDF. (DXF: converta para PDF antes, como no app.)'); return;
+  }
+  $('prInfo').innerHTML='<div class="pr-card"><div class="nm">'+esc(file.name)+'</div><div class="st">Calculando identidade…</div></div>';
+  try{
+    const buf=await file.arrayBuffer();
+    const hash=await sha256Hex(buf);                       // hash ANTES (pdf.js consome o buffer)
+    V.doc=await pdfjsLib.getDocument({data:buf}).promise;
+    V.pageNum=1;
+    await carregarPagina();
+    fitPage();
+    $('dropHint').style.display='none';
+    await registrarPrancha(file.name, hash);
+  }catch(e){
+    console.error(e);
+    alert('Não foi possível abrir o PDF: '+(e.message||e));
+    $('prInfo').innerHTML='';
+  }
+}
+
+async function registrarPrancha(nome, hash){
+  // Reconhece o arquivo pelo hash; registra se for novo.
+  let card=(st,tag)=>{ $('prInfo').innerHTML=
+    '<div class="pr-card"><div class="nm">'+esc(nome)+'</div><div class="st">'+st+'</div>'+
+    (tag?('<span class="tag '+tag+'">'+(tag==='nova'?'REGISTRADA AGORA':'RECONHECIDA')+'</span>'):'')+'</div>'; };
+  try{
+    const [ , , w, h ] = V.page.view;                      // dimensões em pontos PDF
+    let { data:pr }=await sb.from('pranchas_auria').select('*')
+      .eq('empreendimento_id',EMP.id).eq('arquivo_hash',hash).maybeSingle();
+    if(pr){
+      PRANCHA=pr;
+      card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','reconhecida');
+      return;
+    }
+    const ins=await sb.from('pranchas_auria').insert({
+      empreendimento_id:EMP.id, arquivo_nome:nome, arquivo_hash:hash,
+      n_pages:V.doc.numPages, width_pts:w, height_pts:h, criado_por:USER.id
+    }).select().single();
+    if(ins.error) throw ins.error;
+    PRANCHA=ins.data;
+    card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','nova');
+  }catch(e){
+    console.error('registrarPrancha:',e);
+    card('⚠ Prancha aberta localmente, mas o registro no Auria falhou: '+esc(e.message||e),null);
+  }
+}
+
+// ── Render por viewport ──────────────────────────────────────────────────────
+async function carregarPagina(){
+  V.page=await V.doc.getPage(V.pageNum);
+  $('pageLbl').textContent=V.pageNum+' / '+V.doc.numPages;
+}
+
+function pageSizePx(){
+  // tamanho da página em px de tela no zoom atual (view em pontos @72dpi × zoom)
+  const [x1,y1,x2,y2]=V.page.view;
+  return { w:(x2-x1)*V.zoom, h:(y2-y1)*V.zoom };
+}
+
+async function render(){
+  if(!V.page) return;
+  if(V.rendering){ V.renderPend=true; return; }
+  V.rendering=true;
+  try{
+    const stage=$('stage'), canvas=$('pdfCanvas'), dpr=window.devicePixelRatio||1;
+    const cw=stage.clientWidth, ch=stage.clientHeight;
+    canvas.width=Math.round(cw*dpr); canvas.height=Math.round(ch*dpr);
+    canvas.style.width=cw+'px'; canvas.style.height=ch+'px';
+    canvas.style.transform='';                             // limpa preview CSS
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#8B99AC'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    const viewport=V.page.getViewport({ scale:V.zoom*dpr });
+    // desloca o conteúdo pela panorâmica (viewport clip: só o visível rasteriza)
+    await V.page.render({
+      canvasContext:ctx, viewport,
+      transform:[1,0,0,1, -V.panX*dpr, -V.panY*dpr],
+      background:'#FFFFFF'
+    }).promise;
+  }catch(e){ if(!String(e).includes('cancelled')) console.error('render:',e); }
+  V.rendering=false;
+  if(V.renderPend){ V.renderPend=false; render(); }
+  $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
+}
+
+function fitPage(){
+  if(!V.page) return;
+  const stage=$('stage'), [x1,y1,x2,y2]=V.page.view;
+  const pw=x2-x1, ph=y2-y1;
+  V.zoom=Math.min(stage.clientWidth/pw, stage.clientHeight/ph)*0.96;
+  const sz=pageSizePx();
+  V.panX=-(stage.clientWidth-sz.w)/2;
+  V.panY=-(stage.clientHeight-sz.h)/2;
+  render();
+}
+
+function zoomAt(fator, cx, cy){
+  // zoom ancorado no ponto (cx,cy) da tela — o ponto sob o cursor não se move
+  const novo=Math.min(20, Math.max(0.05, V.zoom*fator));
+  const k=novo/V.zoom;
+  V.panX=(V.panX+cx)*k-cx;
+  V.panY=(V.panY+cy)*k-cy;
+  V.zoom=novo;
+  render();
+}
+function zoomStep(dir){
+  const stage=$('stage');
+  zoomAt(dir>0?1.25:0.8, stage.clientWidth/2, stage.clientHeight/2);
+}
+
+async function mudarPagina(delta){
+  if(!V.doc) return;
+  const n=V.pageNum+delta;
+  if(n<1||n>V.doc.numPages) return;
+  V.pageNum=n;
+  await carregarPagina();
+  fitPage();
+}
+
+// ── Interação: roda do mouse (zoom no cursor) e arraste (pan) ───────────────
+(function(){
+  const stage=document.getElementById('stage');
+  stage.addEventListener('wheel', function(e){
+    if(!V.page) return;
+    e.preventDefault();
+    const r=stage.getBoundingClientRect();
+    zoomAt(e.deltaY<0?1.15:0.87, e.clientX-r.left, e.clientY-r.top);
+  }, { passive:false });
+
+  let drag=null;
+  stage.addEventListener('mousedown', function(e){
+    if(!V.page) return;
+    drag={ x:e.clientX, y:e.clientY, px:V.panX, py:V.panY };
+    stage.classList.add('panning');
+  });
+  window.addEventListener('mousemove', function(e){
+    if(!drag) return;
+    const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+    // preview instantâneo por CSS; o raster real vem no mouseup
+    document.getElementById('pdfCanvas').style.transform='translate('+dx+'px,'+dy+'px)';
+    V.panX=drag.px-dx; V.panY=drag.py-dy;
+  });
+  window.addEventListener('mouseup', function(){
+    if(!drag) return;
+    drag=null; stage.classList.remove('panning');
+    render();
+  });
+
+  // Arrastar-e-soltar PDF
+  stage.addEventListener('dragover', function(e){ e.preventDefault(); stage.classList.add('dragover'); });
+  stage.addEventListener('dragleave', function(){ stage.classList.remove('dragover'); });
+  stage.addEventListener('drop', function(e){
+    e.preventDefault(); stage.classList.remove('dragover');
+    const f=e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(f) abrirPdfLocal(f);
+  });
+
+  window.addEventListener('resize', function(){ if(V.page) render(); });
+})();
+
+async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
+
+boot();
+</script>
+</body>
+</html>
