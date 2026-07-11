@@ -524,7 +524,7 @@ async function baixarZip(btn, idx){
   if(!nfs.length){ alert('Nenhum PDF nesta pasta.'); return; }
   if(nfs.length>200 && !confirm('São '+nfs.length+' arquivos — o download pode demorar. Continuar?')) return;
   const orig=btn.textContent; btn.disabled=true;
-  let falhas=0;
+  let falhas=0, ultimoErro='';
   try{
     const zip=new JSZip();
     // profundidade do nó: os níveis já fixados não viram pastas dentro do zip
@@ -545,9 +545,12 @@ async function baixarZip(btn, idx){
         const nome='NF '+sanit(n.nf_numero||String(n.id).slice(0,8))
                   +(n.parcela_numero?(' - Parcela '+n.parcela_numero):'')+'.pdf';
         zip.file((rel?rel+'/':'')+nome, blob);
-      }catch(fe){ falhas++; console.warn('Falhou:', n.pdf_path, fe.message||fe); }
+      }catch(fe){
+        falhas++; ultimoErro=(fe&&(fe.message||fe.name))||String(fe);
+        console.warn('Falhou:', n.pdf_path, fe);
+      }
     }
-    if(falhas===nfs.length) throw new Error('nenhum arquivo pôde ser baixado');
+    if(falhas===nfs.length) throw new Error('nenhum arquivo pôde ser baixado'+(ultimoErro?(' — motivo: '+ultimoErro):''));
     btn.textContent='Compactando…';
     const blob=await zip.generateAsync({type:'blob'});
     const a=document.createElement('a');
