@@ -50,6 +50,36 @@
   #dropHint .big{font-size:44px}
   #dropHint p{font-size:13.5px;max-width:400px;text-align:center;line-height:1.6}
   #stage.dragover{outline:3px dashed #3B82F6;outline-offset:-8px}
+  #stage.modo-pin{cursor:crosshair}
+
+  /* Lista de apontamentos */
+  .ap-card{background:#F8FAFC;border:1px solid #E2E8F0;border-left:3px solid #94A3B8;border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font-size:12px}
+  .ap-card:hover{border-color:#3B82F6}
+  .ap-card .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ap-card .m{font-size:10.5px;color:#64748B;margin-top:2px}
+  .ap-st{display:inline-block;font-size:9px;font-weight:800;border-radius:8px;padding:1px 6px;margin-right:4px}
+
+  /* Modal do apontamento */
+  .modalbg{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:flex-start;justify-content:center;z-index:80;padding:28px 16px;overflow:auto}
+  .modalbg.on{display:flex}
+  .modalcard{background:#fff;border-radius:14px;max-width:680px;width:100%;padding:20px;position:relative}
+  .modalcard .x{position:absolute;top:10px;right:14px;font-size:20px;color:#94A3B8;cursor:pointer;border:none;background:none}
+  .modalcard h3{font-size:15px;margin-bottom:12px}
+  .fg{margin-bottom:10px}
+  .fg label{display:block;font-size:10px;font-weight:800;color:#64748B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+  .fg input,.fg select,.fg textarea{width:100%;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none}
+  .fg textarea{min-height:70px;resize:vertical}
+  .fg input:focus,.fg select:focus,.fg textarea:focus{border-color:#3B82F6}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .part-row{display:grid;grid-template-columns:1.2fr 1fr 1.4fr .9fr .9fr 30px;gap:6px;margin-bottom:5px;align-items:center}
+  .part-row input,.part-row select{border:1.5px solid #E2E8F0;border-radius:7px;padding:6px 8px;font-size:12px;outline:none;width:100%}
+  .imgs-stg{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .imgs-stg .th{position:relative}
+  .imgs-stg img{width:74px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #E2E8F0;cursor:pointer}
+  .imgs-stg .rm{position:absolute;top:-6px;right:-6px;background:#EF4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1}
+  .btn-sec{background:#F1F5F9;border:1px solid #CBD5E1;color:#334155;border-radius:9px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer}
+  .mfoot{display:flex;justify-content:space-between;gap:10px;margin-top:14px}
 </style>
 </head>
 <body>
@@ -73,8 +103,21 @@
       <button class="btn" id="btnAbrir" onclick="document.getElementById('pdfInput').click()" disabled>📂 Abrir prancha (PDF)</button>
       <div id="prInfo"></div>
       <div class="hint">O PDF fica no seu computador — a estação registra a identidade da prancha e
-        guardará pins, apontamentos e calibração no Auria. Abrir o mesmo arquivo em qualquer
+        guarda pins, apontamentos e calibração no Auria. Abrir o mesmo arquivo em qualquer
         máquina recupera tudo.</div>
+
+      <div style="border-top:1px solid #E2E8F0;padding-top:10px">
+        <label>Apontamentos</label>
+        <div style="display:flex;gap:6px;margin:6px 0">
+          <select id="fApSt" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px">
+            <option value="">Todos</option><option>Em aberto</option><option>Em análise</option>
+            <option>Resolvido</option><option>Reprovado</option>
+          </select>
+        </div>
+        <input id="fApTxt" oninput="renderListaApts()" placeholder="Buscar…"
+               style="width:100%;border:1.5px solid #E2E8F0;border-radius:8px;padding:7px 10px;font-size:12px;outline:none;margin-bottom:8px">
+        <div id="aptLista"><div class="hint">Selecione um empreendimento.</div></div>
+      </div>
     </aside>
 
     <div class="viewer-wrap">
@@ -87,14 +130,62 @@
         <button class="tb" onclick="mudarPagina(-1)">◀</button>
         <span class="tb-info" id="pageLbl">—</span>
         <button class="tb" onclick="mudarPagina(1)">▶</button>
+        <span class="sep"></span>
+        <button class="tb" id="btnModoPin" onclick="alternarModoPin()">📍 Apontar</button>
+        <span style="font-size:11px;color:#94A3B8" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stage">
         <canvas id="pdfCanvas"></canvas>
+        <svg id="pinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <div id="dropHint">
           <div class="big">🗺️</div>
           <p><b>Nenhuma prancha aberta.</b><br>Selecione o empreendimento e clique em
           “Abrir prancha”, ou arraste um PDF para cá.</p>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: editor de apontamento -->
+<div class="modalbg" id="modalApt" onclick="if(event.target===this)fecharApt()">
+  <div class="modalcard">
+    <button class="x" onclick="fecharApt()">&times;</button>
+    <h3 id="aptModalT">Apontamento</h3>
+    <div class="g2">
+      <div class="fg"><label>ID</label><input id="apId" readonly style="background:#F8FAFC"></div>
+      <div class="fg"><label>Disciplina</label><select id="apDisc"></select></div>
+    </div>
+    <div class="fg"><label>Título</label><input id="apTitulo" placeholder="Resumo curto do apontamento"></div>
+    <div class="fg"><label>Descrição</label><textarea id="apDesc" placeholder="Detalhe o apontamento…"></textarea></div>
+    <div class="g3">
+      <div class="fg"><label>Tipo</label><select id="apTipo"></select></div>
+      <div class="fg"><label>Criticidade</label><select id="apPrio">
+        <option value=""></option>
+        <option>Severa / Imediata</option><option>Importante / Programada</option><option>Observação / Atenção</option>
+      </select></div>
+      <div class="fg"><label>Status</label><select id="apStatus">
+        <option>Em aberto</option><option>Em análise</option><option>Resolvido</option><option>Reprovado</option>
+      </select></div>
+    </div>
+    <div class="fg">
+      <label>Participantes e prazos</label>
+      <div class="part-row" style="font-size:10px;color:#64748B;font-weight:700">
+        <span>DISCIPLINA</span><span>NÍVEL</span><span>E-MAILS</span><span>PRAZO</span><span>CONCLUSÃO</span><span></span>
+      </div>
+      <div id="apParts"></div>
+      <button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="addPartRow()">＋ participante</button>
+    </div>
+    <div class="fg">
+      <label>Prints (Ctrl+V cola aqui)</label>
+      <div class="imgs-stg" id="apImgs"></div>
+    </div>
+    <div style="font-size:11px;color:#94A3B8" id="apPinsInfo"></div>
+    <div class="mfoot">
+      <button class="btn-sec" id="apExcluir" onclick="excluirApt()">🗑 Excluir</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn-sec" onclick="fecharApt()">Cancelar</button>
+        <button class="btn" id="apSalvar" style="width:auto;padding:9px 22px" onclick="salvarApt()">Salvar</button>
       </div>
     </div>
   </div>
@@ -150,6 +241,7 @@ async function boot(){
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   $('btnAbrir').disabled = !EMP;
+  carregarApts();
 }
 
 // ── Abrir PDF local: hash → registro → render ────────────────────────────────
@@ -194,6 +286,7 @@ async function registrarPrancha(nome, hash){
     if(pr){
       PRANCHA=pr;
       card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','reconhecida');
+      renderPins(); renderListaApts();
       return;
     }
     const ins=await sb.from('pranchas_auria').insert({
@@ -203,6 +296,7 @@ async function registrarPrancha(nome, hash){
     if(ins.error) throw ins.error;
     PRANCHA=ins.data;
     card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','nova');
+    renderPins(); renderListaApts();
   }catch(e){
     console.error('registrarPrancha:',e);
     card('⚠ Prancha aberta localmente, mas o registro no Auria falhou: '+esc(e.message||e),null);
@@ -231,6 +325,7 @@ function updateCss(){
   canvas.style.transformOrigin='0 0';
   canvas.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
   $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
+  try{ renderPins(); }catch(e){}                         // pins acompanham a vista
 }
 
 // O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
@@ -346,10 +441,19 @@ async function mudarPagina(delta){
     V.panX=drag.px-dx; V.panY=drag.py-dy;
     updateCss();                                         // segue o mouse (a margem cobre)
   });
-  window.addEventListener('mouseup', function(){
+  window.addEventListener('mouseup', function(e){
     if(!drag) return;
+    const dist=Math.hypot(e.clientX-drag.x, e.clientY-drag.y);
     drag=null; stage.classList.remove('panning');
     scheduleRender(0);                                   // recompleta a margem se precisar
+    // Modo apontar: clique simples (sem arrasto) cria um apontamento no ponto
+    if(MODE==='pin' && dist<5 && V.page && PRANCHA
+       && !(e.target.closest && e.target.closest('#pinsSvg'))
+       && !(e.target.closest && e.target.closest('.modalbg'))){
+      const r=stage.getBoundingClientRect();
+      const pt=screenToPage(e.clientX-r.left, e.clientY-r.top);
+      if(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1) novoApontamento(pt.nx, pt.ny);
+    }
   });
 
   // Arrastar-e-soltar PDF
@@ -363,6 +467,318 @@ async function mudarPagina(delta){
 
   window.addEventListener('resize', function(){ if(V.page) render(); });
 })();
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  W1 — PINS + APONTAMENTOS
+//  Mesmo modelo do desktop: id "DIS-n" por disciplina, participantes/prazos,
+//  criticidades e tipos idênticos. Grava na MESMA tabela `apontamentos`
+//  (convivência) + pontos_json normalizado [{nx,ny,pg}] e prancha_id.
+// ═══════════════════════════════════════════════════════════════════════════
+const TIPOS_APT=["Interferência / Divergência entre Disciplinas","Falha Gráfica / Modelagem",
+  "Dúvida","Divergência de Informação","Alteração de Premissa / Definição",
+  "Ausência de Informação","Melhoria / Otimização","Inconsistência Técnica ou Normativa",
+  "Não atendimento às premissas"];
+const DISCS=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
+  'Instalações Hidrossanitárias','Instalações Elétricas','Instalações PCI/SPDA/Gás',
+  'Instalações Automação','Infraestrutura','Topografia / Sondagem','Ambientação',
+  'Paisagismo','Luminotécnico','Esquadrias','Fachada','Heliponto','Segurança',
+  'Sinalização / Comunicação Visual','ETA / ETE','Climatização / Pressurização / Exaustão',
+  'Fundação','Contenção'];
+const NIVEIS=['Pendência','Informação','Validação'];
+function corPrio(p){
+  if(!p) return '#7F8C8D';
+  if(p.indexOf('Severa')>=0) return '#E74C3C';
+  if(p.indexOf('Importante')>=0) return '#E67E22';
+  if(p.indexOf('Observação')>=0) return '#C29D0B';
+  return '#7F8C8D';
+}
+function corStatus(s){
+  return {'Em aberto':'#E67E22','Em análise':'#F39C12','Resolvido':'#27AE60','Reprovado':'#E74C3C'}[s]||'#7F8C8D';
+}
+
+let APTS=[];                 // apontamentos do empreendimento (tabela `apontamentos`)
+let APT_EDIT=null;           // apontamento aberto no editor (objeto local)
+let APT_IMGS=[];             // imagens do editor: {url} já subidas ou {data} pendentes
+let MODE='pan';
+
+async function carregarApts(){
+  APTS=[];
+  if(!EMP){ renderListaApts(); renderPins(); return; }
+  try{
+    const { data, error }=await sb.from('apontamentos')
+      .select('*').eq('empreendimento', EMP.nome).limit(1000);
+    if(error) throw error;
+    APTS=data||[];
+  }catch(e){ console.error('carregarApts:', e.message||e); }
+  renderListaApts(); renderPins();
+}
+
+// ── Pins (SVG overlay; posição derivada da vista atual V) ───────────────────
+function pageDims(){ const [x1,y1,x2,y2]=V.page.view; return { w:x2-x1, h:y2-y1 }; }
+function pageToScreen(nx,ny){
+  const d=pageDims();
+  return { x:nx*d.w*V.zoom - V.panX, y:ny*d.h*V.zoom - V.panY };
+}
+function screenToPage(sx,sy){
+  const d=pageDims();
+  return { nx:(V.panX+sx)/(d.w*V.zoom), ny:(V.panY+sy)/(d.h*V.zoom) };
+}
+
+function renderPins(){
+  const svg=$('pinsSvg'); if(!svg) return;
+  if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
+  let out='';
+  APTS.forEach((a,ai)=>{
+    if(a.prancha_id!==PRANCHA.id) return;
+    (a.pontos_json||[]).forEach(pt=>{
+      if((pt.pg||1)!==V.pageNum) return;
+      const p=pageToScreen(pt.nx,pt.ny);
+      if(p.x<-30||p.y<-30||p.x>svg.clientWidth+30||p.y>svg.clientHeight+30) return;
+      const cor=corPrio(a.prioridade);
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="abrirAptIdx(${ai});event.stopPropagation()">
+        <path d="M ${p.x} ${p.y} l -9 -16 a 11 11 0 1 1 18 0 z" fill="${cor}" stroke="#fff" stroke-width="1.6"/>
+        <circle cx="${p.x}" cy="${p.y-17}" r="8.2" fill="#fff"/>
+        <text x="${p.x}" y="${p.y-13.5}" text-anchor="middle" font-size="9.5" font-weight="800" fill="${cor}">${esc(String(a.id_num||''))}</text>
+      </g>`;
+    });
+  });
+  svg.innerHTML=out;
+}
+
+function alternarModoPin(){
+  MODE = MODE==='pin' ? 'pan' : 'pin';
+  $('btnModoPin').style.background = MODE==='pin' ? '#3B82F6' : '';
+  $('btnModoPin').style.color      = MODE==='pin' ? '#fff' : '';
+  $('stage').classList.toggle('modo-pin', MODE==='pin');
+  $('modoHint').textContent = MODE==='pin'
+    ? 'clique na prancha para criar um apontamento' : 'arraste para navegar';
+}
+
+// ── Editor ──────────────────────────────────────────────────────────────────
+function proximoId(disc){
+  const pref=(disc? disc.slice(0,3).toUpperCase() : 'GER');
+  let num=1;
+  APTS.forEach(a=>{ if(a.disciplina===disc && (a.id_num||0)>=num) num=(a.id_num||0)+1; });
+  return { id:pref+'-'+num, num };
+}
+function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
+
+function novoApontamento(nx,ny){
+  const disc=(PRANCHA&&PRANCHA.disciplina)||DISCS[1];
+  const g=proximoId(disc);
+  APT_EDIT={
+    id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
+    disciplina:disc, status:'Em aberto', visibilidade:'Coordenação',
+    data_criacao:hojeBr(),
+    participantes:{ [disc]:{nivel:'Pendência',emails:'',prazo:'',conclusao:''} },
+    log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
+    pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
+    prancha_id:PRANCHA?PRANCHA.id:null,
+    _novo:true
+  };
+  APT_IMGS=[];
+  abrirEditor();
+}
+function abrirAptIdx(i){
+  const a=APTS[i]; if(!a) return;
+  APT_EDIT=JSON.parse(JSON.stringify(a)); APT_EDIT._novo=false;
+  APT_IMGS=(a.imagens_json||[]).map(u=>({url:u}));
+  abrirEditor();
+}
+function abrirEditor(){
+  const a=APT_EDIT;
+  $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id);
+  $('apId').value=a.id;
+  $('apDisc').innerHTML=DISCS.map(d=>`<option${d===a.disciplina?' selected':''}>${esc(d)}</option>`).join('');
+  $('apTitulo').value=a.titulo||'';
+  $('apDesc').value=a.descricao||'';
+  $('apTipo').innerHTML='<option value=""></option>'+TIPOS_APT.map(t=>`<option${t===a.tipo?' selected':''}>${esc(t)}</option>`).join('');
+  $('apPrio').value=a.prioridade||'';
+  $('apStatus').value=a.status||'Em aberto';
+  renderParts(); renderImgs();
+  const nPins=(a.pontos_json||[]).length;
+  $('apPinsInfo').textContent='📍 '+nPins+' pin(s) nesta prancha · criado em '+(a.data_criacao||'—');
+  $('apExcluir').style.display=a._novo?'none':'';
+  $('modalApt').classList.add('on');
+}
+function fecharApt(){ $('modalApt').classList.remove('on'); APT_EDIT=null; APT_IMGS=[]; }
+
+function renderParts(){
+  const ps=APT_EDIT.participantes||{};
+  $('apParts').innerHTML=Object.keys(ps).map((d,i)=>{
+    const p=ps[d]||{};
+    return `<div class="part-row" data-i="${i}">
+      <select data-f="disc">${DISCS.map(x=>`<option${x===d?' selected':''}>${esc(x)}</option>`).join('')}</select>
+      <select data-f="nivel">${NIVEIS.map(n=>`<option${n===(p.nivel||'Pendência')?' selected':''}>${n}</option>`).join('')}</select>
+      <input data-f="emails" value="${esc(p.emails||'')}" placeholder="a@x.com, b@y.com">
+      <input data-f="prazo" value="${esc(p.prazo||'')}" placeholder="dd/mm/aaaa">
+      <input data-f="conclusao" value="${esc(p.conclusao||'')}" placeholder="dd/mm/aaaa">
+      <button class="btn-sec" style="padding:4px 7px;font-size:11px" onclick="rmPartRow(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+function lerParts(){
+  const out={};
+  document.querySelectorAll('#apParts .part-row').forEach(r=>{
+    const g=f=>{ const el=r.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():''; };
+    const d=g('disc'); if(!d) return;
+    out[d]={ nivel:g('nivel'), emails:g('emails'), prazo:g('prazo'), conclusao:g('conclusao') };
+  });
+  return out;
+}
+function addPartRow(){
+  APT_EDIT.participantes=lerParts();
+  const usados=Object.keys(APT_EDIT.participantes);
+  const livre=DISCS.find(d=>!usados.includes(d))||DISCS[0];
+  APT_EDIT.participantes[livre]={nivel:'Pendência',emails:'',prazo:'',conclusao:''};
+  renderParts();
+}
+function rmPartRow(i){
+  APT_EDIT.participantes=lerParts();
+  const k=Object.keys(APT_EDIT.participantes)[i];
+  if(k) delete APT_EDIT.participantes[k];
+  renderParts();
+}
+
+// ── Imagens (Ctrl+V no modal → bucket apontamentos/<uid>/<id>/) ─────────────
+function renderImgs(){
+  $('apImgs').innerHTML=APT_IMGS.map((im,i)=>`<div class="th">
+    <img src="${im.url||im.data}" onclick="window.open('${im.url||im.data}','_blank')">
+    <button class="rm" onclick="APT_IMGS.splice(${i},1);renderImgs()">×</button></div>`).join('')
+    ||'<span style="font-size:11px;color:#94A3B8">Nenhum print. Ctrl+V cola aqui.</span>';
+}
+document.addEventListener('paste', function(e){
+  if(!$('modalApt').classList.contains('on')||!APT_EDIT) return;
+  const items=(e.clipboardData||{}).items||[];
+  for(const it of items){
+    if(it.type&&it.type.indexOf('image')===0){
+      const f=it.getAsFile(); if(!f) continue;
+      const img=new Image(), url=URL.createObjectURL(f);
+      img.onload=function(){
+        const max=1200, sc=Math.min(1,max/Math.max(img.width,img.height));
+        const c=document.createElement('canvas');
+        c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+        c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        URL.revokeObjectURL(url);
+        APT_IMGS.push({data:c.toDataURL('image/jpeg',0.75)});
+        renderImgs();
+      };
+      img.src=url;
+      e.preventDefault();
+    }
+  }
+});
+async function subirImgsPendentes(aptId){
+  for(let i=0;i<APT_IMGS.length;i++){
+    const im=APT_IMGS[i];
+    if(im.url) continue;
+    const blob=await (await fetch(im.data)).blob();
+    const path=USER.id+'/'+aptId+'/img_'+Date.now()+'_'+i+'.jpg';
+    const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:true});
+    if(up.error) throw new Error('upload de print: '+up.error.message);
+    im.url=sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl;
+    delete im.data;
+  }
+  return APT_IMGS.map(im=>im.url);
+}
+
+// ── Salvar / excluir (mesmos campos que o sync do desktop envia) ────────────
+function calcPrazos(parts){
+  let prazos=[], maxAtraso=0;
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  Object.values(parts||{}).forEach(p=>{
+    if(p.prazo && !(p.conclusao||'').trim()){
+      const m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(p.prazo.trim());
+      if(m){
+        prazos.push(p.prazo.trim());
+        const d=Math.round((new Date(+m[3],+m[2]-1,+m[1])-hoje)/864e5);
+        if(d<0 && Math.abs(d)>maxAtraso) maxAtraso=Math.abs(d);
+      }
+    }
+  });
+  const concl=Object.values(parts||{}).map(p=>(p.conclusao||'').trim()).filter(Boolean);
+  return { prazo_min:prazos.length?prazos.sort()[0]:'', conclusao:concl.length?concl.sort().slice(-1)[0]:'',
+           atrasado:maxAtraso>0, dias_atraso:maxAtraso };
+}
+
+async function salvarApt(){
+  if(!APT_EDIT) return;
+  const a=APT_EDIT;
+  a.titulo=$('apTitulo').value.trim();
+  a.descricao=$('apDesc').value.trim();
+  a.tipo=$('apTipo').value; a.prioridade=$('apPrio').value;
+  a.status=$('apStatus').value; a.disciplina=$('apDisc').value;
+  a.participantes=lerParts();
+  if(!a.titulo){ alert('Informe o título.'); return; }
+  const btn=$('apSalvar'); btn.disabled=true; btn.textContent='Salvando…';
+  try{
+    const imgs=await subirImgsPendentes(a.id);
+    const px=calcPrazos(a.participantes);
+    const row={
+      id:a.id, user_id:USER.id, empreendimento:EMP.nome, analista:USER.nome,
+      id_num:a.id_num||0, titulo:a.titulo, descricao:a.descricao, tipo:a.tipo,
+      disciplina:a.disciplina, prancha_nome:(PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||'',
+      obs_coord:(a.log_json||[]).filter(e=>e.tipo!=='sistema'),
+      status:a.status, prioridade:a.prioridade, visibilidade:a.visibilidade||'Coordenação',
+      etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
+      prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
+      participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs,
+      pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
+      prancha_id:a.prancha_id||null
+    };
+    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'id' });
+    if(error) throw error;
+    fecharApt();
+    await carregarApts();
+  }catch(e){ alert('Erro ao salvar: '+(e.message||e)); }
+  finally{ btn.disabled=false; btn.textContent='Salvar'; }
+}
+
+async function excluirApt(){
+  if(!APT_EDIT||APT_EDIT._novo) return;
+  if(!confirm('Excluir o apontamento '+APT_EDIT.id+'? Essa ação não pode ser desfeita.')) return;
+  try{
+    const { error }=await sb.from('apontamentos').delete().eq('id',APT_EDIT.id).eq('empreendimento',EMP.nome);
+    if(error) throw error;
+    fecharApt();
+    await carregarApts();
+  }catch(e){ alert('Erro ao excluir: '+(e.message||e)); }
+}
+
+// ── Lista lateral ────────────────────────────────────────────────────────────
+function renderListaApts(){
+  const el=$('aptLista'); if(!el) return;
+  if(!EMP){ el.innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
+  const st=$('fApSt').value, txt=($('fApTxt').value||'').toLowerCase();
+  const rows=APTS.filter(a=>{
+    if(st && a.status!==st) return false;
+    if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+(a.disciplina||'')).toLowerCase().includes(txt)) return false;
+    return true;
+  }).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  el.innerHTML=rows.length?rows.map(a=>{
+    const i=APTS.indexOf(a);
+    const nesta=PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
+    return `<div class="ap-card" style="border-left-color:${corPrio(a.prioridade)}" onclick="clicarAptLista(${i})">
+      <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+      <div class="m"><span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>
+        ${esc(a.disciplina||'')}${nesta?' · 📍 nesta prancha':''}</div>
+    </div>`;
+  }).join(''):'<div class="hint">Nenhum apontamento'+(st||txt?' no filtro':'')+'.</div>';
+}
+function clicarAptLista(i){
+  const a=APTS[i]; if(!a) return;
+  // se tem pin nesta prancha/página: centraliza; sempre abre o editor
+  if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
+    const pt=a.pontos_json[0];
+    if((pt.pg||1)===V.pageNum){
+      const d=pageDims(), stage=$('stage');
+      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      updateCss(); scheduleRender(0);
+    }
+  }
+  abrirAptIdx(i);
+}
 
 async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
 
