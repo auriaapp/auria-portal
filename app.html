@@ -127,14 +127,20 @@
         <label>Empreendimento</label>
         <select id="selEmp" onchange="trocarEmp()"></select>
       </div>
-      <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0])">
-      <button class="btn" id="btnAbrir" onclick="document.getElementById('pdfInput').click()" disabled>📂 Abrir prancha (PDF)</button>
+      <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0], PDF_OVERLAY)">
+      <button class="btn" id="btnAbrir" onclick="abrirDialogo(false)" disabled>📂 Abrir prancha (PDF)</button>
       <div id="prInfo"></div>
-      <div class="hint">O PDF fica no seu computador — a estação registra a identidade da prancha e
-        guarda pins, apontamentos e calibração no Auria. Abrir o mesmo arquivo em qualquer
-        máquina recupera tudo.</div>
+      <div class="hint">O PDF fica no seu computador — o Auria registra a identidade da prancha e
+        guarda pins, apontamentos e calibração. Abrir o mesmo arquivo em qualquer máquina recupera tudo.</div>
 
-      <div style="border-top:1px solid #E2E8F0;padding-top:10px">
+      <!-- Camadas (sobreposição) -->
+      <div style="border-top:1px solid var(--line);padding-top:10px">
+        <label>Camadas (sobreposição)</label>
+        <div id="camList" style="margin:6px 0"></div>
+        <button class="btn-sec" id="btnAddCam" style="width:100%;font-size:12px" onclick="abrirDialogo(true)" disabled>＋ Adicionar camada</button>
+      </div>
+
+      <div style="border-top:1px solid var(--line);padding-top:10px">
         <label>Apontamentos</label>
         <div style="display:flex;gap:6px;margin:6px 0">
           <select id="fApSt" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px">
@@ -259,6 +265,14 @@ const V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
 const F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false };
 const MARGEM = 0.45;          // fração da janela rasterizada além de cada borda
 let _renderJob=0, _renderTimer=null, _rendering=false;
+// W2 — camadas de SOBREPOSIÇÃO (a prancha base = V.page/PRANCHA; overlays por cima).
+// Cada overlay: { prancha, doc, page, pageNum, offset:{x,y}, scale, rot, opacity, preset, visible }
+let OVERLAYS=[];
+let PDF_OVERLAY=false;        // o próximo "Abrir" é camada de sobreposição?
+const PRESETS_COR={
+  'Original':'none','Cinza':'grayscale(1)','Fantasma':'grayscale(1) opacity(1)',
+  'Raio-X':'contrast(1.45) brightness(1.05)','Negativo':'invert(1)'
+};
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -292,6 +306,12 @@ async function boot(){
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   $('btnAbrir').disabled = !EMP;
+  // troca de empreendimento zera a prancha/camadas abertas
+  V.doc=null; V.page=null; PRANCHA=null; OVERLAYS=[]; F.valido=false;
+  $('btnAddCam').disabled=true; $('prInfo').innerHTML='';
+  $('dropHint').style.display='flex'; $('pinsSvg').innerHTML='';
+  const cv=$('pdfCanvas'); if(cv){ const c=cv.getContext('2d'); c&&c.clearRect(0,0,cv.width,cv.height); }
+  renderCamadas();
   carregarApts();
   carregarFornecedores();
 }
@@ -302,58 +322,139 @@ async function sha256Hex(buf){
   return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-async function abrirPdfLocal(file){
+function abrirDialogo(overlay){
+  if(overlay && !PRANCHA){ alert('Abra a prancha base primeiro.'); return; }
+  PDF_OVERLAY=!!overlay;
+  const inp=$('pdfInput'); inp.value=''; inp.click();
+}
+
+async function abrirPdfLocal(file, overlay){
   if(!file) return;
   if(!EMP){ alert('Selecione o empreendimento antes de abrir a prancha.'); return; }
   if(file.type!=='application/pdf' && !file.name.toLowerCase().endsWith('.pdf')){
     alert('Abra um arquivo PDF. (DXF: converta para PDF antes, como no app.)'); return;
   }
-  $('prInfo').innerHTML='<div class="pr-card"><div class="nm">'+esc(file.name)+'</div><div class="st">Calculando identidade…</div></div>';
   try{
     const buf=await file.arrayBuffer();
     const hash=await sha256Hex(buf);                       // hash ANTES (pdf.js consome o buffer)
-    V.doc=await pdfjsLib.getDocument({data:buf}).promise;
-    V.pageNum=1;
-    F.valido=false;                                      // documento novo: descarta quadro antigo
-    await carregarPagina();
-    fitPage();
-    $('dropHint').style.display='none';
-    await registrarPrancha(file.name, hash);
+    const doc=await pdfjsLib.getDocument({data:buf}).promise;
+    const page=await doc.getPage(1);
+    const pr=await registrarPranchaDb(file.name, hash, doc, page);
+    if(overlay){
+      const L={ prancha:pr, doc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
+                opacity:0.7, preset:'Cinza', visible:true, nome:file.name };
+      await carregarEstadoCamada(L);
+      OVERLAYS.push(L);
+      renderCamadas(); F.valido=false; render();
+    }else{
+      // prancha BASE (caminho original, intocado)
+      V.doc=doc; V.page=page; V.pageNum=1; PRANCHA=pr;
+      OVERLAYS=[];                                          // troca de base zera as sobreposições
+      F.valido=false;
+      $('pageLbl').textContent='1 / '+doc.numPages;
+      fitPage();
+      $('dropHint').style.display='none';
+      $('btnAddCam').disabled=false;
+      atualizarCardBase(hash);
+      renderCamadas(); renderPins(); renderListaApts();
+    }
   }catch(e){
     console.error(e);
     alert('Não foi possível abrir o PDF: '+(e.message||e));
-    $('prInfo').innerHTML='';
   }
 }
 
-async function registrarPrancha(nome, hash){
-  // Reconhece o arquivo pelo hash; registra se for novo.
-  let card=(st,tag)=>{ $('prInfo').innerHTML=
-    '<div class="pr-card"><div class="nm">'+esc(nome)+'</div><div class="st">'+st+'</div>'+
-    (tag?('<span class="tag '+tag+'">'+(tag==='nova'?'REGISTRADA AGORA':'RECONHECIDA')+'</span>'):'')+'</div>'; };
-  try{
-    const [ , , w, h ] = V.page.view;                      // dimensões em pontos PDF
-    let { data:pr }=await sb.from('pranchas_auria').select('*')
-      .eq('empreendimento_id',EMP.id).eq('arquivo_hash',hash).maybeSingle();
-    if(pr){
-      PRANCHA=pr;
-      card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','reconhecida');
-      renderPins(); renderListaApts();
-      return;
-    }
-    const ins=await sb.from('pranchas_auria').insert({
-      empreendimento_id:EMP.id, arquivo_nome:nome, arquivo_hash:hash,
-      n_pages:V.doc.numPages, width_pts:w, height_pts:h, criado_por:USER.id
-    }).select().single();
-    if(ins.error) throw ins.error;
-    PRANCHA=ins.data;
-    card(V.doc.numPages+' pág. · hash '+hash.slice(0,10)+'…','nova');
-    renderPins(); renderListaApts();
-  }catch(e){
-    console.error('registrarPrancha:',e);
-    card('⚠ Prancha aberta localmente, mas o registro no Auria falhou: '+esc(e.message||e),null);
-  }
+// Reconhece o arquivo pelo hash; registra se for novo. Devolve o registro.
+async function registrarPranchaDb(nome, hash, doc, page){
+  const [ , , w, h ] = page.view;
+  let { data:pr }=await sb.from('pranchas_auria').select('*')
+    .eq('empreendimento_id',EMP.id).eq('arquivo_hash',hash).maybeSingle();
+  if(pr){ pr._nova=false; pr._hash=hash; pr._doc=doc; return pr; }
+  const ins=await sb.from('pranchas_auria').insert({
+    empreendimento_id:EMP.id, arquivo_nome:nome, arquivo_hash:hash,
+    n_pages:doc.numPages, width_pts:w, height_pts:h, criado_por:USER.id
+  }).select().single();
+  if(ins.error) throw ins.error;
+  ins.data._nova=true; ins.data._hash=hash; ins.data._doc=doc;
+  return ins.data;
 }
+function atualizarCardBase(hash){
+  const tag=PRANCHA._nova?'nova':'reconhecida';
+  $('prInfo').innerHTML='<div class="pr-card"><div class="nm">'+esc(PRANCHA.arquivo_nome)+'</div>'+
+    '<div class="st">'+V.doc.numPages+' pág. · hash '+(hash||'').slice(0,10)+'…</div>'+
+    '<span class="tag '+tag+'">'+(PRANCHA._nova?'REGISTRADA AGORA':'RECONHECIDA')+'</span></div>';
+}
+
+// ── Camadas: estado persistido em camadas_estado_auria ──────────────────────
+async function carregarEstadoCamada(L){
+  try{
+    const { data }=await sb.from('camadas_estado_auria').select('*')
+      .eq('empreendimento_id',EMP.id).eq('prancha_id',L.prancha.id).maybeSingle();
+    if(data){
+      L.offset={x:+data.offset_x||0,y:+data.offset_y||0}; L.scale=+data.scale||1;
+      L.rot=+data.rotation||0; L.opacity=(data.opacity==null?0.7:+data.opacity);
+      L.preset=data.color_mode||'Cinza'; L.visible=data.visible!==false;
+    }
+  }catch(e){ console.warn('carregarEstadoCamada:',e.message||e); }
+}
+let _saveCamTimer=null;
+function salvarEstadoCamada(L){
+  clearTimeout(_saveCamTimer);
+  _saveCamTimer=setTimeout(async()=>{
+    try{
+      await sb.from('camadas_estado_auria').upsert({
+        empreendimento_id:EMP.id, prancha_id:L.prancha.id,
+        offset_x:L.offset.x, offset_y:L.offset.y, scale:L.scale, rotation:L.rot,
+        opacity:L.opacity, color_mode:L.preset, visible:L.visible,
+        atualizado_em:new Date().toISOString(), atualizado_por:USER.id
+      }, { onConflict:'empreendimento_id,prancha_id' });
+    }catch(e){ console.warn('salvarEstadoCamada:',e.message||e); }
+  }, 500);
+}
+
+function renderCamadas(){
+  const el=$('camList'); if(!el) return;
+  const base=PRANCHA?`<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
+      <div class="nm" style="font-size:11.5px">🗺️ ${esc(PRANCHA.arquivo_nome)} <span style="color:var(--mut);font-weight:400">(base)</span></div></div>`:'';
+  const ov=OVERLAYS.map((L,i)=>`
+    <div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Visível">
+        <span class="nm" style="flex:1;font-size:11.5px">${esc(L.nome||L.prancha.arquivo_nome)}</span>
+        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},-1)" title="Subir">▲</button>
+        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},1)" title="Descer">▼</button>
+        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camRemover(${i})" title="Remover">🗑</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+        <span style="font-size:10px;color:var(--mut)">Opac.</span>
+        <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" style="flex:1">
+        <select onchange="camPreset(${i},this.value)" style="font-size:10.5px;padding:2px 4px;background:var(--bg2);color:var(--txt);border:1px solid var(--line);border-radius:6px">
+          ${Object.keys(PRESETS_COR).map(p=>`<option${p===L.preset?' selected':''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;margin-top:6px;flex-wrap:wrap">
+        <span style="font-size:10px;color:var(--mut)">Ajuste:</span>
+        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},-1,0)">◀</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},1,0)">▶</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},0,-1)">▲</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},0,1)">▼</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camEscala(${i},1.02)">＋</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camEscala(${i},0.98)">－</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camGira(${i},-1)">⟲</button>
+        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camGira(${i},1)">⟳</button>
+        <span style="font-size:9.5px;color:var(--mut)">${Math.round(L.scale*100)}% · ${Math.round(L.rot)}°</span>
+      </div>
+    </div>`).join('');
+  el.innerHTML = base+ov || '<div class="hint">Abra a prancha base.</div>';
+}
+function camVis(i,v){ OVERLAYS[i].visible=v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
+function camOpac(i,v){ OVERLAYS[i].opacity=+v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
+function camPreset(i,v){ OVERLAYS[i].preset=v; salvarEstadoCamada(OVERLAYS[i]); renderCamadas(); F.valido=false; render(); }
+function camMove(i,dx,dy){ const L=OVERLAYS[i]; L.offset.x+=dx*0.002; L.offset.y+=dy*0.002; salvarEstadoCamada(L); F.valido=false; render(); }
+function camEscala(i,f){ const L=OVERLAYS[i]; L.scale=Math.max(0.1,Math.min(10,L.scale*f)); salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
+function camGira(i,d){ const L=OVERLAYS[i]; L.rot=(L.rot+d)%360; salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
+function camOrdem(i,d){ const j=i+d; if(j<0||j>=OVERLAYS.length) return; const t=OVERLAYS[i];OVERLAYS[i]=OVERLAYS[j];OVERLAYS[j]=t; renderCamadas(); F.valido=false; render(); }
+function camRemover(i){ OVERLAYS.splice(i,1); renderCamadas(); F.valido=false; render(); }
 
 // ── Render por viewport ──────────────────────────────────────────────────────
 async function carregarPagina(){
@@ -428,6 +529,29 @@ async function render(){
       background:'#FFFFFF'
     }).promise;
     if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }  // vista mudou muito — refaz
+
+    // W2 — compõe as CAMADAS de sobreposição por cima da base (fundo transparente,
+    // opacidade/preset/offset/escala/rotação por camada). Coordenadas ligadas à base.
+    const [ , , bw, bh ] = V.page.view;
+    for(const L of OVERLAYS){
+      if(!L.visible) continue;
+      const [ , , lw, lh ] = L.page.view;
+      const s = zoom*L.scale*rScale;
+      const sx = (L.offset.x*bw*zoom - panX)*rScale;      // origem da camada em px do offscreen
+      const sy = (L.offset.y*bh*zoom - panY)*rScale;
+      octx.save();
+      octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
+      octx.filter=PRESETS_COR[L.preset]||'none';
+      octx.translate(sx,sy);
+      if(L.rot){ const cx=lw*s/2, cy=lh*s/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
+      try{
+        await L.page.render({ canvasContext:octx,
+          viewport:L.page.getViewport({ scale:s }), background:'rgba(0,0,0,0)' }).promise;
+      }catch(le){ console.warn('camada:',le.message||le); }
+      octx.restore();
+      octx.filter='none'; octx.globalAlpha=1;
+      if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }
+    }
 
     // troca SÍNCRONA: redimensiona + copia no mesmo frame de pintura (sem branco)
     const canvas=$('pdfCanvas'), ctx=canvas.getContext('2d');
