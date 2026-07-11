@@ -182,7 +182,10 @@
     </div>
     <div style="font-size:11px;color:#94A3B8" id="apPinsInfo"></div>
     <div class="mfoot">
-      <button class="btn-sec" id="apExcluir" onclick="excluirApt()">🗑 Excluir</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-sec" id="apExcluir" onclick="excluirApt()">🗑 Excluir</button>
+        <button class="btn-sec" id="apFocar" onclick="focarPin()" title="Mostra onde está o pin na prancha">🎯 Foco</button>
+      </div>
       <div style="display:flex;gap:10px">
         <button class="btn-sec" onclick="fecharApt()">Cancelar</button>
         <button class="btn" id="apSalvar" style="width:auto;padding:9px 22px" onclick="salvarApt()">Salvar</button>
@@ -242,6 +245,7 @@ function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   $('btnAbrir').disabled = !EMP;
   carregarApts();
+  carregarFornecedores();
 }
 
 // ── Abrir PDF local: hash → registro → render ────────────────────────────────
@@ -500,6 +504,40 @@ let APTS=[];                 // apontamentos do empreendimento (tabela `apontame
 let APT_EDIT=null;           // apontamento aberto no editor (objeto local)
 let APT_IMGS=[];             // imagens do editor: {url} já subidas ou {data} pendentes
 let MODE='pan';
+let FORN_DISC={};            // disciplina -> { empresa, emails } (fornecedor do empreendimento)
+
+// Datas: armazenamos dd/mm/aaaa (formato do desktop); o input type=date usa ISO.
+function brToIso(s){ const m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec((s||'').trim()); return m?(m[3]+'-'+m[2]+'-'+m[1]):''; }
+function isoToBr(s){ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec((s||'').trim()); return m?(m[3]+'/'+m[2]+'/'+m[1]):''; }
+
+// Fornecedor registrado por disciplina: 1º a atribuição do empreendimento
+// (disciplina_fornecedor_auria); sem ela, deduz pelos projetistas cadastrados.
+async function carregarFornecedores(){
+  FORN_DISC={};
+  if(!EMP) return;
+  try{
+    const { data:forns }=await sb.from('fornecedores_auria').select('*, projetistas_auria(*)');
+    const porId={}; (forns||[]).forEach(f=>{ porId[f.id]=f; });
+    // fallback: projetistas → disciplinas
+    (forns||[]).forEach(f=>(f.projetistas_auria||[]).forEach(p=>{
+      (p.disciplinas||[]).forEach(d=>{
+        if(!FORN_DISC[d]) FORN_DISC[d]={ empresa:f.nome||'', emails:[] };
+        if(p.email && !FORN_DISC[d].emails.includes(p.email)) FORN_DISC[d].emails.push(p.email);
+      });
+    }));
+    // atribuição explícita do empreendimento tem prioridade
+    const { data:atr }=await sb.from('disciplina_fornecedor_auria')
+      .select('disciplina, fornecedor_id').eq('empreendimento_id', EMP.id);
+    (atr||[]).forEach(a=>{
+      const f=porId[a.fornecedor_id]; if(!f) return;
+      const emails=[]; (f.projetistas_auria||[]).forEach(p=>{
+        if((p.disciplinas||[]).includes(a.disciplina) && p.email) emails.push(p.email);
+      });
+      if(!emails.length) (f.projetistas_auria||[]).forEach(p=>{ if(p.email) emails.push(p.email); });
+      FORN_DISC[a.disciplina]={ empresa:f.nome||'', emails };
+    });
+  }catch(e){ console.warn('fornecedores:', e.message||e); }
+}
 
 async function carregarApts(){
   APTS=[];
@@ -566,11 +604,12 @@ function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0'
 function novoApontamento(nx,ny){
   const disc=(PRANCHA&&PRANCHA.disciplina)||DISCS[1];
   const g=proximoId(disc);
+  const fornEmails=(FORN_DISC[disc]&&FORN_DISC[disc].emails.join(', '))||'';
   APT_EDIT={
     id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
     disciplina:disc, status:'Em aberto', visibilidade:'Coordenação',
     data_criacao:hojeBr(),
-    participantes:{ [disc]:{nivel:'Pendência',emails:'',prazo:'',conclusao:''} },
+    participantes:{ [disc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
     pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
     prancha_id:PRANCHA?PRANCHA.id:null,
@@ -607,22 +646,37 @@ function renderParts(){
   const ps=APT_EDIT.participantes||{};
   $('apParts').innerHTML=Object.keys(ps).map((d,i)=>{
     const p=ps[d]||{};
+    const forn=FORN_DISC[d];
     return `<div class="part-row" data-i="${i}">
-      <select data-f="disc">${DISCS.map(x=>`<option${x===d?' selected':''}>${esc(x)}</option>`).join('')}</select>
+      <select data-f="disc" onchange="onPartDisc(this)">${DISCS.map(x=>`<option${x===d?' selected':''}>${esc(x)}</option>`).join('')}</select>
       <select data-f="nivel">${NIVEIS.map(n=>`<option${n===(p.nivel||'Pendência')?' selected':''}>${n}</option>`).join('')}</select>
-      <input data-f="emails" value="${esc(p.emails||'')}" placeholder="a@x.com, b@y.com">
-      <input data-f="prazo" value="${esc(p.prazo||'')}" placeholder="dd/mm/aaaa">
-      <input data-f="conclusao" value="${esc(p.conclusao||'')}" placeholder="dd/mm/aaaa">
+      <input data-f="emails" value="${esc(p.emails||'')}" placeholder="${forn?esc(forn.empresa):'a@x.com, b@y.com'}" title="${forn?('Fornecedor: '+esc(forn.empresa)):''}">
+      <input data-f="prazo" type="date" value="${brToIso(p.prazo)}">
+      <input data-f="conclusao" type="date" value="${brToIso(p.conclusao)}">
       <button class="btn-sec" style="padding:4px 7px;font-size:11px" onclick="rmPartRow(${i})">✕</button>
-    </div>`;
+    </div>`+
+    (forn?`<div style="font-size:10px;color:#64748B;margin:-2px 0 5px 2px">🏢 ${esc(forn.empresa)}</div>`:'');
   }).join('');
+}
+// Ao trocar a disciplina do participante, autopreenche com o fornecedor dela
+function onPartDisc(sel){
+  const row=sel.closest('.part-row'); if(!row) return;
+  const forn=FORN_DISC[sel.value];
+  const em=row.querySelector('[data-f="emails"]');
+  if(forn){
+    if(em && !em.value.trim()) em.value=forn.emails.join(', ');
+    if(em){ em.placeholder=forn.empresa; em.title='Fornecedor: '+forn.empresa; }
+  }
+  APT_EDIT.participantes=lerParts();
+  renderParts();
 }
 function lerParts(){
   const out={};
   document.querySelectorAll('#apParts .part-row').forEach(r=>{
     const g=f=>{ const el=r.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():''; };
     const d=g('disc'); if(!d) return;
-    out[d]={ nivel:g('nivel'), emails:g('emails'), prazo:g('prazo'), conclusao:g('conclusao') };
+    out[d]={ nivel:g('nivel'), emails:g('emails'),
+             prazo:isoToBr(g('prazo')), conclusao:isoToBr(g('conclusao')) };
   });
   return out;
 }
@@ -726,12 +780,34 @@ async function salvarApt(){
       pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
       prancha_id:a.prancha_id||null
     };
-    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'id' });
+    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento,id' });
     if(error) throw error;
     fecharApt();
     await carregarApts();
   }catch(e){ alert('Erro ao salvar: '+(e.message||e)); }
   finally{ btn.disabled=false; btn.textContent='Salvar'; }
+}
+
+// 🎯 Foco: centraliza a vista no pin do apontamento (troca de página se preciso)
+async function focarPin(){
+  if(!APT_EDIT||!V.page) return;
+  const pts=APT_EDIT.pontos_json||[];
+  if(!pts.length){ alert('Este apontamento não tem pin nesta prancha.'); return; }
+  if(PRANCHA && APT_EDIT.prancha_id && APT_EDIT.prancha_id!==PRANCHA.id){
+    alert('O pin deste apontamento está em OUTRA prancha ('+(APT_EDIT.prancha_nome||'')+'). Abra o PDF dela para visualizar.');
+    return;
+  }
+  const pt=pts[0];
+  if((pt.pg||1)!==V.pageNum){
+    V.pageNum=pt.pg||1; F.valido=false;
+    await carregarPagina();
+  }
+  const d=pageDims(), stage=$('stage');
+  if(V.zoom<0.8) V.zoom=1.2;                       // aproxima o suficiente p/ enxergar
+  V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
+  V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+  fecharApt();                                     // libera a tela p/ ver o pin
+  updateCss(); scheduleRender(0);
 }
 
 async function excluirApt(){
