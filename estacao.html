@@ -168,6 +168,12 @@
         <option>Em aberto</option><option>Em análise</option><option>Resolvido</option><option>Reprovado</option>
       </select></div>
     </div>
+    <div class="g2">
+      <div class="fg"><label>Local / Pavimento</label><input id="apLocal" placeholder="Ex.: Pav. Tipo, Subsolo 2, Cobertura…"></div>
+      <div class="fg"><label>Visibilidade</label><select id="apVisib">
+        <option>Coordenação</option><option>Público</option>
+      </select></div>
+    </div>
     <div class="fg">
       <label>Participantes e prazos</label>
       <div class="part-row" style="font-size:10px;color:#64748B;font-weight:700">
@@ -177,10 +183,18 @@
       <button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="addPartRow()">＋ participante</button>
     </div>
     <div class="fg">
+      <label>Pins na prancha</label>
+      <div id="apPinsList" style="font-size:12px;color:#334155"></div>
+      <button class="btn-sec" style="font-size:11px;padding:5px 10px;margin-top:4px" onclick="adicionarPinAoApt()">📍 Adicionar pin (clique na prancha)</button>
+    </div>
+    <div class="fg">
       <label>Prints (Ctrl+V cola aqui)</label>
       <div class="imgs-stg" id="apImgs"></div>
     </div>
-    <div style="font-size:11px;color:#94A3B8" id="apPinsInfo"></div>
+    <div class="fg">
+      <label>Histórico do apontamento</label>
+      <div id="apLog" style="max-height:130px;overflow:auto;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.55"></div>
+    </div>
     <div class="mfoot">
       <div style="display:flex;gap:8px">
         <button class="btn-sec" id="apExcluir" onclick="excluirApt()">🗑 Excluir</button>
@@ -450,13 +464,22 @@ async function mudarPagina(delta){
     const dist=Math.hypot(e.clientX-drag.x, e.clientY-drag.y);
     drag=null; stage.classList.remove('panning');
     scheduleRender(0);                                   // recompleta a margem se precisar
-    // Modo apontar: clique simples (sem arrasto) cria um apontamento no ponto
-    if(MODE==='pin' && dist<5 && V.page && PRANCHA
+    // Clique simples (sem arrasto) sobre a prancha
+    const clicouPrancha = dist<5 && V.page && PRANCHA
        && !(e.target.closest && e.target.closest('#pinsSvg'))
-       && !(e.target.closest && e.target.closest('.modalbg'))){
-      const r=stage.getBoundingClientRect();
-      const pt=screenToPage(e.clientX-r.left, e.clientY-r.top);
-      if(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1) novoApontamento(pt.nx, pt.ny);
+       && !(e.target.closest && e.target.closest('.modalbg'));
+    if(!clicouPrancha) return;
+    const r=stage.getBoundingClientRect();
+    const pt=screenToPage(e.clientX-r.left, e.clientY-r.top);
+    if(!(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1)) return;
+    if(MODE==='addpin' && APT_EDIT){
+      // adiciona OUTRO pin ao apontamento em edição e reabre o modal
+      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum});
+      MODE='pan'; $('stage').classList.remove('modo-pin'); $('modoHint').textContent='arraste para navegar';
+      renderPins();
+      $('modalApt').classList.add('on'); renderPinsList();
+    } else if(MODE==='pin'){
+      novoApontamento(pt.nx, pt.ny);
     }
   });
 
@@ -562,24 +585,42 @@ function screenToPage(sx,sy){
   return { nx:(V.panX+sx)/(d.w*V.zoom), ny:(V.panY+sy)/(d.h*V.zoom) };
 }
 
+// Desenha um marcador limpo: balão circular com o número CENTRADO + ponteiro
+// até a ponta exata (px,py). r=raio do balão, H=altura do centro sobre a ponta.
+function pinSvg(px, py, num, cor, destaque){
+  const r=11, H=25, cy=py-H;
+  // ponteiro: da ponta até a base do balão (levemente dentro do círculo)
+  const ptr=`M ${px} ${py} L ${px-7} ${cy+r*0.55} L ${px+7} ${cy+r*0.55} Z`;
+  const halo=destaque?`<circle cx="${px}" cy="${cy}" r="${r+3.5}" fill="none" stroke="${cor}" stroke-width="2" opacity=".45"/>`:'';
+  return halo+
+    `<path d="${ptr}" fill="${cor}"/>`+
+    `<circle cx="${px}" cy="${cy}" r="${r}" fill="${cor}" stroke="#fff" stroke-width="1.8"/>`+
+    `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="800" fill="#fff" style="pointer-events:none">${esc(String(num||''))}</text>`;
+}
+
 function renderPins(){
   const svg=$('pinsSvg'); if(!svg) return;
   if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
+  const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
   let out='';
   APTS.forEach((a,ai)=>{
     if(a.prancha_id!==PRANCHA.id) return;
     (a.pontos_json||[]).forEach(pt=>{
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
-      if(p.x<-30||p.y<-30||p.x>svg.clientWidth+30||p.y>svg.clientHeight+30) return;
-      const cor=corPrio(a.prioridade);
+      if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="abrirAptIdx(${ai});event.stopPropagation()">
-        <path d="M ${p.x} ${p.y} l -9 -16 a 11 11 0 1 1 18 0 z" fill="${cor}" stroke="#fff" stroke-width="1.6"/>
-        <circle cx="${p.x}" cy="${p.y-17}" r="8.2" fill="#fff"/>
-        <text x="${p.x}" y="${p.y-13.5}" text-anchor="middle" font-size="9.5" font-weight="800" fill="${cor}">${esc(String(a.id_num||''))}</text>
-      </g>`;
+        ${pinSvg(p.x,p.y, a.id_num, corPrio(a.prioridade), a.id===editId)}</g>`;
     });
   });
+  // pins do apontamento sendo criado agora (ainda não salvo)
+  if(APT_EDIT && APT_EDIT._novo){
+    (APT_EDIT.pontos_json||[]).forEach(pt=>{
+      if((pt.pg||1)!==V.pageNum) return;
+      const p=pageToScreen(pt.nx,pt.ny);
+      out+=`<g>${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
+    });
+  }
   svg.innerHTML=out;
 }
 
@@ -634,13 +675,51 @@ function abrirEditor(){
   $('apTipo').innerHTML='<option value=""></option>'+TIPOS_APT.map(t=>`<option${t===a.tipo?' selected':''}>${esc(t)}</option>`).join('');
   $('apPrio').value=a.prioridade||'';
   $('apStatus').value=a.status||'Em aberto';
-  renderParts(); renderImgs();
-  const nPins=(a.pontos_json||[]).length;
-  $('apPinsInfo').textContent='📍 '+nPins+' pin(s) nesta prancha · criado em '+(a.data_criacao||'—');
+  $('apLocal').value=a.local_txt||'';
+  $('apVisib').value=a.visibilidade||'Coordenação';
+  renderParts(); renderImgs(); renderPinsList(); renderLog();
   $('apExcluir').style.display=a._novo?'none':'';
   $('modalApt').classList.add('on');
 }
-function fecharApt(){ $('modalApt').classList.remove('on'); APT_EDIT=null; APT_IMGS=[]; }
+function fecharApt(){ $('modalApt').classList.remove('on'); APT_EDIT=null; APT_IMGS=[]; renderPins(); }
+
+// Lista de pins do apontamento (com remoção); base para o multi-pin
+function renderPinsList(){
+  const pts=APT_EDIT.pontos_json||[];
+  $('apPinsList').innerHTML = pts.length
+    ? pts.map((pt,i)=>`<span style="display:inline-flex;align-items:center;gap:5px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:14px;padding:2px 6px 2px 10px;margin:0 5px 5px 0;font-size:11px">
+        📍 pág. ${pt.pg||1}
+        <button class="btn-sec" style="padding:1px 6px;font-size:11px;border-radius:10px" onclick="removerPinApt(${i})">✕</button></span>`).join('')
+    : '<span style="font-size:11px;color:#94A3B8">Nenhum pin. Use “Adicionar pin”.</span>';
+}
+function removerPinApt(i){
+  if(!APT_EDIT) return;
+  APT_EDIT.pontos_json.splice(i,1);
+  renderPinsList(); renderPins();
+}
+// Fecha o modal temporariamente para o usuário clicar e adicionar OUTRO pin
+function adicionarPinAoApt(){
+  if(!PRANCHA){ alert('Abra uma prancha antes.'); return; }
+  MODE='addpin';
+  $('modalApt').classList.remove('on');   // não perde APT_EDIT (fecharApt não é chamado)
+  $('stage').classList.add('modo-pin');
+  $('modoHint').textContent='clique na prancha para adicionar o pin a '+APT_EDIT.id;
+  $('btnModoPin').style.background=''; $('btnModoPin').style.color='';
+}
+
+function renderLog(){
+  const log=(APT_EDIT.log_json||[]).slice().reverse();
+  $('apLog').innerHTML = log.length
+    ? log.map(e=>`<div style="margin-bottom:3px">
+        <b style="color:${e.tipo==='sistema'?'#64748B':'#1D4ED8'}">${esc(e.data||'')}</b>
+        ${e.tipo==='sistema'?'':' <span style="color:#94A3B8">'+esc(e.autor||e.usuario||'')+'</span>'}
+        — ${esc(e.texto||'')}</div>`).join('')
+    : '<span style="color:#94A3B8">Sem histórico ainda.</span>';
+}
+function logAdd(texto){
+  (APT_EDIT.log_json=APT_EDIT.log_json||[]).push(
+    { data:hojeBr(), texto:texto, tipo:'edicao', autor:USER.nome });
+}
 
 function renderParts(){
   const ps=APT_EDIT.participantes||{};
@@ -758,12 +837,26 @@ function calcPrazos(parts){
 async function salvarApt(){
   if(!APT_EDIT) return;
   const a=APT_EDIT;
+  const antes={ status:a.status, prioridade:a.prioridade, titulo:a.titulo };
   a.titulo=$('apTitulo').value.trim();
   a.descricao=$('apDesc').value.trim();
   a.tipo=$('apTipo').value; a.prioridade=$('apPrio').value;
   a.status=$('apStatus').value; a.disciplina=$('apDisc').value;
+  a.local_txt=$('apLocal').value.trim();
+  a.visibilidade=$('apVisib').value;
   a.participantes=lerParts();
   if(!a.titulo){ alert('Informe o título.'); return; }
+  // Aviso: salvar sem NENHUM prazo definido (como no desktop)
+  const temPrazo=Object.values(a.participantes).some(p=>(p.prazo||'').trim());
+  if(!temPrazo && a.status!=='Resolvido'
+     && !confirm('Este apontamento não tem prazo definido para nenhum participante. Salvar mesmo assim?')) return;
+  // Log automático das mudanças relevantes
+  if(a._novo){ /* log de criação já existe */ }
+  else{
+    if(antes.status!==a.status) logAdd('Status: '+antes.status+' → '+a.status+'.');
+    if(antes.prioridade!==a.prioridade) logAdd('Criticidade alterada para "'+(a.prioridade||'—')+'".');
+    if(antes.titulo!==a.titulo) logAdd('Título editado.');
+  }
   const btn=$('apSalvar'); btn.disabled=true; btn.textContent='Salvando…';
   try{
     const imgs=await subirImgsPendentes(a.id);
