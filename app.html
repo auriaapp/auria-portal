@@ -209,7 +209,7 @@
       </select></div>
     </div>
     <div class="g2">
-      <div class="fg"><label>Local / Pavimento</label><input id="apLocal" placeholder="Ex.: Pav. Tipo, Subsolo 2, Cobertura…"></div>
+      <div class="fg"><label>Local / Pavimento</label><select id="apLocal"></select></div>
       <div class="fg"><label>Visibilidade</label><select id="apVisib">
         <option>Coordenação</option><option>Público</option>
       </select></div>
@@ -290,10 +290,15 @@ let _renderJob=0, _renderTimer=null, _rendering=false;
 // Cada overlay: { prancha, doc, page, pageNum, offset:{x,y}, scale, rot, opacity, preset, visible }
 let OVERLAYS=[];
 let PDF_OVERLAY=false;        // o próximo "Abrir" é camada de sobreposição?
-const PRESETS_COR={
-  'Original':'none','Cinza':'grayscale(1)','Fantasma':'grayscale(1) opacity(1)',
-  'Raio-X':'contrast(1.45) brightness(1.05)','Negativo':'invert(1)'
-};
+let CAM_ABERTA=-1;            // índice da camada com o card expandido na sidebar
+// Paleta de cores de VISUALIZAÇÃO da camada (tinge as linhas). Original = sem cor.
+const PALETA=[
+  {nome:'Original', cor:null},
+  {nome:'Vermelho', cor:'#E74C3C'}, {nome:'Azul', cor:'#2563EB'},
+  {nome:'Verde', cor:'#27AE60'},    {nome:'Laranja', cor:'#E67E22'},
+  {nome:'Roxo', cor:'#8E44AD'},     {nome:'Magenta', cor:'#EC4899'},
+  {nome:'Ciano', cor:'#0891B2'},    {nome:'Preto', cor:'#0B0F1A'}
+];
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -363,9 +368,10 @@ async function abrirPdfLocal(file, overlay){
     const pr=await registrarPranchaDb(file.name, hash, doc, page);
     if(overlay){
       const L={ prancha:pr, doc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
-                opacity:0.7, preset:'Cinza', visible:true, nome:file.name };
+                opacity:0.7, cor:'#E74C3C', visible:true, nome:file.name };
       await carregarEstadoCamada(L);
       OVERLAYS.push(L);
+      CAM_ABERTA=OVERLAYS.length-1;
       renderCamadas(); F.valido=false; render();
     }else{
       // prancha BASE (caminho original, intocado)
@@ -414,7 +420,8 @@ async function carregarEstadoCamada(L){
     if(data){
       L.offset={x:+data.offset_x||0,y:+data.offset_y||0}; L.scale=+data.scale||1;
       L.rot=+data.rotation||0; L.opacity=(data.opacity==null?0.7:+data.opacity);
-      L.preset=data.color_mode||'Cinza'; L.visible=data.visible!==false;
+      L.cor=(data.color_mode&&data.color_mode[0]==='#')?data.color_mode:null;
+      L.visible=data.visible!==false;
     }
   }catch(e){ console.warn('carregarEstadoCamada:',e.message||e); }
 }
@@ -426,7 +433,7 @@ function salvarEstadoCamada(L){
       await sb.from('camadas_estado_auria').upsert({
         empreendimento_id:EMP.id, prancha_id:L.prancha.id,
         offset_x:L.offset.x, offset_y:L.offset.y, scale:L.scale, rotation:L.rot,
-        opacity:L.opacity, color_mode:L.preset, visible:L.visible,
+        opacity:L.opacity, color_mode:L.cor||'Original', visible:L.visible,
         atualizado_em:new Date().toISOString(), atualizado_por:USER.id
       }, { onConflict:'empreendimento_id,prancha_id' });
     }catch(e){ console.warn('salvarEstadoCamada:',e.message||e); }
@@ -437,35 +444,40 @@ function renderCamadas(){
   const el=$('camList'); if(!el) return;
   const base=PRANCHA?`<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
       <div class="nm" style="font-size:11.5px">🗺️ ${esc(PRANCHA.arquivo_nome)} <span style="color:var(--mut);font-weight:400">(base)</span></div></div>`:'';
-  const ov=OVERLAYS.map((L,i)=>`
-    <div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
+  const ov=OVERLAYS.map((L,i)=>{
+    const aberto=CAM_ABERTA===i;
+    const swatch=(o)=>`<button title="${o.nome}" onclick="camCor(${i},${o.cor?("'"+o.cor+"'"):'null'})"
+        style="width:18px;height:18px;border-radius:5px;cursor:pointer;
+        border:2px solid ${((L.cor||null)===o.cor)?'#fff':'transparent'};
+        background:${o.cor||'linear-gradient(135deg,#fff 45%,#111 55%)'}"></button>`;
+    return `<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
       <div style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Visível">
-        <span class="nm" style="flex:1;font-size:11.5px">${esc(L.nome||L.prancha.arquivo_nome)}</span>
+        <span class="nm" style="flex:1;font-size:11.5px;cursor:pointer" onclick="camToggle(${i})" title="${esc(L.nome||L.prancha.arquivo_nome)}">${aberto?'▾':'▸'} ${esc(L.nome||L.prancha.arquivo_nome)}</span>
         <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},-1)" title="Subir">▲</button>
         <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},1)" title="Descer">▼</button>
         <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camRemover(${i})" title="Remover">🗑</button>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+      ${aberto?`
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
         <span style="font-size:10px;color:var(--mut)">Opac.</span>
         <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" style="flex:1">
-        <select onchange="camPreset(${i},this.value)" style="font-size:10.5px;padding:2px 4px;background:var(--bg2);color:var(--txt);border:1px solid var(--line);border-radius:6px">
-          ${Object.keys(PRESETS_COR).map(p=>`<option${p===L.preset?' selected':''}>${p}</option>`).join('')}
-        </select>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+      <div style="margin-top:7px">
+        <div style="font-size:10px;color:var(--mut);margin-bottom:3px">Cor de visualização</div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap">${PALETA.map(swatch).join('')}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
         <span style="font-size:9.5px;color:var(--mut)">escala ${Math.round(L.scale*100)}% · ${Math.round(L.rot)}°</span>
         <button class="btn-sec" style="padding:2px 8px;font-size:10.5px" onclick="abrirPosicao(${i})">⚙ Posição/Escala/Alinhar</button>
-      </div>
-    </div>`).join('');
+      </div>`:''}
+    </div>`;}).join('');
   el.innerHTML = base+ov || '<div class="hint">Abra a prancha base.</div>';
 }
+function camToggle(i){ CAM_ABERTA = CAM_ABERTA===i ? -1 : i; renderCamadas(); }
 function camVis(i,v){ OVERLAYS[i].visible=v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
 function camOpac(i,v){ OVERLAYS[i].opacity=+v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
-function camPreset(i,v){ OVERLAYS[i].preset=v; salvarEstadoCamada(OVERLAYS[i]); renderCamadas(); F.valido=false; render(); }
-function camMove(i,dx,dy){ const L=OVERLAYS[i]; L.offset.x+=dx*0.002; L.offset.y+=dy*0.002; salvarEstadoCamada(L); F.valido=false; render(); }
-function camEscala(i,f){ const L=OVERLAYS[i]; L.scale=Math.max(0.1,Math.min(10,L.scale*f)); salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
-function camGira(i,d){ const L=OVERLAYS[i]; L.rot=(L.rot+d)%360; salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
+function camCor(i,cor){ OVERLAYS[i].cor=cor; salvarEstadoCamada(OVERLAYS[i]); renderCamadas(); F.valido=false; render(); }
 function camOrdem(i,d){ const j=i+d; if(j<0||j>=OVERLAYS.length) return; const t=OVERLAYS[i];OVERLAYS[i]=OVERLAYS[j];OVERLAYS[j]=t; renderCamadas(); F.valido=false; render(); }
 function camRemover(i){ OVERLAYS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
 
@@ -721,14 +733,24 @@ async function render(){
       const vp = L.page.getViewport({ scale:s });
       octx.save();
       octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
-      octx.filter=PRESETS_COR[L.preset]||'none';
       octx.translate(sx,sy);
       if(L.rot){ const cx=vp.width/2, cy=vp.height/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
       try{
-        await L.page.render({ canvasContext:octx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
+        if(L.cor){
+          // VISUALIZAÇÃO por cor: rasteriza a camada (fundo transparente) e tinge
+          // só o conteúdo desenhado (as linhas) com a cor escolhida.
+          const tw=Math.max(1,Math.ceil(vp.width)), th=Math.max(1,Math.ceil(vp.height));
+          const tmp=document.createElement('canvas'); tmp.width=tw; tmp.height=th;
+          const tctx=tmp.getContext('2d');
+          await L.page.render({ canvasContext:tctx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
+          tctx.globalCompositeOperation='source-in'; tctx.fillStyle=L.cor; tctx.fillRect(0,0,tw,th);
+          octx.drawImage(tmp,0,0);
+        }else{
+          await L.page.render({ canvasContext:octx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
+        }
       }catch(le){ console.warn('camada:',le.message||le); }
       octx.restore();
-      octx.filter='none'; octx.globalAlpha=1;
+      octx.globalAlpha=1;
       if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }
     }
 
@@ -954,24 +976,24 @@ function renderPins(){
   // Visibilidade (barra superior). Em edição de pins, mantém visível p/ editar.
   if(!PINS_VISIVEIS && !(PIN_EDIT && APT_EDIT)){ svg.innerHTML=''; return; }
   const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
-  const cur='cursor:pointer';
   let out='';
   APTS.forEach((a,ai)=>{
     if(a.prancha_id!==PRANCHA.id) return;
+    if(a.id===editId) return;                    // o em edição é desenhado do APT_EDIT (ao vivo)
     (a.pontos_json||[]).forEach((pt,pi)=>{
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+=`<g style="pointer-events:auto;${cur}" onclick="pinClick(${ai},${pi});event.stopPropagation()">
-        ${pinSvg(p.x,p.y, a.id_num, corPrio(a.prioridade), a.id===editId)}</g>`;
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClick(${ai},${pi});event.stopPropagation()">
+        ${pinSvg(p.x,p.y, a.id_num, corPrio(a.prioridade), false)}</g>`;
     });
   });
-  // pins do apontamento sendo criado agora (ainda não salvo)
-  if(APT_EDIT && APT_EDIT._novo){
+  // Apontamento em EDIÇÃO (novo ou existente): pins desenhados AO VIVO do APT_EDIT
+  if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
-      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickNovo(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
     });
   }
   svg.innerHTML=out;
@@ -1001,21 +1023,10 @@ function setPinEdit(on){
     : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
   renderPins();
 }
-// Clique num pin: no modo edição remove (se for do apontamento aberto) ou abre;
-// fora do modo, abre o apontamento.
-function pinClick(ai, pi){
-  const a=APTS[ai]; if(!a) return;
-  if(PIN_EDIT && APT_EDIT && a.id===APT_EDIT.id){
-    APT_EDIT.pontos_json.splice(pi,1);
-    // reflete no array carregado também
-    if(a.pontos_json) a.pontos_json.splice(pi,1);
-    renderPins(); renderPinsList();
-    return;
-  }
-  abrirAptIdx(ai);
-}
-// Clique num pin do apontamento NOVO (ainda não salvo)
-function pinClickNovo(pi){
+// Clique num pin de OUTRO apontamento (não o em edição) → abre.
+function pinClick(ai, pi){ const a=APTS[ai]; if(a) abrirAptIdx(ai); }
+// Clique num pin do apontamento EM EDIÇÃO → no modo edição, remove.
+function pinClickEdit(pi){
   if(PIN_EDIT && APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPins(); renderPinsList(); }
 }
 
@@ -1027,6 +1038,28 @@ function proximoId(disc){
   return { id:pref+'-'+num, num };
 }
 function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
+
+// Locais/pavimentos PRÉ-DEFINIDOS a partir do registro do empreendimento
+// (mesma lógica do desktop _get_locais: pav. tipo colapsados + fixos).
+function locaisDoEmp(){
+  const c=(EMP&&EMP.config)||{};
+  const n=+(c.n_pavimentos||EMP.n_pavimentos||0);
+  const de=+(c.tipo_de||EMP.tipo_de||0), ate=+(c.tipo_ate||EMP.tipo_ate||0);
+  const grupo=(c.tipo_grupo_nome||'Pavimentos Tipo');
+  const out=[];
+  if(n>0){
+    let tipoAdd=false;
+    for(let i=1;i<=n;i++){
+      if(de&&ate&&i>=de&&i<=ate){ if(!tipoAdd){ out.push(grupo); tipoAdd=true; } }
+      else out.push(i===1?'Térreo':(i+'º Pavimento'));
+    }
+    out.push('Cobertura');
+  }else out.push('Térreo', grupo, 'Cobertura');
+  out.push('Fachada');
+  if(c.tem_garagem||EMP.tem_garagem) out.push('Edif. Garagem / Subsolo');
+  if(c.tem_edicula||EMP.tem_edicula) out.push('Edícula');
+  return [...new Set(out)];
+}
 
 function novoApontamento(nx,ny){
   const disc=(PRANCHA&&PRANCHA.disciplina)||DISCS[1];
@@ -1061,7 +1094,11 @@ function abrirEditor(){
   $('apTipo').innerHTML='<option value=""></option>'+TIPOS_APT.map(t=>`<option${t===a.tipo?' selected':''}>${esc(t)}</option>`).join('');
   $('apPrio').value=a.prioridade||'';
   $('apStatus').value=a.status||'Em aberto';
-  $('apLocal').value=a.local_txt||'';
+  // Local/Pavimento = lista PRÉ-DEFINIDA do empreendimento (não texto livre)
+  const locais=locaisDoEmp();
+  if(a.local_txt && !locais.includes(a.local_txt)) locais.unshift(a.local_txt);
+  $('apLocal').innerHTML='<option value="">— selecione —</option>'+
+    locais.map(l=>`<option${l===a.local_txt?' selected':''}>${esc(l)}</option>`).join('');
   $('apVisib').value=a.visibilidade||'Coordenação';
   renderParts(); renderImgs(); renderPinsList(); renderLog();
   $('apExcluir').style.display=a._novo?'none':'';
