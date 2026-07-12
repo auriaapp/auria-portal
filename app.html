@@ -165,12 +165,15 @@
         <span class="tb-info" id="pageLbl">—</span>
         <button class="tb" onclick="mudarPagina(1)">▶</button>
         <span class="sep"></span>
-        <button class="tb" id="btnModoPin" onclick="alternarModoPin()">✏️ Editar pins</button>
+        <button class="tb on" id="btnVerPins" onclick="toggleVerPins()" title="Mostrar/ocultar os pins">👁 Pins</button>
+        <button class="tb" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stage">
         <canvas id="pdfCanvas"></canvas>
         <svg id="pinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+        <svg id="alignSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+        <div id="pickHint" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.85);color:#fff;padding:6px 14px;border-radius:20px;font-size:12.5px;font-weight:700;display:none;z-index:5"></div>
         <div id="dropHint">
           <div class="big">🗺️</div>
           <p><b>Nenhuma prancha aberta.</b><br>Selecione o empreendimento e clique em
@@ -244,6 +247,24 @@
       </div>
     </div>
   </div><!-- /win-body -->
+</div>
+
+<!-- JANELA: Posição / Escala / Alinhar (opera na camada selecionada) -->
+<div class="win" id="winPos" data-win="pos" data-title="Posição / Escala / Alinhar" style="width:440px;left:calc(50% - 220px)">
+  <div class="win-head">
+    <span class="ttl">⚙ Posição / Escala / Alinhar</span>
+    <button class="wbtn" title="Minimizar" onclick="minimizarWin('pos')">—</button>
+    <button class="wbtn" title="Fechar" onclick="fecharWin('pos')">✕</button>
+  </div>
+  <div class="win-body">
+    <div class="fg"><label>Camada a mover</label><select id="posCam" onchange="posSelCam(this.value)"></select></div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="tb on" id="ptab-pos" style="flex:1" onclick="posTab('pos')">📐 Posição</button>
+      <button class="tb" id="ptab-esc" style="flex:1" onclick="posTab('esc')">🔍 Escala</button>
+      <button class="tb" id="ptab-aln" style="flex:1" onclick="posTab('aln')">🎯 Alinhar</button>
+    </div>
+    <div id="posBody"></div>
+  </div>
 </div>
 
 <div id="minibar"></div>
@@ -432,17 +453,9 @@ function renderCamadas(){
           ${Object.keys(PRESETS_COR).map(p=>`<option${p===L.preset?' selected':''}>${p}</option>`).join('')}
         </select>
       </div>
-      <div style="display:flex;align-items:center;gap:4px;margin-top:6px;flex-wrap:wrap">
-        <span style="font-size:10px;color:var(--mut)">Ajuste:</span>
-        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},-1,0)">◀</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},1,0)">▶</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},0,-1)">▲</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:12px" onclick="camMove(${i},0,1)">▼</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camEscala(${i},1.02)">＋</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camEscala(${i},0.98)">－</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camGira(${i},-1)">⟲</button>
-        <button class="btn-sec" style="padding:2px 7px;font-size:11px" onclick="camGira(${i},1)">⟳</button>
-        <span style="font-size:9.5px;color:var(--mut)">${Math.round(L.scale*100)}% · ${Math.round(L.rot)}°</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <span style="font-size:9.5px;color:var(--mut)">escala ${Math.round(L.scale*100)}% · ${Math.round(L.rot)}°</span>
+        <button class="btn-sec" style="padding:2px 8px;font-size:10.5px" onclick="abrirPosicao(${i})">⚙ Posição/Escala/Alinhar</button>
       </div>
     </div>`).join('');
   el.innerHTML = base+ov || '<div class="hint">Abra a prancha base.</div>';
@@ -454,7 +467,170 @@ function camMove(i,dx,dy){ const L=OVERLAYS[i]; L.offset.x+=dx*0.002; L.offset.y
 function camEscala(i,f){ const L=OVERLAYS[i]; L.scale=Math.max(0.1,Math.min(10,L.scale*f)); salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
 function camGira(i,d){ const L=OVERLAYS[i]; L.rot=(L.rot+d)%360; salvarEstadoCamada(L); renderCamadas(); F.valido=false; render(); }
 function camOrdem(i,d){ const j=i+d; if(j<0||j>=OVERLAYS.length) return; const t=OVERLAYS[i];OVERLAYS[i]=OVERLAYS[j];OVERLAYS[j]=t; renderCamadas(); F.valido=false; render(); }
-function camRemover(i){ OVERLAYS.splice(i,1); renderCamadas(); F.valido=false; render(); }
+function camRemover(i){ OVERLAYS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
+
+// ═══ JANELA POSIÇÃO / ESCALA / ALINHAR ══════════════════════════════════════
+function abrirPosicao(i){
+  if(!OVERLAYS.length){ alert('Adicione uma camada de sobreposição primeiro.'); return; }
+  ALIGN.camIdx = (i!=null && OVERLAYS[i]) ? i : Math.max(0,ALIGN.camIdx);
+  const sel=$('posCam');
+  sel.innerHTML=OVERLAYS.map((L,k)=>`<option value="${k}"${k===ALIGN.camIdx?' selected':''}>${esc(L.nome||L.prancha.arquivo_nome)}</option>`).join('');
+  posTab('pos');
+  abrirWin('pos');
+}
+function camAtual(){ return OVERLAYS[ALIGN.camIdx]||null; }
+function posSelCam(v){ ALIGN.camIdx=+v; alignReset(); posTab(ALIGN.tabAtual||'pos'); }
+
+function posTab(t){
+  ALIGN.tabAtual=t;
+  ['pos','esc','aln'].forEach(x=>$('ptab-'+x).classList.toggle('on',x===t));
+  if(t!=='aln') alignReset();
+  const b=$('posBody');
+  const L=camAtual(); if(!L){ b.innerHTML='<div class="hint">Sem camada.</div>'; return; }
+  if(t==='pos') b.innerHTML=htmlPos(L);
+  else if(t==='esc') b.innerHTML=htmlEsc(L);
+  else { if(!ALIGN.modo) ALIGN.modo='pts'; b.innerHTML=htmlAln(L); renderAlnBody(); }
+}
+let POS_STEP=0.01;
+function htmlPos(L){
+  const bt=(v)=>`<button class="btn-sec" style="padding:3px 9px;font-size:11px${v===POS_STEP?';border-color:var(--accent);color:#fff':''}" onclick="POS_STEP=${v};posTab('pos')">${(v*100)}%</button>`;
+  return `<div class="fg"><label>Passo</label><div style="display:flex;gap:5px">${[0.001,0.005,0.01,0.05].map(bt).join('')}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(3,44px);gap:5px;justify-content:center;margin:8px 0">
+      <span></span><button class="btn-sec" style="height:40px;font-size:16px" onclick="posMove(0,-1)">▲</button><span></span>
+      <button class="btn-sec" style="height:40px;font-size:16px" onclick="posMove(-1,0)">◀</button>
+      <button class="btn-sec" style="height:40px;font-size:14px" onclick="posReset()" title="Resetar posição">✛</button>
+      <button class="btn-sec" style="height:40px;font-size:16px" onclick="posMove(1,0)">▶</button>
+      <span></span><button class="btn-sec" style="height:40px;font-size:16px" onclick="posMove(0,1)">▼</button><span></span>
+    </div>
+    <div class="fg"><label>Rotação — ${Math.round(L.rot)}°</label>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button class="btn-sec" style="padding:5px 9px" onclick="posRot(90)">⟲ 90°</button>
+        <button class="btn-sec" style="padding:5px 9px" onclick="posRot(1)">⟲ 1°</button>
+        <button class="btn-sec" style="padding:5px 9px" onclick="posRot(-1)">⟳ 1°</button>
+        <button class="btn-sec" style="padding:5px 9px" onclick="posRot(-90)">⟳ 90°</button>
+        <button class="btn-sec" style="padding:5px 9px" onclick="posSetRot(0)">↺ 0°</button>
+      </div></div>`;
+}
+function htmlEsc(L){
+  const q=(lbl,v)=>`<button class="btn-sec" style="padding:5px 10px" onclick="posSetScale(${v})">${lbl}</button>`;
+  return `<div class="fg"><label>Escala — ${(L.scale).toFixed(3)}× (1 = largura da base)</label>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+        <input id="escInp" type="number" step="0.01" min="0.05" max="10" value="${L.scale.toFixed(3)}" style="width:110px">
+        <button class="btn" style="width:auto;padding:8px 14px" onclick="posSetScale(parseFloat($('escInp').value))">Aplicar</button>
+      </div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${q('50%',.5)+q('75%',.75)+q('100%',1)+q('125%',1.25)+q('150%',1.5)+q('200%',2)}
+      </div></div>
+    <button class="btn-sec" style="width:100%;margin-top:6px" onclick="posSetScale(1)">↺ Resetar escala</button>`;
+}
+function htmlAln(L){
+  return `<div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="tb ${ALIGN.modo==='pts'?'on':''}" style="flex:1;font-size:11px" onclick="alignModo('pts')">📍 2 Pontos</button>
+      <button class="tb ${ALIGN.modo==='lin'?'on':''}" style="flex:1;font-size:11px" onclick="alignModo('lin')">📏 Por Linha</button>
+    </div>
+    <div id="alnBody"></div>`;
+}
+
+function posMove(dx,dy){ const L=camAtual(); if(!L) return; L.offset.x+=dx*POS_STEP; L.offset.y+=dy*POS_STEP; salvarEstadoCamada(L); F.valido=false; render(); }
+function posReset(){ const L=camAtual(); if(!L) return; L.offset={x:0,y:0}; salvarEstadoCamada(L); F.valido=false; render(); }
+function posRot(d){ const L=camAtual(); if(!L) return; L.rot=(L.rot+d)%360; salvarEstadoCamada(L); posTab('pos'); renderCamadas(); F.valido=false; render(); }
+function posSetRot(v){ const L=camAtual(); if(!L) return; L.rot=v%360; salvarEstadoCamada(L); posTab('pos'); renderCamadas(); F.valido=false; render(); }
+function posSetScale(v){ const L=camAtual(); if(!L||!(v>=0.05&&v<=10)){ alert('Escala entre 0.05 e 10.'); return; } L.scale=v; salvarEstadoCamada(L); posTab('esc'); renderCamadas(); F.valido=false; render(); }
+
+// ── Alinhamento por ponto/linha ─────────────────────────────────────────────
+function alignReset(){
+  ALIGN.picking=null; ALIGN.pts={}; ALIGN.modo=ALIGN.modo;
+  $('alignSvg').innerHTML=''; $('pickHint').style.display='none';
+  $('stage').classList.remove('modo-pin');
+}
+function alignModo(m){
+  ALIGN.modo=m; ALIGN.pts={}; $('alignSvg').innerHTML='';
+  posTab('aln');
+  renderAlnBody();
+}
+function renderAlnBody(){
+  const b=$('alnBody'); if(!b) return;
+  if(ALIGN.modo==='pts'){
+    b.innerHTML=`<div class="hint" style="margin-bottom:8px">Marque <b style="color:#E74C3C">P1</b> num ponto da camada e <b style="color:#3B82F6">P2</b> no MESMO ponto da base. A camada é transladada para P1→P2.</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn-sec" onclick="pick('p1')">📍 Marcar P1 ${ALIGN.pts.p1?'✅':''}</button>
+        <button class="btn-sec" onclick="pick('p2')">📍 Marcar P2 ${ALIGN.pts.p2?'✅':''}</button>
+        <button class="btn" style="width:auto;padding:8px 16px" onclick="aplicar2Pontos()">⇌ Alinhar</button>
+      </div>`;
+  }else{
+    b.innerHTML=`<div class="hint" style="margin-bottom:8px">Marque uma <b>linha</b> conhecida na camada (A→B) e a MESMA linha na base (C→D). Calcula escala (razão dos comprimentos) e posição (A→C).</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button class="btn-sec" onclick="pick('A')">A ${ALIGN.pts.A?'✅':''}</button>
+        <button class="btn-sec" onclick="pick('B')">B ${ALIGN.pts.B?'✅':''}</button>
+        <button class="btn-sec" onclick="pick('C')">C ${ALIGN.pts.C?'✅':''}</button>
+        <button class="btn-sec" onclick="pick('D')">D ${ALIGN.pts.D?'✅':''}</button>
+        <button class="btn" style="width:auto;padding:8px 16px" onclick="aplicarLinha()">⇌ Alinhar</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--mut);margin-top:6px">A,B = camada · C,D = base</div>`;
+  }
+}
+function pick(qual){
+  ALIGN.picking=qual;
+  const cores={p1:'#E74C3C',p2:'#3B82F6',A:'#8E44AD',B:'#8E44AD',C:'#27AE60',D:'#27AE60'};
+  const alvo=(qual==='p1'||qual==='A'||qual==='B')?'camada':'base';
+  $('pickHint').textContent='✛ Clique o ponto '+qual.toUpperCase()+' na '+alvo;
+  $('pickHint').style.color=cores[qual]||'#fff';
+  $('pickHint').style.display='block';
+  $('stage').classList.add('modo-pin');
+}
+function alignOnClick(pt, sx, sy){
+  const qual=ALIGN.picking; ALIGN.picking=null;
+  $('pickHint').style.display='none'; $('stage').classList.remove('modo-pin');
+  ALIGN.pts[qual]={ nx:pt.nx, ny:pt.ny };   // guarda em coords normalizadas da BASE
+  desenharAlignMarks();
+  renderAlnBody();
+}
+function desenharAlignMarks(){
+  const svg=$('alignSvg'); const cores={p1:'#E74C3C',p2:'#3B82F6',A:'#8E44AD',B:'#8E44AD',C:'#27AE60',D:'#27AE60'};
+  let out='';
+  for(const [q,pn] of Object.entries(ALIGN.pts)){
+    const p=pageToScreen(pn.nx,pn.ny), c=cores[q]||'#fff';
+    out+=`<g><circle cx="${p.x}" cy="${p.y}" r="8" fill="${c}" stroke="#fff" stroke-width="2"/>
+      <line x1="${p.x-14}" y1="${p.y}" x2="${p.x+14}" y2="${p.y}" stroke="${c}" stroke-width="1.5"/>
+      <line x1="${p.x}" y1="${p.y-14}" x2="${p.x}" y2="${p.y+14}" stroke="${c}" stroke-width="1.5"/>
+      <text x="${p.x+11}" y="${p.y-9}" font-size="11" font-weight="800" fill="${c}">${q.toUpperCase()}</text></g>`;
+  }
+  // linhas A-B e C-D
+  const ln=(a,b,c)=>{ if(!ALIGN.pts[a]||!ALIGN.pts[b])return''; const p=pageToScreen(ALIGN.pts[a].nx,ALIGN.pts[a].ny),q=pageToScreen(ALIGN.pts[b].nx,ALIGN.pts[b].ny);
+    return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" stroke="${c}" stroke-width="2.5"/>`; };
+  out+=ln('A','B','#8E44AD')+ln('C','D','#27AE60');
+  svg.innerHTML=out;
+}
+function aplicar2Pontos(){
+  const L=camAtual(); if(!L) return;
+  if(!ALIGN.pts.p1||!ALIGN.pts.p2){ alert('Marque P1 e P2.'); return; }
+  L.offset.x += (ALIGN.pts.p2.nx-ALIGN.pts.p1.nx);
+  L.offset.y += (ALIGN.pts.p2.ny-ALIGN.pts.p1.ny);
+  salvarEstadoCamada(L); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
+  renderCamadas(); F.valido=false; render();
+}
+function aplicarLinha(){
+  const L=camAtual(); if(!L) return;
+  const P=ALIGN.pts;
+  if(!(P.A&&P.B&&P.C&&P.D)){ alert('Marque A, B (camada) e C, D (base).'); return; }
+  const [ , , bw, bh ]=V.page.view;
+  // comprimentos em PONTOS de mundo (base)
+  const wpt=p=>({x:p.nx*bw,y:p.ny*bh});
+  const A=wpt(P.A),B=wpt(P.B),C=wpt(P.C),D=wpt(P.D);
+  const len1=Math.hypot(B.x-A.x,B.y-A.y), len2=Math.hypot(D.x-C.x,D.y-C.y);
+  if(len1<bw*0.005){ alert('Linha da camada muito curta.'); return; }
+  const scOld=L.scale;
+  const scNew=Math.max(0.05,Math.min(10,(len2/len1)*scOld));
+  // coord. normalizada da IMAGEM da camada no ponto A: nImg=(baseNorm - off)/sc
+  const nxImgA=(P.A.nx - L.offset.x)/Math.max(1e-4,scOld);
+  const nyImgA=(P.A.ny - L.offset.y)/Math.max(1e-4,scOld);
+  // novo offset: A da imagem coincide com C (base)
+  L.scale=scNew;
+  L.offset.x=P.C.nx - nxImgA*scNew;
+  L.offset.y=P.C.ny - nyImgA*scNew;
+  salvarEstadoCamada(L); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
+  renderCamadas(); F.valido=false; render();
+}
 
 // ── Render por viewport ──────────────────────────────────────────────────────
 async function carregarPagina(){
@@ -479,6 +655,7 @@ function updateCss(){
   canvas.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
   $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
   try{ renderPins(); }catch(e){}                         // pins acompanham a vista
+  try{ if($('alignSvg').innerHTML) desenharAlignMarks(); }catch(e){}
 }
 
 // O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
@@ -535,18 +712,20 @@ async function render(){
     const [ , , bw, bh ] = V.page.view;
     for(const L of OVERLAYS){
       if(!L.visible) continue;
-      const [ , , lw, lh ] = L.page.view;
-      const s = zoom*L.scale*rScale;
+      const [ , , lw ] = L.page.view;
+      // escala NORMALIZADA à base (como o desktop): scale=1 → camada ocupa a
+      // largura da base. s = px do offscreen por ponto do PDF da camada.
+      const s = L.scale*(bw/lw)*zoom*rScale;
       const sx = (L.offset.x*bw*zoom - panX)*rScale;      // origem da camada em px do offscreen
       const sy = (L.offset.y*bh*zoom - panY)*rScale;
+      const vp = L.page.getViewport({ scale:s });
       octx.save();
       octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
       octx.filter=PRESETS_COR[L.preset]||'none';
       octx.translate(sx,sy);
-      if(L.rot){ const cx=lw*s/2, cy=lh*s/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
+      if(L.rot){ const cx=vp.width/2, cy=vp.height/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
       try{
-        await L.page.render({ canvasContext:octx,
-          viewport:L.page.getViewport({ scale:s }), background:'rgba(0,0,0,0)' }).promise;
+        await L.page.render({ canvasContext:octx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
       }catch(le){ console.warn('camada:',le.message||le); }
       octx.restore();
       octx.filter='none'; octx.globalAlpha=1;
@@ -630,20 +809,24 @@ async function mudarPagina(delta){
     const dist=Math.hypot(e.clientX-drag.x, e.clientY-drag.y);
     drag=null; stage.classList.remove('panning');
     scheduleRender(0);                                   // recompleta a margem se precisar
-    // Clique simples (sem arrasto) numa ÁREA VAZIA da prancha (pins têm handler próprio)
-    const clicouVazio = dist<5 && V.page && PRANCHA
-       && !(e.target.closest && e.target.closest('#pinsSvg g'));
-    if(!clicouVazio || !PIN_EDIT) return;               // só cria pin com o modo ligado
+    if(dist>=5 || !V.page || !PRANCHA) return;           // arrasto = pan, não clique
     const r=stage.getBoundingClientRect();
     const pt=screenToPage(e.clientX-r.left, e.clientY-r.top);
+    // 1) Coleta de ponto p/ ALINHAMENTO (barra Posição/Escala/Alinhar)
+    if(ALIGN.picking){ alignOnClick(pt, e.clientX-r.left, e.clientY-r.top); return; }
+    const clicouVazio = !(e.target.closest && e.target.closest('#pinsSvg g'));
+    if(!clicouVazio) return;                             // pins têm handler próprio
     if(!(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1)) return;
-    if(APT_EDIT){
-      // adiciona OUTRO pin ao apontamento aberto (a janela flutuante fica visível)
+    // 2) Edição de pins do apontamento ABERTO → adiciona pin
+    if(PIN_EDIT && APT_EDIT){
       (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum});
-      renderPins(); renderPinsList();
-    }else{
-      novoApontamento(pt.nx, pt.ny);                     // sem editor aberto → novo apontamento
+      renderPins(); renderPinsList(); return;
     }
+    // 3) "Apontar" (barra) → cria novo apontamento (one-shot)
+    if(APONTAR){ APONTAR=false; $('btnApontar').classList.remove('on');
+      $('stage').classList.toggle('modo-pin', PIN_EDIT);
+      $('modoHint').textContent='arraste para navegar';
+      novoApontamento(pt.nx, pt.ny); }
   });
 
   // Arrastar-e-soltar PDF
@@ -689,7 +872,11 @@ function corStatus(s){
 let APTS=[];                 // apontamentos do empreendimento (tabela `apontamentos`)
 let APT_EDIT=null;           // apontamento aberto no editor (objeto local)
 let APT_IMGS=[];             // imagens do editor: {url} já subidas ou {data} pendentes
-let PIN_EDIT=false;   // modo de edição de pins (add no vazio / remove no pin)
+let PIN_EDIT=false;      // edição de pins do apontamento aberto (dentro do editor)
+let PINS_VISIVEIS=true;  // barra superior: mostrar/ocultar pins
+let APONTAR=false;       // barra superior: próximo clique cria apontamento
+// Estado do alinhamento (barra Posição/Escala/Alinhar)
+const ALIGN={ camIdx:-1, picking:null, pts:{}, modo:null };
 let FORN_DISC={};            // disciplina -> { empresa, emails } (fornecedor do empreendimento)
 
 // Datas: armazenamos dd/mm/aaaa (formato do desktop); o input type=date usa ISO.
@@ -764,8 +951,10 @@ function pinSvg(px, py, num, cor, destaque){
 function renderPins(){
   const svg=$('pinsSvg'); if(!svg) return;
   if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
+  // Visibilidade (barra superior). Em edição de pins, mantém visível p/ editar.
+  if(!PINS_VISIVEIS && !(PIN_EDIT && APT_EDIT)){ svg.innerHTML=''; return; }
   const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
-  const cur=PIN_EDIT?'cursor:pointer':'cursor:pointer';
+  const cur='cursor:pointer';
   let out='';
   APTS.forEach((a,ai)=>{
     if(a.prancha_id!==PRANCHA.id) return;
@@ -788,16 +977,29 @@ function renderPins(){
   svg.innerHTML=out;
 }
 
+// Barra superior = VISUALIZAÇÃO dos pins (mostrar/ocultar).
+function toggleVerPins(){
+  PINS_VISIVEIS=!PINS_VISIVEIS;
+  $('btnVerPins').classList.toggle('on', PINS_VISIVEIS);
+  renderPins();
+}
+// "Apontar": próximo clique na prancha cria um novo apontamento (one-shot).
+function ativarApontar(){
+  APONTAR=!APONTAR;
+  $('btnApontar').classList.toggle('on', APONTAR);
+  $('stage').classList.toggle('modo-pin', APONTAR||PIN_EDIT);
+  $('modoHint').textContent = APONTAR ? 'clique na prancha para criar o apontamento' : 'arraste para navegar';
+}
+// Edição de pins do apontamento ABERTO (botão dentro do editor).
 function alternarModoPin(){ setPinEdit(!PIN_EDIT); }
 function setPinEdit(on){
   PIN_EDIT=!!on;
-  $('btnModoPin').classList.toggle('on', PIN_EDIT);
   const be=$('apBtnPin'); if(be) be.classList.toggle('on', PIN_EDIT);
-  $('stage').classList.toggle('modo-pin', PIN_EDIT);
+  $('stage').classList.toggle('modo-pin', PIN_EDIT||APONTAR);
   $('modoHint').textContent = PIN_EDIT
-    ? (APT_EDIT ? 'clique vazio adiciona pin · clique num pin remove'
-                : 'clique na prancha para criar um apontamento')
-    : 'arraste para navegar';
+    ? 'clique vazio adiciona pin · clique num pin remove'
+    : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
+  renderPins();
 }
 // Clique num pin: no modo edição remove (se for do apontamento aberto) ou abre;
 // fora do modo, abre o apontamento.
