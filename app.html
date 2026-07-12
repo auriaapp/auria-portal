@@ -99,8 +99,10 @@
   .fg input[type=date]{color-scheme:dark}
   .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-  .part-row{display:grid;grid-template-columns:1.2fr 1fr 1.4fr .9fr .9fr 30px;gap:6px;margin-bottom:5px;align-items:center}
-  .part-row input,.part-row select{border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;outline:none;width:100%;background:var(--bg2);color:var(--txt);color-scheme:dark}
+  .part-blk{border:1px solid var(--line);border-radius:9px;padding:7px 8px;margin-bottom:6px;background:var(--bg2)}
+  .part-blk input,.part-blk select{border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;outline:none;width:100%;background:var(--panel);color:var(--txt);color-scheme:dark}
+  /* Janela do editor é estreita: grids de 3 colunas viram 2 */
+  #modalApt .g3{grid-template-columns:1fr 1fr}
   .imgs-stg{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .imgs-stg .th{position:relative}
   .imgs-stg img{width:74px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer}
@@ -185,7 +187,7 @@
 </div>
 
 <!-- JANELA: editor de apontamento (flutuante, arrastável, minimizável) -->
-<div class="win" id="modalApt" data-win="apt" data-title="Apontamento">
+<div class="win" id="modalApt" data-win="apt" data-title="Apontamento" style="width:390px;left:20px;top:64px">
   <div class="win-head" id="aptHead">
     <span class="ttl" id="aptModalT">Apontamento</span>
     <button class="wbtn" title="Minimizar" onclick="minimizarWin('apt')">—</button>
@@ -216,9 +218,6 @@
     </div>
     <div class="fg">
       <label>Participantes e prazos</label>
-      <div class="part-row" style="font-size:10px;color:#64748B;font-weight:700">
-        <span>DISCIPLINA</span><span>NÍVEL</span><span>E-MAILS</span><span>PRAZO</span><span>CONCLUSÃO</span><span></span>
-      </div>
       <div id="apParts"></div>
       <button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="addPartRow()">＋ participante</button>
     </div>
@@ -286,11 +285,14 @@ const V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
 const F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false };
 const MARGEM = 0.45;          // fração da janela rasterizada além de cada borda
 let _renderJob=0, _renderTimer=null, _rendering=false;
-// W2 — camadas de SOBREPOSIÇÃO (a prancha base = V.page/PRANCHA; overlays por cima).
-// Cada overlay: { prancha, doc, page, pageNum, offset:{x,y}, scale, rot, opacity, preset, visible }
-let OVERLAYS=[];
+// W2 — CAMADAS unificadas: LAYERS[0] = prancha BASE (referência de coords/pins);
+// LAYERS[1..] = sobreposições. Cada camada:
+//   { prancha, doc, page, pageNum, offset:{x,y}, scale, rot, opacity, cor, visible, nome }
+// V.doc/V.page/V.pageNum e PRANCHA são atalhos p/ LAYERS[0] (mantidos por setBaseShims).
+let LAYERS=[];
 let PDF_OVERLAY=false;        // o próximo "Abrir" é camada de sobreposição?
-let CAM_ABERTA=-1;            // índice da camada com o card expandido na sidebar
+let LOCK_POS=false;           // travar posição das pranchas (evita mover sem querer)
+function setBaseShims(){ const b=LAYERS[0]; V.doc=b?b.doc:null; V.page=b?b.page:null; V.pageNum=b?b.pageNum:1; PRANCHA=b?b.prancha:null; }
 // Paleta de cores de VISUALIZAÇÃO da camada (tinge as linhas). Original = sem cor.
 const PALETA=[
   {nome:'Original', cor:null},
@@ -299,6 +301,18 @@ const PALETA=[
   {nome:'Roxo', cor:'#8E44AD'},     {nome:'Magenta', cor:'#EC4899'},
   {nome:'Ciano', cor:'#0891B2'},    {nome:'Preto', cor:'#0B0F1A'}
 ];
+// Detecta a disciplina pela nomenclatura do arquivo (código no nome).
+const COD_DISC={ARQ:'Arquitetura',EST:'Estrutura Concreto',MET:'Estrutura Metálica',
+  HID:'Instalações Hidrossanitárias',ELE:'Instalações Elétricas',INC:'Instalações PCI/SPDA/Gás',
+  AUT:'Instalações Automação',INF:'Infraestrutura',TOP:'Topografia / Sondagem',AMB:'Ambientação',
+  PAI:'Paisagismo',LUM:'Luminotécnico',ESQ:'Esquadrias',FAC:'Fachada',HEL:'Heliponto',
+  SEG:'Segurança',SIN:'Sinalização / Comunicação Visual',ETA:'ETA / ETE',
+  CLI:'Climatização / Pressurização / Exaustão',FUN:'Fundação',CON:'Contenção'};
+function deduzDisc(nome){
+  const toks=String(nome||'').toUpperCase().split(/[^A-Z]+/);
+  for(const t of toks){ if(COD_DISC[t]) return COD_DISC[t]; }
+  return '';
+}
 
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -333,7 +347,7 @@ function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   $('btnAbrir').disabled = !EMP;
   // troca de empreendimento zera a prancha/camadas abertas
-  V.doc=null; V.page=null; PRANCHA=null; OVERLAYS=[]; F.valido=false;
+  LAYERS=[]; setBaseShims(); F.valido=false;
   $('btnAddCam').disabled=true; $('prInfo').innerHTML='';
   $('dropHint').style.display='flex'; $('pinsSvg').innerHTML='';
   const cv=$('pdfCanvas'); if(cv){ const c=cv.getContext('2d'); c&&c.clearRect(0,0,cv.width,cv.height); }
@@ -366,17 +380,19 @@ async function abrirPdfLocal(file, overlay){
     const doc=await pdfjsLib.getDocument({data:buf}).promise;
     const page=await doc.getPage(1);
     const pr=await registrarPranchaDb(file.name, hash, doc, page);
+    // dedução da disciplina pela nomenclatura (grava se ainda vazia)
+    if(!pr.disciplina){ const d=deduzDisc(file.name);
+      if(d){ pr.disciplina=d; try{ await sb.from('pranchas_auria').update({disciplina:d}).eq('id',pr.id); }catch(e){} } }
+    const L={ prancha:pr, doc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
+              opacity:1, cor:null, visible:true, nome:file.name };
     if(overlay){
-      const L={ prancha:pr, doc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
-                opacity:0.7, cor:'#E74C3C', visible:true, nome:file.name };
+      L.opacity=0.7; L.cor='#E74C3C';
       await carregarEstadoCamada(L);
-      OVERLAYS.push(L);
-      CAM_ABERTA=OVERLAYS.length-1;
+      LAYERS.push(L);
       renderCamadas(); F.valido=false; render();
     }else{
-      // prancha BASE (caminho original, intocado)
-      V.doc=doc; V.page=page; V.pageNum=1; PRANCHA=pr;
-      OVERLAYS=[];                                          // troca de base zera as sobreposições
+      // nova prancha BASE (camada 0) — troca de base zera as sobreposições
+      LAYERS=[L]; setBaseShims();
       F.valido=false;
       $('pageLbl').textContent='1 / '+doc.numPages;
       fitPage();
@@ -440,57 +456,70 @@ function salvarEstadoCamada(L){
   }, 500);
 }
 
+// Painel de camadas: cada prancha = disciplina + código/nome + opacidade +
+// visível + botões (🎨 cor · ⚙ posição). Base (0) não tem posição (é a referência).
 function renderCamadas(){
   const el=$('camList'); if(!el) return;
-  const base=PRANCHA?`<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
-      <div class="nm" style="font-size:11.5px">🗺️ ${esc(PRANCHA.arquivo_nome)} <span style="color:var(--mut);font-weight:400">(base)</span></div></div>`:'';
-  const ov=OVERLAYS.map((L,i)=>{
-    const aberto=CAM_ABERTA===i;
-    const swatch=(o)=>`<button title="${o.nome}" onclick="camCor(${i},${o.cor?("'"+o.cor+"'"):'null'})"
-        style="width:18px;height:18px;border-radius:5px;cursor:pointer;
-        border:2px solid ${((L.cor||null)===o.cor)?'#fff':'transparent'};
-        background:${o.cor||'linear-gradient(135deg,#fff 45%,#111 55%)'}"></button>`;
+  if(!LAYERS.length){ el.innerHTML='<div class="hint">Abra a prancha base.</div>'; return; }
+  const lockRow=`<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--txt);margin-bottom:8px;cursor:pointer">
+      <input type="checkbox" ${LOCK_POS?'checked':''} onchange="toggleLock(this.checked)"> 🔒 Travar posição das pranchas</label>`;
+  const rows=LAYERS.map((L,i)=>{
+    const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'—');
+    const cod=(L.prancha.codigo||L.prancha.arquivo_nome||L.nome||'');
+    const corBg=L.cor?`background:${L.cor}`:'background:linear-gradient(135deg,#fff 45%,#111 55%)';
     return `<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
-      <div style="display:flex;align-items:center;gap:6px">
-        <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Visível">
-        <span class="nm" style="flex:1;font-size:11.5px;cursor:pointer" onclick="camToggle(${i})" title="${esc(L.nome||L.prancha.arquivo_nome)}">${aberto?'▾':'▸'} ${esc(L.nome||L.prancha.arquivo_nome)}</span>
-        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},-1)" title="Subir">▲</button>
-        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camOrdem(${i},1)" title="Descer">▼</button>
-        <button class="btn-sec" style="padding:2px 6px;font-size:11px" onclick="camRemover(${i})" title="Remover">🗑</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Ver esta prancha">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em">${esc(disc)}${i===0?' · base':''}</div>
+          <div class="nm" style="font-size:11.5px" title="${esc(cod)}">${esc(cod)}</div>
+        </div>
+        <button class="btn-sec" style="padding:3px 7px;font-size:12px" onclick="abrirCorPopup(${i},event)" title="Cor de visualização"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;${corBg}"></span></button>
+        ${i>0?`<button class="btn-sec" style="padding:3px 7px;font-size:12px${LOCK_POS?';opacity:.4':''}" onclick="${LOCK_POS?'':`abrirPosicao(${i})`}" title="Posição/Escala/Alinhar">⚙</button>
+        <button class="btn-sec" style="padding:3px 7px;font-size:12px" onclick="camRemover(${i})" title="Remover">🗑</button>`:''}
       </div>
-      ${aberto?`
-      <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
-        <span style="font-size:10px;color:var(--mut)">Opac.</span>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:7px">
+        <span style="font-size:9.5px;color:var(--mut)">opac.</span>
         <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" style="flex:1">
+        ${i>0?`<span style="font-size:9px;color:var(--mut)">${Math.round(L.scale*100)}%·${Math.round(L.rot)}°</span>`:''}
       </div>
-      <div style="margin-top:7px">
-        <div style="font-size:10px;color:var(--mut);margin-bottom:3px">Cor de visualização</div>
-        <div style="display:flex;gap:5px;flex-wrap:wrap">${PALETA.map(swatch).join('')}</div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
-        <span style="font-size:9.5px;color:var(--mut)">escala ${Math.round(L.scale*100)}% · ${Math.round(L.rot)}°</span>
-        <button class="btn-sec" style="padding:2px 8px;font-size:10.5px" onclick="abrirPosicao(${i})">⚙ Posição/Escala/Alinhar</button>
-      </div>`:''}
     </div>`;}).join('');
-  el.innerHTML = base+ov || '<div class="hint">Abra a prancha base.</div>';
+  el.innerHTML=lockRow+rows;
 }
-function camToggle(i){ CAM_ABERTA = CAM_ABERTA===i ? -1 : i; renderCamadas(); }
-function camVis(i,v){ OVERLAYS[i].visible=v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
-function camOpac(i,v){ OVERLAYS[i].opacity=+v; salvarEstadoCamada(OVERLAYS[i]); F.valido=false; render(); }
-function camCor(i,cor){ OVERLAYS[i].cor=cor; salvarEstadoCamada(OVERLAYS[i]); renderCamadas(); F.valido=false; render(); }
-function camOrdem(i,d){ const j=i+d; if(j<0||j>=OVERLAYS.length) return; const t=OVERLAYS[i];OVERLAYS[i]=OVERLAYS[j];OVERLAYS[j]=t; renderCamadas(); F.valido=false; render(); }
-function camRemover(i){ OVERLAYS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
+function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
+function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+function camOpac(i,v){ LAYERS[i].opacity=+v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+function camCor(i,cor){ LAYERS[i].cor=cor; if(i>0) salvarEstadoCamada(LAYERS[i]); renderCamadas(); F.valido=false; render(); }
+function camRemover(i){ if(i<=0) return; LAYERS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
 
-// ═══ JANELA POSIÇÃO / ESCALA / ALINHAR ══════════════════════════════════════
+// Popup de paleta de cores (abre ao lado do botão 🎨)
+function abrirCorPopup(i,ev){
+  fecharCorPopup();
+  const L=LAYERS[i]; if(!L) return;
+  const pop=document.createElement('div'); pop.id='corPopup';
+  pop.style.cssText='position:fixed;z-index:120;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 14px 40px rgba(0,0,0,.5);display:grid;grid-template-columns:repeat(3,26px);gap:6px';
+  pop.innerHTML=PALETA.map(o=>`<button title="${o.nome}" onclick="camCor(${i},${o.cor?("'"+o.cor+"'"):'null'});fecharCorPopup()"
+      style="width:26px;height:26px;border-radius:6px;cursor:pointer;border:2px solid ${((L.cor||null)===o.cor)?'#fff':'var(--line)'};background:${o.cor||'linear-gradient(135deg,#fff 45%,#111 55%)'}"></button>`).join('');
+  document.body.appendChild(pop);
+  const r=ev.currentTarget.getBoundingClientRect();
+  pop.style.left=Math.min(window.innerWidth-pop.offsetWidth-8, r.left)+'px';
+  pop.style.top=(r.bottom+6)+'px';
+  setTimeout(()=>document.addEventListener('mousedown', fecharCorPopupOut),0);
+}
+function fecharCorPopup(){ const p=$('corPopup'); if(p) p.remove(); document.removeEventListener('mousedown', fecharCorPopupOut); }
+function fecharCorPopupOut(e){ if(!e.target.closest('#corPopup')) fecharCorPopup(); }
+
+// ═══ JANELA POSIÇÃO / ESCALA / ALINHAR (só sobreposições, i>=1) ═════════════
 function abrirPosicao(i){
-  if(!OVERLAYS.length){ alert('Adicione uma camada de sobreposição primeiro.'); return; }
-  ALIGN.camIdx = (i!=null && OVERLAYS[i]) ? i : Math.max(0,ALIGN.camIdx);
+  if(LOCK_POS){ alert('As pranchas estão travadas. Destrave para ajustar a posição.'); return; }
+  if(LAYERS.length<2){ alert('Adicione uma camada de sobreposição primeiro.'); return; }
+  ALIGN.camIdx = (i!=null && i>=1 && LAYERS[i]) ? i : Math.max(1,ALIGN.camIdx);
   const sel=$('posCam');
-  sel.innerHTML=OVERLAYS.map((L,k)=>`<option value="${k}"${k===ALIGN.camIdx?' selected':''}>${esc(L.nome||L.prancha.arquivo_nome)}</option>`).join('');
+  sel.innerHTML=LAYERS.map((L,k)=>k>=1?`<option value="${k}"${k===ALIGN.camIdx?' selected':''}>${esc(L.prancha.codigo||L.nome||L.prancha.arquivo_nome)}</option>`:'').join('');
   posTab('pos');
   abrirWin('pos');
 }
-function camAtual(){ return OVERLAYS[ALIGN.camIdx]||null; }
+function camAtual(){ return LAYERS[ALIGN.camIdx]||null; }
 function posSelCam(v){ ALIGN.camIdx=+v; alignReset(); posTab(ALIGN.tabAtual||'pos'); }
 
 function posTab(t){
@@ -646,8 +675,11 @@ function aplicarLinha(){
 
 // ── Render por viewport ──────────────────────────────────────────────────────
 async function carregarPagina(){
-  V.page=await V.doc.getPage(V.pageNum);
-  $('pageLbl').textContent=V.pageNum+' / '+V.doc.numPages;
+  const b=LAYERS[0]; if(!b) return;
+  b.pageNum=V.pageNum;
+  b.page=await b.doc.getPage(b.pageNum);
+  setBaseShims();
+  $('pageLbl').textContent=V.pageNum+' / '+b.doc.numPages;
 }
 
 function pageSizePx(){
@@ -711,34 +743,26 @@ async function render(){
     off.width=Math.round(cssW*rScale); off.height=Math.round(cssH*rScale);
     const octx=off.getContext('2d');
     octx.fillStyle='#0A0F1A'; octx.fillRect(0,0,off.width,off.height);
-    const viewport=V.page.getViewport({ scale:zoom*rScale });
-    await V.page.render({
-      canvasContext:octx, viewport,
-      transform:[1,0,0,1, -panX*rScale, -panY*rScale],
-      background:'#FFFFFF'
-    }).promise;
-    if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }  // vista mudou muito — refaz
 
-    // W2 — compõe as CAMADAS de sobreposição por cima da base (fundo transparente,
-    // opacidade/preset/offset/escala/rotação por camada). Coordenadas ligadas à base.
-    const [ , , bw, bh ] = V.page.view;
-    for(const L of OVERLAYS){
+    // CAMADAS unificadas (0 = base). Todas passam pelo MESMO caminho: a base tem
+    // offset 0 / escala 1, então a fórmula abaixo reduz ao render normal da base.
+    const [ , , bw, bh ] = LAYERS[0].page.view;
+    for(let li=0; li<LAYERS.length; li++){
+      const L=LAYERS[li];
       if(!L.visible) continue;
       const [ , , lw ] = L.page.view;
-      // escala NORMALIZADA à base (como o desktop): scale=1 → camada ocupa a
-      // largura da base. s = px do offscreen por ponto do PDF da camada.
-      const s = L.scale*(bw/lw)*zoom*rScale;
-      const sx = (L.offset.x*bw*zoom - panX)*rScale;      // origem da camada em px do offscreen
+      const s  = L.scale*(bw/lw)*zoom*rScale;            // escala normalizada à base
+      const sx = (L.offset.x*bw*zoom - panX)*rScale;
       const sy = (L.offset.y*bh*zoom - panY)*rScale;
       const vp = L.page.getViewport({ scale:s });
+      const bg = li===0 ? '#FFFFFF' : 'rgba(0,0,0,0)';   // só a base pinta fundo branco
       octx.save();
       octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
       octx.translate(sx,sy);
       if(L.rot){ const cx=vp.width/2, cy=vp.height/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
       try{
         if(L.cor){
-          // VISUALIZAÇÃO por cor: rasteriza a camada (fundo transparente) e tinge
-          // só o conteúdo desenhado (as linhas) com a cor escolhida.
+          // VISUALIZAÇÃO por cor: rasteriza (fundo transparente) e tinge as linhas.
           const tw=Math.max(1,Math.ceil(vp.width)), th=Math.max(1,Math.ceil(vp.height));
           const tmp=document.createElement('canvas'); tmp.width=tw; tmp.height=th;
           const tctx=tmp.getContext('2d');
@@ -746,7 +770,7 @@ async function render(){
           tctx.globalCompositeOperation='source-in'; tctx.fillStyle=L.cor; tctx.fillRect(0,0,tw,th);
           octx.drawImage(tmp,0,0);
         }else{
-          await L.page.render({ canvasContext:octx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
+          await L.page.render({ canvasContext:octx, viewport:vp, background:bg }).promise;
         }
       }catch(le){ console.warn('camada:',le.message||le); }
       octx.restore();
@@ -1156,20 +1180,25 @@ function renderParts(){
   $('apParts').innerHTML=Object.keys(ps).map((d,i)=>{
     const p=ps[d]||{};
     const forn=FORN_DISC[d];
-    return `<div class="part-row" data-i="${i}">
-      <select data-f="disc" onchange="onPartDisc(this)">${(()=>{const ds=discsEd().slice();if(d&&!ds.includes(d))ds.unshift(d);return ds.map(x=>`<option${x===d?' selected':''}>${esc(x)}</option>`).join('');})()}</select>
-      <select data-f="nivel">${NIVEIS.map(n=>`<option${n===(p.nivel||'Pendência')?' selected':''}>${n}</option>`).join('')}</select>
-      <input data-f="emails" value="${esc(p.emails||'')}" placeholder="${forn?esc(forn.empresa):'a@x.com, b@y.com'}" title="${forn?('Fornecedor: '+esc(forn.empresa)):''}">
-      <input data-f="prazo" type="date" value="${brToIso(p.prazo)}">
-      <input data-f="conclusao" type="date" value="${brToIso(p.conclusao)}">
-      <button class="btn-sec" style="padding:4px 7px;font-size:11px" onclick="rmPartRow(${i})">✕</button>
-    </div>`+
-    (forn?`<div style="font-size:10px;color:#64748B;margin:-2px 0 5px 2px">🏢 ${esc(forn.empresa)}</div>`:'');
+    const discOpts=(()=>{const ds=discsEd().slice();if(d&&!ds.includes(d))ds.unshift(d);return ds.map(x=>`<option${x===d?' selected':''}>${esc(x)}</option>`).join('');})();
+    return `<div class="part-blk" data-i="${i}">
+      <div style="display:flex;gap:5px;align-items:center">
+        <select data-f="disc" onchange="onPartDisc(this)" style="flex:1">${discOpts}</select>
+        <select data-f="nivel" style="width:96px">${NIVEIS.map(n=>`<option${n===(p.nivel||'Pendência')?' selected':''}>${n}</option>`).join('')}</select>
+        <button class="btn-sec" style="padding:4px 8px;font-size:11px" onclick="rmPartRow(${i})">✕</button>
+      </div>
+      <input data-f="emails" value="${esc(p.emails||'')}" placeholder="${forn?('e-mails · '+esc(forn.empresa)):'a@x.com, b@y.com'}" style="margin-top:4px">
+      <div style="display:flex;gap:5px;margin-top:4px">
+        <div style="flex:1"><span style="font-size:9px;color:var(--mut)">prazo</span><input data-f="prazo" type="date" value="${brToIso(p.prazo)}"></div>
+        <div style="flex:1"><span style="font-size:9px;color:var(--mut)">conclusão</span><input data-f="conclusao" type="date" value="${brToIso(p.conclusao)}"></div>
+      </div>
+      ${forn?`<div style="font-size:9.5px;color:var(--mut);margin-top:3px">🏢 ${esc(forn.empresa)}</div>`:''}
+    </div>`;
   }).join('');
 }
 // Ao trocar a disciplina do participante, autopreenche com o fornecedor dela
 function onPartDisc(sel){
-  const row=sel.closest('.part-row'); if(!row) return;
+  const row=sel.closest('.part-blk'); if(!row) return;
   const forn=FORN_DISC[sel.value];
   const em=row.querySelector('[data-f="emails"]');
   if(forn){
@@ -1181,7 +1210,7 @@ function onPartDisc(sel){
 }
 function lerParts(){
   const out={};
-  document.querySelectorAll('#apParts .part-row').forEach(r=>{
+  document.querySelectorAll('#apParts .part-blk').forEach(r=>{
     const g=f=>{ const el=r.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():''; };
     const d=g('disc'); if(!d) return;
     out[d]={ nivel:g('nivel'), emails:g('emails'),
