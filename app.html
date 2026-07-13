@@ -54,7 +54,7 @@
   .tb.on{background:linear-gradient(180deg,#3B82F6,#2563EB);border-color:transparent;color:#fff}
   .tb-info{font-size:12px;color:var(--mut);font-weight:600;min-width:52px;text-align:center}
   .sep{width:1px;height:20px;background:var(--line)}
-  #stage{flex:1;position:relative;overflow:hidden;background:#0A0F1A;cursor:grab}
+  #stage{flex:1;position:relative;overflow:hidden;background:#FFFFFF;cursor:grab}
   #stage.panning{cursor:grabbing}
   #pdfCanvas{position:absolute;top:0;left:0;will-change:transform}
   #dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4B5B78;gap:10px;pointer-events:none}
@@ -137,9 +137,9 @@
 
       <!-- Camadas (sobreposição) -->
       <div style="border-top:1px solid var(--line);padding-top:10px">
-        <label>Camadas (sobreposição)</label>
+        <label>Disciplinas e Pranchas</label>
         <div id="camList" style="margin:6px 0"></div>
-        <button class="btn-sec" id="btnAddCam" style="width:100%;font-size:12px" onclick="abrirDialogo(true)" disabled>＋ Adicionar camada</button>
+        <button class="btn-sec" id="btnAddCam" style="width:100%;font-size:12px" onclick="abrirDialogo(true)" disabled>＋ Adicionar Prancha</button>
       </div>
 
       <div style="border-top:1px solid var(--line);padding-top:10px">
@@ -463,32 +463,40 @@ function renderCamadas(){
   if(!LAYERS.length){ el.innerHTML='<div class="hint">Abra a prancha base.</div>'; return; }
   const lockRow=`<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--txt);margin-bottom:8px;cursor:pointer">
       <input type="checkbox" ${LOCK_POS?'checked':''} onchange="toggleLock(this.checked)"> 🔒 Travar posição das pranchas</label>`;
-  const rows=LAYERS.map((L,i)=>{
-    const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'—');
+
+  // UM CARD por prancha, no layout do desktop: pílula azul com a DISCIPLINA +
+  // slider de opacidade + checkbox de visibilidade; embaixo o CÓDIGO da prancha e
+  // dois botões pequenos que só abrem painel ao clicar: ⚙ (posição/escala) e 🎨 (cor).
+  const card=(L,i)=>{
+    const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
     const cod=(L.prancha.codigo||L.prancha.arquivo_nome||L.nome||'');
     const corBg=L.cor?`background:${L.cor}`:'background:linear-gradient(135deg,#fff 45%,#111 55%)';
-    return `<div class="pr-card" style="padding:8px 10px;margin-bottom:6px">
-      <div style="display:flex;align-items:center;gap:8px">
-        <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Ver esta prancha">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em">${esc(disc)}${i===0?' · base':''}</div>
-          <div class="nm" style="font-size:11.5px" title="${esc(cod)}">${esc(cod)}</div>
+    const posBtn = i===0
+      ? `<button class="btn-sec" style="padding:4px 8px;font-size:12px;opacity:.4;cursor:default" title="Prancha base — é a referência de posição">⚙</button>`
+      : `<button class="btn-sec" style="padding:4px 8px;font-size:12px${LOCK_POS?';opacity:.4':''}" onclick="${LOCK_POS?'':`abrirPosicao(${i})`}" title="Editar posição e escala">⚙</button>`;
+    return `<div style="margin-bottom:11px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;background:var(--accent);color:#fff;border-radius:11px;padding:8px 11px">
+          <span style="font-size:12px;opacity:.85">✎</span>
+          <span style="font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(disc)}${i===0?' · base':''}</span>
         </div>
-        <button class="btn-sec" style="padding:3px 7px;font-size:12px" onclick="abrirCorPopup(${i},event)" title="Cor de visualização"><span style="display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle;${corBg}"></span></button>
-        ${i>0?`<button class="btn-sec" style="padding:3px 7px;font-size:12px${LOCK_POS?';opacity:.4':''}" onclick="${LOCK_POS?'':`abrirPosicao(${i})`}" title="Posição/Escala/Alinhar">⚙</button>
-        <button class="btn-sec" style="padding:3px 7px;font-size:12px" onclick="camRemover(${i})" title="Remover">🗑</button>`:''}
+        <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" title="Opacidade" style="width:52px;accent-color:var(--accent)">
+        <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Ver esta prancha" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">
       </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:7px">
-        <span style="font-size:9.5px;color:var(--mut)">opac.</span>
-        <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" style="flex:1">
-        ${i>0?`<span style="font-size:9px;color:var(--mut)">${Math.round(L.scale*100)}%·${Math.round(L.rot)}°</span>`:''}
+      <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding-left:3px">
+        <span style="flex:1;min-width:0;font-size:9.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(cod)}">${esc(cod)}</span>
+        ${posBtn}
+        <button class="btn-sec" style="padding:4px 6px;font-size:12px" onclick="abrirCorPopup(${i},event)" title="Escolher cor de visualização"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;${corBg}"></span></button>
+        ${i>0?`<button class="btn-sec" style="padding:4px 7px;font-size:11px" onclick="camRemover(${i})" title="Remover prancha">✕</button>`:''}
       </div>
-    </div>`;}).join('');
-  el.innerHTML=lockRow+rows;
+    </div>`;
+  };
+
+  el.innerHTML=lockRow+LAYERS.map((L,i)=>card(L,i)).join('');
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
 function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
-function camOpac(i,v){ LAYERS[i].opacity=+v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+function camOpac(i,v,inp){ LAYERS[i].opacity=+v; if(inp&&inp.nextElementSibling) inp.nextElementSibling.textContent=Math.round(+v*100)+'%'; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
 function camCor(i,cor){ LAYERS[i].cor=cor; if(i>0) salvarEstadoCamada(LAYERS[i]); renderCamadas(); F.valido=false; render(); }
 function camRemover(i){ if(i<=0) return; LAYERS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
 
@@ -742,7 +750,17 @@ async function render(){
     const off=document.createElement('canvas');
     off.width=Math.round(cssW*rScale); off.height=Math.round(cssH*rScale);
     const octx=off.getContext('2d');
-    octx.fillStyle='#0A0F1A'; octx.fillRect(0,0,off.width,off.height);
+    octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,off.width,off.height);   // fundo SEMPRE branco
+
+    // Canvas de camada reutilizado, do TAMANHO DA VISTA (não da página inteira):
+    // cada prancha é rasterizada aqui e depois composta no octx via drawImage COM
+    // globalAlpha. Essa é a única forma de a opacidade valer — o pdf.js sobrescreve
+    // o globalAlpha do contexto durante o próprio render, então rasterizar direto
+    // no octx ignora L.opacity. Rasterizar do tamanho da vista (o pdf.js recorta ao
+    // canvas) mantém o custo baixo mesmo com zoom alto.
+    const lay=document.createElement('canvas');
+    lay.width=off.width; lay.height=off.height;
+    const lctx=lay.getContext('2d');
 
     // CAMADAS unificadas (0 = base). Todas passam pelo MESMO caminho: a base tem
     // offset 0 / escala 1, então a fórmula abaixo reduz ao render normal da base.
@@ -755,26 +773,34 @@ async function render(){
       const sx = (L.offset.x*bw*zoom - panX)*rScale;
       const sy = (L.offset.y*bh*zoom - panY)*rScale;
       const vp = L.page.getViewport({ scale:s });
-      const bg = li===0 ? '#FFFFFF' : 'rgba(0,0,0,0)';   // só a base pinta fundo branco
-      octx.save();
-      octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
-      octx.translate(sx,sy);
-      if(L.rot){ const cx=vp.width/2, cy=vp.height/2; octx.translate(cx,cy); octx.rotate(L.rot*Math.PI/180); octx.translate(-cx,-cy); }
+      // Sem cor → rasteriza com FUNDO BRANCO (para o 'multiply' apagar o branco).
+      // Com cor → fundo transparente (as linhas serão tingidas).
+      const bg = L.cor ? 'rgba(0,0,0,0)' : '#FFFFFF';
+      lctx.setTransform(1,0,0,1,0,0);
+      lctx.clearRect(0,0,lay.width,lay.height);
+      lctx.save();
+      lctx.translate(sx,sy);
+      if(L.rot){ const cx=vp.width/2, cy=vp.height/2; lctx.translate(cx,cy); lctx.rotate(L.rot*Math.PI/180); lctx.translate(-cx,-cy); }
       try{
-        if(L.cor){
-          // VISUALIZAÇÃO por cor: rasteriza (fundo transparente) e tinge as linhas.
-          const tw=Math.max(1,Math.ceil(vp.width)), th=Math.max(1,Math.ceil(vp.height));
-          const tmp=document.createElement('canvas'); tmp.width=tw; tmp.height=th;
-          const tctx=tmp.getContext('2d');
-          await L.page.render({ canvasContext:tctx, viewport:vp, background:'rgba(0,0,0,0)' }).promise;
-          tctx.globalCompositeOperation='source-in'; tctx.fillStyle=L.cor; tctx.fillRect(0,0,tw,th);
-          octx.drawImage(tmp,0,0);
-        }else{
-          await L.page.render({ canvasContext:octx, viewport:vp, background:bg }).promise;
-        }
+        await L.page.render({ canvasContext:lctx, viewport:vp, background:bg }).promise;
       }catch(le){ console.warn('camada:',le.message||le); }
-      octx.restore();
+      lctx.restore();
+      if(L.cor){                                          // VISUALIZAÇÃO por cor: tinge as linhas
+        lctx.setTransform(1,0,0,1,0,0);
+        lctx.globalCompositeOperation='source-in';
+        lctx.fillStyle=L.cor; lctx.fillRect(0,0,lay.width,lay.height);
+        lctx.globalCompositeOperation='source-over';
+      }
+      // COMPOSIÇÃO 'multiply' (igual ao desktop): o branco da prancha some
+      // (branco × destino = destino → fundo fica branco, só as linhas aparecem) e
+      // o globalAlpha desbota as linhas em direção ao branco — a prancha NUNCA
+      // escurece ao reduzir a opacidade, e as camadas se sobrepõem como papel
+      // vegetal (interseções ficam mais fortes).
+      octx.globalCompositeOperation='multiply';
+      octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));   // ← opacidade REAL da prancha
+      octx.drawImage(lay,0,0);
       octx.globalAlpha=1;
+      octx.globalCompositeOperation='source-over';
       if(job!==_renderJob){ _rendering=false; scheduleRender(0); return; }
     }
 
