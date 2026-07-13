@@ -1092,6 +1092,7 @@ async function doLogout(){
 // ═══════════════════════════════════════════════════════
 async function loadAll(){
   await Promise.all([ loadConstrutoras(), loadEmpreendimentos(), loadMetrics(), loadAnalistas() ]);
+  await loadApontamentosLive();     // sobrepõe os números de hoje com a tabela real (inclui web)
   preencherFiltroEmpresas();
   renderDashboard();
 }
@@ -1136,6 +1137,40 @@ async function loadMetrics(){
   if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
   const { data } = await q;
   METRICS = data || [];
+}
+
+// Os números do DIA vêm da tabela REAL `apontamentos` (inclui os criados no app
+// web, ausentes do agregado metricas_diarias_auria do desktop). RLS escopa por
+// empresa/analista. Injeta uma métrica "de hoje" por empreendimento (substituindo
+// a de hoje que porventura exista), para dashboard/cards/tendências refletirem o
+// estado real. Requer EMPS já carregado (mapeia empreendimento por NOME → id).
+async function loadApontamentosLive(){
+  if(!EMPS.length) return;
+  let apts=[];
+  try{
+    const { data, error } = await sb.from('apontamentos').select('empreendimento,status,atrasado');
+    if(error) throw error;
+    apts = data || [];
+  }catch(e){ console.warn('loadApontamentosLive:', e.message||e); return; }
+  const hoje = new Date().toISOString().split('T')[0];
+  const empPorNome = {}; EMPS.forEach(e=>{ empPorNome[e.nome]=e; });
+  const acc = {};
+  apts.forEach(a=>{
+    const e = empPorNome[a.empreendimento]; if(!e) return;
+    const o = acc[e.id] || (acc[e.id]={ abertos:0, resolvidos:0, atraso:0 });
+    if(a.status==='Resolvido') o.resolvidos++;
+    else { o.abertos++; if(a.atrasado) o.atraso++; }
+  });
+  METRICS = METRICS.filter(m => m.data !== hoje);           // remove a linha de hoje (desktop)
+  Object.keys(acc).forEach(eid=>{
+    const o=acc[eid], tot=o.abertos+o.resolvidos, e=EMPS.find(x=>x.id===eid)||{};
+    METRICS.push({
+      empreendimento_id: eid, empresa_id: e.empresa_id, data: hoje,
+      total_abertos: o.abertos, total_resolvidos: o.resolvidos,
+      total_em_atraso: o.atraso, total_em_dia: Math.max(0, o.abertos-o.atraso),
+      indice_resposta: tot>0 ? Math.round(o.resolvidos/tot*100) : 0
+    });
+  });
 }
 
 async function loadAnalistas(){
