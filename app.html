@@ -1122,6 +1122,7 @@ let _draw=null;                   // traço em construção (arraste)
 let _poly=null;                   // polígono por pontos em construção
 let _polyCur=null;                // cursor p/ "elástico" do polígono
 let _patNeeded=null;             // Set de padrões de hachura no render atual
+let _hiliteIdx=-1;                // índice do desenho destacado (hover na lista)
 const DRAW_PALETA=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111','#FFFFFF'];
 const DRAW_TOOLS=[['arrow','🡒','Seta'],['line','／','Linha'],['rect','▭','Retângulo'],['ellipse','⬭','Elipse'],['polygon','⬠','Polígono por pontos'],['free','✎','Livre']];
 const DRAW_FILLS=[['none','Sem'],['solid','■'],['hatch45','╱╱'],['hatch90','|||'],['hatchX','▨']];
@@ -1141,7 +1142,17 @@ function renderDrawTools(){
       <button class="btn" style="width:auto;padding:6px 12px;font-size:11px" onclick="polyFinish()">✓ Concluir (${_poly.pts.length})</button>
       <button class="btn-sec" style="padding:6px 12px;font-size:11px" onclick="polyCancel()">✕ Cancelar</button>
       <span style="font-size:10px;color:var(--mut)">clique p/ pontos · clique no 1º p/ fechar</span></div>` : '';
-  const n=(APT_EDIT.drawings_json||[]).length;
+  // Lista dos desenhos com apagar individual (passe o mouse p/ destacar na prancha)
+  const ICO={arrow:'🡒',line:'／',rect:'▭',ellipse:'⬭',polygon:'⬠',free:'✎'};
+  const FIC={solid:'■',hatch45:'╱',hatch90:'|',hatchX:'▨'};
+  const ds=(APT_EDIT.drawings_json||[]);
+  const chips=ds.map((s,i)=>{
+    const fl=(s.fill&&s.fill!=='none')?(' '+(FIC[s.fill]||'')):'';
+    return `<span onmouseenter="hiliteDraw(${i})" onmouseleave="hiliteDraw(-1)" title="Apagar este desenho" style="display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:2px 4px 2px 7px;font-size:11px">
+      <span style="width:9px;height:9px;border-radius:2px;background:${s.color}"></span><span>${ICO[s.t]||'•'}${fl}</span>
+      <button onclick="delDraw(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px;line-height:1;padding:0 2px">✕</button></span>`;
+  }).join(' ');
+  const listBlock = ds.length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;max-height:74px;overflow:auto">${chips}</div>` : '';
   el.innerHTML=`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">${tbtn}</div>
     <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px">${cores}</div>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:9.5px;color:var(--mut)">Traço</span>${ws}</div>
@@ -1149,9 +1160,11 @@ function renderDrawTools(){
       <span style="flex:1"></span>
       <button class="btn-sec" onclick="undoDraw()" style="padding:4px 8px;font-size:11px">↶ Desfazer</button>
       <button class="btn-sec" onclick="clearDraw()" style="padding:4px 8px;font-size:11px">🗑 Limpar</button></div>
-    ${polyCtl}
-    <div style="font-size:10px;color:var(--mut);margin-top:5px">${n} desenho(s)${DRAW_TOOL?' · '+(DRAW_TOOL==='polygon'?'clique para marcar pontos':'arraste na prancha'):''}</div>`;
+    ${polyCtl}${listBlock}
+    <div style="font-size:10px;color:var(--mut);margin-top:5px">${ds.length} desenho(s)${DRAW_TOOL?' · '+(DRAW_TOOL==='polygon'?'clique para marcar pontos':'arraste na prancha'):''}</div>`;
 }
+function delDraw(i){ if(APT_EDIT&&APT_EDIT.drawings_json&&i>=0&&i<APT_EDIT.drawings_json.length){ APT_EDIT.drawings_json.splice(i,1); _hiliteIdx=-1; renderDrawings(); renderDrawTools(); } }
+function hiliteDraw(i){ _hiliteIdx=i; renderDrawings(); }
 function setDrawTool(t){
   DRAW_TOOL=(DRAW_TOOL===t?null:t);
   if(DRAW_TOOL!=='polygon' && _poly){ _poly=null; _polyCur=null; }   // cancela polígono pendente ao trocar
@@ -1265,9 +1278,13 @@ function renderDrawings(){
     if(!(a.prancha_id===PRANCHA.id)) return;
     (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
   });
-  // Desenhos do apontamento EM EDIÇÃO + traço/polígono em construção
+  // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
   if(APT_EDIT){
-    (APT_EDIT.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
+    (APT_EDIT.drawings_json||[]).forEach((s,i)=>{
+      if(!naPagina(s)) return;
+      if(i===_hiliteIdx){ out+=shapeToSvg(Object.assign({},s,{color:'#22D3EE',w:(s.w||2)+6,fill:'none'}), true); }  // halo
+      out+=shapeToSvg(s, false);
+    });
     if(_draw) out+=shapeToSvg(_draw, true);
     out+=polyPreviewSvg();
   }
