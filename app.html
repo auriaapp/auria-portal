@@ -875,12 +875,16 @@ async function mudarPagina(delta){
   let drag=null;
   stage.addEventListener('mousedown', function(e){
     if(!V.page) return;
-    if(drawActive() && e.button===0){ drawStart(e); return; }   // desenho tem prioridade sobre o pan
+    if(drawActive() && e.button===0){                          // desenho tem prioridade sobre o pan
+      if(DRAW_TOOL==='polygon') return;                        // polígono é por CLIQUE (tratado no mouseup)
+      drawStart(e); return;
+    }
     drag={ x:e.clientX, y:e.clientY, px:V.panX, py:V.panY };
     stage.classList.add('panning');
   });
   window.addEventListener('mousemove', function(e){
     if(_draw){ drawMove(e); return; }
+    if(drawActive() && DRAW_TOOL==='polygon' && _poly){ polyMoveAt(e); return; }
     if(!drag) return;
     const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
     V.panX=drag.px-dx; V.panY=drag.py-dy;
@@ -888,6 +892,7 @@ async function mudarPagina(delta){
   });
   window.addEventListener('mouseup', function(e){
     if(_draw){ drawEnd(e); return; }
+    if(drawActive() && DRAW_TOOL==='polygon'){ polyClickAt(e); return; }   // clique = ponto do polígono
     if(!drag) return;
     const dist=Math.hypot(e.clientX-drag.x, e.clientY-drag.y);
     drag=null; stage.classList.remove('panning');
@@ -1107,13 +1112,20 @@ function pinClickEdit(pi){
 
 // ═══ DESENHOS (W3): ferramentas vetoriais SVG por apontamento ════════════════
 // Cada forma em APT_EDIT.drawings_json, coords normalizadas [0,1] por página:
-//  {t:'arrow'|'line'|'rect'|'ellipse'|'free', pg, color, w, a:{nx,ny}, b:{nx,ny}, pts:[...]}
+//  {t:'arrow'|'line'|'rect'|'ellipse'|'polygon'|'free', pg, color, w,
+//   fill:'none'|'solid'|'hatch45'|'hatch90'|'hatchX', fillColor, a:{nx,ny}, b:{nx,ny}, pts:[...]}
 let DRAW_TOOL=null;               // ferramenta ativa (null = nenhuma)
 let DRAW_COLOR='#E74C3C';
-let DRAW_W=3;                      // espessura em px de tela
-let _draw=null;                   // traço em construção
+let DRAW_W=3;                     // espessura em px de tela
+let DRAW_FILL='none';            // preenchimento das formas fechadas
+let _draw=null;                   // traço em construção (arraste)
+let _poly=null;                   // polígono por pontos em construção
+let _polyCur=null;                // cursor p/ "elástico" do polígono
+let _patNeeded=null;             // Set de padrões de hachura no render atual
 const DRAW_PALETA=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111','#FFFFFF'];
-const DRAW_TOOLS=[['arrow','🡒','Seta'],['line','／','Linha'],['rect','▭','Retângulo'],['ellipse','⬭','Elipse'],['free','✎','Livre']];
+const DRAW_TOOLS=[['arrow','🡒','Seta'],['line','／','Linha'],['rect','▭','Retângulo'],['ellipse','⬭','Elipse'],['polygon','⬠','Polígono por pontos'],['free','✎','Livre']];
+const DRAW_FILLS=[['none','Sem'],['solid','■'],['hatch45','╱╱'],['hatch90','|||'],['hatchX','▨']];
+const CAN_FILL={rect:1,ellipse:1,polygon:1};
 
 function drawActive(){ return !!(DRAW_TOOL && APT_EDIT); }
 
@@ -1124,27 +1136,41 @@ function renderDrawTools(){
   const tbtn=DRAW_TOOLS.map(([t,ic,nm])=>`<button class="btn-sec" title="${nm}" onclick="setDrawTool('${t}')" style="padding:5px 9px;font-size:13px${DRAW_TOOL===t?';background:var(--accent);border-color:var(--accent);color:#fff':''}">${ic}</button>`).join('');
   const cores=DRAW_PALETA.map(c=>`<button title="${c}" onclick="setDrawColor('${c}')" style="width:20px;height:20px;border-radius:5px;cursor:pointer;border:2px solid ${DRAW_COLOR===c?'#fff':'var(--line)'};background:${c}"></button>`).join('');
   const ws=[['Fino',1.5],['Médio',3],['Grosso',5]].map(([nm,v])=>`<button class="btn-sec" onclick="setDrawW(${v})" style="padding:4px 8px;font-size:11px${DRAW_W===v?';background:var(--accent);border-color:var(--accent);color:#fff':''}">${nm}</button>`).join('');
+  const fills=DRAW_FILLS.map(([v,lb])=>`<button class="btn-sec" title="Preenchimento" onclick="setDrawFill('${v}')" style="padding:4px 8px;font-size:11px${DRAW_FILL===v?';background:var(--accent);border-color:var(--accent);color:#fff':''}">${lb}</button>`).join('');
+  const polyCtl = _poly ? `<div style="display:flex;gap:6px;align-items:center;margin-top:7px">
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px" onclick="polyFinish()">✓ Concluir (${_poly.pts.length})</button>
+      <button class="btn-sec" style="padding:6px 12px;font-size:11px" onclick="polyCancel()">✕ Cancelar</button>
+      <span style="font-size:10px;color:var(--mut)">clique p/ pontos · clique no 1º p/ fechar</span></div>` : '';
   const n=(APT_EDIT.drawings_json||[]).length;
   el.innerHTML=`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">${tbtn}</div>
     <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px">${cores}</div>
-    <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${ws}<span style="flex:1"></span>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span style="font-size:9.5px;color:var(--mut)">Traço</span>${ws}</div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:9.5px;color:var(--mut)">Preench.</span>${fills}
+      <span style="flex:1"></span>
       <button class="btn-sec" onclick="undoDraw()" style="padding:4px 8px;font-size:11px">↶ Desfazer</button>
       <button class="btn-sec" onclick="clearDraw()" style="padding:4px 8px;font-size:11px">🗑 Limpar</button></div>
-    <div style="font-size:10px;color:var(--mut);margin-top:5px">${n} desenho(s)${DRAW_TOOL?' · arraste na prancha':''}</div>`;
+    ${polyCtl}
+    <div style="font-size:10px;color:var(--mut);margin-top:5px">${n} desenho(s)${DRAW_TOOL?' · '+(DRAW_TOOL==='polygon'?'clique para marcar pontos':'arraste na prancha'):''}</div>`;
 }
 function setDrawTool(t){
   DRAW_TOOL=(DRAW_TOOL===t?null:t);
+  if(DRAW_TOOL!=='polygon' && _poly){ _poly=null; _polyCur=null; }   // cancela polígono pendente ao trocar
   $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
-  $('modoHint').textContent = DRAW_TOOL?'arraste sobre a prancha para desenhar':(APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
-  renderDrawTools();
+  $('modoHint').textContent = DRAW_TOOL
+    ? (DRAW_TOOL==='polygon'?'clique para marcar os pontos do polígono':'arraste sobre a prancha para desenhar')
+    : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
+  renderDrawTools(); renderDrawings();
 }
 function setDrawColor(c){ DRAW_COLOR=c; renderDrawTools(); }
 function setDrawW(v){ DRAW_W=v; renderDrawTools(); }
+function setDrawFill(v){ DRAW_FILL=v; renderDrawTools(); }
 function undoDraw(){ if(APT_EDIT&&(APT_EDIT.drawings_json||[]).length){ APT_EDIT.drawings_json.pop(); renderDrawings(); renderDrawTools(); } }
 function clearDraw(){ if(APT_EDIT&&(APT_EDIT.drawings_json||[]).length&&confirm('Apagar todos os desenhos deste apontamento?')){ APT_EDIT.drawings_json=[]; renderDrawings(); renderDrawTools(); } }
 
 function _drawPt(e){ const r=$('stage').getBoundingClientRect(); return screenToPage(e.clientX-r.left, e.clientY-r.top); }
-function drawStart(e){ const pt=_drawPt(e); _draw={ t:DRAW_TOOL, pg:V.pageNum, color:DRAW_COLOR, w:DRAW_W, a:{nx:pt.nx,ny:pt.ny}, b:{nx:pt.nx,ny:pt.ny}, pts:[{nx:pt.nx,ny:pt.ny}] }; }
+function _newFill(){ return { fill:DRAW_FILL, fillColor:DRAW_COLOR }; }
+function drawStart(e){ const pt=_drawPt(e); const f=CAN_FILL[DRAW_TOOL]?_newFill():{fill:'none'};
+  _draw={ t:DRAW_TOOL, pg:V.pageNum, color:DRAW_COLOR, w:DRAW_W, fill:f.fill, fillColor:f.fillColor||DRAW_COLOR, a:{nx:pt.nx,ny:pt.ny}, b:{nx:pt.nx,ny:pt.ny}, pts:[{nx:pt.nx,ny:pt.ny}] }; }
 function drawMove(e){ if(!_draw) return; const pt=_drawPt(e); _draw.b={nx:pt.nx,ny:pt.ny}; if(_draw.t==='free') _draw.pts.push({nx:pt.nx,ny:pt.ny}); renderDrawings(); }
 function drawEnd(e){
   const s=_draw; _draw=null;
@@ -1155,29 +1181,75 @@ function drawEnd(e){
   renderDrawings(); renderDrawTools();
 }
 
+// ── Polígono por pontos (clique adiciona; clique no 1º ponto ou "Concluir" fecha)
+function polyClickAt(e){
+  const pt=_drawPt(e);
+  if(!_poly) _poly={ t:'polygon', pg:V.pageNum, color:DRAW_COLOR, w:DRAW_W, fill:DRAW_FILL, fillColor:DRAW_COLOR, pts:[] };
+  if(_poly.pts.length>=3){
+    const f=pageToScreen(_poly.pts[0].nx,_poly.pts[0].ny), r=$('stage').getBoundingClientRect();
+    if(Math.hypot((e.clientX-r.left)-f.x, (e.clientY-r.top)-f.y)<12){ polyFinish(); return; }
+  }
+  _poly.pts.push({nx:pt.nx,ny:pt.ny}); _polyCur=pt; renderDrawings(); renderDrawTools();
+}
+function polyMoveAt(e){ if(!_poly) return; _polyCur=_drawPt(e); renderDrawings(); }
+function polyFinish(){ if(_poly && _poly.pts.length>=3 && APT_EDIT){ (APT_EDIT.drawings_json=APT_EDIT.drawings_json||[]).push(_poly); } _poly=null; _polyCur=null; renderDrawings(); renderDrawTools(); }
+function polyCancel(){ _poly=null; _polyCur=null; renderDrawings(); renderDrawTools(); }
+
+// ── Preenchimento: sólido (semi-transparente) ou hachura via <pattern> ───────
+function patId(ft,fc){ return 'hp-'+ft+'-'+String(fc).replace('#','').toLowerCase(); }
+function patDef(ft,fc){
+  const id=patId(ft,fc), s=8; let ln='';
+  if(ft==='hatch45'||ft==='hatchX') ln+=`<path d="M0 ${s} L${s} 0" stroke="${fc}" stroke-width="1"/>`;
+  if(ft==='hatch90'||ft==='hatchX') ln+=`<path d="M${s/2} 0 L${s/2} ${s}" stroke="${fc}" stroke-width="1"/>`;
+  return `<pattern id="${id}" patternUnits="userSpaceOnUse" width="${s}" height="${s}">${ln}</pattern>`;
+}
+function fillPaint(s){
+  const ft=s.fill||'none'; if(ft==='none') return 'fill="none"';
+  const fc=s.fillColor||s.color||'#E74C3C';
+  if(ft==='solid') return `fill="${fc}" fill-opacity="0.28"`;
+  if(_patNeeded) _patNeeded.add(ft+'|'+fc);
+  return `fill="url(#${patId(ft,fc)})"`;
+}
+
 // Serializa uma forma em SVG (coords de tela via pageToScreen)
 function shapeToSvg(s, preview){
   const P=p=>pageToScreen(p.nx,p.ny), col=s.color||'#E74C3C', w=s.w||2, op=preview?0.85:1;
-  const cm=`stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="${op}"`;
+  const st=`stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" opacity="${op}"`;
   if(s.t==='free'){
     if(!s.pts||s.pts.length<2) return '';
     const d=s.pts.map((p,i)=>{const q=P(p);return (i?'L':'M')+q.x.toFixed(1)+' '+q.y.toFixed(1);}).join(' ');
-    return `<path d="${d}" ${cm}/>`;
+    return `<path d="${d}" fill="none" ${st}/>`;
+  }
+  if(s.t==='polygon'){
+    if(!s.pts||s.pts.length<3) return '';
+    const pts=s.pts.map(p=>{const q=P(p);return q.x.toFixed(1)+','+q.y.toFixed(1);}).join(' ');
+    return `<polygon points="${pts}" ${fillPaint(s)} ${st}/>`;
   }
   const A=P(s.a), B=P(s.b);
-  if(s.t==='line') return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" ${cm}/>`;
+  if(s.t==='line') return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" fill="none" ${st}/>`;
   if(s.t==='rect'){ const x=Math.min(A.x,B.x),y=Math.min(A.y,B.y),ww=Math.abs(B.x-A.x),hh=Math.abs(B.y-A.y);
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${ww.toFixed(1)}" height="${hh.toFixed(1)}" ${cm}/>`; }
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${ww.toFixed(1)}" height="${hh.toFixed(1)}" ${fillPaint(s)} ${st}/>`; }
   if(s.t==='ellipse'){ const cx=(A.x+B.x)/2,cy=(A.y+B.y)/2,rx=Math.abs(B.x-A.x)/2,ry=Math.abs(B.y-A.y)/2;
-    return `<ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" ${cm}/>`; }
+    return `<ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" ${fillPaint(s)} ${st}/>`; }
   if(s.t==='arrow'){
     const ang=Math.atan2(B.y-A.y,B.x-A.x), hl=Math.max(9,w*3.5);
     const x1=(B.x-hl*Math.cos(ang-0.4)).toFixed(1), y1=(B.y-hl*Math.sin(ang-0.4)).toFixed(1);
     const x2=(B.x-hl*Math.cos(ang+0.4)).toFixed(1), y2=(B.y-hl*Math.sin(ang+0.4)).toFixed(1);
-    return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" ${cm}/>`+
-           `<path d="M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x1} ${y1} M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x2} ${y2}" ${cm}/>`;
+    return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" fill="none" ${st}/>`+
+           `<path d="M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x1} ${y1} M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x2} ${y2}" fill="none" ${st}/>`;
   }
   return '';
+}
+// Prévia do polígono em construção (linha tracejada + vértices + elástico)
+function polyPreviewSvg(){
+  if(!_poly||!_poly.pts.length) return '';
+  const P=p=>pageToScreen(p.nx,p.ny), col=_poly.color, w=_poly.w, q=_poly.pts.map(P);
+  let d='M'+q[0].x.toFixed(1)+' '+q[0].y.toFixed(1);
+  for(let i=1;i<q.length;i++) d+=' L'+q[i].x.toFixed(1)+' '+q[i].y.toFixed(1);
+  if(_polyCur){ const c=P(_polyCur); d+=' L'+c.x.toFixed(1)+' '+c.y.toFixed(1); }
+  let out=`<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-dasharray="6 4" opacity="0.9"/>`;
+  q.forEach((p,i)=>{ out+=`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i===0?4.5:3}" fill="${i===0?'#fff':col}" stroke="${col}" stroke-width="1.5"/>`; });
+  return out;
 }
 
 // Renderiza os desenhos da prancha atual (só os da página corrente)
@@ -1185,6 +1257,7 @@ function renderDrawings(){
   const svg=$('drawSvg'); if(!svg) return;
   if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
   const naPagina = s => (s.pg==null || s.pg===V.pageNum);
+  _patNeeded=new Set();
   let out='';
   // Desenhos de OUTROS apontamentos desta prancha (somente leitura)
   APTS.forEach(a=>{
@@ -1192,12 +1265,15 @@ function renderDrawings(){
     if(!(a.prancha_id===PRANCHA.id)) return;
     (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
   });
-  // Desenhos do apontamento EM EDIÇÃO + traço em construção
+  // Desenhos do apontamento EM EDIÇÃO + traço/polígono em construção
   if(APT_EDIT){
     (APT_EDIT.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
     if(_draw) out+=shapeToSvg(_draw, true);
+    out+=polyPreviewSvg();
   }
-  svg.innerHTML=out;
+  let defs=''; _patNeeded.forEach(k=>{ const i=k.indexOf('|'); defs+=patDef(k.slice(0,i), k.slice(i+1)); });
+  svg.innerHTML=(defs?`<defs>${defs}</defs>`:'')+out;
+  _patNeeded=null;
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
@@ -1278,7 +1354,7 @@ function abrirEditor(){
   abrirWin('apt', a._novo?'📌 Novo apontamento':('📌 '+a.id));
   renderPins(); renderDrawings();
 }
-function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; setPinEdit(false); renderPins(); renderDrawings(); }
+function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
 
 // Lista de pins do apontamento (com remoção); base para o multi-pin
 function renderPinsList(){
