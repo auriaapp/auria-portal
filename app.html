@@ -173,6 +173,7 @@
       </div>
       <div id="stage">
         <canvas id="pdfCanvas"></canvas>
+        <svg id="drawSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <svg id="pinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <svg id="alignSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <div id="pickHint" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.85);color:#fff;padding:6px 14px;border-radius:20px;font-size:12.5px;font-weight:700;display:none;z-index:5"></div>
@@ -226,6 +227,11 @@
       <div id="apPinsList" style="font-size:12px;color:var(--txt)"></div>
       <button class="btn-sec" id="apBtnPin" style="font-size:11px;padding:6px 11px;margin-top:5px" onclick="alternarModoPin()">✏️ Editar pins</button>
       <span style="font-size:10.5px;color:var(--mut);margin-left:6px">clique vazio adiciona · clique num pin remove</span>
+    </div>
+    <div class="fg">
+      <label>Desenhos na prancha</label>
+      <div id="drawTools"></div>
+      <span id="drawHint" style="font-size:10.5px;color:var(--mut)">Escolha uma ferramenta e arraste sobre a prancha.</span>
     </div>
     <div class="fg">
       <label>Prints (Ctrl+V cola aqui)</label>
@@ -708,6 +714,7 @@ function updateCss(){
   canvas.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
   $('zoomLbl').textContent=Math.round(V.zoom*100)+'%';
   try{ renderPins(); }catch(e){}                         // pins acompanham a vista
+  try{ renderDrawings(); }catch(e){}                     // desenhos acompanham a vista
   try{ if($('alignSvg').innerHTML) desenharAlignMarks(); }catch(e){}
 }
 
@@ -868,16 +875,19 @@ async function mudarPagina(delta){
   let drag=null;
   stage.addEventListener('mousedown', function(e){
     if(!V.page) return;
+    if(drawActive() && e.button===0){ drawStart(e); return; }   // desenho tem prioridade sobre o pan
     drag={ x:e.clientX, y:e.clientY, px:V.panX, py:V.panY };
     stage.classList.add('panning');
   });
   window.addEventListener('mousemove', function(e){
+    if(_draw){ drawMove(e); return; }
     if(!drag) return;
     const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
     V.panX=drag.px-dx; V.panY=drag.py-dy;
     updateCss();                                         // segue o mouse (a margem cobre)
   });
   window.addEventListener('mouseup', function(e){
+    if(_draw){ drawEnd(e); return; }
     if(!drag) return;
     const dist=Math.hypot(e.clientX-drag.x, e.clientY-drag.y);
     drag=null; stage.classList.remove('panning');
@@ -1008,7 +1018,7 @@ async function carregarApts(){
     if(error) throw error;
     APTS=data||[];
   }catch(e){ console.error('carregarApts:', e.message||e); }
-  renderListaApts(); renderPins();
+  renderListaApts(); renderPins(); renderDrawings();
 }
 
 // ── Pins (SVG overlay; posição derivada da vista atual V) ───────────────────
@@ -1095,6 +1105,101 @@ function pinClickEdit(pi){
   if(PIN_EDIT && APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPins(); renderPinsList(); }
 }
 
+// ═══ DESENHOS (W3): ferramentas vetoriais SVG por apontamento ════════════════
+// Cada forma em APT_EDIT.drawings_json, coords normalizadas [0,1] por página:
+//  {t:'arrow'|'line'|'rect'|'ellipse'|'free', pg, color, w, a:{nx,ny}, b:{nx,ny}, pts:[...]}
+let DRAW_TOOL=null;               // ferramenta ativa (null = nenhuma)
+let DRAW_COLOR='#E74C3C';
+let DRAW_W=3;                      // espessura em px de tela
+let _draw=null;                   // traço em construção
+const DRAW_PALETA=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111','#FFFFFF'];
+const DRAW_TOOLS=[['arrow','🡒','Seta'],['line','／','Linha'],['rect','▭','Retângulo'],['ellipse','⬭','Elipse'],['free','✎','Livre']];
+
+function drawActive(){ return !!(DRAW_TOOL && APT_EDIT); }
+
+// Barra de ferramentas de desenho (dentro do editor)
+function renderDrawTools(){
+  const el=$('drawTools'); if(!el) return;
+  if(!APT_EDIT){ el.innerHTML='<span style="font-size:11px;color:var(--mut)">Abra ou crie um apontamento para desenhar.</span>'; return; }
+  const tbtn=DRAW_TOOLS.map(([t,ic,nm])=>`<button class="btn-sec" title="${nm}" onclick="setDrawTool('${t}')" style="padding:5px 9px;font-size:13px${DRAW_TOOL===t?';background:var(--accent);border-color:var(--accent);color:#fff':''}">${ic}</button>`).join('');
+  const cores=DRAW_PALETA.map(c=>`<button title="${c}" onclick="setDrawColor('${c}')" style="width:20px;height:20px;border-radius:5px;cursor:pointer;border:2px solid ${DRAW_COLOR===c?'#fff':'var(--line)'};background:${c}"></button>`).join('');
+  const ws=[['Fino',1.5],['Médio',3],['Grosso',5]].map(([nm,v])=>`<button class="btn-sec" onclick="setDrawW(${v})" style="padding:4px 8px;font-size:11px${DRAW_W===v?';background:var(--accent);border-color:var(--accent);color:#fff':''}">${nm}</button>`).join('');
+  const n=(APT_EDIT.drawings_json||[]).length;
+  el.innerHTML=`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">${tbtn}</div>
+    <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px">${cores}</div>
+    <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${ws}<span style="flex:1"></span>
+      <button class="btn-sec" onclick="undoDraw()" style="padding:4px 8px;font-size:11px">↶ Desfazer</button>
+      <button class="btn-sec" onclick="clearDraw()" style="padding:4px 8px;font-size:11px">🗑 Limpar</button></div>
+    <div style="font-size:10px;color:var(--mut);margin-top:5px">${n} desenho(s)${DRAW_TOOL?' · arraste na prancha':''}</div>`;
+}
+function setDrawTool(t){
+  DRAW_TOOL=(DRAW_TOOL===t?null:t);
+  $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
+  $('modoHint').textContent = DRAW_TOOL?'arraste sobre a prancha para desenhar':(APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
+  renderDrawTools();
+}
+function setDrawColor(c){ DRAW_COLOR=c; renderDrawTools(); }
+function setDrawW(v){ DRAW_W=v; renderDrawTools(); }
+function undoDraw(){ if(APT_EDIT&&(APT_EDIT.drawings_json||[]).length){ APT_EDIT.drawings_json.pop(); renderDrawings(); renderDrawTools(); } }
+function clearDraw(){ if(APT_EDIT&&(APT_EDIT.drawings_json||[]).length&&confirm('Apagar todos os desenhos deste apontamento?')){ APT_EDIT.drawings_json=[]; renderDrawings(); renderDrawTools(); } }
+
+function _drawPt(e){ const r=$('stage').getBoundingClientRect(); return screenToPage(e.clientX-r.left, e.clientY-r.top); }
+function drawStart(e){ const pt=_drawPt(e); _draw={ t:DRAW_TOOL, pg:V.pageNum, color:DRAW_COLOR, w:DRAW_W, a:{nx:pt.nx,ny:pt.ny}, b:{nx:pt.nx,ny:pt.ny}, pts:[{nx:pt.nx,ny:pt.ny}] }; }
+function drawMove(e){ if(!_draw) return; const pt=_drawPt(e); _draw.b={nx:pt.nx,ny:pt.ny}; if(_draw.t==='free') _draw.pts.push({nx:pt.nx,ny:pt.ny}); renderDrawings(); }
+function drawEnd(e){
+  const s=_draw; _draw=null;
+  if(s && APT_EDIT){
+    const ok = s.t==='free' ? (s.pts.length>2) : (Math.hypot(s.b.nx-s.a.nx, s.b.ny-s.a.ny) > 0.004);
+    if(ok){ (APT_EDIT.drawings_json=APT_EDIT.drawings_json||[]).push(s); }
+  }
+  renderDrawings(); renderDrawTools();
+}
+
+// Serializa uma forma em SVG (coords de tela via pageToScreen)
+function shapeToSvg(s, preview){
+  const P=p=>pageToScreen(p.nx,p.ny), col=s.color||'#E74C3C', w=s.w||2, op=preview?0.85:1;
+  const cm=`stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="${op}"`;
+  if(s.t==='free'){
+    if(!s.pts||s.pts.length<2) return '';
+    const d=s.pts.map((p,i)=>{const q=P(p);return (i?'L':'M')+q.x.toFixed(1)+' '+q.y.toFixed(1);}).join(' ');
+    return `<path d="${d}" ${cm}/>`;
+  }
+  const A=P(s.a), B=P(s.b);
+  if(s.t==='line') return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" ${cm}/>`;
+  if(s.t==='rect'){ const x=Math.min(A.x,B.x),y=Math.min(A.y,B.y),ww=Math.abs(B.x-A.x),hh=Math.abs(B.y-A.y);
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${ww.toFixed(1)}" height="${hh.toFixed(1)}" ${cm}/>`; }
+  if(s.t==='ellipse'){ const cx=(A.x+B.x)/2,cy=(A.y+B.y)/2,rx=Math.abs(B.x-A.x)/2,ry=Math.abs(B.y-A.y)/2;
+    return `<ellipse cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" ${cm}/>`; }
+  if(s.t==='arrow'){
+    const ang=Math.atan2(B.y-A.y,B.x-A.x), hl=Math.max(9,w*3.5);
+    const x1=(B.x-hl*Math.cos(ang-0.4)).toFixed(1), y1=(B.y-hl*Math.sin(ang-0.4)).toFixed(1);
+    const x2=(B.x-hl*Math.cos(ang+0.4)).toFixed(1), y2=(B.y-hl*Math.sin(ang+0.4)).toFixed(1);
+    return `<line x1="${A.x.toFixed(1)}" y1="${A.y.toFixed(1)}" x2="${B.x.toFixed(1)}" y2="${B.y.toFixed(1)}" ${cm}/>`+
+           `<path d="M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x1} ${y1} M${B.x.toFixed(1)} ${B.y.toFixed(1)} L${x2} ${y2}" ${cm}/>`;
+  }
+  return '';
+}
+
+// Renderiza os desenhos da prancha atual (só os da página corrente)
+function renderDrawings(){
+  const svg=$('drawSvg'); if(!svg) return;
+  if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
+  const naPagina = s => (s.pg==null || s.pg===V.pageNum);
+  let out='';
+  // Desenhos de OUTROS apontamentos desta prancha (somente leitura)
+  APTS.forEach(a=>{
+    if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
+    if(!(a.prancha_id===PRANCHA.id)) return;
+    (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
+  });
+  // Desenhos do apontamento EM EDIÇÃO + traço em construção
+  if(APT_EDIT){
+    (APT_EDIT.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
+    if(_draw) out+=shapeToSvg(_draw, true);
+  }
+  svg.innerHTML=out;
+}
+
 // ── Editor ──────────────────────────────────────────────────────────────────
 function proximoId(disc){
   const pref=(disc? disc.slice(0,3).toUpperCase() : 'GER');
@@ -1137,6 +1242,7 @@ function novoApontamento(nx,ny){
     participantes:{ [disc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
     pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
+    drawings_json:[],
     prancha_id:PRANCHA?PRANCHA.id:null,
     _novo:true
   };
@@ -1166,12 +1272,13 @@ function abrirEditor(){
   $('apLocal').innerHTML='<option value="">— selecione —</option>'+
     locais.map(l=>`<option${l===a.local_txt?' selected':''}>${esc(l)}</option>`).join('');
   $('apVisib').value=a.visibilidade||'Coordenação';
-  renderParts(); renderImgs(); renderPinsList(); renderLog();
+  if(!Array.isArray(a.drawings_json)) a.drawings_json=[];
+  renderParts(); renderImgs(); renderPinsList(); renderLog(); renderDrawTools();
   $('apExcluir').style.display=a._novo?'none':'';
   abrirWin('apt', a._novo?'📌 Novo apontamento':('📌 '+a.id));
-  renderPins();
+  renderPins(); renderDrawings();
 }
-function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; setPinEdit(false); renderPins(); }
+function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; setPinEdit(false); renderPins(); renderDrawings(); }
 
 // Lista de pins do apontamento (com remoção); base para o multi-pin
 function renderPinsList(){
