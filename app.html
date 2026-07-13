@@ -169,6 +169,7 @@
         <span class="sep"></span>
         <button class="tb on" id="btnVerPins" onclick="toggleVerPins()" title="Mostrar/ocultar os pins">👁 Pins</button>
         <button class="tb" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
+        <button class="tb" id="btnCota" onclick="toggleCota()" title="Calibrar escala e medir distâncias (cotas)">📏 Cotas</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stage">
@@ -177,6 +178,7 @@
         <svg id="pinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <svg id="alignSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <div id="pickHint" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.85);color:#fff;padding:6px 14px;border-radius:20px;font-size:12.5px;font-weight:700;display:none;z-index:5"></div>
+        <div id="cotaPanel" style="display:none;position:absolute;top:10px;right:10px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:212px;box-shadow:0 12px 40px rgba(0,0,0,.45)"></div>
         <div id="dropHint">
           <div class="big">🗺️</div>
           <p><b>Nenhuma prancha aberta.</b><br>Selecione o empreendimento e clique em
@@ -354,8 +356,9 @@ function trocarEmp(){
   $('btnAbrir').disabled = !EMP;
   // troca de empreendimento zera a prancha/camadas abertas
   LAYERS=[]; setBaseShims(); F.valido=false;
+  TRENA={ m_por_pt:null, cotas:[] };
   $('btnAddCam').disabled=true; $('prInfo').innerHTML='';
-  $('dropHint').style.display='flex'; $('pinsSvg').innerHTML='';
+  $('dropHint').style.display='flex'; $('pinsSvg').innerHTML=''; $('drawSvg').innerHTML='';
   const cv=$('pdfCanvas'); if(cv){ const c=cv.getContext('2d'); c&&c.clearRect(0,0,cv.width,cv.height); }
   renderCamadas();
   carregarApts();
@@ -406,6 +409,7 @@ async function abrirPdfLocal(file, overlay){
       $('btnAddCam').disabled=false;
       atualizarCardBase(hash);
       renderCamadas(); renderPins(); renderListaApts();
+      carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); });   // calibração + cotas da prancha
     }
   }catch(e){
     console.error(e);
@@ -875,6 +879,7 @@ async function mudarPagina(delta){
   let drag=null;
   stage.addEventListener('mousedown', function(e){
     if(!V.page) return;
+    if(cotaActive() && e.button===0){ cotaStart(e); return; }   // medição/cota tem prioridade
     if(drawActive() && e.button===0){                          // desenho tem prioridade sobre o pan
       if(DRAW_TOOL==='polygon') return;                        // polígono é por CLIQUE (tratado no mouseup)
       drawStart(e); return;
@@ -883,6 +888,7 @@ async function mudarPagina(delta){
     stage.classList.add('panning');
   });
   window.addEventListener('mousemove', function(e){
+    if(_cota){ cotaMove(e); return; }
     if(_draw){ drawMove(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon' && _poly){ polyMoveAt(e); return; }
     if(!drag) return;
@@ -891,6 +897,7 @@ async function mudarPagina(delta){
     updateCss();                                         // segue o mouse (a margem cobre)
   });
   window.addEventListener('mouseup', function(e){
+    if(_cota){ cotaEnd(e); return; }
     if(_draw){ drawEnd(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon'){ polyClickAt(e); return; }   // clique = ponto do polígono
     if(!drag) return;
@@ -1288,9 +1295,123 @@ function renderDrawings(){
     if(_draw) out+=shapeToSvg(_draw, true);
     out+=polyPreviewSvg();
   }
+  // Cotas — nível de prancha (independem de apontamento aberto)
+  (TRENA.cotas||[]).filter(naPagina).forEach(c=>{ out+=cotaToSvg(c, false); });
+  if(_cota){ const m=TRENA.m_por_pt?_ptLen(_cota.a,_cota.b)*TRENA.m_por_pt:null; out+=cotaToSvg({a:_cota.a,b:_cota.b,metros:m,color:COTA_COLOR}, true); }
   let defs=''; _patNeeded.forEach(k=>{ const i=k.indexOf('|'); defs+=patDef(k.slice(0,i), k.slice(i+1)); });
   svg.innerHTML=(defs?`<defs>${defs}</defs>`:'')+out;
   _patNeeded=null;
+}
+
+// ═══ COTAS / TRENA (W3): medição em nível de prancha ═════════════════════════
+// Persistidas em camadas_estado_auria.trena_json da prancha BASE:
+//   { m_por_pt:number|null, cotas:[{a:{nx,ny}, b:{nx,ny}, pg, metros, color}] }
+// m_por_pt = metros por ponto-PDF (a distância é medida em pontos da página, que
+// são uniformes, ao contrário das coords normalizadas por eixo).
+let TRENA={ m_por_pt:null, cotas:[] };
+let COTA_MODE=null;               // 'cal' | 'cota' | null
+let _cota=null;                   // segmento em construção
+const COTA_COLOR='#0EA5E9';
+
+function cotaActive(){ return !!(COTA_MODE && PRANCHA && V.page); }
+function _basePageDims(){ const [x1,y1,x2,y2]=V.page.view; return {w:x2-x1,h:y2-y1}; }
+function _ptLen(a,b){ const d=_basePageDims(); return Math.hypot((b.nx-a.nx)*d.w,(b.ny-a.ny)*d.h); }
+
+async function carregarTrena(){
+  TRENA={ m_por_pt:null, cotas:[] };
+  if(!(EMP&&PRANCHA)) return;
+  try{
+    const { data }=await sb.from('camadas_estado_auria').select('trena_json')
+      .eq('empreendimento_id',EMP.id).eq('prancha_id',PRANCHA.id).maybeSingle();
+    if(data&&data.trena_json){ TRENA={ m_por_pt:data.trena_json.m_por_pt||null, cotas:data.trena_json.cotas||[] }; }
+  }catch(e){ console.warn('carregarTrena:',e.message||e); }
+}
+let _saveTrenaTimer=null;
+function salvarTrena(){
+  if(!(EMP&&PRANCHA)) return;
+  clearTimeout(_saveTrenaTimer);
+  _saveTrenaTimer=setTimeout(async()=>{
+    try{ await sb.from('camadas_estado_auria').upsert({
+        empreendimento_id:EMP.id, prancha_id:PRANCHA.id, trena_json:TRENA, atualizado_por:USER.id
+      }, { onConflict:'empreendimento_id,prancha_id' }); }
+    catch(e){ console.warn('salvarTrena:',e.message||e); }
+  },400);
+}
+
+// Painel flutuante de cotas
+function toggleCota(){
+  const el=$('cotaPanel'); const abrir=(el.style.display==='none'||!el.style.display);
+  el.style.display=abrir?'block':'none';
+  $('btnCota').classList.toggle('on',abrir);
+  if(!abrir){ COTA_MODE=null; $('stage').classList.toggle('modo-pin',!!DRAW_TOOL||PIN_EDIT||APONTAR); }
+  renderCotaPanel();
+}
+function renderCotaPanel(){
+  const el=$('cotaPanel'); if(!el||el.style.display==='none') return;
+  const calOk=!!TRENA.m_por_pt;
+  const lista=(TRENA.cotas||[]).map((c,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
+      <span style="width:9px;height:9px;border-radius:2px;background:${c.color||COTA_COLOR}"></span>
+      <span style="flex:1">${c.metros!=null?c.metros.toFixed(2).replace('.',',')+' m':'—'}</span>
+      <button onclick="delCota(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`).join('')
+      || '<div style="font-size:10.5px;color:var(--mut);margin-top:4px">Nenhuma cota.</div>';
+  el.innerHTML=`<div style="display:flex;align-items:center;margin-bottom:6px">
+      <b style="flex:1;font-size:12px">📏 Cotas</b>
+      <button onclick="toggleCota()" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">✕</button></div>
+    <div style="font-size:10.5px;color:${calOk?'var(--ok)':'var(--warn)'};margin-bottom:7px">${calOk?'✓ Escala calibrada':'⚠ Escala não calibrada'}</div>
+    <div style="display:flex;gap:5px;margin-bottom:8px">
+      <button class="btn-sec" onclick="setCotaMode('cal')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cal'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">🎯 Calibrar</button>
+      <button class="btn-sec" onclick="setCotaMode('cota')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cota'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">📏 Medir</button>
+    </div>
+    <div style="max-height:130px;overflow:auto">${lista}</div>`;
+}
+function setCotaMode(m){
+  COTA_MODE=(COTA_MODE===m?null:m);
+  $('stage').classList.toggle('modo-pin', !!COTA_MODE||!!DRAW_TOOL||PIN_EDIT||APONTAR);
+  $('modoHint').textContent = COTA_MODE==='cal' ? 'arraste sobre um comprimento CONHECIDO e informe os metros'
+    : COTA_MODE==='cota' ? 'arraste para medir uma distância'
+    : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
+  renderCotaPanel();
+}
+function delCota(i){ if(TRENA.cotas&&i>=0&&i<TRENA.cotas.length){ TRENA.cotas.splice(i,1); salvarTrena(); renderDrawings(); renderCotaPanel(); } }
+
+function cotaStart(e){ const pt=_drawPt(e); _cota={ a:{nx:pt.nx,ny:pt.ny}, b:{nx:pt.nx,ny:pt.ny} }; }
+function cotaMove(e){ if(!_cota) return; const pt=_drawPt(e); _cota.b={nx:pt.nx,ny:pt.ny}; renderDrawings(); }
+function cotaEnd(e){
+  const s=_cota; _cota=null;
+  if(s && PRANCHA){
+    const Lpt=_ptLen(s.a,s.b);
+    if(Lpt>2){
+      if(COTA_MODE==='cal' || !TRENA.m_por_pt){
+        const v=prompt('Comprimento real deste segmento, em metros:', '');
+        const m=parseFloat((v||'').replace(',','.'));
+        if(m>0){
+          TRENA.m_por_pt=m/Lpt;
+          if(COTA_MODE==='cota') TRENA.cotas.push({a:s.a,b:s.b,pg:V.pageNum,metros:m,color:COTA_COLOR});
+          salvarTrena();
+        }
+      }else{
+        TRENA.cotas.push({a:s.a,b:s.b,pg:V.pageNum,metros:Lpt*TRENA.m_por_pt,color:COTA_COLOR});
+        salvarTrena();
+      }
+    }
+  }
+  renderDrawings(); renderCotaPanel();
+}
+
+// Serializa uma cota (linha de dimensão: seta dupla + ticks + rótulo em metros)
+function cotaToSvg(c, preview){
+  const f=n=>n.toFixed(1), P=p=>pageToScreen(p.nx,p.ny), A=P(c.a), B=P(c.b), col=c.color||COTA_COLOR, op=preview?0.85:1;
+  const ang=Math.atan2(B.y-A.y,B.x-A.x), perp=ang+Math.PI/2, tk=7, ah=8;
+  const tx=Math.cos(perp)*tk, ty=Math.sin(perp)*tk;
+  const st=`stroke="${col}" stroke-width="2" fill="none" stroke-linecap="round" opacity="${op}"`;
+  const ha=`M${f(A.x)} ${f(A.y)} L${f(A.x+ah*Math.cos(ang-0.4))} ${f(A.y+ah*Math.sin(ang-0.4))} M${f(A.x)} ${f(A.y)} L${f(A.x+ah*Math.cos(ang+0.4))} ${f(A.y+ah*Math.sin(ang+0.4))}`;
+  const hb=`M${f(B.x)} ${f(B.y)} L${f(B.x-ah*Math.cos(ang-0.4))} ${f(B.y-ah*Math.sin(ang-0.4))} M${f(B.x)} ${f(B.y)} L${f(B.x-ah*Math.cos(ang+0.4))} ${f(B.y-ah*Math.sin(ang+0.4))}`;
+  const tA=`M${f(A.x-tx)} ${f(A.y-ty)} L${f(A.x+tx)} ${f(A.y+ty)}`, tB=`M${f(B.x-tx)} ${f(B.y-ty)} L${f(B.x+tx)} ${f(B.y+ty)}`;
+  const mx=(A.x+B.x)/2, my=(A.y+B.y)/2, ox=Math.cos(perp)*14, oy=Math.sin(perp)*14;
+  const lbl=c.metros!=null?(c.metros.toFixed(2).replace('.',',')+' m'):'?';
+  return `<line x1="${f(A.x)}" y1="${f(A.y)}" x2="${f(B.x)}" y2="${f(B.y)}" ${st}/>`+
+         `<path d="${ha} ${hb} ${tA} ${tB}" ${st}/>`+
+         `<text x="${f(mx+ox)}" y="${f(my+oy)}" font-family="sans-serif" font-size="12" font-weight="700" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="3" fill="${col}" opacity="${op}">${lbl}</text>`;
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
