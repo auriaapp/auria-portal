@@ -82,6 +82,27 @@ tbody tr.apt-done:hover td{background:#E7F6ED}
 .st-analise{background:#FEF5E7;color:#B9770E}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .atr{color:#C0392B;font-weight:600}
+/* Início / central do analista */
+.sec-h{font-size:13px;font-weight:800;color:#334155;margin:0 0 10px;text-transform:uppercase;letter-spacing:.03em}
+.feed{display:flex;flex-direction:column;gap:9px}
+.feed-it{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #E6EBF1;border-left:4px solid #94A3B8;border-radius:11px;padding:11px 13px;cursor:pointer;transition:box-shadow .15s,transform .15s}
+.feed-it:hover{box-shadow:0 6px 18px rgba(16,42,67,.10);transform:translateY(-1px)}
+.fi-ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.fi-b{flex:1;min-width:0}
+.fi-t{font-weight:700;font-size:13px;color:#1A2F4A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fi-m{font-size:11.5px;color:#64748B;margin-top:2px}
+.fi-go{font-size:11px;font-weight:700;color:#2563EB;white-space:nowrap}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;background:#fff;border:1px solid #E6EBF1;border-radius:12px;padding:10px}
+.cal-dow{text-align:center;font-size:10px;font-weight:700;color:#94A3B8;padding:2px 0}
+.cal-cell{position:relative;text-align:center;font-size:12px;color:#334155;padding:6px 0;border-radius:7px}
+.cal-today{background:#1E3A5F;color:#fff;font-weight:800}
+.cal-dot{position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%}
+.prox-it{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #F1F5F9;cursor:pointer;font-size:12px}
+.prox-it:hover{background:#F8FAFC}
+.prox-d{color:#64748B;font-variant-numeric:tabular-nums;white-space:nowrap}
+.prox-t{flex:1;color:#1A2F4A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prox-tag{font-size:10px;font-weight:700;color:#D97706;background:#FEF3C7;border-radius:10px;padding:1px 7px}
+@media(max-width:820px){.inicio-grid{grid-template-columns:1fr!important}}
 /* agenda */
 .ag-day{background:#fff;border:1px solid #E6EBF1;border-radius:10px;padding:12px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(16,42,67,.05)}
 .ag-day .d{font-size:13px;font-weight:700;color:#1A2F4A;margin-bottom:8px}
@@ -239,7 +260,8 @@ tbody tr.apt-done:hover td{background:#E7F6ED}
     </div>
     <nav class="nav">
       <div class="nav-sec">Trabalho</div>
-      <div class="nav-item active" id="nav-emp" onclick="goPage('emp')">🏢 Meus Empreendimentos</div>
+      <div class="nav-item active" id="nav-inicio" onclick="goPage('inicio')">🏠 Início</div>
+      <div class="nav-item" id="nav-emp" onclick="goPage('emp')">🏢 Meus Empreendimentos</div>
       <div class="nav-item" id="nav-app" onclick="location.href='app.html'">📐 Auria App</div>
       <div class="nav-item" id="nav-msg" onclick="goPage('msg')">✉ Mensagens</div>
       <div class="nav-item" id="nav-forn" onclick="goPage('forn')">🏢 Fornecedores</div>
@@ -414,7 +436,7 @@ async function afterLogin(user){
   document.getElementById('hoje').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   await loadEmpreendimentos();
   await loadSolicitacoes();
-  goPage('emp');
+  goPage('inicio');
 }
 async function doLogout(){await sb.auth.signOut();location.replace('./');}
 
@@ -450,9 +472,10 @@ async function loadEmpreendimentos(){
 
 function goPage(p){
   PAGE=p;
-  ['emp','msg','forn','agenda','kanban'].forEach(x=>{var el=document.getElementById('nav-'+x); if(el) el.classList.toggle('active',x===p);});
-  document.getElementById('pageTitle').textContent={emp:'Meus Empreendimentos',msg:'Mensagens',forn:'Fornecedores',agenda:'Agenda',kanban:'Kanban'}[p];
-  if(p==='emp')renderHome();
+  ['inicio','emp','msg','forn','agenda','kanban'].forEach(x=>{var el=document.getElementById('nav-'+x); if(el) el.classList.toggle('active',x===p);});
+  document.getElementById('pageTitle').textContent={inicio:'Início',emp:'Meus Empreendimentos',msg:'Mensagens',forn:'Fornecedores',agenda:'Agenda',kanban:'Kanban'}[p];
+  if(p==='inicio')renderInicio();
+  else if(p==='emp')renderHome();
   else if(p==='msg')renderMensagens();
   else if(p==='forn')renderFornecedoresPage();
   else if(p==='agenda')renderAgenda();
@@ -487,6 +510,113 @@ function abrirPrimeiraSolicitacao(){
   if(!empId) return;
   openEmp(empId);
   setTimeout(()=>{ try{ empTab('ctr'); }catch(e){} }, 60);
+}
+
+// ═══ INÍCIO / CENTRAL — feed de pendências + calendário (dados do analista) ═══
+var INICIO={apts:[],solic:[]};
+function _isoToDate(s){ if(!s)return null; const p=String(s).slice(0,10).split('-'); if(p.length<3)return null; const d=new Date(+p[0],+p[1]-1,+p[2]); return isNaN(d)?null:d; }
+function _daysUntil(iso){ const d=_isoToDate(iso); if(!d)return null; const t=new Date(); return Math.round((d-new Date(t.getFullYear(),t.getMonth(),t.getDate()))/864e5); }
+function _empIdByNome(nome){ const e=EMPS.find(x=>x.nome===nome); return e?e.id:null; }
+function _brl(v){ return 'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function irApt(eid){ if(!eid){ goPage('emp'); return; } openEmp(eid); }
+function irContrato(eid){ if(!eid){ goPage('emp'); return; } openEmp(eid); setTimeout(()=>{ try{ empTab('ctr'); }catch(e){} },60); }
+
+async function loadInicioData(){
+  INICIO={apts:[],solic:[]};
+  const nomes=EMPS.map(e=>e.nome);
+  if(nomes.length){
+    try{ const r=await sb.from('apontamentos')
+        .select('id,titulo,empreendimento,disciplina,prazo_min,status,atrasado,prioridade')
+        .in('empreendimento',nomes);
+      INICIO.apts=r.data||[];
+    }catch(e){ console.warn('inicio apts',e.message||e); }
+  }
+  try{
+    const rc=await sb.from('contratos_auria').select('*');
+    const ctrs=rc.data||[], map={}; ctrs.forEach(c=>{ map[c.id]=c; });
+    if(ctrs.length){
+      const rp=await sb.from('parcelas_auria')
+        .select('contrato_id,numero,valor,descricao,status,vencimento').eq('status','solicitada');
+      INICIO.solic=(rp.data||[]).map(p=>{ const c=map[p.contrato_id]||{};
+        return Object.assign({},p,{ empreendimento_id:c.empreendimento_id, fornecedor:(c.fornecedor_nome||c.fornecedor||''), disciplina:c.disciplina }); });
+    }
+  }catch(e){ console.warn('inicio solic',e.message||e); }
+}
+
+function _miniCal(apts){
+  const now=new Date(), y=now.getFullYear(), m=now.getMonth(), today=now.getDate();
+  const startDow=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate();
+  const cnt={};
+  apts.forEach(a=>{ if(a.status==='Resolvido')return; const d=_isoToDate(a.prazo_min);
+    if(d&&d.getFullYear()===y&&d.getMonth()===m){ const n=d.getDate(); cnt[n]=cnt[n]||{n:0,late:false};
+      cnt[n].n++; if(_daysUntil(a.prazo_min)<0) cnt[n].late=true; } });
+  let cells=''; ['D','S','T','Q','Q','S','S'].forEach(w=>cells+=`<div class="cal-dow">${w}</div>`);
+  for(let i=0;i<startDow;i++) cells+='<div></div>';
+  for(let d=1;d<=days;d++){ const c=cnt[d];
+    const dot=c?`<span class="cal-dot" style="background:${c.late?'#DC2626':'#D97706'}"></span>`:'';
+    cells+=`<div class="cal-cell${d===today?' cal-today':''}"${c?` title="${c.n} prazo(s)"`:''}>${d}${dot}</div>`; }
+  return `<div class="cal">${cells}</div>`;
+}
+function _proximos(apts){
+  const up=apts.filter(a=>a.status!=='Resolvido' && _daysUntil(a.prazo_min)!=null && _daysUntil(a.prazo_min)>=0 && _daysUntil(a.prazo_min)<=14)
+    .sort((a,b)=>_daysUntil(a.prazo_min)-_daysUntil(b.prazo_min)).slice(0,8);
+  if(!up.length) return '<div style="color:#94A3B8;font-size:12px;margin-top:10px">Sem prazos nos próximos 14 dias.</div>';
+  return '<div style="margin-top:12px">'+up.map(a=>{ const eid=_empIdByNome(a.empreendimento), d=_daysUntil(a.prazo_min);
+    return `<div class="prox-it" onclick="irApt('${eid}')"><span class="prox-d">${fmtBR(a.prazo_min)}</span><span class="prox-t">${esc(a.titulo||a.id)}</span><span class="prox-tag">${d===0?'hoje':d+'d'}</span></div>`;
+  }).join('')+'</div>';
+}
+
+async function renderInicio(){
+  const c=document.getElementById('content');
+  c.innerHTML='<div class="loading">Carregando sua central…</div>';
+  if(!EMPS.length){ c.innerHTML='<div class="empty"><div class="emoji">🏗️</div><h3>Nenhum empreendimento atribuído</h3><p>Peça ao gestor para liberar seu acesso na Distribuição.</p></div>'; return; }
+  await loadInicioData();
+  const apts=INICIO.apts, solic=INICIO.solic;
+  const atrasados=apts.filter(a=>a.status!=='Resolvido' && (a.atrasado || (_daysUntil(a.prazo_min)!=null && _daysUntil(a.prazo_min)<0)));
+  const vencendo=apts.filter(a=>a.status!=='Resolvido' && atrasados.indexOf(a)<0 && _daysUntil(a.prazo_min)!=null && _daysUntil(a.prazo_min)>=0 && _daysUntil(a.prazo_min)<=7);
+  const abertos=apts.filter(a=>a.status!=='Resolvido').length;
+  const nome=(USER&&(USER.nome||'').split(' ')[0])||'';
+
+  const tile=(lbl,val,col,onclick)=>`<div onclick="${onclick||''}" style="flex:1;min-width:130px;background:#fff;border:1px solid #E6EBF1;border-left:4px solid ${col};border-radius:12px;padding:14px 16px;cursor:${onclick?'pointer':'default'};box-shadow:0 1px 3px rgba(16,42,67,.05)">
+      <div style="font-size:26px;font-weight:800;color:${col};line-height:1">${val}</div><div style="font-size:12px;color:#64748B;font-weight:600;margin-top:4px">${lbl}</div></div>`;
+
+  const feed=[];
+  atrasados.sort((a,b)=>(_daysUntil(a.prazo_min)||0)-(_daysUntil(b.prazo_min)||0));
+  atrasados.forEach(a=>{ const eid=_empIdByNome(a.empreendimento), d=_daysUntil(a.prazo_min);
+    feed.push(`<div class="feed-it" onclick="irApt('${eid}')" style="border-left-color:#DC2626">
+      <div class="fi-ic" style="background:#FEE2E2">🔴</div><div class="fi-b">
+      <div class="fi-t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+      <div class="fi-m">${esc(a.empreendimento)} · <b style="color:#DC2626">atrasado${d!=null?' há '+Math.abs(d)+'d':''}</b> · prazo ${fmtBR(a.prazo_min)||'—'}</div></div>
+      <span class="fi-go">resolver ›</span></div>`); });
+  vencendo.sort((a,b)=>(_daysUntil(a.prazo_min)||0)-(_daysUntil(b.prazo_min)||0));
+  vencendo.forEach(a=>{ const eid=_empIdByNome(a.empreendimento), d=_daysUntil(a.prazo_min);
+    feed.push(`<div class="feed-it" onclick="irApt('${eid}')" style="border-left-color:#D97706">
+      <div class="fi-ic" style="background:#FEF3C7">🟠</div><div class="fi-b">
+      <div class="fi-t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+      <div class="fi-m">${esc(a.empreendimento)} · vence ${d===0?'hoje':'em '+d+'d'} · ${fmtBR(a.prazo_min)||'—'}</div></div>
+      <span class="fi-go">ver ›</span></div>`); });
+  solic.forEach(p=>{ const eid=p.empreendimento_id;
+    feed.push(`<div class="feed-it" onclick="irContrato('${eid}')" style="border-left-color:#2563EB">
+      <div class="fi-ic" style="background:#DBEAFE">💵</div><div class="fi-b">
+      <div class="fi-t">Faturamento solicitado — parcela ${esc(String(p.numero||''))}${p.valor?' · '+_brl(p.valor):''}</div>
+      <div class="fi-m">${esc(p.fornecedor||'Fornecedor')}${p.disciplina?' · '+esc(p.disciplina):''} · aguardando sua autorização</div></div>
+      <span class="fi-go">autorizar ›</span></div>`); });
+
+  const feedHtml=feed.length?feed.join(''):'<div class="empty" style="padding:30px"><div class="emoji">✅</div><h3>Tudo em dia</h3><p>Nenhuma pendência urgente nos seus empreendimentos.</p></div>';
+
+  c.innerHTML=`
+    <div style="margin-bottom:16px"><h2 style="margin:0;font-size:20px;color:#1A2F4A">Olá, ${esc(nome)} 👋</h2>
+      <div style="color:#94A3B8;font-size:13px">Sua central — pendências e prazos dos seus empreendimentos.</div></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">
+      ${tile('Atrasados',atrasados.length,'#DC2626', atrasados.length?`irApt('${_empIdByNome(atrasados[0].empreendimento)}')`:'')}
+      ${tile('Vencendo (7 dias)',vencendo.length,'#D97706','')}
+      ${tile('Solicitações de faturamento',solic.length,'#2563EB', solic.length?'abrirPrimeiraSolicitacao()':'')}
+      ${tile('Apontamentos abertos',abertos,'#2980B9','')}
+    </div>
+    <div class="inicio-grid" style="display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start">
+      <div><h3 class="sec-h">Precisa de atenção</h3><div class="feed">${feedHtml}</div></div>
+      <div><h3 class="sec-h">${new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</h3>${_miniCal(apts)}${_proximos(apts)}</div>
+    </div>`;
 }
 
 // Analista sobe/troca a logo APENAS dos empreendimentos que lhe foram liberados.
