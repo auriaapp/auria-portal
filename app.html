@@ -139,6 +139,7 @@
         <select id="selEmp" onchange="trocarEmp()"></select>
       </div>
       <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0], PDF_OVERLAY)">
+      <input type="file" id="pdfInputMulti" accept="application/pdf" multiple style="display:none" onchange="onMultiFiles(this.files)">
 
       <!-- Disciplinas e Pranchas -->
       <div>
@@ -146,6 +147,17 @@
         <div id="camList" style="margin:6px 0"></div>
         <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="adicionarPrancha()" disabled>＋ Adicionar Prancha</button>
         <div class="hint" style="margin-top:8px">O PDF fica no seu computador — o Auria registra a identidade da prancha e guarda pins, apontamentos e calibração. Abrir o mesmo arquivo recupera tudo.</div>
+      </div>
+
+      <!-- Análises salvas -->
+      <div style="border-top:1px solid var(--line);padding-top:10px">
+        <label>Análises salvas</label>
+        <div style="display:flex;gap:6px;margin:6px 0">
+          <select id="selAnalise" style="flex:1;font-size:12px;padding:6px"><option value="">— análises salvas —</option></select>
+          <button class="tb" onclick="abrirAnaliseSel()" title="Abrir análise (selecione os PDFs)" style="font-size:13px;padding:6px 9px">📂</button>
+          <button class="tb" onclick="excluirAnaliseSel()" title="Excluir análise selecionada" style="font-size:13px;padding:6px 9px">🗑</button>
+        </div>
+        <button class="btn-sec" onclick="salvarAnalise()" style="width:100%;font-size:12px" disabled id="btnSalvarAnalise">💾 Salvar análise atual</button>
       </div>
 
       <div style="border-top:1px solid var(--line);padding-top:10px">
@@ -378,6 +390,7 @@ function trocarEmp(){
   renderCamadas();
   carregarApts();
   carregarFornecedores();
+  carregarAnalises();
 }
 
 // ── Abrir PDF local: hash → registro → render ────────────────────────────────
@@ -393,6 +406,88 @@ function abrirDialogo(overlay){
 }
 // "+ Adicionar Prancha": abre a BASE se ainda não houver; senão, adiciona sobreposição
 function adicionarPrancha(){ abrirDialogo(!!(PRANCHA && LAYERS.length)); }
+
+// ═══ ANÁLISES SALVAS ════════════════════════════════════════════════════════
+// Guarda o CONJUNTO de pranchas/camadas (ordem + identidade por hash) em
+// analises_auria. Reabrir: seleciona os PDFs (multi) → casa por hash → remonta.
+let ANALISES=[];
+let _analisePend=null;
+async function carregarAnalises(){
+  ANALISES=[];
+  if(EMP){
+    try{ const { data }=await sb.from('analises_auria').select('*').eq('empreendimento_id',EMP.id).order('criado_em',{ascending:false}); ANALISES=data||[]; }
+    catch(e){ console.warn('carregarAnalises:',e.message||e); }
+  }
+  renderAnalises();
+}
+function renderAnalises(){
+  const sel=$('selAnalise'); if(sel) sel.innerHTML='<option value="">— análises salvas —</option>'+ANALISES.map(a=>`<option value="${a.id}">${esc(a.nome)} · ${(a.pranchas||[]).length} prancha(s)</option>`).join('');
+  const b=$('btnSalvarAnalise'); if(b) b.disabled=!(EMP&&LAYERS.length);
+}
+async function salvarAnalise(){
+  if(!EMP){ alert('Selecione o empreendimento.'); return; }
+  if(!LAYERS.length){ alert('Abra ao menos a prancha base antes de salvar a análise.'); return; }
+  const nomeDefault=(LAYERS[0].prancha.arquivo_nome||'Análise')+' — '+new Date().toLocaleDateString('pt-BR');
+  const nome=prompt('Nome da análise:', nomeDefault); if(!nome) return;
+  const pranchas=LAYERS.map((L,i)=>({ prancha_id:L.prancha.id, arquivo_nome:L.prancha.arquivo_nome||L.nome, arquivo_hash:L.prancha.arquivo_hash||L.prancha._hash, ordem:i }));
+  try{
+    const { error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome, pranchas, criado_por:USER.id });
+    if(error) throw error;
+    await carregarAnalises();
+    alert('Análise salva. Para retomá-la depois, selecione-a e clique 📂, escolhendo os mesmos PDFs.');
+  }catch(e){ alert('Erro ao salvar análise: '+(e.message||e)); }
+}
+function abrirAnaliseSel(){
+  const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
+  const an=ANALISES.find(a=>a.id===id); if(!an) return;
+  _analisePend=an;
+  const n=(an.pranchas||[]).length;
+  alert('Selecione os '+n+' PDF(s) desta análise (pode escolher todos de uma vez). O Auria remonta as camadas, escala, cotas e apontamentos.');
+  const inp=$('pdfInputMulti'); inp.value=''; inp.click();
+}
+async function excluirAnaliseSel(){
+  const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
+  const an=ANALISES.find(a=>a.id===id); if(!an) return;
+  if(!confirm('Excluir a análise "'+an.nome+'"? (as pranchas e apontamentos NÃO são apagados)')) return;
+  try{ const { error }=await sb.from('analises_auria').delete().eq('id',id); if(error) throw error; await carregarAnalises(); }
+  catch(e){ alert('Erro ao excluir: '+(e.message||e)); }
+}
+// Recebe os PDFs selecionados, casa por hash com a análise pendente e remonta tudo.
+async function onMultiFiles(files){
+  const an=_analisePend; _analisePend=null;
+  const arr=[...(files||[])]; if(!an || !arr.length) return;
+  try{
+    const byHash={};
+    for(const f of arr){
+      if(f.type!=='application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) continue;
+      const buf=await f.arrayBuffer(); const hash=await sha256Hex(buf);
+      const doc=await pdfjsLib.getDocument({data:buf}).promise; const page=await doc.getPage(1);
+      byHash[hash]={file:f,doc,page};
+    }
+    const metas=(an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+    const montadas=[]; const faltando=[];
+    for(const m of metas){
+      const hit=byHash[m.arquivo_hash];
+      if(!hit){ faltando.push(m.arquivo_nome||'(sem nome)'); continue; }
+      const pr=await registrarPranchaDb(hit.file.name, m.arquivo_hash, hit.doc, hit.page);
+      const L={ prancha:pr, doc:hit.doc, page:hit.page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:hit.file.name };
+      montadas.push({ L, base:(m.ordem||0)===0 });
+    }
+    if(!montadas.length){ alert('Nenhum dos arquivos selecionados corresponde a esta análise.'); return; }
+    const base=montadas.find(x=>x.base)||montadas[0];
+    LAYERS=[base.L]; setBaseShims();                    // base = referência (offset 0 / escala 1)
+    for(const x of montadas){ if(x===base) continue; await carregarEstadoCamada(x.L); LAYERS.push(x.L); }
+    F.valido=false;
+    $('pageLbl').textContent='1 / '+base.L.doc.numPages;
+    fitPage();
+    $('dropHint').style.display='none';
+    $('btnAddCam').disabled=false;
+    renderCamadas(); renderPins(); renderListaApts();
+    carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); });
+    renderAnalises();
+    if(faltando.length) alert('Análise aberta. Não encontrei nos arquivos selecionados: '+faltando.join(', ')+'. Adicione-os depois com "+ Adicionar Prancha".');
+  }catch(e){ console.error(e); alert('Erro ao abrir a análise: '+(e.message||e)); }
+}
 
 async function abrirPdfLocal(file, overlay){
   if(!file) return;
@@ -521,6 +616,7 @@ function renderCamadas(){
   };
 
   el.innerHTML=lockRow+LAYERS.map((L,i)=>card(L,i)).join('');
+  const bsa=$('btnSalvarAnalise'); if(bsa) bsa.disabled=!(EMP&&LAYERS.length);
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
 function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
