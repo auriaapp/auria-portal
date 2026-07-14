@@ -153,15 +153,20 @@
           <label style="flex:1">Apontamentos</label>
           <button class="tb" id="fApView" onclick="toggleAptView()" title="Alternar resumido / estendido" style="font-size:13px;padding:4px 8px">▤</button>
         </div>
-        <div id="fApChips" style="display:flex;gap:5px;flex-wrap:wrap;margin:6px 0"></div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <select id="fApPrio" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px">
-            <option value="">Criticidade</option><option>Severa / Imediata</option><option>Importante / Programada</option><option>Observação / Atenção</option>
-          </select>
-          <select id="fApDisc" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px"><option value="">Todas as disciplinas</option></select>
+        <div style="display:flex;gap:6px;margin:6px 0">
+          <input id="fApTxt" oninput="renderListaApts()" placeholder="Buscar…"
+                 style="flex:1;border:1.5px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;outline:none;background:var(--panel);color:var(--txt)">
+          <button class="tb" id="fApFiltBtn" onclick="toggleFiltros()" title="Filtros" style="font-size:12px;padding:6px 10px;white-space:nowrap">⏵ Filtros</button>
         </div>
-        <input id="fApTxt" oninput="renderListaApts()" placeholder="Buscar por id, título, descrição…"
-               style="width:100%;border:1.5px solid #E2E8F0;border-radius:8px;padding:7px 10px;font-size:12px;outline:none;margin-bottom:8px">
+        <div id="fApPanel" style="display:none;margin-bottom:8px">
+          <div id="fApChips" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px"></div>
+          <div style="display:flex;gap:6px">
+            <select id="fApPrio" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px">
+              <option value="">Criticidade</option><option>Severa / Imediata</option><option>Importante / Programada</option><option>Observação / Atenção</option>
+            </select>
+            <select id="fApDisc" onchange="renderListaApts()" style="flex:1;font-size:12px;padding:6px"><option value="">Todas as disciplinas</option></select>
+          </div>
+        </div>
         <div id="aptLista"><div class="hint">Selecione um empreendimento.</div></div>
       </div>
     </aside>
@@ -1796,11 +1801,13 @@ let APT_FILT=new Set();  // tokens de status/atraso ativos (multi-seleção)
 function toggleAptView(){ APT_VIEW=(APT_VIEW==='resumo'?'estendido':'resumo'); const b=$('fApView'); if(b) b.textContent=(APT_VIEW==='resumo'?'▤':'▦'); renderListaApts(); }
 function _dispData(s){ if(!s) return ''; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); return m?`${m[3]}/${m[2]}/${m[1]}`:String(s); }
 function _parseData(s){ if(!s) return null; s=String(s); let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s); if(m) return new Date(+m[1],+m[2]-1,+m[3]); m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if(m) return new Date(+m[3],+m[2]-1,+m[1]); return null; }
-// Atrasado: em aberto vencido (flag do banco) OU resolvido cuja conclusão passou do prazo.
+// Atrasado: em aberto vencido (flag do banco) OU resolvido concluído após o prazo.
+// No resolvido o prazo_min fica vazio (participantes concluídos são excluídos do
+// cálculo), então comparamos prazo × conclusão POR PARTICIPANTE.
 function estaAtrasado(a){
   if(a.status!=='Resolvido') return !!a.atrasado;
-  const pr=_parseData(a.prazo_min), cc=_parseData(a.conclusao);
-  return !!(pr && cc && cc>pr);
+  const ps=a.participantes||{};
+  return Object.values(ps).some(p=>{ const pr=_parseData(p&&p.prazo), cc=_parseData(p&&p.conclusao); return !!(pr&&cc&&cc>pr); });
 }
 function renderFiltroChips(){
   const el=$('fApChips'); if(!el) return;
@@ -1810,6 +1817,10 @@ function renderFiltroChips(){
   }).join('');
 }
 function toggleFiltro(t){ if(APT_FILT.has(t)) APT_FILT.delete(t); else APT_FILT.add(t); renderFiltroChips(); renderListaApts(); }
+function toggleFiltros(){ const p=$('fApPanel'); if(!p) return; const open=(p.style.display==='none'||!p.style.display); p.style.display=open?'block':'none'; const b=$('fApFiltBtn'); if(b){ b.textContent=(open?'⏷':'⏵')+' Filtros'+_nFiltrosTxt(); } }
+function _nFiltros(){ return APT_FILT.size + (($('fApPrio')&&$('fApPrio').value)?1:0) + (($('fApDisc')&&$('fApDisc').value)?1:0); }
+function _nFiltrosTxt(){ const n=_nFiltros(); return n?(' ('+n+')'):''; }
+function _atualizaBtnFiltro(){ const b=$('fApFiltBtn'); if(!b) return; const aberto=$('fApPanel')&&$('fApPanel').style.display!=='none'&&$('fApPanel').style.display!==''; b.textContent=(aberto?'⏷':'⏵')+' Filtros'+_nFiltrosTxt(); b.classList.toggle('on', _nFiltros()>0); }
 function popularFiltroDisc(){
   const sel=$('fApDisc'); if(!sel) return;
   const cur=sel.value;
@@ -1818,6 +1829,7 @@ function popularFiltroDisc(){
 }
 function renderListaApts(){
   const el=$('aptLista'); if(!el) return;
+  try{ _atualizaBtnFiltro(); }catch(e){}
   if(!EMP){ el.innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
   const txt=($('fApTxt').value||'').toLowerCase();
   const prio=($('fApPrio')&&$('fApPrio').value)||'';
