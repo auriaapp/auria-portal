@@ -130,16 +130,13 @@
         <select id="selEmp" onchange="trocarEmp()"></select>
       </div>
       <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0], PDF_OVERLAY)">
-      <button class="btn" id="btnAbrir" onclick="abrirDialogo(false)" disabled>📂 Abrir prancha (PDF)</button>
-      <div id="prInfo"></div>
-      <div class="hint">O PDF fica no seu computador — o Auria registra a identidade da prancha e
-        guarda pins, apontamentos e calibração. Abrir o mesmo arquivo em qualquer máquina recupera tudo.</div>
 
-      <!-- Camadas (sobreposição) -->
-      <div style="border-top:1px solid var(--line);padding-top:10px">
+      <!-- Disciplinas e Pranchas -->
+      <div>
         <label>Disciplinas e Pranchas</label>
         <div id="camList" style="margin:6px 0"></div>
-        <button class="btn-sec" id="btnAddCam" style="width:100%;font-size:12px" onclick="abrirDialogo(true)" disabled>＋ Adicionar Prancha</button>
+        <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="adicionarPrancha()" disabled>＋ Adicionar Prancha</button>
+        <div class="hint" style="margin-top:8px">O PDF fica no seu computador — o Auria registra a identidade da prancha e guarda pins, apontamentos e calibração. Abrir o mesmo arquivo recupera tudo.</div>
       </div>
 
       <div style="border-top:1px solid var(--line);padding-top:10px">
@@ -353,11 +350,10 @@ async function boot(){
 
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
-  $('btnAbrir').disabled = !EMP;
   // troca de empreendimento zera a prancha/camadas abertas
   LAYERS=[]; setBaseShims(); F.valido=false;
   TRENA={ m_por_pt:null, cotas:[] };
-  $('btnAddCam').disabled=true; $('prInfo').innerHTML='';
+  $('btnAddCam').disabled = !EMP;
   $('dropHint').style.display='flex'; $('pinsSvg').innerHTML=''; $('drawSvg').innerHTML='';
   const cv=$('pdfCanvas'); if(cv){ const c=cv.getContext('2d'); c&&c.clearRect(0,0,cv.width,cv.height); }
   renderCamadas();
@@ -376,6 +372,8 @@ function abrirDialogo(overlay){
   PDF_OVERLAY=!!overlay;
   const inp=$('pdfInput'); inp.value=''; inp.click();
 }
+// "+ Adicionar Prancha": abre a BASE se ainda não houver; senão, adiciona sobreposição
+function adicionarPrancha(){ abrirDialogo(!!(PRANCHA && LAYERS.length)); }
 
 async function abrirPdfLocal(file, overlay){
   if(!file) return;
@@ -407,7 +405,6 @@ async function abrirPdfLocal(file, overlay){
       fitPage();
       $('dropHint').style.display='none';
       $('btnAddCam').disabled=false;
-      atualizarCardBase(hash);
       renderCamadas(); renderPins(); renderListaApts();
       carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); });   // calibração + cotas da prancha
     }
@@ -481,6 +478,7 @@ function renderCamadas(){
   const card=(L,i)=>{
     const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
     const cod=(L.prancha.codigo||L.prancha.arquivo_nome||L.nome||'');
+    const rec=(L.prancha&&L.prancha._nova===false);           // prancha reconhecida (já registrada)
     const corBg=L.cor?`background:${L.cor}`:'background:linear-gradient(135deg,#fff 45%,#111 55%)';
     const posBtn = i===0
       ? `<button class="btn-sec" style="padding:4px 8px;font-size:12px;opacity:.4;cursor:default" title="Prancha base — é a referência de posição">⚙</button>`
@@ -495,7 +493,7 @@ function renderCamadas(){
         <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Ver esta prancha" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">
       </div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding-left:3px">
-        <span style="flex:1;min-width:0;font-size:9.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(cod)}">${esc(cod)}</span>
+        <span style="flex:1;min-width:0;font-size:9.5px;color:${rec?'#34D399':'var(--mut)'};font-weight:${rec?'700':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span>
         ${posBtn}
         <button class="btn-sec" style="padding:4px 6px;font-size:12px" onclick="abrirCorPopup(${i},event)" title="Escolher cor de visualização"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;${corBg}"></span></button>
         ${i>0?`<button class="btn-sec" style="padding:4px 7px;font-size:11px" onclick="camRemover(${i})" title="Remover prancha">✕</button>`:''}
@@ -879,6 +877,7 @@ async function mudarPagina(delta){
   let drag=null;
   stage.addEventListener('mousedown', function(e){
     if(!V.page) return;
+    if(e.target.closest && e.target.closest('#cotaPanel')) return;   // cliques no painel de cotas não medem/desenham
     if(e.button!==0) return;                                   // só o esquerdo navega/desenha (direito = apontar)
     if(cotaActive()){ cotaStart(e); return; }                  // medição/cota tem prioridade
     if(drawActive()){                                          // desenho tem prioridade sobre o pan
@@ -892,6 +891,7 @@ async function mudarPagina(delta){
   stage.addEventListener('contextmenu', function(e){
     e.preventDefault();
     if(!V.page || !PRANCHA) return;
+    if(e.target.closest && e.target.closest('#cotaPanel')) return;
     const r=stage.getBoundingClientRect();
     const pt=screenToPage(e.clientX-r.left, e.clientY-r.top);
     if(!(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1)) return;      // só dentro da prancha
@@ -1743,10 +1743,14 @@ function renderListaApts(){
   el.innerHTML=rows.length?rows.map(a=>{
     const i=APTS.indexOf(a);
     const nesta=PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
-    const bg = a.status==='Resolvido' ? 'background:rgba(52,211,153,.16);' : (a.atrasado ? 'background:rgba(245,158,11,.22);' : '');
-    return `<div class="ap-card" style="${bg}border-left-color:${corPrio(a.prioridade)}" onclick="clicarAptLista(${i})">
+    // Cores do desktop: atrasado #FADBD8 (vermelho claro), resolvido #D5F5E3 (verde claro), texto escuro
+    const tint = a.status==='Resolvido' ? {bg:'#D5F5E3',fg:'#145A32',mt:'#1E8449'}
+               : a.atrasado ? {bg:'#FADBD8',fg:'#7B241C',mt:'#A93226'} : null;
+    const cs = tint ? `background:${tint.bg};color:${tint.fg};border-left-color:${corPrio(a.prioridade)}` : `border-left-color:${corPrio(a.prioridade)}`;
+    const ms = tint ? `color:${tint.mt}` : 'color:var(--mut)';
+    return `<div class="ap-card" style="${cs}" onclick="clicarAptLista(${i})">
       <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
-      <div class="m"><span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>
+      <div class="m" style="${ms}"><span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>
         ${esc(a.disciplina||'')}${nesta?' · 📍 nesta prancha':''}</div>
     </div>`;
   }).join(''):'<div class="hint">Nenhum apontamento'+(st||txt?' no filtro':'')+'.</div>';
