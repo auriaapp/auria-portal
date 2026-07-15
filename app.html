@@ -194,6 +194,9 @@
         <span class="tb-info" id="pageLbl">—</span>
         <button class="tb" onclick="mudarPagina(1)">▶</button>
         <span class="sep"></span>
+        <span style="font-size:11px;color:var(--mut)">Foco</span>
+        <select id="selFoco" onchange="setFoco(this.value)" title="Prancha/disciplina ativa — novos apontamentos herdam a disciplina dela" style="display:none;font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--txt);max-width:170px"></select>
+        <span class="sep"></span>
         <button class="tb on" id="btnVerPins" onclick="toggleVerPins()" title="Mostrar/ocultar os pins">👁 Pins</button>
         <button class="tb" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
         <button class="tb" id="btnCota" onclick="toggleCota()" title="Calibrar escala e medir distâncias (cotas)">📏 Cotas</button>
@@ -633,6 +636,7 @@ function renderCamadas(){
 
   el.innerHTML=lockRow+LAYERS.map((L,i)=>card(L,i)).join('');
   const bsa=$('btnSalvarAnalise'); if(bsa) bsa.disabled=!(EMP&&LAYERS.length);
+  updateFoco();
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
 function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
@@ -1639,10 +1643,23 @@ async function iaEnviar(){
 
 // ── Editor ──────────────────────────────────────────────────────────────────
 function proximoId(disc){
-  const pref=(disc? disc.slice(0,3).toUpperCase() : 'GER');
+  // prefixo = 3 primeiras letras SEM acento (EST, ARQ, HID, ELE…), como no desktop
+  const pref=(disc? disc.normalize('NFD').replace(/[̀-ͯ]/g,'').slice(0,3).toUpperCase() : 'GER');
   let num=1;
   APTS.forEach(a=>{ if(a.disciplina===disc && (a.id_num||0)>=num) num=(a.id_num||0)+1; });
   return { id:pref+'-'+num, num };
+}
+// ── Foco: prancha/disciplina ativa para novos apontamentos ──────────────────
+let FOCO_LI=0;   // índice da camada ativa em LAYERS
+function discAtiva(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return L ? (L.prancha.disciplina||deduzDisc(L.nome)||'') : ''; }
+function setFoco(v){ FOCO_LI=Math.max(0,Math.min(LAYERS.length-1,+v||0)); updateFoco(); }
+function updateFoco(){
+  const sel=$('selFoco'); if(!sel) return;
+  if(!LAYERS.length){ sel.style.display='none'; return; }
+  if(FOCO_LI>=LAYERS.length) FOCO_LI=0;
+  sel.style.display='';
+  sel.innerHTML=LAYERS.map((L,i)=>{ const d=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
+    return `<option value="${i}"${i===FOCO_LI?' selected':''}>${esc(d)}${i===0?' (base)':''}</option>`; }).join('');
 }
 function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
 
@@ -1669,7 +1686,7 @@ function locaisDoEmp(){
 }
 
 function novoApontamento(nx,ny){
-  const disc=(PRANCHA&&PRANCHA.disciplina)||discsEd()[0]||'Arquitetura';
+  const disc=discAtiva()||(PRANCHA&&PRANCHA.disciplina)||discsEd()[0]||'Arquitetura';
   const g=proximoId(disc);
   const fornEmails=(FORN_DISC[disc]&&FORN_DISC[disc].emails.join(', '))||'';
   APT_EDIT={
