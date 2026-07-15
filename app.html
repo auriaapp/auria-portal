@@ -218,7 +218,8 @@
           </div>
           <div id="iaMsgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px"></div>
           <div style="border-top:1px solid var(--line);padding:9px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-bottom:6px;cursor:pointer"><input type="checkbox" id="iaImg"> 🖼 Enviar imagem da vista atual (visão)</label>
+            <button class="btn" id="iaAnalisarBtn" onclick="iaAnalisar()" style="width:100%;font-size:12px;margin-bottom:8px">🔍 Analisar prancha (sugerir apontamentos)</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-bottom:6px;cursor:pointer"><input type="checkbox" id="iaImg"> 🖼 Enviar imagem da vista atual (nas perguntas)</label>
             <div style="display:flex;gap:6px">
               <textarea id="iaInput" rows="2" placeholder="Pergunte sobre o projeto, uma norma, a prancha…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();iaEnviar();}" style="flex:1;resize:none;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:12px;background:var(--bg2);color:var(--txt);font-family:inherit;outline:none"></textarea>
               <button class="btn" id="iaSend" style="width:auto;padding:0 14px;font-size:15px" onclick="iaEnviar()">➤</button>
@@ -1582,7 +1583,9 @@ function cotaToSvg(c, preview){
 
 // ═══ IA (W4): assistente Groq via Edge Function `groq-proxy` ═════════════════
 // A chave nunca vem ao browser; a função valida o login e injeta o secret.
-let IA_CONV=[];   // histórico [{role:'user'|'assistant', content:string}]
+let IA_CONV=[];        // histórico do chat [{role, content}]
+let IA_SUGEST=[];      // sugestões da última análise [{titulo,descricao,prioridade,tipo,disciplina}]
+let IA_ANALISE_TXT=''; // parágrafo geral da última análise
 function toggleIA(){
   const el=$('iaPanel'); if(!el) return;
   const open=(el.style.display==='none'||!el.style.display);
@@ -1590,23 +1593,85 @@ function toggleIA(){
   const b=$('btnIA'); if(b) b.classList.toggle('on',open);
   if(open){ renderIA(); setTimeout(()=>{ const i=$('iaInput'); if(i) i.focus(); },0); }
 }
-function iaLimpar(){ IA_CONV=[]; renderIA(); }
+function iaLimpar(){ IA_CONV=[]; IA_SUGEST=[]; IA_ANALISE_TXT=''; renderIA(); }
 function iaContexto(){
   const n=APTS.length, ab=APTS.filter(a=>a.status!=='Resolvido').length, at=APTS.filter(a=>estaAtrasado(a)).length;
-  const disc=(PRANCHA&&PRANCHA.disciplina)||'—';
-  return 'Você é o assistente técnico do Auria (coordenação de projetos de engenharia e arquitetura).\n'
-    +'Empreendimento: '+(EMP?EMP.nome:'—')+'. Disciplina da prancha aberta: '+disc+'.\n'
+  return 'Você é um coordenador BIM/CAD sênior brasileiro, especialista em compatibilização de projetos de engenharia e arquitetura.\n'
+    +'Empreendimento: '+(EMP?EMP.nome:'—')+'. Disciplina da prancha ativa: '+(discAtiva()||'—')+'.\n'
     +'Apontamentos: '+n+' no total, '+ab+' em aberto, '+at+' atrasados.\n'
     +'Responda de forma concisa e técnica, em português. Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.';
 }
 function _iaFmt(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>'); }
+function mapPrioIA(p){ p=(p||'').toLowerCase();
+  if(p.indexOf('crít')>=0||p.indexOf('crit')>=0||p.indexOf('sever')>=0) return 'Severa / Imediata';
+  if(p.indexOf('méd')>=0||p.indexOf('med')>=0||p.indexOf('import')>=0) return 'Importante / Programada';
+  return 'Observação / Atenção'; }
 function renderIA(){
   const el=$('iaMsgs'); if(!el) return;
-  if(!IA_CONV.length){ el.innerHTML='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Pergunte sobre o projeto, uma norma técnica, ou marque <b>"enviar imagem"</b> para eu analisar a prancha que está na tela.</div>'; return; }
-  el.innerHTML=IA_CONV.map(m=>{ const me=m.role==='user';
-    return '<div style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;white-space:normal;word-break:break-word">'+_iaFmt(m.content)+'</div>';
-  }).join('');
-  el.scrollTop=el.scrollHeight;
+  let html='';
+  if(IA_ANALISE_TXT) html+='<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.5">'+_iaFmt(IA_ANALISE_TXT)+'</div>';
+  if(IA_SUGEST.length){
+    html+='<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.04em;margin-top:2px">SUGESTÕES DE APONTAMENTO</div>';
+    html+=IA_SUGEST.map((s,i)=>{ const pr=mapPrioIA(s.prioridade), cor=corPrio(pr);
+      return '<div style="border:1px solid var(--line);border-left:3px solid '+cor+';border-radius:10px;padding:8px 10px">'
+        +'<div style="font-weight:700;font-size:12px">'+esc(s.titulo||'(sem título)')+'</div>'
+        +'<div style="font-size:10.5px;color:var(--mut);margin:3px 0">'+esc(pr)+(s.tipo?' · '+esc(s.tipo):'')+'</div>'
+        +(s.descricao?'<div style="font-size:11px;line-height:1.45">'+_iaFmt(s.descricao)+'</div>':'')
+        +'<button class="btn" style="width:auto;padding:5px 10px;font-size:11px;margin-top:7px" onclick="criarApontamentoIA('+i+')">➕ Criar apontamento</button></div>';
+    }).join('');
+  }
+  if(IA_CONV.length){
+    html+=IA_CONV.map(m=>{ const me=m.role==='user';
+      return '<div style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+_iaFmt(m.content)+'</div>';
+    }).join('');
+  }
+  if(!html) html='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Clique em <b>🔍 Analisar prancha</b> para a IA sugerir apontamentos já classificados, ou faça uma pergunta abaixo.</div>';
+  el.innerHTML=html; el.scrollTop=el.scrollHeight;
+}
+// Extrai os blocos [CONFLITO]...[/CONFLITO] + o parágrafo geral.
+function parseConflitos(text){
+  const sug=[]; const re=/\[CONFLITO\]([\s\S]*?)\[\/CONFLITO\]/gi; let m;
+  const campo=(b,k)=>{ const r=new RegExp(k+'\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:TITULO|DESCRICAO|DESCRIÇÃO|PRIORIDADE|TIPO|DISCIPLINA)\\s*:|$)','i').exec(b); return r?r[1].trim():''; };
+  while((m=re.exec(text))){ const b=m[1];
+    sug.push({ titulo:campo(b,'TITULO'), descricao:campo(b,'DESCRICAO')||campo(b,'DESCRIÇÃO'), prioridade:campo(b,'PRIORIDADE'), tipo:campo(b,'TIPO'), disciplina:campo(b,'DISCIPLINA') }); }
+  const geral=text.split(/\[CONFLITO\]/i)[0].replace(/NENHUM CONFLITO CONFIRMADO\.?/i,'').trim();
+  return { geral, sug };
+}
+async function iaAnalisar(){
+  const b64=capturarVista();
+  if(!b64){ alert('Abra uma prancha para analisar.'); return; }
+  const disc=discAtiva()||'—';
+  const btn=$('iaAnalisarBtn'); if(btn){ btn.disabled=true; btn.textContent='🧠 Analisando…'; }
+  IA_ANALISE_TXT='⏳ Analisando a prancha…'; IA_SUGEST=[]; renderIA();
+  const tipos=TIPOS_APT.join(' | ');
+  const system=iaContexto()+'\n\nAnalise a IMAGEM da prancha com atenção — é o projeto real. Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
+  const user='Analise a prancha (disciplina ativa: '+disc+'). Escreva PRIMEIRO um parágrafo curto de análise geral. '
+    +'DEPOIS, para CADA problema confirmado, gere um bloco EXATAMENTE assim (sem markdown):\n'
+    +'[CONFLITO]\nTITULO: (máx 60 chars)\nDESCRICAO: descrição técnica citando o que vê na imagem\n'
+    +'PRIORIDADE: Crítica | Média | Observação\nTIPO: '+tipos+'\nDISCIPLINA: '+disc+'\n[/CONFLITO]\n'
+    +'Máximo 5 blocos. Se não houver problemas, escreva apenas: NENHUM CONFLITO CONFIRMADO.';
+  const messages=[{role:'system',content:system},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:user}]}];
+  try{
+    const { data, error }=await sb.functions.invoke('groq-proxy',{ body:{ messages, hasImage:true, max_tokens:1200 } });
+    if(error) throw error;
+    if(data && data.content){ const p=parseConflitos(data.content); IA_ANALISE_TXT=p.geral||'Análise concluída.'; IA_SUGEST=p.sug; }
+    else { IA_ANALISE_TXT='⚠ '+((data&&data.error)||'Não consegui analisar agora.'); IA_SUGEST=[]; }
+  }catch(e){ IA_ANALISE_TXT='⚠ Erro ao consultar a IA: '+(e.message||e); IA_SUGEST=[]; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA(); }
+}
+// Cria um apontamento a partir de uma sugestão da IA (pino no centro da vista).
+function criarApontamentoIA(i){
+  const s=IA_SUGEST[i]; if(!s) return;
+  if(!PRANCHA||!V.page){ alert('Abra a prancha base primeiro.'); return; }
+  const st=$('stage'); const pt=screenToPage(st.clientWidth/2, st.clientHeight/2);
+  novoApontamento(pt.nx, pt.ny);                    // cria com a disciplina ATIVA e abre o editor
+  if(APT_EDIT){
+    APT_EDIT.titulo=s.titulo||''; APT_EDIT.descricao=s.descricao||'';
+    APT_EDIT.prioridade=mapPrioIA(s.prioridade);
+    if(TIPOS_APT.indexOf(s.tipo)>=0) APT_EDIT.tipo=s.tipo;
+    (APT_EDIT.log_json=APT_EDIT.log_json||[]).push({data:hojeBr(),texto:'Sugerido pela IA a partir da análise da prancha.',tipo:'sistema'});
+    abrirEditor();                                   // repopula o formulário com os campos
+  }
 }
 // Snapshot da vista atual (reduzido) → base64 JPEG p/ os modelos com visão.
 function capturarVista(){
