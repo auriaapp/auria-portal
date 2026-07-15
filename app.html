@@ -218,6 +218,10 @@
           </div>
           <div id="iaMsgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px"></div>
           <div style="border-top:1px solid var(--line);padding:9px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+              <span style="font-size:11px;color:var(--mut)">Prancha</span>
+              <select id="iaPrancha" title="Prancha a analisar (padrão: a em foco)" style="flex:1;font-size:12px;padding:5px 7px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--txt)"></select>
+            </div>
             <button class="btn" id="iaAnalisarBtn" onclick="iaAnalisar()" style="width:100%;font-size:12px;margin-bottom:8px">🔍 Analisar prancha (sugerir apontamentos)</button>
             <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-bottom:6px;cursor:pointer"><input type="checkbox" id="iaImg"> 🖼 Enviar imagem da vista atual (nas perguntas)</label>
             <div style="display:flex;gap:6px">
@@ -1594,7 +1598,7 @@ function toggleIA(){
   const open=(el.style.display==='none'||!el.style.display);
   el.style.display=open?'flex':'none';
   const b=$('btnIA'); if(b) b.classList.toggle('on',open);
-  if(open){ renderIA(); setTimeout(()=>{ const i=$('iaInput'); if(i) i.focus(); },0); }
+  if(open){ updateIaPranchaSel(); renderIA(); setTimeout(()=>{ const i=$('iaInput'); if(i) i.focus(); },0); }
 }
 function iaLimpar(){ IA_CONV=[]; IA_SUGEST=[]; IA_ANALISE_TXT=''; renderIA(); }
 function iaContexto(){
@@ -1640,15 +1644,38 @@ function parseConflitos(text){
   const geral=text.split(/\[CONFLITO\]/i)[0].replace(/NENHUM CONFLITO CONFIRMADO\.?/i,'').trim();
   return { geral, sug };
 }
+// Seletor de prancha do painel de IA (default = prancha em foco).
+function updateIaPranchaSel(){
+  const sel=$('iaPrancha'); if(!sel) return;
+  const cur=sel.value!==''?+sel.value:FOCO_LI;
+  sel.innerHTML=LAYERS.map((L,i)=>{ const d=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
+    return '<option value="'+i+'"'+((i===cur||(cur>=LAYERS.length&&i===FOCO_LI))?' selected':'')+'>'+esc(d)+(i===0?' (base)':'')+'</option>'; }).join('');
+  if(!LAYERS.length) sel.innerHTML='';
+}
+// Renderiza a página da prancha em ALTA resolução (independente do zoom da tela).
+async function renderPranchaHi(L, maxpx){
+  maxpx=maxpx||1800;
+  const [x1,y1,x2,y2]=L.page.view, pw=x2-x1, ph=y2-y1;
+  const scale=Math.max(0.1, Math.min(maxpx/pw, maxpx/ph));
+  const vp=L.page.getViewport({ scale });
+  const c=document.createElement('canvas'); c.width=Math.max(1,Math.ceil(vp.width)); c.height=Math.max(1,Math.ceil(vp.height));
+  const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+  await L.page.render({ canvasContext:ctx, viewport:vp, background:'#FFFFFF' }).promise;
+  return c.toDataURL('image/jpeg',0.85).split(',')[1];
+}
 async function iaAnalisar(){
-  const b64=capturarVista();
-  if(!b64){ alert('Abra uma prancha para analisar.'); return; }
-  const disc=discAtiva()||'—';
+  const sel=$('iaPrancha'); const li=sel&&sel.value!==''?(+sel.value):FOCO_LI;
+  const L=LAYERS[li]||LAYERS[FOCO_LI]||LAYERS[0];
+  if(!L||!L.page){ alert('Abra uma prancha para analisar.'); return; }
+  const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'—');
   const btn=$('iaAnalisarBtn'); if(btn){ btn.disabled=true; btn.textContent='🧠 Analisando…'; }
-  IA_ANALISE_TXT='⏳ Analisando a prancha…'; IA_SUGEST=[]; renderIA();
+  IA_ANALISE_TXT='⏳ Renderizando a prancha em alta resolução e analisando…'; IA_SUGEST=[]; renderIA();
+  let b64=null;
+  try{ b64=await renderPranchaHi(L); }catch(e){ console.warn('renderPranchaHi',e.message||e); }
+  if(!b64){ IA_ANALISE_TXT='⚠ Não consegui renderizar a prancha.'; if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA(); return; }
   const tipos=TIPOS_APT.join(' | ');
-  const system=iaContexto()+'\n\nAnalise a IMAGEM da prancha com atenção — é o projeto real. Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
-  const user='Analise a prancha (disciplina ativa: '+disc+'). Escreva PRIMEIRO um parágrafo curto de análise geral. '
+  const system=iaContexto()+'\n\nAnalise a IMAGEM da prancha com atenção — é o projeto real, renderizado em alta resolução (dê zoom mental nos detalhes, cotas, tabelas e carimbo). Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
+  const user='Analise esta prancha da disciplina "'+disc+'". Escreva PRIMEIRO um parágrafo curto de análise geral. '
     +'DEPOIS, para CADA problema confirmado, gere um bloco EXATAMENTE assim (sem markdown):\n'
     +'[CONFLITO]\nTITULO: (máx 60 chars)\nDESCRICAO: descrição técnica citando o que vê na imagem\n'
     +'PRIORIDADE: Crítica | Média | Observação\nTIPO: '+tipos+'\nDISCIPLINA: '+disc+'\n[/CONFLITO]\n'
@@ -1728,6 +1755,7 @@ function updateFoco(){
   sel.style.display='';
   sel.innerHTML=LAYERS.map((L,i)=>{ const d=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
     return `<option value="${i}"${i===FOCO_LI?' selected':''}>${esc(d)}${i===0?' (base)':''}</option>`; }).join('');
+  updateIaPranchaSel();
 }
 function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
 
