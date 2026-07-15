@@ -201,6 +201,7 @@
         <button class="tb" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
         <button class="tb" id="btnCota" onclick="toggleCota()" title="Calibrar escala e medir distâncias (cotas)">📏 Cotas</button>
         <button class="tb" id="btnIA" onclick="toggleIA()" title="Assistente de IA (Groq · Llama 4, com visão)">✦ IA</button>
+        <button class="tb" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stage">
@@ -210,6 +211,7 @@
         <svg id="alignSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         <div id="pickHint" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.85);color:#fff;padding:6px 14px;border-radius:20px;font-size:12.5px;font-weight:700;display:none;z-index:5"></div>
         <div id="cotaPanel" style="display:none;position:absolute;top:10px;right:10px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:212px;box-shadow:0 12px 40px rgba(0,0,0,.45)"></div>
+        <div id="iaMarquee" style="display:none;position:absolute;border:2px dashed var(--accent2);background:rgba(34,211,238,.12);pointer-events:none;z-index:8;border-radius:3px"></div>
         <div id="iaPanel" style="display:none;position:absolute;right:10px;top:10px;bottom:10px;z-index:7;width:330px;max-width:calc(100% - 20px);background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 44px rgba(0,0,0,.5);flex-direction:column">
           <div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)">
             <b style="flex:1;font-size:13px">✦ Assistente IA</b>
@@ -1019,6 +1021,7 @@ async function mudarPagina(delta){
     if(!V.page) return;
     if(e.target.closest && e.target.closest('#cotaPanel,#iaPanel')) return;   // cliques nos painéis não medem/desenham
     if(e.button!==0) return;                                   // só o esquerdo navega/desenha (direito = apontar)
+    if(IA_REGIAO){ iaRegStart(e); return; }                    // seleção de região p/ a IA
     if(cotaActive()){ cotaStart(e); return; }                  // medição/cota tem prioridade
     if(drawActive()){                                          // desenho tem prioridade sobre o pan
       if(DRAW_TOOL==='polygon') return;                        // polígono é por CLIQUE (tratado no mouseup)
@@ -1038,6 +1041,7 @@ async function mudarPagina(delta){
     novoApontamento(pt.nx, pt.ny);
   });
   window.addEventListener('mousemove', function(e){
+    if(_iaSel){ iaRegMove(e); return; }
     if(_cota){ cotaMove(e); return; }
     if(_draw){ drawMove(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon' && _poly){ polyMoveAt(e); return; }
@@ -1047,6 +1051,7 @@ async function mudarPagina(delta){
     updateCss();                                         // segue o mouse (a margem cobre)
   });
   window.addEventListener('mouseup', function(e){
+    if(_iaSel){ iaRegEnd(e); return; }
     if(_cota){ cotaEnd(e); return; }
     if(_draw){ drawEnd(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon'){ polyClickAt(e); return; }   // clique = ponto do polígono
@@ -1663,19 +1668,15 @@ async function renderPranchaHi(L, maxpx){
   await L.page.render({ canvasContext:ctx, viewport:vp, background:'#FFFFFF' }).promise;
   return c.toDataURL('image/jpeg',0.85).split(',')[1];
 }
-async function iaAnalisar(){
-  const sel=$('iaPrancha'); const li=sel&&sel.value!==''?(+sel.value):FOCO_LI;
-  const L=LAYERS[li]||LAYERS[FOCO_LI]||LAYERS[0];
-  if(!L||!L.page){ alert('Abra uma prancha para analisar.'); return; }
-  const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'—');
-  const btn=$('iaAnalisarBtn'); if(btn){ btn.disabled=true; btn.textContent='🧠 Analisando…'; }
-  IA_ANALISE_TXT='⏳ Renderizando a prancha em alta resolução e analisando…'; IA_SUGEST=[]; renderIA();
-  let b64=null;
-  try{ b64=await renderPranchaHi(L); }catch(e){ console.warn('renderPranchaHi',e.message||e); }
-  if(!b64){ IA_ANALISE_TXT='⚠ Não consegui renderizar a prancha.'; if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA(); return; }
+// Envia uma imagem (prancha inteira ou região) para análise e popula sugestões.
+async function _enviarAnaliseIA(b64, disc, escopo){
+  const btn=$('iaAnalisarBtn');
+  if($('iaPanel') && $('iaPanel').style.display==='none') toggleIA();   // garante painel aberto
+  if(btn){ btn.disabled=true; btn.textContent='🧠 Analisando…'; }
+  IA_ANALISE_TXT='⏳ Analisando '+escopo+'…'; IA_SUGEST=[]; renderIA();
   const tipos=TIPOS_APT.join(' | ');
-  const system=iaContexto()+'\n\nAnalise a IMAGEM da prancha com atenção — é o projeto real, renderizado em alta resolução (dê zoom mental nos detalhes, cotas, tabelas e carimbo). Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
-  const user='Analise esta prancha da disciplina "'+disc+'". Escreva PRIMEIRO um parágrafo curto de análise geral. '
+  const system=iaContexto()+'\n\nAnalise a IMAGEM com atenção — é o projeto real em alta resolução (observe detalhes, cotas, tabelas, carimbo). Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
+  const user='Analise '+escopo+' da disciplina "'+disc+'". Escreva PRIMEIRO um parágrafo curto de análise geral. '
     +'DEPOIS, para CADA problema confirmado, gere um bloco EXATAMENTE assim (sem markdown):\n'
     +'[CONFLITO]\nTITULO: (máx 60 chars)\nDESCRICAO: descrição técnica citando o que vê na imagem\n'
     +'PRIORIDADE: Crítica | Média | Observação\nTIPO: '+tipos+'\nDISCIPLINA: '+disc+'\n[/CONFLITO]\n'
@@ -1688,6 +1689,65 @@ async function iaAnalisar(){
     else { IA_ANALISE_TXT='⚠ '+((data&&data.error)||'Não consegui analisar agora.'); IA_SUGEST=[]; }
   }catch(e){ IA_ANALISE_TXT='⚠ Erro ao consultar a IA: '+(e.message||e); IA_SUGEST=[]; }
   finally{ if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA(); }
+}
+function _iaLayerSel(){ const sel=$('iaPrancha'); const li=sel&&sel.value!==''?(+sel.value):FOCO_LI; return LAYERS[li]||LAYERS[FOCO_LI]||LAYERS[0]; }
+async function iaAnalisar(){
+  const L=_iaLayerSel();
+  if(!L||!L.page){ alert('Abra uma prancha para analisar.'); return; }
+  const disc=(L.prancha.disciplina||deduzDisc(L.nome)||'—');
+  let b64=null; try{ b64=await renderPranchaHi(L); }catch(e){ console.warn('renderPranchaHi',e.message||e); }
+  if(!b64){ alert('Não consegui renderizar a prancha.'); return; }
+  _enviarAnaliseIA(b64, disc, 'esta prancha inteira');
+}
+
+// ── Análise por REGIÃO: robô + retângulo pontilhado ─────────────────────────
+let IA_REGIAO=false; let _iaSel=null;   // _iaSel = {x,y} inicial em coords do stage
+function toggleIaRegiao(){
+  if(!V.page||!PRANCHA){ alert('Abra uma prancha primeiro.'); return; }
+  IA_REGIAO=!IA_REGIAO;
+  const b=$('btnIARegiao'); if(b) b.classList.toggle('on',IA_REGIAO);
+  $('stage').classList.toggle('modo-pin', IA_REGIAO||!!DRAW_TOOL||PIN_EDIT||APONTAR);
+  $('modoHint').textContent = IA_REGIAO ? 'arraste um retângulo sobre a prancha para a IA analisar' : 'arraste para navegar';
+  if(!IA_REGIAO){ _iaSel=null; const mq=$('iaMarquee'); if(mq) mq.style.display='none'; }
+}
+function iaRegStart(e){ const r=$('stage').getBoundingClientRect(); _iaSel={ x:e.clientX-r.left, y:e.clientY-r.top }; }
+function iaRegMove(e){
+  if(!_iaSel) return; const r=$('stage').getBoundingClientRect();
+  const x=e.clientX-r.left, y=e.clientY-r.top, mq=$('iaMarquee'); if(!mq) return;
+  mq.style.display='block';
+  mq.style.left=Math.min(_iaSel.x,x)+'px'; mq.style.top=Math.min(_iaSel.y,y)+'px';
+  mq.style.width=Math.abs(x-_iaSel.x)+'px'; mq.style.height=Math.abs(y-_iaSel.y)+'px';
+}
+async function iaRegEnd(e){
+  const s=_iaSel; _iaSel=null; const mq=$('iaMarquee'); if(mq) mq.style.display='none';
+  if(!s) return;
+  const r=$('stage').getBoundingClientRect();
+  const a=screenToPage(s.x,s.y), b=screenToPage(e.clientX-r.left, e.clientY-r.top);
+  IA_REGIAO=false; const bt=$('btnIARegiao'); if(bt) bt.classList.remove('on');
+  $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
+  $('modoHint').textContent='arraste para navegar';
+  const nx0=Math.min(a.nx,b.nx), ny0=Math.min(a.ny,b.ny), nx1=Math.max(a.nx,b.nx), ny1=Math.max(a.ny,b.ny);
+  if((nx1-nx0)<0.01 || (ny1-ny0)<0.01){ return; }   // seleção muito pequena
+  const b64=await capturarRegiao({x0:nx0,y0:ny0,x1:nx1,y1:ny1});
+  if(!b64){ alert('Não consegui capturar a região.'); return; }
+  const L=_iaLayerSel(); const disc=(L&&(L.prancha.disciplina||deduzDisc(L.nome)))||'—';
+  _enviarAnaliseIA(b64, disc, 'a REGIÃO selecionada da prancha (foque só no que está nela)');
+}
+// Renderiza a prancha selecionada em alta res e recorta a região (coords base).
+async function capturarRegiao(nr){
+  const L=_iaLayerSel(); if(!L||!L.page) return null;
+  const [x1,y1,x2,y2]=L.page.view, pw=x2-x1, ph=y2-y1;
+  const scale=Math.max(0.1, Math.min(3000/pw, 3000/ph));   // página cheia em alta res
+  const vp=L.page.getViewport({ scale });
+  const full=document.createElement('canvas'); full.width=Math.ceil(vp.width); full.height=Math.ceil(vp.height);
+  const fc=full.getContext('2d'); fc.fillStyle='#fff'; fc.fillRect(0,0,full.width,full.height);
+  await L.page.render({ canvasContext:fc, viewport:vp, background:'#FFFFFF' }).promise;
+  const cx=Math.round(nr.x0*full.width), cy=Math.round(nr.y0*full.height);
+  const cw=Math.max(8,Math.round((nr.x1-nr.x0)*full.width)), ch=Math.max(8,Math.round((nr.y1-nr.y0)*full.height));
+  let crop=document.createElement('canvas'); crop.width=cw; crop.height=ch;
+  crop.getContext('2d').drawImage(full, cx,cy,cw,ch, 0,0,cw,ch);
+  const M=1700; if(Math.max(cw,ch)>M){ const s=M/Math.max(cw,ch); const d=document.createElement('canvas'); d.width=Math.round(cw*s); d.height=Math.round(ch*s); d.getContext('2d').drawImage(crop,0,0,d.width,d.height); crop=d; }
+  return crop.toDataURL('image/jpeg',0.85).split(',')[1];
 }
 // Cria um apontamento a partir de uma sugestão da IA (pino no centro da vista).
 function criarApontamentoIA(i){
