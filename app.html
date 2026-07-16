@@ -48,6 +48,20 @@
 
   /* Viewer */
   .viewer-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  /* Coluna direita: calendário + resumos + acesso aos painéis */
+  .side-right{width:270px;min-width:270px;background:var(--bg2);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto}
+  .side-right.collapsed{width:48px;min-width:48px}
+  .side-right.collapsed .sr-full{display:none}
+  .side-right:not(.collapsed) .sr-icons{display:none}
+  .sr-icons{display:flex;flex-direction:column;align-items:center;gap:7px;padding:8px 0}
+  .sr-ic{width:34px;height:34px;border-radius:8px;border:none;color:#fff;cursor:pointer;font-size:15px}
+  .sr-tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 4px;text-align:center}
+  .sr-btn{display:flex;align-items:center;gap:8px;width:100%;border:none;border-radius:9px;color:#fff;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-top:6px}
+  .sr-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px}
+  .sr-dow{text-align:center;font-size:9px;color:var(--mut);font-weight:700}
+  .sr-cell{position:relative;text-align:center;font-size:11px;color:var(--txt);padding:4px 0;border-radius:6px}
+  .sr-today{background:var(--accent);color:#fff;font-weight:800}
+  .sr-dot{position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%}
   .toolbar{background:var(--bg2);border-bottom:1px solid var(--line);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-shrink:0}
   .tb{background:var(--panel);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer}
   .tb:hover{border-color:var(--accent);color:#fff}
@@ -247,6 +261,24 @@
         <div id="cmdMenu" style="display:none;position:absolute;left:12px;right:12px;bottom:50px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 -10px 34px rgba(0,0,0,.45);overflow:hidden;z-index:12"></div>
       </div>
     </div>
+
+    <!-- Coluna direita: calendário + resumos + painéis -->
+    <aside class="side-right" id="sideRight">
+      <div class="sr-icons">
+        <button class="sr-ic" style="background:transparent;color:var(--mut)" onclick="toggleSideRight()" title="Expandir painéis">◀</button>
+        <button class="sr-ic" style="background:#1A6B4A" onclick="abrirPainel('agenda','Agenda')" title="Agenda">📅</button>
+        <button class="sr-ic" style="background:#6C3483" onclick="abrirPainel('kanban','Kanban')" title="Kanban">📋</button>
+        <button class="sr-ic" style="background:#1A5276" onclick="abrirPainel('msg','Mensagens')" title="Mensagens">✉</button>
+        <button class="sr-ic" style="background:#117A65" onclick="abrirPainel('emp','Cronograma')" title="Cronograma">🗓</button>
+      </div>
+      <div class="sr-full" style="padding:12px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center">
+          <b style="flex:1;font-size:13px;color:var(--txt)">Painéis & resumos</b>
+          <button onclick="toggleSideRight()" title="Recolher" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">▶</button>
+        </div>
+        <div id="sideRightBody"></div>
+      </div>
+    </aside>
   </div>
 </div>
 
@@ -422,7 +454,7 @@ async function boot(){
     ? '<option value="">— selecione —</option>'+EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('')
     : '<option value="">Nenhum empreendimento atribuído</option>';
   $('loading').style.display='none'; $('app').style.display='flex';
-  renderFiltroChips();
+  renderFiltroChips(); renderSideRight();
 }
 
 function trocarEmp(){
@@ -1206,7 +1238,7 @@ async function carregarApts(){
     if(error) throw error;
     APTS=data||[];
   }catch(e){ console.error('carregarApts:', e.message||e); }
-  popularFiltroDisc(); renderListaApts(); renderPins(); renderDrawings();
+  popularFiltroDisc(); renderListaApts(); renderPins(); renderDrawings(); renderSideRight();
 }
 
 // ── Pins (SVG overlay; posição derivada da vista atual V) ───────────────────
@@ -1887,6 +1919,44 @@ function runCmd(token){
   const c=CMDS.find(x=>x[0]===token); const menu=$('cmdMenu'); if(menu) menu.style.display='none';
   $('cmdInput').value='';
   if(c) abrirPainel(c[2], c[3]);
+}
+
+// ── Coluna direita: calendário do mês + contadores + próximos prazos ────────
+function toggleSideRight(){ const el=$('sideRight'); if(el) el.classList.toggle('collapsed'); }
+function _sideCalendar(){
+  const now=new Date(), y=now.getFullYear(), m=now.getMonth(), today=now.getDate();
+  const startDow=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate();
+  const cnt={};
+  APTS.forEach(a=>{ if(a.status==='Resolvido')return; const d=_parseData(a.prazo_min);
+    if(d&&d.getFullYear()===y&&d.getMonth()===m){ const n=d.getDate(); cnt[n]=cnt[n]||{late:false}; if(estaAtrasado(a)) cnt[n].late=true; } });
+  let cells=''; ['D','S','T','Q','Q','S','S'].forEach(w=>cells+='<div class="sr-dow">'+w+'</div>');
+  for(let i=0;i<startDow;i++) cells+='<div></div>';
+  for(let d=1;d<=days;d++){ const c=cnt[d]; const dot=c?'<span class="sr-dot" style="background:'+(c.late?'#E74C3C':'#E67E22')+'"></span>':'';
+    cells+='<div class="sr-cell'+(d===today?' sr-today':'')+'"'+(c?' title="prazo(s) neste dia"':'')+'>'+d+dot+'</div>'; }
+  return '<div class="sr-cal">'+cells+'</div>';
+}
+function _sideProximos(){
+  const now=new Date(), t0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const up=APTS.filter(a=>a.status!=='Resolvido').map(a=>{ const d=_parseData(a.prazo_min); return {a, dd:d?Math.round((d-t0)/864e5):null}; })
+    .filter(x=>x.dd!=null && x.dd>=0 && x.dd<=14).sort((p,q)=>p.dd-q.dd).slice(0,6);
+  if(!up.length) return '<div style="font-size:11px;color:var(--mut)">Sem prazos nos próximos 14 dias.</div>';
+  return up.map(x=>'<div onclick="clicarAptLista('+APTS.indexOf(x.a)+')" style="display:flex;gap:6px;align-items:center;padding:4px 2px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--line)">'
+    +'<span style="color:'+(x.dd===0?'#E74C3C':'var(--mut)')+';min-width:24px;font-weight:600">'+(x.dd===0?'hoje':x.dd+'d')+'</span>'
+    +'<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--txt)">'+esc(x.a.titulo||x.a.id)+'</span></div>').join('');
+}
+function renderSideRight(){
+  const el=$('sideRightBody'); if(!el) return;
+  if(!EMP){ el.innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
+  const abertos=APTS.filter(a=>a.status!=='Resolvido').length;
+  const atras=APTS.filter(a=>estaAtrasado(a)).length;
+  const resol=APTS.filter(a=>a.status==='Resolvido').length;
+  const tile=(l,v,c)=>'<div class="sr-tile"><div style="font-size:20px;font-weight:800;color:'+c+';line-height:1">'+v+'</div><div style="font-size:9.5px;color:var(--mut);margin-top:2px">'+l+'</div></div>';
+  const counts='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+tile('Abertos',abertos,'#3B82F6')+tile('Atraso',atras,'#E67E22')+tile('Resolv.',resol,'#27AE60')+'</div>';
+  const btn=(ic,txt,cor,page,tit)=>'<button class="sr-btn" style="background:'+cor+'" onclick="abrirPainel(\''+page+'\',\''+tit+'\')">'+ic+' '+txt+'</button>';
+  el.innerHTML=counts
+    +'<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.03em;margin-top:6px;text-transform:uppercase">'+new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})+'</div>'+_sideCalendar()
+    +'<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.03em;margin-top:6px">PRÓXIMOS PRAZOS</div>'+_sideProximos()
+    +'<div style="margin-top:6px">'+btn('📅','Agenda','#1A6B4A','agenda','Agenda')+btn('📋','Kanban','#6C3483','kanban','Kanban')+btn('✉','Mensagens','#1A5276','msg','Mensagens')+btn('🗓','Cronograma','#117A65','emp','Cronograma')+'</div>';
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
