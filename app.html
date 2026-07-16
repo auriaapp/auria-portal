@@ -1750,21 +1750,24 @@ async function explicarRegiao(b64, disc){
   IA_CONV[IA_CONV.length-1]={role:'assistant',content:resp};   // substitui o "analisando…"
   renderIA();
 }
-// Renderiza a prancha selecionada em alta res e recorta a região (coords base).
+// Renderiza SÓ a região selecionada, em ALTA resolução (a região preenchendo
+// ~1600px). Usa o offset do viewport do pdf.js — não rasteriza a página inteira,
+// então um trecho pequeno sai nítido (ao contrário de recortar um render de página).
 async function capturarRegiao(nr){
   const L=_iaLayerSel(); if(!L||!L.page) return null;
   const [x1,y1,x2,y2]=L.page.view, pw=x2-x1, ph=y2-y1;
-  const scale=Math.max(0.1, Math.min(3000/pw, 3000/ph));   // página cheia em alta res
-  const vp=L.page.getViewport({ scale });
-  const full=document.createElement('canvas'); full.width=Math.ceil(vp.width); full.height=Math.ceil(vp.height);
-  const fc=full.getContext('2d'); fc.fillStyle='#fff'; fc.fillRect(0,0,full.width,full.height);
-  await L.page.render({ canvasContext:fc, viewport:vp, background:'#FFFFFF' }).promise;
-  const cx=Math.round(nr.x0*full.width), cy=Math.round(nr.y0*full.height);
-  const cw=Math.max(8,Math.round((nr.x1-nr.x0)*full.width)), ch=Math.max(8,Math.round((nr.y1-nr.y0)*full.height));
-  let crop=document.createElement('canvas'); crop.width=cw; crop.height=ch;
-  crop.getContext('2d').drawImage(full, cx,cy,cw,ch, 0,0,cw,ch);
-  const M=1700; if(Math.max(cw,ch)>M){ const s=M/Math.max(cw,ch); const d=document.createElement('canvas'); d.width=Math.round(cw*s); d.height=Math.round(ch*s); d.getContext('2d').drawImage(crop,0,0,d.width,d.height); crop=d; }
-  return crop.toDataURL('image/jpeg',0.85).split(',')[1];
+  // margem de contexto: expande um pouco a seleção (10%) para a IA ter arredores
+  const mgx=(nr.x1-nr.x0)*0.10, mgy=(nr.y1-nr.y0)*0.10;
+  const rx0=Math.max(0,nr.x0-mgx), ry0=Math.max(0,nr.y0-mgy), rx1=Math.min(1,nr.x1+mgx), ry1=Math.min(1,nr.y1+mgy);
+  const rwPt=Math.max(1,(rx1-rx0)*pw), rhPt=Math.max(1,(ry1-ry0)*ph);
+  let scale=Math.min(1600/rwPt, 1600/rhPt);            // região ~1600px no maior lado
+  scale=Math.max(0.2, Math.min(scale, 8));
+  const cw=Math.max(8,Math.round(rwPt*scale)), ch=Math.max(8,Math.round(rhPt*scale));
+  const vp=L.page.getViewport({ scale, offsetX:-rx0*pw*scale, offsetY:-ry0*ph*scale });
+  const c=document.createElement('canvas'); c.width=cw; c.height=ch;
+  const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cw,ch);
+  await L.page.render({ canvasContext:ctx, viewport:vp, background:'#FFFFFF' }).promise;
+  return c.toDataURL('image/jpeg',0.92).split(',')[1];
 }
 // Cria um apontamento a partir de uma sugestão da IA (pino no centro da vista).
 function criarApontamentoIA(i){
