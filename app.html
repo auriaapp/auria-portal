@@ -238,7 +238,27 @@
           “Abrir prancha”, ou arraste um PDF para cá.</p>
         </div>
       </div>
+      <!-- Barra de comando inferior: perguntas à IA + /comandos -->
+      <div id="cmdBar" style="flex-shrink:0;background:var(--bg2);border-top:1px solid var(--line);padding:8px 12px;display:flex;align-items:center;gap:8px;position:relative">
+        <span style="font-size:14px;color:var(--accent2)">✦</span>
+        <input id="cmdInput" autocomplete="off" placeholder="Pergunte à IA…  ou digite / para comandos (/agenda, /mensagens, /kanban, /inicio)"
+               onkeydown="cmdKey(event)" oninput="cmdInputChanged()"
+               style="flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:13px;background:var(--panel);color:var(--txt);outline:none">
+        <div id="cmdMenu" style="display:none;position:absolute;left:12px;right:12px;bottom:50px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 -10px 34px rgba(0,0,0,.45);overflow:hidden;z-index:12"></div>
+      </div>
     </div>
+  </div>
+</div>
+
+<!-- Pop-up de painel (iframe do painel do analista em modo embed) -->
+<div id="painelModal" style="display:none;position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:22px">
+  <div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(1150px,96vw);height:min(800px,92vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.55)">
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg2);border-bottom:1px solid var(--line)">
+      <b id="painelModalT" style="flex:1;font-size:14px">Painel</b>
+      <button class="wbtn" onclick="abrirPainelNovaAba()" title="Abrir em nova aba">⧉</button>
+      <button class="wbtn" onclick="fecharPainel()" title="Fechar">✕</button>
+    </div>
+    <iframe id="painelFrame" title="Painel" style="flex:1;border:none;width:100%;background:#fff"></iframe>
   </div>
 </div>
 
@@ -1011,6 +1031,7 @@ async function mudarPagina(delta){
   const stage=document.getElementById('stage');
   stage.addEventListener('wheel', function(e){
     if(!V.page) return;
+    if(e.target.closest && e.target.closest('#iaPanel,#cotaPanel')) return;   // roda do mouse rola o painel, não dá zoom
     e.preventDefault();
     const r=stage.getBoundingClientRect();
     zoomAt(e.deltaY<0?1.15:0.87, e.clientX-r.left, e.clientY-r.top);
@@ -1618,7 +1639,7 @@ function mapPrioIA(p){ p=(p||'').toLowerCase();
   if(p.indexOf('crít')>=0||p.indexOf('crit')>=0||p.indexOf('sever')>=0) return 'Severa / Imediata';
   if(p.indexOf('méd')>=0||p.indexOf('med')>=0||p.indexOf('import')>=0) return 'Importante / Programada';
   return 'Observação / Atenção'; }
-function renderIA(){
+function renderIA(startAt){   // startAt: 'top' | 'lastUser' | undefined (rola p/ o fim)
   const el=$('iaMsgs'); if(!el) return;
   let html='';
   if(IA_ANALISE_TXT) html+='<div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.5">'+_iaFmt(IA_ANALISE_TXT)+'</div>';
@@ -1634,11 +1655,14 @@ function renderIA(){
   }
   if(IA_CONV.length){
     html+=IA_CONV.map(m=>{ const me=m.role==='user';
-      return '<div style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+_iaFmt(m.content)+'</div>';
+      return '<div data-role="'+m.role+'" style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+_iaFmt(m.content)+'</div>';
     }).join('');
   }
   if(!html) html='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Clique em <b>🔍 Analisar prancha</b> para a IA sugerir apontamentos já classificados, ou faça uma pergunta abaixo.</div>';
-  el.innerHTML=html; el.scrollTop=el.scrollHeight;
+  el.innerHTML=html;
+  if(startAt==='top'){ el.scrollTop=0; }
+  else if(startAt==='lastUser'){ const us=el.querySelectorAll('[data-role="user"]'); const last=us[us.length-1]; el.scrollTop=last?Math.max(0,last.offsetTop-8):0; }
+  else { el.scrollTop=el.scrollHeight; }
 }
 // Extrai os blocos [CONFLITO]...[/CONFLITO] + o parágrafo geral.
 function parseConflitos(text){
@@ -1673,7 +1697,7 @@ async function _enviarAnaliseIA(b64, disc, escopo){
   const btn=$('iaAnalisarBtn');
   if($('iaPanel') && $('iaPanel').style.display==='none') toggleIA();   // garante painel aberto
   if(btn){ btn.disabled=true; btn.textContent='🧠 Analisando…'; }
-  IA_ANALISE_TXT='⏳ Analisando '+escopo+'…'; IA_SUGEST=[]; renderIA();
+  IA_ANALISE_TXT='⏳ Analisando '+escopo+'…'; IA_SUGEST=[]; renderIA('top');
   const tipos=TIPOS_APT.join(' | ');
   const system=iaContexto()+'\n\nAnalise a IMAGEM com atenção — é o projeto real em alta resolução (observe detalhes, cotas, tabelas, carimbo). Só reporte problemas que consiga CONFIRMAR visualmente. Prefira 1 apontamento real a 5 especulativos. NÃO use markdown.';
   const user='Analise '+escopo+' da disciplina "'+disc+'". Escreva PRIMEIRO um parágrafo curto de análise geral. '
@@ -1688,7 +1712,7 @@ async function _enviarAnaliseIA(b64, disc, escopo){
     if(data && data.content){ const p=parseConflitos(data.content); IA_ANALISE_TXT=p.geral||'Análise concluída.'; IA_SUGEST=p.sug; }
     else { IA_ANALISE_TXT='⚠ '+((data&&data.error)||'Não consegui analisar agora.'); IA_SUGEST=[]; }
   }catch(e){ IA_ANALISE_TXT='⚠ Erro ao consultar a IA: '+(e.message||e); IA_SUGEST=[]; }
-  finally{ if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA(); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='🔍 Analisar prancha (sugerir apontamentos)'; } renderIA('top'); }
 }
 function _iaLayerSel(){ const sel=$('iaPrancha'); const li=sel&&sel.value!==''?(+sel.value):FOCO_LI; return LAYERS[li]||LAYERS[FOCO_LI]||LAYERS[0]; }
 async function iaAnalisar(){
@@ -1748,7 +1772,7 @@ async function explicarRegiao(b64, disc){
     resp=(data&&data.content)||('⚠ '+((data&&data.error)||'Não consegui explicar agora.'));
   }catch(e){ resp='⚠ Erro ao consultar a IA: '+(e.message||e); }
   IA_CONV[IA_CONV.length-1]={role:'assistant',content:resp};   // substitui o "analisando…"
-  renderIA();
+  renderIA('lastUser');
 }
 // Renderiza SÓ a região selecionada, em ALTA resolução (a região preenchendo
 // ~1600px). Usa o offset do viewport do pdf.js — não rasteriza a página inteira,
@@ -1814,6 +1838,55 @@ async function iaEnviar(){
     else IA_CONV.push({role:'assistant',content:'⚠ '+((data&&data.error)||'Não consegui responder agora.')});
   }catch(e){ IA_CONV.push({role:'assistant',content:'⚠ Erro ao consultar a IA: '+(e.message||e)}); }
   finally{ if(send){ send.disabled=false; send.textContent='➤'; } renderIA(); }
+}
+
+// ═══ PAINÉIS EM POP-UP + BARRA DE COMANDO ═══════════════════════════════════
+// Abre os painéis existentes (auria_analista.html) num iframe em modo embed,
+// dentro da própria página — não em outra aba.
+function abrirPainel(page, titulo){
+  const url='auria_analista.html?embed=1#'+page;
+  window._painelURL=url;
+  $('painelModalT').textContent=titulo||'Painel';
+  $('painelFrame').src=url;
+  $('painelModal').style.display='flex';
+}
+function fecharPainel(){ $('painelModal').style.display='none'; const f=$('painelFrame'); if(f) f.src='about:blank'; }
+function abrirPainelNovaAba(){ if(window._painelURL) window.open(window._painelURL.replace('?embed=1',''),'_blank'); }
+
+// Comandos da barra "/": [token, rótulo, page, título do pop-up]
+const CMDS=[
+  ['/inicio','🏠 Início (central)','inicio','Início'],
+  ['/mensagens','✉ Mensagens','msg','Mensagens'],
+  ['/agenda','📅 Agenda (prazos)','agenda','Agenda'],
+  ['/kanban','📋 Kanban','kanban','Kanban'],
+  ['/cronograma','📆 Cronograma (por empreendimento)','emp','Empreendimentos · Cronograma'],
+  ['/fornecedores','🏢 Fornecedores','forn','Fornecedores'],
+  ['/empreendimentos','🏢 Empreendimentos','emp','Empreendimentos']
+];
+function _cmdMatch(q){ q=q.replace(/^\//,'').toLowerCase(); return CMDS.filter(c=>c[0].slice(1).indexOf(q)===0 || c[1].toLowerCase().indexOf(q)>=0); }
+function cmdInputChanged(){
+  const v=$('cmdInput').value, menu=$('cmdMenu'); if(!menu) return;
+  if(v.charAt(0)!=='/'){ menu.style.display='none'; return; }
+  const ms=_cmdMatch(v);
+  if(!ms.length){ menu.style.display='none'; return; }
+  menu.innerHTML=ms.map(c=>`<div onmousedown="event.preventDefault();runCmd('${c[0]}')" style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--line)" onmouseenter="this.style.background='var(--panel2)'" onmouseleave="this.style.background=''"><b>${c[0]}</b> <span style="color:var(--mut)">— ${esc(c[1])}</span></div>`).join('');
+  menu.style.display='block';
+}
+function cmdKey(e){
+  if(e.key==='Escape'){ $('cmdMenu').style.display='none'; return; }
+  if(e.key!=='Enter') return;
+  e.preventDefault();
+  const v=$('cmdInput').value.trim(); if(!v) return;
+  if(v.charAt(0)==='/'){ const ms=_cmdMatch(v); if(ms.length){ runCmd(ms[0][0]); } else { alert('Comando não reconhecido. Tente /agenda, /mensagens, /kanban, /inicio, /cronograma.'); } return; }
+  // texto normal → pergunta à IA
+  if($('iaPanel') && $('iaPanel').style.display==='none') toggleIA();
+  const inp=$('iaInput'); if(inp){ inp.value=v; iaEnviar(); }
+  $('cmdInput').value='';
+}
+function runCmd(token){
+  const c=CMDS.find(x=>x[0]===token); const menu=$('cmdMenu'); if(menu) menu.style.display='none';
+  $('cmdInput').value='';
+  if(c) abrirPainel(c[2], c[3]);
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
