@@ -1731,7 +1731,24 @@ async function iaRegEnd(e){
   const b64=await capturarRegiao({x0:nx0,y0:ny0,x1:nx1,y1:ny1});
   if(!b64){ alert('Não consegui capturar a região.'); return; }
   const L=_iaLayerSel(); const disc=(L&&(L.prancha.disciplina||deduzDisc(L.nome)))||'—';
-  _enviarAnaliseIA(b64, disc, 'a REGIÃO selecionada da prancha (foque só no que está nela)');
+  explicarRegiao(b64, disc);
+}
+// Análise por região = EXPLICAÇÃO do que a IA vê (com contexto), sem sugerir apontamentos.
+async function explicarRegiao(b64, disc){
+  if($('iaPanel') && $('iaPanel').style.display==='none') toggleIA();
+  IA_CONV.push({role:'user',content:'🔍 Explique a região selecionada'+(disc&&disc!=='—'?(' — '+disc):'')});
+  IA_CONV.push({role:'assistant',content:'⏳ analisando a região…'}); renderIA();
+  const system=iaContexto()+'\n\nVocê recebe uma REGIÃO recortada de uma prancha de projeto. Explique de forma técnica e objetiva o que aparece nela: elementos, cotas, textos, tabelas, símbolos e materiais. NÃO sugira apontamentos nem liste problemas — apenas descreva e explique o conteúdo, usando o contexto do projeto/disciplina. Se algo estiver ilegível, diga.';
+  const user='Explique o que você vê nesta região da prancha (disciplina: '+disc+').';
+  const messages=[{role:'system',content:system},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:user}]}];
+  let resp;
+  try{
+    const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:true, max_tokens:900 } });
+    if(error) throw error;
+    resp=(data&&data.content)||('⚠ '+((data&&data.error)||'Não consegui explicar agora.'));
+  }catch(e){ resp='⚠ Erro ao consultar a IA: '+(e.message||e); }
+  IA_CONV[IA_CONV.length-1]={role:'assistant',content:resp};   // substitui o "analisando…"
+  renderIA();
 }
 // Renderiza a prancha selecionada em alta res e recorta a região (coords base).
 async function capturarRegiao(nr){
