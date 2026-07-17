@@ -762,28 +762,65 @@ async function loadCronograma(empId){
   v.innerHTML=html;
 }
 
+// ── Agenda: calendário do mês + dia clicável com as pendências ──────────────
+let AGENDA_MONTH=null, AGENDA_SEL=null, AGENDA_BYDATE={}, AGENDA_DAYOBJS=[];
+function _agIso(s){ const d=_pdBR(s); if(!d)return null; return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 async function renderAgenda(){
   const c=document.getElementById('content'); c.innerHTML='<div class="loading">Montando agenda…</div>';
   const nomes=EMPS.map(e=>e.nome);
   let apt=[],tar=[];
-  if(nomes.length){ const r=await sb.from('apontamentos').select('id,titulo,empreendimento,prazo_min,status,atrasado').in('empreendimento',nomes); apt=r.data||[]; }
-  const rt=await sb.from('tarefas').select('*').eq('analista_id',USER.id); tar=rt.data||[];
-  const byDate={};
-  apt.forEach(i=>{ if(i.prazo_min && i.status!=='Resolvido'){ const k=fmtBR(i.prazo_min); (byDate[k]=byDate[k]||[]).push({tipo:'apontamento',titulo:i.titulo,sub:i.empreendimento,atr:i.atrasado}); }});
-  tar.forEach(t=>{ if(t.prazo && t.status!=='Concluído'){ const k=fmtBR(t.prazo); (byDate[k]=byDate[k]||[]).push({tipo:'tarefa',titulo:t.titulo,sub:(t.empreendimento||'Kanban')}); }});
-  const keys=Object.keys(byDate).sort((a,b)=>parseData(a)-parseData(b));
-  if(!keys.length){c.innerHTML='<div class="empty"><div class="emoji">📅</div><h3>Nenhum prazo pendente</h3><p>Prazos de apontamentos e tarefas de todos os seus empreendimentos aparecem aqui.</p></div>';return;}
-  const hoje=new Date();hoje.setHours(0,0,0,0);
-  let html='';
-  keys.forEach(k=>{
-    const venc=parseData(k)<hoje;
-    html+=`<div class="ag-day"><div class="d">${k}${venc?' <span class="atr">(vencido)</span>':''}</div>`;
-    byDate[k].forEach(it=>{
-      html+=`<div class="ag-item">${it.tipo==='apontamento'?'📌':'📋'} <b>${esc(it.titulo||'—')}</b> <span class="sub">· ${esc(it.sub||'')}</span>${it.atr?' <span class="atr">⚠ atrasado</span>':''}</div>`;
-    });
-    html+='</div>';
-  });
-  c.innerHTML=html;
+  if(nomes.length){ const r=await sb.from('apontamentos').select('id,titulo,empreendimento,prazo_min,status,atrasado,disciplina,prioridade,descricao,mensagens,imagens_json,participantes,conclusao').in('empreendimento',nomes); apt=r.data||[]; }
+  try{ const rt=await sb.from('tarefas').select('*').eq('analista_id',USER.id); tar=rt.data||[]; }catch(e){}
+  AGENDA_BYDATE={};
+  const add=(iso,it)=>{ if(!iso)return; (AGENDA_BYDATE[iso]=AGENDA_BYDATE[iso]||[]).push(it); };
+  apt.forEach(i=>{ if(i.prazo_min && i.status!=='Resolvido') add(_agIso(i.prazo_min),{tipo:'apontamento',titulo:(i.id+' — '+(i.titulo||'Sem título')),sub:i.empreendimento,atr:i.atrasado,obj:i}); });
+  tar.forEach(t=>{ if(t.prazo && t.status!=='Concluído') add(_agIso(t.prazo),{tipo:'tarefa',titulo:t.titulo,sub:(t.empreendimento||'Kanban'),obj:null}); });
+  const urlDate=new URLSearchParams(location.search).get('date');
+  if(urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)){ AGENDA_SEL=urlDate; const p=urlDate.split('-'); AGENDA_MONTH={y:+p[0],m:+p[1]-1}; }
+  if(!AGENDA_MONTH){ const n=new Date(); AGENDA_MONTH={y:n.getFullYear(),m:n.getMonth()}; }
+  _agRender();
+}
+function _agSel(iso){ AGENDA_SEL=iso; _agRender(); }
+function _agMove(delta){ let m=AGENDA_MONTH.m+delta, y=AGENDA_MONTH.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} AGENDA_MONTH={y,m}; _agRender(); }
+function _agOpen(idx){ const o=AGENDA_DAYOBJS[idx]; if(o) verAptObj(o); }
+function _agDayPanel(){
+  AGENDA_DAYOBJS=[];
+  if(!AGENDA_SEL) return '<div class="tbl-card" style="padding:16px;color:#94A3B8;font-size:13px">Clique num dia para ver as pendências.</div>';
+  const items=AGENDA_BYDATE[AGENDA_SEL]||[]; const p=AGENDA_SEL.split('-');
+  let h='<div class="tbl-card" style="padding:14px"><div style="font-weight:800;font-size:14px;margin-bottom:10px">📅 '+p[2]+'/'+p[1]+'/'+p[0]+'</div>';
+  if(!items.length){ h+='<div style="color:#94A3B8;font-size:13px">Nenhuma pendência neste dia.</div>'; }
+  else { h+=items.map((it,idx)=>{ AGENDA_DAYOBJS.push(it.obj||null);
+      const ic=it.tipo==='apontamento'?'📌':'📋';
+      const clk=it.obj?' onclick="_agOpen('+idx+')" style="cursor:pointer"':'';
+      return '<div class="ag-item"'+clk+'>'+ic+' <b>'+esc(it.titulo||'—')+'</b> <span class="sub">· '+esc(it.sub||'')+'</span>'+(it.atr?' <span class="atr">⚠ atrasado</span>':'')+'</div>';
+    }).join(''); }
+  return h+'</div>';
+}
+function _agRender(){
+  const c=document.getElementById('content'); if(!c)return;
+  const y=AGENDA_MONTH.y, m=AGENDA_MONTH.m;
+  const startDow=new Date(y,m,1).getDay(), days=new Date(y,m+1,0).getDate();
+  const today=new Date(); today.setHours(0,0,0,0);
+  const mesNome=new Date(y,m,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  let cells='';
+  ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].forEach(w=>cells+='<div style="text-align:center;font-size:11px;font-weight:700;color:#94A3B8;padding:4px 0">'+w+'</div>');
+  for(let i=0;i<startDow;i++) cells+='<div></div>';
+  for(let d=1;d<=days;d++){
+    const iso=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const items=AGENDA_BYDATE[iso]||[], dt=new Date(y,m,d);
+    const late=items.length && (items.some(x=>x.atr) || dt<today);
+    const isToday=dt.getTime()===today.getTime(), sel=(iso===AGENDA_SEL);
+    const badge=items.length?'<span style="min-width:16px;padding:0 4px;background:'+(late?'#E74C3C':'#E8960A')+';color:#fff;border-radius:8px;font-size:9px;font-weight:800">'+items.length+'</span>':'';
+    cells+='<div onclick="_agSel(\''+iso+'\')" style="min-height:54px;border:1px solid '+(sel?'#1D4ED8':'#E6EBF1')+';border-radius:8px;padding:4px 6px;cursor:pointer;background:'+(sel?'#EFF6FF':(isToday?'#F0F9FF':'#fff'))+'">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:'+(isToday?'800':'600')+';color:'+(isToday?'#1D4ED8':'#334155')+'">'+d+'</span>'+badge+'</div></div>';
+  }
+  c.innerHTML='<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start" class="ag-grid">'
+    +'<div><div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+      +'<button onclick="_agMove(-1)" style="border:1px solid #E6EBF1;background:#fff;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:14px">‹</button>'
+      +'<b style="flex:1;text-align:center;font-size:15px;text-transform:capitalize;color:#1A2F4A">'+mesNome+'</b>'
+      +'<button onclick="_agMove(1)" style="border:1px solid #E6EBF1;background:#fff;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:14px">›</button></div>'
+      +'<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">'+cells+'</div></div>'
+    +'<div>'+_agDayPanel()+'</div></div>';
 }
 
 async function renderKanban(){
