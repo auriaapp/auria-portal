@@ -803,50 +803,89 @@ async function renderKanban(){
   c.innerHTML=html;
 }
 
+let APT_CONV=null;
 function verApt(idx){ verAptObj(APT_LIST[idx]); }
-function verAptObj(i){
-  if(!i)return;
+function verAptObj(i){ if(!i)return; APT_CONV=i; renderAptModal(); document.getElementById('aptModal').classList.add('on'); }
+function _pdBR(s){ if(!s)return null; s=String(s); let m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if(m)return new Date(+m[3],+m[2]-1,+m[1]); m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s); if(m)return new Date(+m[1],+m[2]-1,+m[3]); return null; }
+function renderAptModal(){
+  const i=APT_CONV; if(!i)return;
   const msgs=Array.isArray(i.mensagens)?i.mensagens:[];
   let chat;
   if(msgs.length){
     chat='<div class="chat">'+msgs.map(m=>{
       const lado=(m.de==='projetista')?'proj':(m.tipo==='sugestao_prazo'?'sug':'anal');
-      const quem=esc(m.nome||m.email||(m.de==='projetista'?'Projetista':'Analista'));
+      const quem=esc(m.nome||m.email||(m.de==='projetista'?'Projetista':'Você'));
       let extra='';
-      if(m.tipo==='sugestao_prazo'&&m.prazo_sugerido) extra=`<div style="margin-top:5px;font-weight:700">📅 Prazo sugerido: ${esc(m.prazo_sugerido)}</div>`;
-      return `<div class="bub ${lado}"><div class="bh">[${esc(m.data||'')}] ${quem}</div>${esc(m.texto||'')}${extra}</div>`;
+      if(m.tipo==='sugestao_prazo'&&m.prazo_sugerido){
+        extra='<div style="margin-top:5px;font-weight:700">📅 Prazo sugerido: '+esc(m.prazo_sugerido)+'</div>';
+        if(m.de==='projetista'){   // sugestão DO projetista → analista aprova/nega
+          extra+='<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'
+            +'<button onclick="aptAceitarPrazo(\''+esc(m.prazo_sugerido)+'\')" style="background:#27AE60;color:#fff;border:none;border-radius:7px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">✅ Aceitar</button>'
+            +'<button onclick="aptRecusarPrazo(\''+esc(m.prazo_sugerido)+'\')" style="background:#E74C3C;color:#fff;border:none;border-radius:7px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">❌ Recusar</button></div>';
+        }
+      }
+      return '<div class="bub '+lado+'"><div class="bh">['+esc(m.data||'')+'] '+quem+'</div>'+esc(m.texto||'')+extra+'</div>';
     }).join('')+'</div>';
   }else{ chat='<div class="no-msg">Nenhuma mensagem trocada com o projetista ainda.</div>'; }
-  // Prints / anexos
-  const imgs=Array.isArray(i.imagens_json)?i.imagens_json:[];
-  PRINTS=imgs;
-  let prints='';
-  if(imgs.length){
-    prints='<div class="sec-t">Prints / Anexos</div><div class="prints">'+imgs.map((u,k)=>`<img src="${esc(u)}" alt="print" onclick="abrirPrint(${k})">`).join('')+'</div>';
-  }
-  const prazo=i.atrasado?`<span class="atr">${fmtBR(i.prazo_min)||'—'} ⚠</span>`:(fmtBR(i.prazo_min)||'—');
-  document.getElementById('aptModalBox').innerHTML=`
-    <div class="modal-h">
-      <div>
-        <h3>${esc(i.id)} — ${esc(i.titulo||'Sem título')}</h3>
-        <div class="meta">
-          <span class="pill ${stCls(i.status)}">${esc(i.status||'')}</span>
-          <span><span class="dot" style="background:${prioCor(i.prioridade)}"></span>${esc((i.prioridade||'').replace(/^[^\w]+/,''))||'—'}</span>
-          <span>· ${esc(i.disciplina||'—')}</span>
-          <span>· Prazo: ${prazo}</span>
-        </div>
-      </div>
-      <button class="modal-x" onclick="closeApt()">×</button>
-    </div>
-    <div class="modal-b">
-      ${i.descricao?`<div class="sec-t">Descrição</div><div class="desc">${esc(i.descricao)}</div>`:''}
-      ${prints}
-      <div class="sec-t">Conversa com o projetista</div>
-      ${chat}
-    </div>`;
-  document.getElementById('aptModal').classList.add('on');
+  const imgs=Array.isArray(i.imagens_json)?i.imagens_json:[]; PRINTS=imgs;
+  let prints=''; if(imgs.length){ prints='<div class="sec-t">Prints / Anexos</div><div class="prints">'+imgs.map((u,k)=>'<img src="'+esc(u)+'" alt="print" onclick="abrirPrint('+k+')">').join('')+'</div>'; }
+  const pr=(fmtBR(i.prazo_min)||i.prazo_min||'—');
+  const prazo=i.atrasado?('<span class="atr">'+pr+' ⚠</span>'):pr;
+  const bstyle='border:1px solid #E2E8F0;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer';
+  document.getElementById('aptModalBox').innerHTML=
+    '<div class="modal-h"><div><h3>'+esc(i.id)+' — '+esc(i.titulo||'Sem título')+'</h3>'
+    +'<div class="meta"><span class="pill '+stCls(i.status)+'">'+esc(i.status||'')+'</span>'
+    +'<span><span class="dot" style="background:'+prioCor(i.prioridade)+'"></span>'+(esc((i.prioridade||'').replace(/^[^\w]+/,''))||'—')+'</span>'
+    +'<span>· '+esc(i.disciplina||'—')+'</span><span>· Prazo: '+prazo+'</span></div></div>'
+    +'<button class="modal-x" onclick="closeApt()">×</button></div>'
+    +'<div class="modal-b">'
+    +(i.descricao?'<div class="sec-t">Descrição</div><div class="desc">'+esc(i.descricao)+'</div>':'')
+    +prints
+    +'<div class="sec-t">Conversa com o projetista</div>'+chat
+    +'<div style="display:flex;gap:6px;margin-top:10px">'
+      +'<input id="aptMsgTxt" placeholder="Escreva uma resposta ao projetista…" onkeydown="if(event.key===\'Enter\'){event.preventDefault();aptMsgEnviar();}" style="flex:1;border:1px solid #E2E8F0;border-radius:9px;padding:9px 11px;font-size:13px;outline:none">'
+      +'<button onclick="aptMsgEnviar()" style="background:#1D4ED8;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">Enviar</button>'
+      +'<button onclick="aptSugerirPrazoPrompt()" style="'+bstyle+'">📅 Sugerir prazo</button>'
+    +'</div></div>';
 }
-function closeApt(){document.getElementById('aptModal').classList.remove('on');}
+async function _aptSalvarConv(extra){
+  const i=APT_CONV; if(!i) return false;
+  const obj=Object.assign({mensagens:i.mensagens||[]}, extra||{});
+  const { error }=await sb.from('apontamentos').update(obj).eq('id',i.id).eq('empreendimento',i.empreendimento);
+  if(error){ alert('Erro ao salvar: '+(error.message||error)); return false; }
+  if(PAGE==='msg' && typeof mcLoad==='function'){ try{ mcLoad(); }catch(e){} }
+  return true;
+}
+async function aptMsgEnviar(){
+  const i=APT_CONV; if(!i)return; const t=document.getElementById('aptMsgTxt'); const txt=(t&&t.value||'').trim(); if(!txt)return;
+  i.mensagens=Array.isArray(i.mensagens)?i.mensagens:[];
+  i.mensagens.push({de:'analista',nome:USER.nome||USER.email,email:USER.email,data:new Date().toLocaleString('pt-BR'),texto:txt});
+  if(t)t.value='';
+  if(await _aptSalvarConv()) renderAptModal();
+}
+async function aptSugerirPrazoPrompt(){
+  const v=prompt('Prazo sugerido para o projetista (dd/mm/aaaa):',''); if(!v)return; const p=v.trim(); if(!p)return;
+  const i=APT_CONV; i.mensagens=Array.isArray(i.mensagens)?i.mensagens:[];
+  i.mensagens.push({de:'analista',tipo:'sugestao_prazo',prazo_sugerido:p,nome:USER.nome||USER.email,email:USER.email,data:new Date().toLocaleString('pt-BR'),texto:'Sugestão de prazo: '+p});
+  if(await _aptSalvarConv()) renderAptModal();
+}
+async function aptAceitarPrazo(p){
+  const i=APT_CONV; if(!i)return;
+  i.prazo_min=p;
+  const disc=i.disciplina; if(disc && i.participantes && i.participantes[disc]) i.participantes[disc].prazo=p;
+  const d=_pdBR(p), t0=new Date(); t0.setHours(0,0,0,0);
+  i.atrasado=!!(d && d<t0 && i.status!=='Resolvido');
+  i.mensagens=Array.isArray(i.mensagens)?i.mensagens:[];
+  i.mensagens.push({de:'analista',data:new Date().toLocaleString('pt-BR'),texto:'✅ Prazo aprovado: '+p,tipo:'sistema'});
+  if(await _aptSalvarConv({prazo_min:i.prazo_min, participantes:i.participantes||{}, atrasado:i.atrasado})) renderAptModal();
+}
+async function aptRecusarPrazo(p){
+  const i=APT_CONV; if(!i)return;
+  i.mensagens=Array.isArray(i.mensagens)?i.mensagens:[];
+  i.mensagens.push({de:'analista',data:new Date().toLocaleString('pt-BR'),texto:'❌ Prazo recusado: '+p,tipo:'sistema'});
+  if(await _aptSalvarConv()) renderAptModal();
+}
+function closeApt(){document.getElementById('aptModal').classList.remove('on'); APT_CONV=null;}
 function abrirPrint(idx){const u=PRINTS[idx];if(!u)return;document.getElementById('lbImg').src=u;document.getElementById('imgLightbox').classList.add('on');}
 function fecharPrint(){document.getElementById('imgLightbox').classList.remove('on');}
 document.addEventListener('keydown',e=>{
@@ -855,7 +894,15 @@ document.addEventListener('keydown',e=>{
   else closeApt();
 });
 
-(async()=>{ const {data}=await sb.auth.getSession(); if(data&&data.session){ await afterLogin(data.session.user); } else { location.replace('./'); } })();
+(async()=>{
+  // Em modo embed (iframe na estação) esconde a tela de login de imediato para
+  // não "piscar" o login antes do painel aparecer (a sessão é a mesma do pai).
+  const _embed=new URLSearchParams(location.search).get('embed')==='1';
+  if(_embed){ const lw=document.getElementById('loginWrap'); if(lw) lw.style.display='none'; }
+  const {data}=await sb.auth.getSession();
+  if(data&&data.session){ await afterLogin(data.session.user); }
+  else { location.replace('./'); }
+})();
 
 // ── Painel financeiro consolidado (por empreendimento) ───────
 async function loadFinanceiro(empId){
