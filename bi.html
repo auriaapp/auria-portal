@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Painel BI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0F1923;color:#E8EDF2;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{background:#1A2F4A;padding:10px 18px;display:flex;align-items:center;gap:12px;flex-shrink:0;border-bottom:1px solid #243447}
+.header h1{font-size:16px;font-weight:700}
+.btn-sec{background:#243447;color:#E8EDF2;border:1px solid #3D5A7A;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px}
+.btn-sec:hover{background:#2C4A6A}
+.btn-export{background:#1A5276;color:#fff;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600}
+.btn-export:hover{background:#1F6FA3}
+
+/* Tabs */
+.tabs{background:#152030;display:flex;gap:0;flex-shrink:0;border-bottom:2px solid #243447}
+.tab{padding:9px 22px;font-size:13px;font-weight:600;cursor:pointer;color:#7FB3D3;border-bottom:3px solid transparent;transition:all .2s;user-select:none}
+.tab:hover{color:#E8EDF2;background:#1A2F4A}
+.tab.active{color:#E8960A;border-bottom-color:#E8960A;background:transparent}
+/* Filter bar */
+.filterbar{background:#0F1923;padding:8px 18px;display:flex;align-items:center;gap:10px;flex-shrink:0;border-bottom:1px solid #1D2E40;flex-wrap:wrap}
+.filterbar label{font-size:11px;color:#7FB3D3;white-space:nowrap}
+.filterbar input,.filterbar select{background:#1A2F4A;border:1px solid #3D5A7A;color:#E8EDF2;border-radius:7px;padding:5px 10px;font-size:12px;outline:none}
+.filterbar input{width:160px}
+.filterbar input[type=date]{width:135px}
+.ms{position:relative;display:inline-block}
+.ms-btn{background:#1A2F4A;border:1px solid #3D5A7A;color:#E8EDF2;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap}
+.ms-btn:hover{border-color:#5A7A9A}
+.ms-btn.act{border-color:#E8960A;color:#E8960A;font-weight:600}
+.ms-pop{display:none;position:absolute;top:112%;left:0;background:#16263a;border:1px solid #3D5A7A;border-radius:8px;padding:6px;min-width:180px;max-height:280px;overflow:auto;z-index:60;box-shadow:0 12px 32px rgba(0,0,0,.55)}
+.ms-pop.on{display:block}
+.ms-opt{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px;color:#E8EDF2;cursor:pointer;white-space:nowrap}
+.ms-opt:hover{background:#22384f}
+.ms-opt input{width:auto !important}
+.ms-pop .dlbl{font-size:10px;color:#7FB3D3;margin:2px 2px 3px;text-transform:uppercase;letter-spacing:.5px}
+.ms-pop .dinp{width:100%;background:#1A2F4A;border:1px solid #3D5A7A;color:#E8EDF2;border-radius:6px;padding:5px 8px;font-size:12px;cursor:pointer}
+.ms-clear{background:transparent;border:1px solid #3D5A7A;color:#7FB3D3;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
+.ms-clear:hover{color:#fff;border-color:#7FB3D3}
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:200;align-items:center;justify-content:center;padding:20px}
+.modal-ov.on{display:flex}
+.modal{background:#16263a;border:1px solid #3D5A7A;border-radius:14px;width:880px;max-width:96vw;max-height:88vh;overflow:auto;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+.modal-h{padding:16px 18px;border-bottom:1px solid #243447;position:sticky;top:0;background:#16263a;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;z-index:1}
+.modal-h h3{font-size:16px;color:#E8EDF2}
+.modal-x{background:transparent;border:none;color:#7FB3D3;font-size:24px;cursor:pointer;line-height:1}
+.det-tbl{border-collapse:collapse;width:100%;font-size:12px}
+.det-tbl th{text-align:left;padding:8px 10px;color:#7FB3D3;border-bottom:1px solid #243447;white-space:nowrap}
+.det-tbl td{padding:7px 10px;border-bottom:1px solid #1c2c3f;color:#E8EDF2}
+.det-tbl tr:hover td{background:#1c2c3f}
+.scroll{flex:1;overflow-y:auto;overflow-x:hidden}
+.kpis{display:flex;gap:10px;padding:14px 14px 8px;flex-wrap:wrap}
+.kpi{flex:1;min-width:100px;background:#1A2F4A;border-radius:10px;padding:12px 14px;text-align:center;border-top:3px solid transparent}
+.kpi-v{font-size:26px;font-weight:800;line-height:1}
+.kpi-l{font-size:10px;color:#7FB3D3;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 14px 12px}
+.box{background:#1A2F4A;border-radius:12px;padding:14px}
+.box-title{font-size:11px;font-weight:700;color:#7FB3D3;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.wide{grid-column:1/-1}
+canvas{max-height:200px}
+.tbl-box{background:#1A2F4A;border-radius:12px;padding:14px;margin:0 14px 14px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#0F1923;padding:8px 10px;text-align:left;color:#7FB3D3;font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:.5px}
+td{padding:7px 10px;border-bottom:1px solid #1D2E40}
+tr:hover td{background:#1D2E40}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
+.tag{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700}
+/* Avaliação */
+.aval-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;padding:14px}
+.aval-card{background:#1A2F4A;border-radius:14px;padding:18px;border-top:4px solid #888;position:relative;transition:transform .15s}
+.aval-card:hover{transform:translateY(-2px)}
+.aval-disc{font-size:15px;font-weight:700;margin-bottom:10px}
+.aval-row{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid #243447}
+.aval-row:last-child{border:none}
+.aval-label{color:#7FB3D3}
+.aval-val{font-weight:600}
+.score-bar{height:6px;background:#243447;border-radius:3px;margin-top:10px;overflow:hidden}
+.score-fill{height:100%;border-radius:3px;transition:width .4s}
+.score-num{font-size:22px;font-weight:800;position:absolute;top:14px;right:16px}
+.badge-atr{background:rgba(231,76,60,.2);color:#E74C3C;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700}
+.empty-aval{text-align:center;color:#5A7A9A;padding:60px;font-size:14px}
+/* ── Tema claro ─────────────────────────────────────────── */
+body.light{background:#EEF2F7;color:#1E293B}
+body.light .header{background:#FFFFFF;border-bottom-color:#E2E8F0}
+body.light .btn-sec{background:#F1F5F9;color:#334155;border-color:#CBD5E1}
+body.light .btn-sec:hover{background:#E2E8F0}
+body.light .tabs{background:#F8FAFC;border-bottom-color:#E2E8F0}
+body.light .tab{color:#475569}
+body.light .tab:hover{color:#1E293B;background:#EEF2F7}
+body.light .filterbar{background:#F8FAFC;border-bottom-color:#E2E8F0}
+body.light .filterbar label{color:#475569}
+body.light .filterbar input,body.light .filterbar select{background:#FFFFFF;border-color:#CBD5E1;color:#1E293B}
+body.light .ms-btn{background:#FFFFFF;border-color:#CBD5E1;color:#1E293B}
+body.light .ms-pop{background:#FFFFFF;border-color:#CBD5E1}
+body.light .ms-opt{color:#1E293B}
+body.light .ms-opt:hover{background:#EEF2F7}
+body.light .ms-pop .dinp{background:#FFFFFF;border-color:#CBD5E1;color:#1E293B}
+body.light .ms-pop .dlbl{color:#475569}
+body.light .ms-clear{border-color:#CBD5E1;color:#475569}
+body.light .ms-clear:hover{color:#1E293B;border-color:#94A3B8}
+body.light .modal{background:#FFFFFF;border-color:#E2E8F0}
+body.light .modal-h{background:#FFFFFF;border-bottom-color:#E2E8F0}
+body.light .modal-h h3{color:#1E293B}
+body.light .det-tbl th{color:#475569;border-bottom-color:#E2E8F0}
+body.light .det-tbl td{color:#334155;border-bottom-color:#EEF2F7}
+body.light .det-tbl tr:hover td{background:#F8FAFC}
+body.light .kpi{background:#FFFFFF}
+body.light .kpi-l{color:#475569}
+body.light .box{background:#FFFFFF}
+body.light .box-title{color:#475569}
+body.light .tbl-box{background:#FFFFFF}
+body.light th{background:#F1F5F9;color:#475569}
+body.light td{border-bottom-color:#EEF2F7;color:#334155}
+body.light tr:hover td{background:#F8FAFC}
+body.light .aval-card{background:#FFFFFF}
+body.light .aval-label{color:#475569}
+body.light .aval-row{border-bottom-color:#EEF2F7}
+body.light .score-bar{background:#E2E8F0}
+body.light .empty-aval{color:#94A3B8}
+</style></head><body>
+<div class="header">
+  <h1>📊 Painel de Apontamentos — Auria</h1>
+  <button class="btn-sec" onclick="carregar()">↺ Atualizar</button>
+  <button class="btn-export" onclick="exportarCSV()">⬇ Exportar CSV</button>
+  <button class="btn-sec" id="thBtn" onclick="toggleTheme()" style="margin-left:auto" title="Alternar tema">☾ Escuro</button>
+</div>
+<div class="tabs">
+  <div class="tab active" id="tab-bi" onclick="mudarAba('bi')">📊 Apontamentos</div>
+  <div class="tab" id="tab-aval" onclick="mudarAba('aval')">⭐ Avaliação de Projetos</div>
+</div>
+<!-- Filtros (visíveis em ambas as abas de forma contextual) -->
+<div class="filterbar" id="filterbar-bi">
+  <label>Busca:</label>
+  <input id="f-txt" placeholder="Título ou descrição..." oninput="carregar()">
+  <div class="ms"><button type="button" class="ms-btn" id="msb-local" onclick="msToggle('local')">Local ▾</button><div class="ms-pop" id="ms-local"></div></div>
+  <div class="ms"><button type="button" class="ms-btn" id="msb-status" onclick="msToggle('status')">Status ▾</button><div class="ms-pop" id="ms-status"></div></div>
+  <div class="ms"><button type="button" class="ms-btn" id="msb-disc" onclick="msToggle('disc')">Disciplina ▾</button><div class="ms-pop" id="ms-disc"></div></div>
+  <div class="ms"><button type="button" class="ms-btn" id="msb-tipo" onclick="msToggle('tipo')">Tipo ▾</button><div class="ms-pop" id="ms-tipo"></div></div>
+  <div class="ms"><button type="button" class="ms-btn" id="msb-crit" onclick="msToggle('crit')">Criticidade ▾</button><div class="ms-pop" id="ms-crit"></div></div>
+  <div class="ms">
+    <button type="button" class="ms-btn" id="msb-crd" onclick="msToggle('crd')">Criação ▾</button>
+    <div class="ms-pop" id="ms-crd">
+      <div class="dlbl">De</div>
+      <input type="date" id="f-crde" class="dinp" onchange="dateChg()" onclick="if(this.showPicker)this.showPicker()">
+      <div class="dlbl">Até</div>
+      <input type="date" id="f-crate" class="dinp" onchange="dateChg()" onclick="if(this.showPicker)this.showPicker()">
+      <button type="button" class="ms-clear" style="width:100%;margin-top:8px" onclick="dateClear('cr')">Limpar datas</button>
+    </div>
+  </div>
+  <div class="ms">
+    <button type="button" class="ms-btn" id="msb-cod" onclick="msToggle('cod')">Conclusão ▾</button>
+    <div class="ms-pop" id="ms-cod">
+      <div class="dlbl">De</div>
+      <input type="date" id="f-code" class="dinp" onchange="dateChg()" onclick="if(this.showPicker)this.showPicker()">
+      <div class="dlbl">Até</div>
+      <input type="date" id="f-coate" class="dinp" onchange="dateChg()" onclick="if(this.showPicker)this.showPicker()">
+      <button type="button" class="ms-clear" style="width:100%;margin-top:8px" onclick="dateClear('co')">Limpar datas</button>
+    </div>
+  </div>
+  <button type="button" class="ms-clear" onclick="limparFiltros()">Limpar tudo</button>
+  <span id="f-cnt" style="font-size:11px;color:#5A7A9A;margin-left:auto"></span>
+</div>
+<!-- Aba Apontamentos -->
+<div class="scroll" id="pane-bi">
+  <div class="kpis">
+    <div class="kpi" style="border-color:#2980B9"><div class="kpi-v" id="k-total">—</div><div class="kpi-l">Total</div></div>
+    <div class="kpi" style="border-color:#E74C3C"><div class="kpi-v" style="color:#E74C3C" id="k-aberto">—</div><div class="kpi-l">Em aberto</div></div>
+    <div class="kpi" style="border-color:#27AE60"><div class="kpi-v" style="color:#27AE60" id="k-res">—</div><div class="kpi-l">Resolvidos</div></div>
+    <div class="kpi" style="border-color:#E67E22"><div class="kpi-v" style="color:#E67E22" id="k-atr">—</div><div class="kpi-l">Pendentes atrasados</div></div>
+    <div class="kpi" style="border-color:#27AE60"><div class="kpi-v" style="color:#27AE60" id="k-cprazo">—</div><div class="kpi-l">Concluídos no prazo</div></div>
+    <div class="kpi" style="border-color:#E74C3C"><div class="kpi-v" style="color:#E74C3C" id="k-catraso">—</div><div class="kpi-l">Concluídos em atraso</div></div>
+  </div>
+  <div class="charts">
+    <div class="box"><div class="box-title">Por Status</div><canvas id="ch-st"></canvas></div>
+    <div class="box"><div class="box-title">Por Prioridade</div><canvas id="ch-pr"></canvas></div>
+    <div class="box"><div class="box-title">Por Disciplina</div><canvas id="ch-di"></canvas></div>
+    <div class="box"><div class="box-title">Por Tipo</div><canvas id="ch-tp"></canvas></div>
+    <div class="box wide"><div class="box-title">Evolução — Apontamentos por Data de Criação</div><canvas id="ch-tm"></canvas></div>
+  </div>
+  <div class="tbl-box">
+    <div class="box-title" style="margin-bottom:10px">Listagem de Apontamentos</div>
+    <table><thead><tr><th>#</th><th>ID</th><th>Título</th><th>Disciplina</th><th>Prioridade</th><th>Status</th><th>Prazo</th></tr></thead>
+    <tbody id="tb"></tbody></table>
+  </div>
+</div>
+<!-- Aba Avaliação -->
+<div class="scroll" id="pane-aval" style="display:none">
+  <div id="aval-content" class="aval-grid"></div>
+</div>
+
+<!-- Modal: apontamentos considerados na avaliação -->
+<div class="modal-ov" id="avalDet" onclick="if(event.target===this)fecharAvalDet()">
+  <div class="modal" id="avalDetBox"></div>
+</div>
+
+<script>
+function chTheme(){ var l=document.body.classList.contains('light');
+  return {txt:l?'#334155':'#E8EDF2', tick:l?'#475569':'#7FB3D3', grid:l?'#E6EBF2':'#1D2E40'}; }
+function CO(){ var c=chTheme();
+  return {plugins:{legend:{labels:{color:c.txt,font:{size:11},padding:10}}},responsive:true,maintainAspectRatio:true}; }
+function SCO(){ var c=chTheme(); var co=CO();
+  return Object.assign({}, co, {scales:{
+    x:{ticks:{color:c.tick,font:{size:10}},grid:{color:c.grid}},
+    y:{ticks:{color:c.tick,font:{size:10}},grid:{color:c.grid}}}}); }
+let chs={};
+let _abaAtual='bi';
+let _discList=[];
+const MS={local:new Set(),status:new Set(),disc:new Set(),tipo:new Set(),crit:new Set()};
+const MS_LBL={local:'Local',status:'Status',disc:'Disciplina',tipo:'Tipo',crit:'Criticidade'};
+let _optsBuilt=false, _lastOpts={};
+function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function mudarAba(aba){
+  _abaAtual=aba;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+aba).classList.add('active');
+  document.getElementById('pane-bi').style.display=aba==='bi'?'block':'none';
+  document.getElementById('pane-aval').style.display=aba==='aval'?'block':'none';
+  document.getElementById('filterbar-bi').style.display=aba==='bi'?'flex':'none';
+  if(aba==='aval') carregarAval();
+}
+
+function mkDonut(id,labels,data,colors){
+  if(chs[id])chs[id].destroy();
+  chs[id]=new Chart(document.getElementById(id),{type:'doughnut',
+    data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,hoverOffset:4}]},
+    options:Object.assign({}, CO(), {cutout:'62%',plugins:Object.assign({}, CO().plugins,{tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${ctx.raw}`}}})})});
+}
+function mkBar(id,labels,data,color,horizontal=false){
+  if(chs[id])chs[id].destroy();
+  chs[id]=new Chart(document.getElementById(id),{
+    data:{labels,datasets:[{data,backgroundColor:color,borderRadius:4,borderSkipped:false}]},
+    type:'bar',
+    options:Object.assign({}, SCO(), {indexAxis:horizontal?'y':'x',plugins:Object.assign({}, SCO().plugins,{legend:{display:false}})})});
+}
+function mkLine(id,labels,data){
+  if(chs[id])chs[id].destroy();
+  chs[id]=new Chart(document.getElementById(id),{type:'line',
+    data:{labels,datasets:[{label:'Apontamentos',data,borderColor:'#2980B9',backgroundColor:'rgba(41,128,185,.15)',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:'#2980B9'}]},
+    options:SCO()});
+}
+const STATUS_COLORS=['#E74C3C','#27AE60','#F39C12','#2980B9','#8E44AD','#7F8C8D'];
+const PRIO_COLORS=['#E74C3C','#E67E22','#F1C40F','#27AE60'];
+
+function render(d){
+  // KPIs
+  document.getElementById('k-total').textContent=d.total;
+  document.getElementById('k-aberto').textContent=d.aberto;
+  document.getElementById('k-res').textContent=d.resolvido;
+  document.getElementById('k-atr').textContent=d.atrasado;
+  document.getElementById('k-cprazo').textContent=d.concluido_prazo!=null?d.concluido_prazo:'—';
+  document.getElementById('k-catraso').textContent=d.concluido_atraso!=null?d.concluido_atraso:'—';
+  document.getElementById('f-cnt').textContent=d.total+' apontamentos';
+  // Charts
+  mkDonut('ch-st',Object.keys(d.por_status),Object.values(d.por_status),STATUS_COLORS);
+  mkDonut('ch-pr',Object.keys(d.por_prio),Object.values(d.por_prio),PRIO_COLORS);
+  mkBar('ch-di',Object.keys(d.por_disc),Object.values(d.por_disc),'#2980B9');
+  mkBar('ch-tp',Object.keys(d.por_tipo),Object.values(d.por_tipo),'#8E44AD',true);
+  mkLine('ch-tm',d.tempo_labels,d.tempo_data);
+  // Constrói os filtros multi-seleção uma única vez (preserva seleções)
+  if(!_optsBuilt && d.opcoes){
+    _lastOpts=d.opcoes;
+    ['local','status','disc','tipo','crit'].forEach(n=>msBuild(n, d.opcoes[n]||[]));
+    _optsBuilt=true;
+  }
+  // Tabela
+  const STATUS_BG={'Em aberto':'rgba(231,76,60,.15)','Resolvido':'rgba(39,174,96,.15)','Em análise':'rgba(243,156,18,.15)','Reprovado':'rgba(142,68,173,.15)'};
+  document.getElementById('tb').innerHTML=d.tabela.map((r,i)=>`<tr>
+    <td style="color:#7FB3D3">${i+1}</td>
+    <td style="font-weight:600">${r.id}</td>
+    <td>${r.titulo}</td>
+    <td>${r.disciplina||'—'}</td>
+    <td><span class="dot" style="background:${r.cor}"></span>${r.prioridade||'—'}</td>
+    <td><span class="tag" style="background:${STATUS_BG[r.status]||'rgba(127,140,141,.15)'};color:#E8EDF2">${r.status}</span></td>
+    <td style="color:${r.atrasado?'#E74C3C':'inherit'}">${r.prazo||'—'}</td>
+  </tr>`).join('');
+}
+
+function msBuild(name, opts){
+  const pop=document.getElementById('ms-'+name); if(!pop) return;
+  if(!opts || !opts.length){ pop.innerHTML='<div class="ms-opt" style="color:#5A7A9A">— sem opções —</div>'; return; }
+  pop.innerHTML=opts.map(o=>{
+    const v=String(o), ck=MS[name].has(v)?'checked':'';
+    return '<label class="ms-opt"><input type="checkbox" '+ck+' value="'+_esc(v)+'">'+_esc(v)+'</label>';
+  }).join('');
+  pop.onchange=function(e){ if(e.target && e.target.type==='checkbox') msTick(name, e.target); };
+}
+function msTick(name, el){
+  const v=el.value;
+  if(el.checked) MS[name].add(v); else MS[name].delete(v);
+  const b=document.getElementById('msb-'+name), n=MS[name].size;
+  b.textContent = (n? MS_LBL[name]+' ('+n+')' : MS_LBL[name])+' ▾';
+  b.classList.toggle('act', n>0);
+  carregar();
+}
+function msToggle(name){
+  const pop=document.getElementById('ms-'+name), open=pop.classList.contains('on');
+  document.querySelectorAll('.ms-pop').forEach(p=>p.classList.remove('on'));
+  if(!open) pop.classList.add('on');
+}
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.ms')) document.querySelectorAll('.ms-pop').forEach(p=>p.classList.remove('on'));
+});
+function limparFiltros(){
+  document.getElementById('f-txt').value='';
+  ['f-crde','f-crate','f-code','f-coate'].forEach(id=>{const el=document.getElementById(id); if(el)el.value='';});
+  refreshDateBtns();
+  ['local','status','disc','tipo','crit'].forEach(n=>{
+    MS[n].clear();
+    const b=document.getElementById('msb-'+n);
+    if(b){ b.textContent=MS_LBL[n]+' ▾'; b.classList.remove('act'); }
+    msBuild(n, _lastOpts[n]||[]);
+  });
+  carregar();
+}
+
+function _brshort(v){ if(!v)return ''; const p=v.split('-'); return p[2]+'/'+p[1]; }
+function updateDateBtn(prefix,deId,ateId,lbl){
+  const de=(document.getElementById(deId)||{}).value||'';
+  const ate=(document.getElementById(ateId)||{}).value||'';
+  const b=document.getElementById('msb-'+prefix); if(!b)return;
+  let txt=lbl;
+  if(de&&ate) txt=lbl+': '+_brshort(de)+'–'+_brshort(ate);
+  else if(de) txt=lbl+': '+_brshort(de);
+  else if(ate) txt=lbl+': até '+_brshort(ate);
+  b.textContent=txt+' ▾';
+  b.classList.toggle('act', !!(de||ate));
+}
+function refreshDateBtns(){
+  updateDateBtn('crd','f-crde','f-crate','Criação');
+  updateDateBtn('cod','f-code','f-coate','Conclusão');
+}
+function dateChg(){ refreshDateBtns(); carregar(); }
+function dateClear(which){
+  if(which==='cr'){document.getElementById('f-crde').value='';document.getElementById('f-crate').value='';}
+  else{document.getElementById('f-code').value='';document.getElementById('f-coate').value='';}
+  dateChg();
+}
+
+function _filtros(){
+  const p=new URLSearchParams();
+  const txt=document.getElementById('f-txt').value.trim();
+  if(txt) p.set('texto',txt);
+  ['local','status','disc','tipo','crit'].forEach(n=>{ MS[n].forEach(v=>p.append(n,v)); });
+  const dmap={crde:'f-crde',crate:'f-crate',code:'f-code',coate:'f-coate'};
+  Object.keys(dmap).forEach(k=>{ const el=document.getElementById(dmap[k]); if(el&&el.value) p.set(k,el.value); });
+  return p.toString();
+}
+
+// ════════ Dados via Supabase (portados de _bi_compute/_avaliacao_compute) ════════
+const sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+const EMP_NOME=new URLSearchParams(location.search).get('emp')||'';
+let ISSUES=[];
+const _TIPOS_QUALIDADE=new Set(['Interferência / Divergência entre Disciplinas','Divergência de Informação','Inconsistência Técnica ou Normativa','Não atendimento às premissas']);
+const _AV_PESOS={pont:0.39,qual:0.30,resol:0.20,inter:0.11};
+function _stripPrio(p){ p=String(p||'').replace('🔴 ','').replace('🟠 ','').replace('🟡 ',''); const M={'Crítica':'Severa / Imediata','Média':'Importante / Programada','Observação':'Observação / Atenção'}; return M[p]||p; }
+function _corPino(pr){ const p=_stripPrio(pr); if(p.indexOf('Severa / Imediata')>=0)return '#E74C3C'; if(p.indexOf('Importante / Programada')>=0)return '#F39C12'; if(p.indexOf('Observação')>=0)return '#F1C40F'; return '#E74C3C'; }
+function _pd(s){ if(!s)return null; s=String(s).trim().slice(0,10); let d;
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)){ d=new Date(s+'T00:00:00'); }
+  else if(/^\d{2}\/\d{2}\/\d{4}/.test(s)){ const p=s.split('/'); d=new Date(+p[2],+p[1]-1,+p[0]); }
+  else return null; return isNaN(d.getTime())?null:d; }
+function _parts(i){ const p=i.participantes; return (p&&typeof p==='object'&&!Array.isArray(p))?p:{}; }
+function _locais(i){ const l=i.local; if(Array.isArray(l))return new Set(l.filter(Boolean)); return l?new Set([l]):new Set(); }
+function _dataConcl(i){ let mx=null; const p=_parts(i); for(const k in p){ const d=_pd((p[k]||{}).conclusao||''); if(d&&(!mx||d>mx))mx=d; } return mx; }
+function _prazoMinStr(i){ const p=_parts(i); const pp=[]; for(const k in p){ const v=(p[k]||{}).prazo; if(v)pp.push(v); } if(pp.length)return pp.slice().sort()[0]; return i.prazo_min||''; }
+function _prazoMinDate(i){ const p=_parts(i); let mn=null; for(const k in p){ const d=_pd((p[k]||{}).prazo||''); if(d&&(!mn||d<mn))mn=d; } if(mn)return mn; return _pd(i.prazo_min||''); }
+async function _loadIssues(){
+  let qy=sb.from('apontamentos').select('id,titulo,descricao,status,disciplina,tipo,prioridade,data_criacao,local,participantes,mensagens,prazo_min,conclusao,empreendimento').limit(3000);
+  if(EMP_NOME) qy=qy.eq('empreendimento',EMP_NOME);
+  try{ const r=await qy; ISSUES=r.data||[]; }catch(e){ ISSUES=[]; }
+}
+function _biCompute(f){
+  f=f||{};
+  const _lst=k=>{ const v=f[k]; return new Set(Array.isArray(v)?v.filter(Boolean):(v?[v]:[])); };
+  const _one=k=>{ const v=f[k]; return Array.isArray(v)?(v[0]||''):(v||''); };
+  const fSt=_lst('status'),fDi=_lst('disc'),fTp=_lst('tipo'),fLo=_lst('local'),fCr=_lst('crit');
+  const fTx=_one('texto').toLowerCase();
+  const crDe=_pd(_one('crde')),crAte=_pd(_one('crate')),coDe=_pd(_one('code')),coAte=_pd(_one('coate'));
+  const passa=i=>{
+    if(fTx && ((i.titulo||'')+(i.descricao||'')).toLowerCase().indexOf(fTx)<0)return false;
+    if(fSt.size && !fSt.has(i.status||''))return false;
+    if(fDi.size && !fDi.has(i.disciplina||''))return false;
+    if(fTp.size && !fTp.has(i.tipo||''))return false;
+    if(fCr.size && !fCr.has(_stripPrio(i.prioridade||'')))return false;
+    if(fLo.size){ let ok=false; _locais(i).forEach(x=>{ if(fLo.has(x))ok=true; }); if(!ok)return false; }
+    if(crDe||crAte){ const d=_pd(i.data_criacao||''); if(!d||(crDe&&d<crDe)||(crAte&&d>crAte))return false; }
+    if(coDe||coAte){ const d=_dataConcl(i); if(!d||(coDe&&d<coDe)||(coAte&&d>coAte))return false; }
+    return true;
+  };
+  const issues=ISSUES.filter(passa);
+  const locSet=new Set(); ISSUES.forEach(i=>_locais(i).forEach(x=>locSet.add(x)));
+  const opcoes={
+    status:['Em aberto','Em análise','Resolvido','Reprovado'],
+    disc:[...new Set(ISSUES.map(i=>i.disciplina).filter(Boolean))].sort(),
+    tipo:[...new Set(ISSUES.map(i=>i.tipo).filter(Boolean))].sort(),
+    local:[...locSet].filter(Boolean).sort(),
+    crit:['Severa / Imediata','Importante / Programada','Observação / Atenção']
+  };
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const atrasado=i=>{ if(i.status==='Resolvido')return false; const d=_prazoMinDate(i); return d?d<hoje:false; };
+  const concl=i=>{ if(i.status!=='Resolvido')return null; const dc=_dataConcl(i),pdl=_prazoMinDate(i); if(dc&&pdl)return dc>pdl?'atraso':'prazo'; return 'prazo'; };
+  const cnt=arr=>{ const o={}; arr.forEach(v=>{ o[v]=(o[v]||0)+1; }); return o; };
+  const por_status=cnt(issues.map(i=>i.status||'N/A'));
+  const por_prio=cnt(issues.map(i=>_stripPrio(i.prioridade||'N/A')));
+  const por_disc=cnt(issues.map(i=>i.disciplina||'N/A'));
+  const por_tipo=cnt(issues.map(i=>i.tipo||'N/A'));
+  const dias={};
+  issues.forEach(i=>{ const d=_pd(i.data_criacao||''); if(d){ const lbl=('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2); dias[lbl]=(dias[lbl]||0)+1; } });
+  const tempo_labels=Object.keys(dias).sort((a,b)=>{ const pa=a.split('/'),pb=b.split('/'); return (pa[1]+pa[0]).localeCompare(pb[1]+pb[0]); }).slice(-30);
+  const tabela=issues.filter(i=>['Em aberto','Em análise','Reprovado'].indexOf(i.status)>=0).map(i=>({
+    id:i.id||'', titulo:(i.titulo||'').slice(0,50), disciplina:i.disciplina||'',
+    prioridade:_stripPrio(i.prioridade||''), status:i.status||'', prazo:_prazoMinStr(i),
+    cor:_corPino(i.prioridade||''), atrasado:atrasado(i)}));
+  return {total:issues.length,
+    aberto:issues.filter(i=>i.status==='Em aberto').length,
+    resolvido:issues.filter(i=>i.status==='Resolvido').length,
+    atrasado:issues.filter(atrasado).length,
+    analise:issues.filter(i=>i.status==='Em análise').length,
+    concluido_prazo:issues.filter(i=>concl(i)==='prazo').length,
+    concluido_atraso:issues.filter(i=>concl(i)==='atraso').length,
+    por_status,por_prio,por_disc,por_tipo,
+    tempo_labels,tempo_data:tempo_labels.map(l=>dias[l]),
+    tabela,opcoes};
+}
+function _avalCompute(){
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const pesoSev=pr=>{ const p=_stripPrio(pr||''); if(p.indexOf('Severa')>=0||p.indexOf('Imediata')>=0)return 3; if(p.indexOf('Importante')>=0||p.indexOf('Programada')>=0)return 2; if(p.indexOf('Observa')>=0||p.indexOf('Aten')>=0)return 1; return 2; };
+  const stats={}; let globalMsgs=0;
+  const S=key=>{ if(!stats[key])stats[key]={disc:'',proj:'',total:0,resolvidos:0,pendentes:0,atrasados:0,no_prazo:0,pont_aval:0,interacao:0,severos:0,sev_soma:0,qual_count:0,tempos:[],itens:[]}; return stats[key]; };
+  ISSUES.forEach(issue=>{
+    const parts=_parts(issue); let pares=[];
+    for(const disc in parts){ const info=parts[disc]; if(!disc||typeof info!=='object')continue; const proj=((info.emails||'')+'').trim()||'—'; pares.push([disc,proj,info]); }
+    if(!pares.length){ const d0=issue.disciplina||''; if(!d0)return; pares=[[d0,'—',{}]]; }
+    const msgs=issue.mensagens||[]; const temInter=Array.isArray(msgs)&&msgs.some(m=>m&&typeof m==='object'&&m.de==='projetista'); if(temInter)globalMsgs++;
+    const tipo=issue.tipo||''; const peso=(_TIPOS_QUALIDADE.has(tipo))?pesoSev(issue.prioridade||''):0; const sev3=(peso===3);
+    const resolvido=issue.status==='Resolvido'; const dcri=_pd(issue.data_criacao||''); const ehQual=_TIPOS_QUALIDADE.has(tipo); const prioTxt=_stripPrio(issue.prioridade||'');
+    pares.forEach(([disc,proj,info])=>{
+      const s=S(disc+'|'+proj); s.disc=disc; s.proj=proj; s.total++; s.sev_soma+=peso;
+      if(ehQual)s.qual_count++; if(sev3)s.severos++; if(temInter)s.interacao++;
+      const prz=_pd(info.prazo||''),cnc=_pd(info.conclusao||''); let pont='—';
+      if(resolvido){ s.resolvidos++; if(prz&&cnc){ s.pont_aval++; if(cnc<=prz){s.no_prazo++;pont='no_prazo';}else{s.atrasados++;pont='atrasado';} if(dcri){ const dd=Math.round((cnc-dcri)/864e5); if(dd>=0&&dd<=365)s.tempos.push(dd); } } }
+      else{ s.pendentes++; if(prz&&prz<hoje){ s.pont_aval++; s.atrasados++; pont='atrasado'; } }
+      s.itens.push({id:issue.id||'',titulo:(issue.titulo||'').slice(0,60),tipo:tipo,status:issue.status||'',prioridade:prioTxt,prazo:info.prazo||'—',conclusao:info.conclusao||'—',pont:pont,qualidade:ehQual});
+    });
+  });
+  const res=[];
+  for(const key in stats){ const s=stats[key]; const tot=s.total; if(!tot)continue;
+    const sResol=s.resolvidos/tot*100;
+    const sPont=s.pont_aval?(s.no_prazo/s.pont_aval*100):100;
+    const sInter=globalMsgs?(s.interacao/tot*100):100;
+    const sevMedia=s.sev_soma/tot; const sQual=Math.max(0,100-sevMedia/3*100);
+    let score=Math.round(_AV_PESOS.pont*sPont+_AV_PESOS.qual*sQual+_AV_PESOS.resol*sResol+_AV_PESOS.inter*sInter);
+    score=Math.max(0,Math.min(100,score));
+    const classif=score>=85?'Excelente':score>=70?'Bom':score>=50?'Regular':'Crítico';
+    res.push({disciplina:s.disc,projetista:s.proj,rotulo:s.disc+((s.proj&&s.proj!=='—')?(' · '+s.proj):''),
+      total:tot,resolvidos:s.resolvidos,pendentes:s.pendentes,atrasados:s.atrasados,no_prazo:s.no_prazo,
+      com_interacao:s.interacao,severos:s.severos,qual_count:s.qual_count,itens:s.itens,
+      tx_resolucao:Math.round(sResol),tempo_medio:s.tempos.length?Math.round(s.tempos.reduce((a,b)=>a+b,0)/s.tempos.length):null,
+      s_resolucao:Math.round(sResol),s_pontualidade:Math.round(sPont),s_qualidade:Math.round(sQual),s_interacao:Math.round(sInter),
+      score:score,classificacao:classif,estrelas:Math.round(score/20),interacao_ativa:!!globalMsgs});
+  }
+  res.sort((a,b)=>b.score-a.score);
+  return res;
+}
+function carregar(){
+  const q=_parseFiltros();
+  render(_biCompute(q));
+}
+function _parseFiltros(){
+  const usp=new URLSearchParams(_filtros()), o={};
+  usp.forEach((v,k)=>{ if(o[k]===undefined)o[k]=[]; o[k].push(v); });
+  return o;
+}
+function carregarAval(){ renderAval(_avalCompute()); }
+
+function scoreColor(s){
+  if(s>=80)return '#27AE60';
+  if(s>=60)return '#F39C12';
+  if(s>=40)return '#E67E22';
+  return '#E74C3C';
+}
+
+let AVAL=[];
+function renderAval(lista){
+  AVAL=lista||[];
+  const c=document.getElementById('aval-content');
+  if(!AVAL.length){c.innerHTML='<div class="empty-aval">Nenhum dado de avaliação disponível.</div>';return;}
+  const stars=n=>'★'.repeat(n)+'☆'.repeat(5-n);
+  const sub=(lbl,v,cor)=>'<div style="margin:5px 0"><div style="display:flex;justify-content:space-between;font-size:11px;color:#7FB3D3"><span>'+lbl+'</span><span>'+v+'%</span></div><div class="score-bar" style="margin-top:3px"><div class="score-fill" style="width:'+v+'%;background:'+cor+'"></div></div></div>';
+  c.innerHTML=AVAL.map((d,i)=>{
+    const cor=scoreColor(d.score);
+    const medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    return `<div class="aval-card" style="border-top-color:${cor};cursor:pointer" onclick="abrirAvalDet(${i})" title="Ver apontamentos considerados">
+      <div class="score-num" style="color:${cor}">${d.score}</div>
+      <div class="aval-disc">${medal} ${d.rotulo||d.disciplina}</div>
+      <div style="font-size:11px;font-weight:700;margin:-4px 0 8px;color:${cor}">${d.classificacao} · <span style="color:#F1C40F">${stars(d.estrelas)}</span></div>
+      <div class="aval-row"><span class="aval-label">Total</span><span class="aval-val">${d.total}</span></div>
+      <div class="aval-row"><span class="aval-label">Resolvidos</span><span class="aval-val" style="color:#27AE60">${d.resolvidos}</span></div>
+      <div class="aval-row"><span class="aval-label">Concluídos no prazo</span><span class="aval-val" style="color:#27AE60">${d.no_prazo}</span></div>
+      <div class="aval-row"><span class="aval-label">Concluídos em atraso</span><span class="aval-val">${d.atrasados>0?`<span class="badge-atr">${d.atrasados}</span>`:'0'}</span></div>
+      <div class="aval-row"><span class="aval-label">Apont. de qualidade</span><span class="aval-val" style="color:${d.qual_count>0?'#E74C3C':'#27AE60'}">${d.qual_count}</span></div>
+      <div class="aval-row"><span class="aval-label">Tempo médio</span><span class="aval-val">${d.tempo_medio!=null?d.tempo_medio+'d':'—'}</span></div>
+      <div style="margin-top:10px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#5A7A9A">Composição do score</div>
+      ${sub('Pontualidade',d.s_pontualidade,'#2980B9')}
+      ${sub('Qualidade',d.s_qualidade,'#8E44AD')}
+      ${sub('Resolução',d.s_resolucao,'#27AE60')}
+      ${sub('Interação'+(d.interacao_ativa?'':' (s/ dados)'),d.s_interacao,'#E67E22')}
+      <div style="text-align:center;margin-top:8px;font-size:10px;color:#5A7A9A">👁 clique para ver os apontamentos</div>
+    </div>`;
+  }).join('');
+}
+function abrirAvalDet(i){
+  const d=AVAL[i]; if(!d) return;
+  const PB={'no_prazo':['No prazo','#27AE60'],'atrasado':['Atrasado','#E74C3C'],'—':['—','#7F8C8D']};
+  const linhas=(d.itens||[]).map(it=>{
+    const pb=PB[it.pont]||PB['—'];
+    return '<tr>'+
+      '<td style="font-weight:600">'+(it.id||'')+'</td>'+
+      '<td>'+_esc(it.titulo||'—')+'</td>'+
+      '<td>'+_esc(it.tipo||'—')+(it.qualidade?' <span style="color:#E74C3C">●</span>':'')+'</td>'+
+      '<td>'+_esc(it.prioridade||'—')+'</td>'+
+      '<td>'+(it.status||'—')+'</td>'+
+      '<td>'+(it.prazo||'—')+'</td>'+
+      '<td style="color:'+pb[1]+';font-weight:600">'+pb[0]+'</td></tr>';
+  }).join('');
+  document.getElementById('avalDetBox').innerHTML=
+    '<div class="modal-h"><div><h3>'+_esc(d.rotulo||d.disciplina)+'</h3>'+
+    '<div style="font-size:12px;color:#7FB3D3">Score '+d.score+' · '+d.classificacao+' · '+d.total+' apontamentos considerados ('+d.qual_count+' de qualidade) · <span style="color:#E74C3C">●</span> = tipo que impacta qualidade</div></div>'+
+    '<button class="modal-x" onclick="fecharAvalDet()">×</button></div>'+
+    '<div style="padding:14px 18px;overflow:auto"><table class="det-tbl"><thead><tr>'+
+    '<th>ID</th><th>Título</th><th>Tipo</th><th>Criticidade</th><th>Status</th><th>Prazo</th><th>Pontualidade</th>'+
+    '</tr></thead><tbody>'+(linhas||'<tr><td colspan="7" style="text-align:center;color:#5A7A9A;padding:20px">Sem itens</td></tr>')+'</tbody></table></div>';
+  document.getElementById('avalDet').classList.add('on');
+}
+function fecharAvalDet(){document.getElementById('avalDet').classList.remove('on');}
+
+function exportarCSV(){
+  const d=_biCompute(_parseFiltros());
+  const rows=[['ID','Título','Disciplina','Criticidade','Status','Prazo','Atrasado']];
+  d.tabela.forEach(r=>rows.push([r.id,r.titulo,r.disciplina,r.prioridade,r.status,r.prazo,r.atrasado?'Sim':'Não']));
+  const csv=rows.map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='apontamentos.csv'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+
+
+function applyTheme(){
+  var t=localStorage.getItem('auria_theme')||'light';
+  document.body.classList.toggle('light', t==='light');
+  var b=document.getElementById('thBtn'); if(b) b.innerHTML=(t==='light')?'☾ Escuro':'☀ Claro';
+}
+function toggleTheme(){
+  var t=((localStorage.getItem('auria_theme')||'light')==='light')?'dark':'light';
+  localStorage.setItem('auria_theme',t); applyTheme();
+  if(_abaAtual==='aval') carregarAval(); else carregar();
+}
+async function _boot(){ applyTheme(); await _loadIssues(); carregar(); }
+document.addEventListener('DOMContentLoaded',_boot);
+</script></body></html>
