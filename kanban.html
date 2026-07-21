@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Kanban</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0F1923;color:#E8EDF2;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{background:#1A2F4A;padding:10px 18px;display:flex;align-items:center;gap:12px;flex-shrink:0;border-bottom:1px solid #243447}
+.header h1{font-size:16px;font-weight:700;white-space:nowrap}
+.btn-primary{background:#E8960A;color:#fff;border:none;padding:6px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px}
+.btn-primary:hover{background:#BA7517}
+.btn-sec{background:#243447;color:#E8EDF2;border:1px solid #3D5A7A;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px}
+.btn-sec:hover{background:#2C4A6A}
+
+.filterbar{background:#152030;padding:8px 18px;display:flex;align-items:center;gap:10px;flex-shrink:0;border-bottom:1px solid #1D2E40}
+.filterbar input,.filterbar select{background:#1A2F4A;border:1px solid #3D5A7A;color:#E8EDF2;border-radius:7px;padding:5px 10px;font-size:12px;outline:none}
+.filterbar input{width:180px}
+.filterbar label{font-size:11px;color:#7FB3D3;white-space:nowrap}
+.board{display:flex;gap:14px;padding:14px;flex:1;overflow-x:auto;overflow-y:hidden}
+.column{background:#1A2F4A;border-radius:12px;width:260px;min-width:260px;display:flex;flex-direction:column;max-height:100%}
+.col-header{padding:10px 14px;font-weight:700;font-size:12px;border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center}
+.s0{background:#2C3E50}.s1{background:#1A5276}.s2{background:#6E2FA0}.s3{background:#935116}.s4{background:#1A7A40}
+.col-body{flex:1;padding:8px;overflow-y:auto;min-height:80px}
+.col-body.over{background:rgba(232,150,10,.15);border-radius:8px}
+.card{background:#243447;border-radius:10px;padding:11px;margin-bottom:8px;cursor:grab;border-left:4px solid transparent;transition:transform .1s,box-shadow .1s}
+.card:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.card.dragging{opacity:.3}
+.card-title{font-weight:600;font-size:13px;margin-bottom:6px;line-height:1.3}
+.card-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.badge{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:700}
+.b-alta{background:#E74C3C;color:#fff}.b-media{background:#E67E22;color:#fff}.b-baixa{background:#27AE60;color:#fff}
+.prazo{font-size:11px;color:#7FB3D3}.prazo.atrasado{color:#E74C3C;font-weight:600}
+.card-footer{display:flex;justify-content:flex-end;margin-top:8px}
+.btn-ic{background:transparent;border:1px solid #3D5A7A;color:#7FB3D3;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;display:inline-flex;align-items:center;justify-content:center}
+.btn-ic:hover{background:#2C4A6A;color:#fff}
+.empty{text-align:center;color:#5A7A9A;font-size:12px;padding:18px;font-style:italic}
+.cnt{background:rgba(255,255,255,.12);border-radius:20px;padding:2px 8px;font-size:11px}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:center;justify-content:center}
+.overlay.on{display:flex}
+.modal{background:#1A2F4A;border-radius:16px;padding:24px;width:440px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.modal h2{font-size:16px;font-weight:700;margin-bottom:18px}
+.fg{margin-bottom:13px}
+.fg label{display:block;font-size:11px;color:#7FB3D3;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.fg input,.fg textarea,.fg select{width:100%;background:#243447;border:1px solid #3D5A7A;border-radius:8px;padding:8px 12px;color:#E8EDF2;font-size:13px;outline:none;font-family:inherit}
+.fg input:focus,.fg textarea:focus,.fg select:focus{border-color:#2980B9}
+.fg textarea{height:70px;resize:vertical}
+.row2{display:flex;gap:12px}.row2 .fg{flex:1}
+.mactions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.btn-del{background:#C0392B;color:#fff;border:none;padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;margin-right:auto}
+.btn-del:hover{background:#E74C3C}
+.trash{position:fixed;bottom:24px;left:50%;display:none;flex-direction:row;align-items:center;gap:13px;padding:13px 26px 13px 16px;border-radius:44px;background:linear-gradient(135deg,#7A1F16,#C0392B);color:#fff;z-index:200;box-shadow:0 12px 34px rgba(192,57,43,.45),0 2px 8px rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.16);opacity:0;transform:translateX(-50%) translateY(34px) scale(.92);transition:transform .2s cubic-bezier(.34,1.56,.64,1),opacity .18s,background .18s,box-shadow .18s;pointer-events:none}
+.trash.show{display:flex;opacity:1;transform:translateX(-50%) translateY(0) scale(1);pointer-events:auto}
+.trash.over{background:linear-gradient(135deg,#C0392B,#E74C3C);transform:translateX(-50%) translateY(-4px) scale(1.06);box-shadow:0 18px 44px rgba(231,76,60,.6)}
+.trash .ticon{width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-size:21px;flex-shrink:0;transition:transform .18s,background .18s}
+.trash.over .ticon{transform:rotate(-9deg) scale(1.14);background:rgba(255,255,255,.30)}
+.trash .ttxt{display:flex;flex-direction:column;line-height:1.25}
+.trash .ttxt b{font-size:13px;font-weight:700}
+.trash .ttxt span{font-size:10.5px;opacity:.82}
+/* ── Tema claro ─────────────────────────────────────────── */
+body.light{background:#EEF2F7;color:#1E293B}
+body.light .header{background:#FFFFFF;border-bottom-color:#E2E8F0}
+body.light .btn-sec{background:#F1F5F9;color:#334155;border-color:#CBD5E1}
+body.light .btn-sec:hover{background:#E2E8F0}
+body.light .filterbar{background:#F8FAFC;border-bottom-color:#E2E8F0}
+body.light .filterbar input,body.light .filterbar select{background:#FFFFFF;border-color:#CBD5E1;color:#1E293B}
+body.light .filterbar label{color:#475569}
+body.light .column{background:#F1F5F9}
+body.light .card{background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+body.light .card:hover{box-shadow:0 4px 14px rgba(0,0,0,.12)}
+body.light .card-title{color:#1E293B}
+body.light .col-header{color:#FFFFFF}
+body.light .prazo{color:#475569}
+body.light .btn-ic{border-color:#CBD5E1;color:#475569}
+body.light .btn-ic:hover{background:#E2E8F0;color:#1E293B}
+body.light .empty{color:#94A3B8}
+body.light .modal{background:#FFFFFF}
+body.light .fg label{color:#475569}
+body.light .fg input,body.light .fg textarea,body.light .fg select{background:#FFFFFF;border-color:#CBD5E1;color:#1E293B}
+body.light #f-cnt{color:#94A3B8}
+</style></head><body>
+<div class="header">
+  <h1>📋 Kanban de Tarefas</h1>
+  <button class="btn-primary" onclick="abrirModal()">+ Nova Tarefa</button>
+  <button class="btn-sec" onclick="carregar()">↺ Atualizar</button>
+  <button class="btn-sec" id="thBtn" onclick="toggleTheme()" style="margin-left:auto" title="Alternar tema">☾ Escuro</button>
+</div>
+<div class="filterbar">
+  <label>Filtrar:</label>
+  <input id="f-txt" placeholder="Buscar título..." oninput="aplicarFiltro()">
+  <label>Prioridade:</label>
+  <select id="f-prio" onchange="aplicarFiltro()">
+    <option value="">Todas</option>
+    <option>Alta</option><option>Média</option><option>Baixa</option>
+  </select>
+  <label>Status:</label>
+  <select id="f-status" onchange="aplicarFiltro()">
+    <option value="">Todos</option>
+    <option>A fazer</option><option>Em andamento</option><option>Em revisão</option><option>Pendente</option><option>Concluído</option>
+  </select>
+  <span id="f-cnt" style="font-size:11px;color:#5A7A9A;margin-left:auto"></span>
+</div>
+<div class="board" id="board"></div>
+<div class="trash" id="trash" ondragover="tov(event)" ondragleave="tlv(event)" ondrop="tdrop(event)">
+  <div class="ticon">🗑️</div>
+  <div class="ttxt"><b>Excluir tarefa</b><span>Solte aqui para remover</span></div>
+</div>
+<div class="overlay" id="modal" onclick="if(event.target===this)fechar()">
+  <div class="modal">
+    <h2 id="mtitle">Nova Tarefa</h2>
+    <div class="fg"><label>Título *</label><input id="ft" placeholder="Título da tarefa"></div>
+    <div class="fg"><label>Descrição</label><textarea id="fd" placeholder="Detalhes..."></textarea></div>
+    <div class="row2">
+      <div class="fg"><label>Prioridade</label>
+        <select id="fp"><option>Alta</option><option selected>Média</option><option>Baixa</option></select></div>
+      <div class="fg"><label>Status</label>
+        <select id="fs"><option>A fazer</option><option>Em andamento</option><option>Em revisão</option><option>Pendente</option><option>Concluído</option></select></div>
+    </div>
+    <div class="fg"><label>Prazo</label><input id="fpr" type="date"></div>
+    <div class="mactions">
+      <button class="btn-del" id="bdel" style="display:none" onclick="deletar()">🗑 Excluir</button>
+      <button class="btn-sec" onclick="fechar()">Cancelar</button>
+      <button class="btn-primary" onclick="salvar()">Salvar</button>
+    </div>
+  </div>
+</div>
+<script>
+const COLS=[
+  {id:'A fazer',label:'A Fazer',s:'s0'},
+  {id:'Em andamento',label:'Em Andamento',s:'s1'},
+  {id:'Em revisão',label:'Em Revisão',s:'s2'},
+  {id:'Pendente',label:'Pendente',s:'s3'},
+  {id:'Concluído',label:'Concluído',s:'s4'},
+];
+const PCOR={Alta:'#E74C3C',Média:'#E67E22',Baixa:'#27AE60'};
+let tarefas=[],editId=null,dragId=null;
+function applyTheme(){
+  var t=localStorage.getItem('auria_theme')||'light';
+  document.body.classList.toggle('light', t==='light');
+  var b=document.getElementById('thBtn'); if(b) b.innerHTML=(t==='light')?'☾ Escuro':'☀ Claro';
+}
+function toggleTheme(){
+  var t=((localStorage.getItem('auria_theme')||'light')==='light')?'dark':'light';
+  localStorage.setItem('auria_theme',t); applyTheme();
+}
+applyTheme();
+
+function tarefasFiltradas(){
+  const txt=(document.getElementById('f-txt').value||'').toLowerCase();
+  const prio=document.getElementById('f-prio').value;
+  const st=document.getElementById('f-status').value;
+  return tarefas.filter(t=>{
+    if(txt&&!((t.titulo||'').toLowerCase().includes(txt)||(t.descricao||'').toLowerCase().includes(txt)))return false;
+    if(prio&&t.prioridade!==prio)return false;
+    if(st&&t.status!==st)return false;
+    return true;
+  });
+}
+function aplicarFiltro(){renderBoard();}
+function renderBoard(){
+  const vis=tarefasFiltradas();
+  document.getElementById('f-cnt').textContent=vis.length===tarefas.length?`${tarefas.length} tarefas`:`${vis.length} / ${tarefas.length} tarefas`;
+  const b=document.getElementById('board');b.innerHTML='';
+  COLS.forEach(col=>{
+    const cards=vis.filter(t=>t.status===col.id);
+    const d=document.createElement('div');d.className='column';
+    d.innerHTML=`<div class="col-header ${col.s}"><span>${col.label}</span><span class="cnt">${cards.length}</span></div>
+    <div class="col-body" id="col-${col.id.replace(/ /g,'_')}"
+      ondragover="ev(event)" ondragleave="el(event)" ondrop="drop(event,'${col.id}')">
+      ${cards.length?cards.map(c=>card(c)).join(''):'<div class="empty">Sem tarefas</div>'}
+    </div>`;
+    b.appendChild(d);
+  });
+}
+function card(t){
+  const p=t.prioridade||'Média',cor=PCOR[p]||'#888';
+  let prazoHtml='';
+  if(t.prazo){const atr=t.status!=='Concluído'&&new Date(t.prazo)<new Date();prazoHtml=`<span class="prazo${atr?' atrasado':''}">📅 ${t.prazo}</span>`;}
+  return `<div class="card" draggable="true" id="c${t.id}" style="border-left-color:${cor}"
+    ondragstart="ds(event,'${t.id}')" ondragend="de(event)">
+    <div class="card-title">${t.titulo||'Sem título'}</div>
+    <div class="card-meta"><span class="badge b-${p.toLowerCase().replace('é','e')}">${p}</span>${prazoHtml}</div>
+    ${t.descricao?`<div style="font-size:11px;color:#7FB3D3;margin-top:5px;overflow:hidden;max-height:38px;line-height:1.4">${t.descricao}</div>`:''}
+    <div class="card-footer"><button class="btn-ic" onclick="editar('${t.id}')">✏</button></div>
+  </div>`;
+}
+function ds(e,id){dragId=id;setTimeout(()=>document.getElementById('c'+id)?.classList.add('dragging'),0);document.getElementById('trash').classList.add('show')}
+function de(e){document.querySelectorAll('.card').forEach(c=>c.classList.remove('dragging'));document.getElementById('trash').classList.remove('show','over')}
+function tov(e){e.preventDefault();document.getElementById('trash').classList.add('over')}
+function tlv(e){document.getElementById('trash').classList.remove('over')}
+function tdrop(e){
+  e.preventDefault();
+  var id=dragId;
+  document.getElementById('trash').classList.remove('show','over');
+  if(!id)return;
+  var t=tarefas.find(x=>String(x.id)===String(id));
+  var nome=t?(t.titulo||'esta tarefa'):'esta tarefa';
+  if(confirm('Excluir "'+nome+'"?')){
+    tarefas=tarefas.filter(x=>String(x.id)!==String(id));renderBoard();
+    _sb.from('tarefas').delete().eq('id',id).then(function(){});
+  }
+  dragId=null;
+}
+function ev(e){e.preventDefault();e.currentTarget.classList.add('over')}
+function el(e){e.currentTarget.classList.remove('over')}
+function drop(e,st){
+  e.preventDefault();e.currentTarget.classList.remove('over');
+  if(!dragId)return;
+  const t=tarefas.find(x=>String(x.id)===String(dragId));
+  if(t&&t.status!==st){t.status=st;renderBoard();_sb.from('tarefas').update({status:st}).eq('id',t.id).then(function(){});}
+  dragId=null;
+}
+function abrirModal(t=null){
+  editId=t?t.id:null;
+  document.getElementById('mtitle').textContent=t?'Editar Tarefa':'Nova Tarefa';
+  document.getElementById('ft').value=t?.titulo||'';
+  document.getElementById('fd').value=t?.descricao||'';
+  document.getElementById('fp').value=t?.prioridade||'Média';
+  document.getElementById('fs').value=t?.status||'A fazer';
+  document.getElementById('fpr').value=t?.prazo||'';
+  document.getElementById('bdel').style.display=t?'block':'none';
+  document.getElementById('modal').classList.add('on');
+  document.getElementById('ft').focus();
+}
+function fechar(){document.getElementById('modal').classList.remove('on');editId=null;}
+function editar(id){const t=tarefas.find(x=>String(x.id)===String(id));if(t)abrirModal(t);}
+async function salvar(){
+  const dados={titulo:document.getElementById('ft').value.trim(),descricao:document.getElementById('fd').value.trim(),
+    prioridade:document.getElementById('fp').value,status:document.getElementById('fs').value,prazo:(document.getElementById('fpr').value||null)};
+  if(!dados.titulo){alert('Informe o título.');return;}
+  try{
+    if(editId){
+      await _sb.from('tarefas').update(dados).eq('id',editId);
+      const i=tarefas.findIndex(x=>String(x.id)===String(editId));if(i>=0)tarefas[i]={...tarefas[i],...dados};
+    }else{
+      const ins=await _sb.from('tarefas').insert(Object.assign({},dados,{analista_id:KUSER.id})).select().single();
+      if(ins.error) throw ins.error;
+      tarefas.unshift(ins.data||dados);
+    }
+    renderBoard();fechar();
+  }catch(e){ alert('Erro ao salvar: '+(e.message||e)); }
+}
+async function deletar(){
+  if(!editId||!confirm('Excluir tarefa?'))return;
+  try{ await _sb.from('tarefas').delete().eq('id',editId); }catch(e){}
+  tarefas=tarefas.filter(x=>String(x.id)!==String(editId));renderBoard();fechar();
+}
+var _sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+var KUSER=null;
+async function carregar(){
+  const {data}=await _sb.auth.getSession();
+  if(!data||!data.session){ tarefas=[]; renderBoard(); return; }
+  KUSER=data.session.user;
+  const r=await _sb.from('tarefas').select('*').eq('analista_id',KUSER.id).order('criado_em',{ascending:false});
+  tarefas=r.data||[]; renderBoard();
+}
+
+document.addEventListener('DOMContentLoaded',carregar);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')fechar();});
+</script></body></html>
