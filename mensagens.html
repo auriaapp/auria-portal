@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><title>Mensagens</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#EEF2F7;color:#1E293B;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:#fff;border-bottom:1px solid #E2E8F0;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+header h1{font-size:17px;font-weight:800}
+.wrap{flex:1;display:flex;overflow:hidden}
+.inbox{width:340px;min-width:300px;background:#fff;border-right:1px solid #E2E8F0;overflow-y:auto}
+.it{padding:12px 16px;border-bottom:1px solid #F1F5F9;cursor:pointer}
+.it:hover{background:#F8FAFC}
+.it.sel{background:#EFF6FF;border-left:3px solid #3B82F6}
+.emp-group-h{position:sticky;top:0;background:#1E2A3D;color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;padding:7px 14px;z-index:1}
+.it-top{display:flex;align-items:center;gap:6px}
+.it-kind{font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
+.k-ap{background:#DBEAFE;color:#1D4ED8}.k-th{background:#FEF3C7;color:#92400E}
+.it-tit{font-size:13px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it-badge{min-width:18px;height:18px;border-radius:9px;background:#EF4444;color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 5px}
+.it-sub{font-size:11px;color:#94A3B8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it-last{font-size:12px;color:#475569;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.conv-h{padding:12px 18px;border-bottom:1px solid #E2E8F0;background:#fff;font-weight:700;font-size:14px;flex-shrink:0}
+.conv-b{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:10px}
+.bub{max-width:72%;padding:9px 13px;border-radius:12px;font-size:13px;line-height:1.4;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.bub .who{font-size:10px;color:#94A3B8;margin-bottom:3px}
+.b-an{align-self:flex-end;background:#3B82F6;color:#fff;border-bottom-right-radius:3px}
+.b-an .who{color:#DBEAFE}
+.b-pr{align-self:flex-start;background:#fff;border:1px solid #E2E8F0;border-bottom-left-radius:3px}
+.b-sys{align-self:center;background:#F1F5F9;color:#64748B;font-size:11px;font-style:italic}
+.conv-f{padding:12px 16px;border-top:1px solid #E2E8F0;background:#fff;display:flex;gap:8px;flex-shrink:0}
+.conv-f textarea{flex:1;border:1px solid #CBD5E1;border-radius:10px;padding:9px 12px;font-size:13px;font-family:inherit;resize:none;height:42px;outline:none}
+.conv-f textarea:focus{border-color:#3B82F6}
+.btn{background:#3B82F6;color:#fff;border:none;border-radius:10px;padding:0 18px;font-weight:700;font-size:13px;cursor:pointer}
+.btn:hover{background:#1D4ED8}
+.empty{flex:1;display:flex;align-items:center;justify-content:center;color:#94A3B8;font-size:14px}
+.loading{padding:30px;text-align:center;color:#94A3B8}
+.btn-nova{background:#3B82F6;color:#fff;border:none;border-radius:9px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;margin-left:auto}
+.btn-nova:hover{background:#1D4ED8}
+/* Anexos nas mensagens */
+.anx{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.anx-img{width:74px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #E2E8F0;cursor:pointer}
+.anx-chip{font-size:11px;font-weight:600;background:#F1F5F9;border:1px solid #E2E8F0;color:#334155;border-radius:14px;padding:2px 9px}
+.b-an .anx-chip{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.35);color:#fff}
+/* Staging de prints na resposta */
+.stg{display:flex;gap:6px;flex-wrap:wrap;padding:0 16px 6px}
+.stg .th{position:relative}
+.stg img{width:54px;height:42px;object-fit:cover;border-radius:5px;border:1px solid #CBD5E1}
+.stg .x{position:absolute;top:-6px;right:-6px;background:#EF4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1}
+.pastehint{font-size:10px;color:#94A3B8;padding:0 16px 4px}
+/* Compose modal */
+.cmp-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:center;justify-content:center;padding:20px}
+.cmp-ov.on{display:flex}
+.cmp{background:#fff;border-radius:14px;width:620px;max-width:96vw;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.cmp-h{padding:14px 18px;border-bottom:1px solid #E2E8F0;font-weight:800;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+.cmp-x{background:none;border:none;font-size:22px;cursor:pointer;color:#94A3B8}
+.cmp-b{padding:16px 18px}
+.cmp-b label{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.04em;display:block;margin:10px 0 4px}
+.cmp-b select,.cmp-b input,.cmp-b textarea{width:100%;border:1px solid #CBD5E1;border-radius:9px;padding:9px 12px;font-size:13px;font-family:inherit;outline:none}
+.cmp-b textarea{height:80px;resize:vertical}
+.chips-box{display:flex;flex-wrap:wrap;gap:6px;border:1px solid #E2E8F0;border-radius:9px;padding:8px;max-height:120px;overflow:auto}
+.chk{font-size:12px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;padding:3px 10px;cursor:pointer;user-select:none}
+.chk.sel{background:#EFF6FF;border-color:#3B82F6;color:#1D4ED8;font-weight:700}
+#c-apt-filtros{display:flex;gap:6px;margin:4px 0 6px}
+.apf{font-size:11px;font-weight:700;color:#64748B;background:#F1F5F9;border:1px solid #E2E8F0;border-radius:12px;padding:3px 10px;cursor:pointer;user-select:none}
+.apf.sel{background:#1D4ED8;border-color:#1D4ED8;color:#fff}
+.cmp-f{padding:12px 18px;border-top:1px solid #E2E8F0;display:flex;justify-content:flex-end;gap:10px}
+.btn-sec{background:#F1F5F9;border:1px solid #CBD5E1;color:#334155;border-radius:9px;padding:9px 16px;font-weight:600;cursor:pointer}
+/* Lightbox */
+.lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:400;align-items:center;justify-content:center;cursor:zoom-out}
+.lb.on{display:flex}.lb img{max-width:92vw;max-height:92vh;border-radius:8px}
+/* Detalhes do apontamento FIXADOS no topo da conversa */
+.pin{background:#fff;border:1px solid #BFDBFE;border-left:4px solid #3B82F6;border-radius:12px;padding:12px 14px;margin-bottom:4px;max-width:100%}
+.pin-t{font-weight:800;font-size:13px;margin-bottom:6px}
+.pin-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.pin-chip{font-size:11px;font-weight:600;background:#F1F5F9;border:1px solid #E2E8F0;border-radius:12px;padding:2px 9px;color:#334155}
+.pin-chip.st{background:#DBEAFE;color:#1D4ED8;border-color:#93C5FD}
+.pin-desc{font-size:12.5px;color:#475569;line-height:1.45;white-space:pre-wrap;margin-bottom:4px}
+</style></head><body>
+<header><h1>✉ Mensagens</h1>
+  <button class="btn-sec" onclick="atualizar()" style="margin-left:auto">↻ Atualizar</button>
+  <button class="btn-nova" onclick="abrirCompose()" style="margin-left:8px">＋ Nova mensagem</button>
+</header>
+<div class="wrap">
+  <div class="inbox" id="inbox"><div class="loading">Carregando…</div></div>
+  <div class="conv">
+    <div class="conv-h" id="conv-h">Selecione uma conversa</div>
+    <div class="conv-b" id="conv-b"><div class="empty">Escolha uma conversa à esquerda.</div></div>
+    <div class="stg" id="reply-stg"></div>
+    <div class="pastehint" id="reply-hint" style="display:none">📎 Cole um print com <b>Ctrl+V</b> para anexar à mensagem</div>
+    <div class="conv-f" style="display:none" id="conv-f">
+      <textarea id="msg-txt" placeholder="Escreva uma resposta..."></textarea>
+      <button class="btn" onclick="enviar()">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMPOSE: nova mensagem -->
+<div class="cmp-ov" id="cmp" onclick="if(event.target===this)fecharCompose()">
+  <div class="cmp">
+    <div class="cmp-h">＋ Nova mensagem <button class="cmp-x" onclick="fecharCompose()">×</button></div>
+    <div class="cmp-b">
+      <label>Projetista</label>
+      <select id="c-proj"></select>
+      <label>Assunto</label>
+      <input id="c-assunto" placeholder="Ex: Revisão de prumadas">
+      <label>Pranchas a anexar</label>
+      <div class="chips-box" id="c-pranchas"></div>
+      <label>Apontamentos a anexar</label>
+      <div id="c-apt-filtros">
+        <span class="apf sel" data-f="">Todos</span>
+        <span class="apf" data-f="Em aberto">Em aberto</span>
+        <span class="apf" data-f="Atrasado">Atrasado</span>
+        <span class="apf" data-f="Resolvido">Resolvido</span>
+      </div>
+      <div class="chips-box" id="c-apts"></div>
+      <button class="btn-sec" onclick="gerarRelatorio()" style="margin-top:6px;font-size:12px;padding:6px 12px">📄 Gerar relatório PDF dos selecionados</button>
+      <label>Mensagem</label>
+      <textarea id="c-texto" placeholder="Escreva a mensagem... (Ctrl+V cola prints)"></textarea>
+      <div class="stg" id="c-stg" style="padding:8px 0 0"></div>
+      <div class="pastehint" style="padding:4px 0 0">📎 Ctrl+V cola prints na mensagem</div>
+    </div>
+    <div class="cmp-f">
+      <button class="btn-sec" onclick="fecharCompose()">Cancelar</button>
+      <button class="btn" onclick="enviarNova()">Enviar</button>
+    </div>
+  </div>
+</div>
+<div class="lb" id="lb" onclick="this.classList.remove('on')"><img id="lb-img"></div>
+<script>
+var ITENS=[], CUR=null;
+var REPLY_ANEXOS=[], COMPOSE_ANEXOS=[], OPC={projetistas:[],pranchas:[],apontamentos:[]};
+var SEL_PR={}, SEL_AP={};
+// ── Supabase (substitui o servidor /api/mensagens/* do desktop) ──────────────
+var sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+var USER={id:'',email:'',nome:''};
+var _APTS=[], _THREADS=[];
+async function _boot(){
+  try{ var s=await sb.auth.getSession(); var u=s.data.session&&s.data.session.user;
+    if(u){ USER.id=u.id; USER.email=u.email||''; USER.nome=(u.user_metadata&&(u.user_metadata.nome||u.user_metadata.full_name))||u.email||''; } }catch(e){}
+  carregarInbox();
+}
+function _dt(s){ return s?new Date(s).toLocaleString('pt-BR'):''; }
+async function _loadItens(){
+  var apts=[], threads=[];
+  try{ var ra=await sb.from('apontamentos').select('id,titulo,empreendimento,mensagens,descricao,prioridade,status,disciplina,tipo,prazo_min,conclusao,imagens_json').limit(1000);
+    apts=(ra.data||[]).filter(function(a){return Array.isArray(a.mensagens)&&a.mensagens.length;}); }catch(e){}
+  try{ var rt=await sb.from('threads_auria').select('*').order('atualizado_em',{ascending:false}).limit(300); threads=rt.data||[]; }catch(e){}
+  _APTS=apts; _THREADS=threads;
+  var itens=[];
+  apts.forEach(function(a){ var last=a.mensagens[a.mensagens.length-1]||{};
+    itens.push({kind:'apontamento', id:a.id, empreendimento:a.empreendimento||'Sem empreendimento',
+      titulo:a.id+' — '+(a.titulo||'Sem título'), projetista:a.disciplina||'', count:a.mensagens.length,
+      nova:(last.de==='projetista'), last_texto:last.texto||'', last_de:last.de||''}); });
+  threads.forEach(function(t){ itens.push({kind:'thread', id:t.id, empreendimento:t.empreendimento||'Avulsas',
+      titulo:t.assunto||'Conversa avulsa', projetista:t.projetista_email||t.de_nome||'', count:0,
+      nova:false, last_texto:'', last_de:''}); });
+  return itens;
+}
+async function _loadConversa(kind,id){
+  if(kind==='apontamento'){ var a=_APTS.find(function(x){return x.id===id;}); return (a&&Array.isArray(a.mensagens))?a.mensagens:[]; }
+  var r=await sb.from('mensagens_auria').select('*').eq('thread_id',id).order('criado_em');
+  try{ await sb.from('mensagens_auria').update({lida_analista:true}).eq('thread_id',id).eq('de','projetista').eq('lida_analista',false); }catch(e){}
+  return (r.data||[]).map(function(m){ return {de:m.de, nome:m.autor_nome||m.autor_email||'', data:_dt(m.criado_em), texto:m.texto, anexos:m.anexos, tipo:m.tipo}; });
+}
+function _aptDet(id){
+  var a=_APTS.find(function(x){return x.id===id;}); if(!a) return {ok:false};
+  var prints=[]; try{ var ij=a.imagens_json; if(typeof ij==='string')ij=JSON.parse(ij);
+    if(Array.isArray(ij)) prints=ij.map(function(x){return (x&&(x.data||x.dataUrl))||x;}).filter(function(x){return typeof x==='string';}); }catch(e){}
+  return {ok:true, id:a.id, titulo:a.titulo, disciplina:a.disciplina, tipo:a.tipo, status:a.status,
+          prioridade:a.prioridade, prazo:a.prazo_min, descricao:a.descricao, prints:prints};
+}
+async function _enviarMsg(kind,id,texto,anexos){
+  if(kind==='apontamento'){ var a=_APTS.find(function(x){return x.id===id;}); if(!a) return {ok:false,error:'apontamento não encontrado'};
+    a.mensagens=Array.isArray(a.mensagens)?a.mensagens:[];
+    a.mensagens.push({de:'analista',nome:USER.nome,email:USER.email,data:new Date().toLocaleString('pt-BR'),texto:texto,anexos:anexos});
+    var r=await sb.from('apontamentos').update({mensagens:a.mensagens}).eq('empreendimento',a.empreendimento).eq('id',a.id);
+    return r.error?{ok:false,error:r.error.message}:{ok:true};
+  }
+  var ins=await sb.from('mensagens_auria').insert({thread_id:id,de:'analista',autor_email:USER.email,autor_nome:USER.nome,texto:texto,anexos:anexos,lida_analista:true});
+  try{ await sb.from('threads_auria').update({atualizado_em:new Date().toISOString()}).eq('id',id); }catch(e){}
+  return ins.error?{ok:false,error:ins.error.message}:{ok:true};
+}
+async function _prazoResolver(id,prazo,aprovar){
+  var a=_APTS.find(function(x){return x.id===id;}); if(!a) return;
+  a.mensagens=Array.isArray(a.mensagens)?a.mensagens:[];
+  a.mensagens.push({de:'analista',tipo:'sistema',data:new Date().toLocaleString('pt-BR'),
+    texto:(aprovar?('✅ Prazo aprovado: '+prazo):('❌ Prazo recusado: '+prazo))});
+  var upd={mensagens:a.mensagens}; if(aprovar&&prazo){ upd.prazo_min=prazo; a.prazo_min=prazo; }
+  try{ await sb.from('apontamentos').update(upd).eq('empreendimento',a.empreendimento).eq('id',a.id); }catch(e){}
+  APT_DET=_aptDet(id); renderConversa(a.mensagens);
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function isComposeOpen(){return document.getElementById('cmp').classList.contains('on');}
+function lightbox(src){var lb=document.getElementById('lb');document.getElementById('lb-img').src=src;lb.classList.add('on');}
+function fileToThumb(file,cb){
+  var img=new Image(), url=URL.createObjectURL(file);
+  img.onload=function(){ var max=1000,w=img.width,h=img.height,sc=Math.min(1,max/Math.max(w,h));
+    var c=document.createElement('canvas');c.width=Math.round(w*sc);c.height=Math.round(h*sc);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);
+    cb(c.toDataURL('image/jpeg',0.72)); };
+  img.onerror=function(){URL.revokeObjectURL(url);}; img.src=url;
+}
+document.addEventListener('paste',function(e){
+  var items=((e.clipboardData||window.clipboardData)||{}).items||[];
+  for(var i=0;i<items.length;i++){
+    if(items[i].type&&items[i].type.indexOf('image')===0){
+      var f=items[i].getAsFile(); if(!f)continue;
+      fileToThumb(f,function(dataUrl){
+        if(isComposeOpen()){ COMPOSE_ANEXOS.push({tipo:'img',data:dataUrl}); renderStg('c-stg',COMPOSE_ANEXOS); }
+        else if(CUR){ REPLY_ANEXOS.push({tipo:'img',data:dataUrl}); renderStg('reply-stg',REPLY_ANEXOS); }
+      });
+      e.preventDefault();
+    }
+  }
+});
+function renderStg(elId,arr){
+  var el=document.getElementById(elId); if(!el)return;
+  el.innerHTML=arr.map(function(a,i){
+    var inner = (a.tipo==='pdf')
+      ? '<div style="width:54px;height:42px;display:flex;align-items:center;justify-content:center;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:5px;font-size:18px" title="'+esc(a.nome||'PDF')+'">📄</div>'
+      : '<img src="'+a.data+'">';
+    return '<div class="th">'+inner+'<button class="x" data-stg="'+elId+'" data-i="'+i+'">×</button></div>';
+  }).join('');
+}
+function gerarRelatorio(){
+  var ids=[]; (OPC.apontamentos||[]).forEach(function(a,i){ if(SEL_AP[i]) ids.push(a.id); });
+  if(!ids.length){ alert('Selecione apontamentos para incluir no relatório.'); return; }
+  // Anexa os apontamentos selecionados como referências (o PDF completo é gerado no app desktop).
+  ids.forEach(function(id){ var a=(OPC.apontamentos||[]).find(function(x){return x.id===id;});
+    COMPOSE_ANEXOS.push({tipo:'apontamento',id:id,titulo:(a&&a.titulo)||''}); });
+  renderStg('c-stg',COMPOSE_ANEXOS);
+  alert(ids.length+' apontamento(s) anexado(s) como referência. O relatório PDF completo é gerado pelo app desktop.');
+}
+document.addEventListener('click',function(e){
+  var b=e.target;
+  if(b&&b.classList&&b.classList.contains('x')&&b.getAttribute&&b.getAttribute('data-stg')){
+    var elId=b.getAttribute('data-stg'), i=+b.getAttribute('data-i');
+    var arr=(elId==='c-stg')?COMPOSE_ANEXOS:REPLY_ANEXOS; arr.splice(i,1); renderStg(elId,arr);
+  }
+});
+function anexHtml(anexos){
+  if(!anexos||!anexos.length)return '';
+  return '<div class="anx">'+anexos.map(function(a){
+    if(a.tipo==='img')return '<img class="anx-img" src="'+a.data+'" onclick="lightbox(this.src)">';
+    if(a.tipo==='prancha')return '<span class="anx-chip">📄 '+esc(a.nome)+'</span>';
+    if(a.tipo==='apontamento')return '<span class="anx-chip">📌 '+esc(a.id)+'</span>';
+    if(a.tipo==='pdf')return '<a class="anx-chip" href="'+a.data+'" download="'+esc(a.nome||'relatorio.pdf')+'" style="text-decoration:none">📄 '+esc(a.nome||'Relatório')+' ⬇</a>';
+    return '';
+  }).join('')+'</div>';
+}
+async function carregarInbox(){
+  var d;
+  try{ ITENS=await _loadItens(); }
+  catch(e){ document.getElementById('inbox').innerHTML='<div class="loading">Erro ao carregar.</div>'; return; }
+  (function(){
+    if(!ITENS.length){ document.getElementById('inbox').innerHTML='<div class="loading">Nenhuma conversa.</div>'; return; }
+    var groups={}, order=[];
+    ITENS.forEach(function(it,i){ var emp=it.empreendimento||'Sem empreendimento'; if(!groups[emp]){groups[emp]=[]; order.push(emp);} groups[emp].push(i); });
+    document.getElementById('inbox').innerHTML=order.map(function(emp){
+      var its=groups[emp].map(function(i){ var it=ITENS[i];
+        var k=it.kind==='apontamento'?'<span class="it-kind k-ap">Apontamento</span>':'<span class="it-kind k-th">Avulsa</span>';
+        var bd=it.nova?'<span class="it-badge">!</span>':'';
+        return '<div class="it" id="it-'+i+'" onclick="abrir('+i+')"><div class="it-top">'+k+
+          '<span class="it-tit">'+esc(it.titulo)+'</span>'+bd+'</div>'+
+          '<div class="it-sub">'+esc(it.projetista||'')+(it.count?(' · '+it.count+' msg'):'')+'</div>'+
+          (it.last_texto?'<div class="it-last">'+(it.last_de==='analista'?'Você: ':'')+esc(it.last_texto)+'</div>':'')+
+          '</div>';
+      }).join('');
+      return '<div class="emp-group"><div class="emp-group-h">🏢 '+esc(emp)+'</div>'+its+'</div>';
+    }).join('');
+    if(CUR){ for(var j=0;j<ITENS.length;j++){ if(ITENS[j].kind===CUR.kind&&ITENS[j].id===CUR.id){
+      var e=document.getElementById('it-'+j); if(e){e.classList.add('sel'); var bb=e.querySelector('.it-badge'); if(bb)bb.remove();} CUR=ITENS[j]; break; } } }
+  })();
+}
+async function refreshConversa(){
+  if(!CUR) return;
+  if(CUR.kind==='apontamento'){ try{ var ra=await sb.from('apontamentos').select('mensagens').eq('empreendimento',(_APTS.find(function(x){return x.id===CUR.id;})||{}).empreendimento||'').eq('id',CUR.id).single(); var a=_APTS.find(function(x){return x.id===CUR.id;}); if(a&&ra.data)a.mensagens=ra.data.mensagens||[]; }catch(e){} }
+  var msgs=await _loadConversa(CUR.kind,CUR.id); renderConversa(msgs);
+}
+function atualizar(){ carregarInbox(); refreshConversa(); }
+window.addEventListener('focus', atualizar);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) atualizar(); });
+setInterval(function(){ if(!document.hidden) refreshConversa(); }, 15000);
+var APT_DET=null;
+function pinHtml(){
+  if(!(CUR&&CUR.kind==='apontamento'&&APT_DET&&APT_DET.ok))return '';
+  var d=APT_DET;
+  var prints=(d.prints||[]).map(function(p){return '<img class="anx-img" src="'+p+'" onclick="lightbox(this.src)">';}).join('');
+  return '<div class="pin">'+
+    '<div class="pin-t">📌 '+esc(d.id)+' — '+esc(d.titulo||'Sem título')+'</div>'+
+    '<div class="pin-meta">'+
+      (d.disciplina?'<span class="pin-chip">📐 '+esc(d.disciplina)+'</span>':'')+
+      (d.tipo?'<span class="pin-chip">🏷 '+esc(d.tipo)+'</span>':'')+
+      (d.status?'<span class="pin-chip st">'+esc(d.status)+'</span>':'')+
+      (d.prioridade?'<span class="pin-chip">⚠ '+esc(d.prioridade)+'</span>':'')+
+      (d.prazo?'<span class="pin-chip">📅 Prazo '+esc(d.prazo)+'</span>':'')+
+    '</div>'+
+    (d.descricao?'<div class="pin-desc">'+esc(d.descricao)+'</div>':'')+
+    (prints?'<div class="anx">'+prints+'</div>':'')+
+  '</div>';
+}
+function abrir(i){
+  CUR=ITENS[i];
+  document.querySelectorAll('.it').forEach(function(e){e.classList.remove('sel');});
+  var el=document.getElementById('it-'+i); if(el){el.classList.add('sel'); var b=el.querySelector('.it-badge'); if(b)b.remove();}
+  document.getElementById('conv-h').textContent=CUR.titulo;
+  document.getElementById('conv-b').innerHTML='<div class="loading">Carregando…</div>';
+  document.getElementById('conv-f').style.display='flex';
+  document.getElementById('reply-hint').style.display='block';
+  REPLY_ANEXOS=[]; renderStg('reply-stg',REPLY_ANEXOS);
+  APT_DET=null;
+  if(CUR.kind==='apontamento'){
+    // Conversa DENTRO da central: detalhes do apontamento fixados + mensagens.
+    APT_DET=_aptDet(CUR.id);
+    _loadConversa('apontamento',CUR.id).then(function(msgs){ renderConversa(msgs); });
+    return;
+  }
+  _loadConversa(CUR.kind,CUR.id).then(function(msgs){ renderConversa(msgs); });
+}
+function renderConversa(msgs){
+  var b=document.getElementById('conv-b');
+  var corpo = msgs.length ? msgs.map(function(m){
+    if(m.tipo==='sistema'||m.de==='sistema') return '<div class="bub b-sys">'+esc(m.texto)+'</div>';
+    var cls=m.de==='analista'?'b-an':'b-pr';
+    var who=(m.de==='analista'?'Você':(m.nome||'Projetista'))+(m.data?(' · '+m.data):'');
+    var prazoBtns='';
+    if(m.tipo==='sugestao_prazo' && m.de==='projetista' && CUR && CUR.kind==='apontamento'){
+      var pz=esc(m.prazo_sugerido||m.prazo||'');
+      prazoBtns='<div style="margin-top:6px;display:flex;gap:6px"><button class="btn" style="padding:2px 10px;font-size:11px" onclick="_prazoResolver(\''+esc(CUR.id)+'\',\''+pz+'\',true)">✅ Aprovar</button>'+
+        '<button class="btn-sec" style="padding:2px 10px;font-size:11px" onclick="_prazoResolver(\''+esc(CUR.id)+'\',\''+pz+'\',false)">❌ Recusar</button></div>';
+    }
+    return '<div class="bub '+cls+'"><div class="who">'+esc(who)+'</div>'+esc(m.texto)+anexHtml(m.anexos)+prazoBtns+'</div>';
+  }).join('') : '<div class="empty">Sem mensagens ainda. Escreva a primeira.</div>';
+  b.innerHTML=pinHtml()+corpo;
+  b.scrollTop=b.scrollHeight;
+}
+function enviar(){
+  if(!CUR) return;
+  var t=document.getElementById('msg-txt'); var texto=t.value.trim();
+  if(!texto && !REPLY_ANEXOS.length) return;
+  var anexos=REPLY_ANEXOS.slice();
+  t.value=''; t.disabled=true;
+  _enviarMsg(CUR.kind,CUR.id,texto,anexos).then(function(res){
+     t.disabled=false; t.focus();
+     if(res&&res.ok){ REPLY_ANEXOS=[]; renderStg('reply-stg',REPLY_ANEXOS);
+       _loadConversa(CUR.kind,CUR.id).then(function(msgs){ renderConversa(msgs); carregarInbox(); }); }
+     else { alert('Erro ao enviar: '+((res&&res.error)||'falha')); }
+   }).catch(function(){ t.disabled=false; alert('Erro ao enviar.'); });
+}
+
+// ── Compor nova mensagem ──────────────────────────────────────
+function abrirCompose(){
+  COMPOSE_ANEXOS=[]; SEL_PR={}; SEL_AP={};
+  document.getElementById('c-assunto').value='';
+  document.getElementById('c-texto').value='';
+  renderStg('c-stg',COMPOSE_ANEXOS);
+  document.getElementById('cmp').classList.add('on');
+  _opcoes().then(function(d){
+    OPC=d||{projetistas:[],pranchas:[],apontamentos:[]};
+    var ps=document.getElementById('c-proj');
+    ps.innerHTML='<option value="">Selecione…</option>'+(OPC.projetistas||[]).map(function(p){
+      return '<option value="'+esc(p.email)+'">'+esc(p.email)+(p.disc?(' ('+esc(p.disc)+')'):'')+'</option>';}).join('');
+    document.getElementById('c-pranchas').innerHTML=(OPC.pranchas||[]).length
+      ? (OPC.pranchas||[]).map(function(n,i){return '<span class="chk" data-pr="'+i+'">📄 '+esc(n)+'</span>';}).join('')
+      : '<span style="color:#94A3B8;font-size:12px">Nenhuma prancha carregada</span>';
+    document.querySelectorAll('.apf').forEach(function(x){x.classList.toggle('sel', x.getAttribute('data-f')==='');});
+    renderApts('');
+  });
+}
+function renderApts(filtro){
+  var box=document.getElementById('c-apts'); if(!box)return;
+  var arr=OPC.apontamentos||[];
+  if(!arr.length){ box.innerHTML='<span style="color:#94A3B8;font-size:12px">Nenhum apontamento</span>'; return; }
+  var stc={'Atrasado':'#A32D2D','Resolvido':'#1E8449','Em aberto':'#854F0B'};
+  var html=arr.map(function(a,i){
+    if(filtro && a.status!==filtro) return '';
+    var sel=SEL_AP[i]?' sel':'';
+    return '<span class="chk'+sel+'" data-ap="'+i+'" title="'+esc(a.status)+'">📌 '+esc(a.id)+' '+esc(a.titulo)+' <b style="color:'+(stc[a.status]||'#64748B')+'">●</b></span>';
+  }).join('');
+  box.innerHTML=html||'<span style="color:#94A3B8;font-size:12px">Nenhum apontamento neste filtro</span>';
+}
+document.addEventListener('click',function(e){
+  var f=e.target; if(f&&f.classList&&f.classList.contains('apf')){
+    document.querySelectorAll('.apf').forEach(function(x){x.classList.remove('sel');});
+    f.classList.add('sel'); renderApts(f.getAttribute('data-f')||'');
+  }
+});
+function fecharCompose(){ document.getElementById('cmp').classList.remove('on'); }
+document.addEventListener('click',function(e){
+  var c=e.target; if(!c||!c.classList||!c.classList.contains('chk'))return;
+  if(c.hasAttribute('data-pr')){
+    var i=+c.getAttribute('data-pr'); SEL_PR[i]=!SEL_PR[i]; c.classList.toggle('sel',!!SEL_PR[i]);
+  } else if(c.hasAttribute('data-ap')){
+    var j=+c.getAttribute('data-ap'); SEL_AP[j]=!SEL_AP[j]; c.classList.toggle('sel',!!SEL_AP[j]);
+  }
+});
+async function _opcoes(){
+  var projs=[], apts=[];
+  try{ var rp=await sb.from('profiles').select('id,email,nome,disciplina,papel').limit(500);
+    projs=(rp.data||[]).filter(function(p){return String(p.papel||'').toLowerCase().indexOf('projet')>=0;})
+      .map(function(p){return {email:p.email,disc:p.disciplina||''};}); }catch(e){}
+  try{ var ra=await sb.from('apontamentos').select('id,titulo,status').limit(500); apts=ra.data||[]; }catch(e){}
+  return {projetistas:projs, pranchas:[], apontamentos:apts};
+}
+async function _novaThread(projEmail,assunto,texto,anexos){
+  var ins=await sb.from('threads_auria').insert({assunto:assunto,projetista_email:projEmail,
+    de_email:USER.email,de_nome:USER.nome,atualizado_em:new Date().toISOString()}).select().single();
+  if(ins.error) return {ok:false,error:ins.error.message};
+  var tid=ins.data.id;
+  var m=await sb.from('mensagens_auria').insert({thread_id:tid,de:'analista',autor_email:USER.email,
+    autor_nome:USER.nome,texto:texto,anexos:anexos,lida_analista:true});
+  return m.error?{ok:false,error:m.error.message}:{ok:true};
+}
+function enviarNova(){
+  var proj=document.getElementById('c-proj').value;
+  if(!proj){ alert('Selecione um projetista.'); return; }
+  var anexos=COMPOSE_ANEXOS.slice();
+  (OPC.pranchas||[]).forEach(function(n,i){ if(SEL_PR[i]) anexos.push({tipo:'prancha',nome:n}); });
+  (OPC.apontamentos||[]).forEach(function(a,i){ if(SEL_AP[i]) anexos.push({tipo:'apontamento',id:a.id,titulo:a.titulo}); });
+  _novaThread(proj,document.getElementById('c-assunto').value,document.getElementById('c-texto').value,anexos)
+   .then(function(res){
+     if(res&&res.ok){ fecharCompose(); carregarInbox(); }
+     else alert('Erro: '+((res&&res.error)||'falha'));
+   }).catch(function(){ alert('Erro ao enviar.'); });
+}
+document.getElementById('msg-txt')&&document.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.shiftKey&&document.activeElement&&document.activeElement.id==='msg-txt'){ e.preventDefault(); enviar(); }
+});
+_boot();
+</script></body></html>
