@@ -157,7 +157,7 @@
 
 <div id="app" style="display:none;height:100vh;flex-direction:column">
   <header>
-    <img src="logo_full.png" alt="Auria">
+    <img src="logo_symbol.png" alt="Auria">
     <h1>Auria App</h1>
     <div class="who"><span id="uName"></span><br><span id="uEmail" style="font-size:10px"></span></div>
     <button class="btn-logout" onclick="sair()">Sair</button>
@@ -280,7 +280,7 @@
             <button id="bimFloorsBtn" class="bim-tb" onclick="bimFloorsToggle()" title="Pavimentos visíveis (pode marcar vários)">Pav. ▾</button>
             <div id="bimFloorsPop" class="bim-pop"></div>
           </div>
-          <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM clicando no modelo">➕ Apontar 3D</button>
+          <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM: clique com o botão direito no modelo (ou ative aqui p/ o botão esquerdo). Pan = botão do meio (scroll)">➕ Apontar 3D</button>
           <button class="bim-x" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
           <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
         </div>
@@ -1695,6 +1695,8 @@ let IA_ANALISE_TXT=''; // parágrafo geral da última análise
 // slug REAL da Edge Function no Supabase (foi criada com nome "groq-proxy" mas
 // slug "dynamic-task"). Se recriar com slug groq-proxy, troque aqui.
 const IA_FN='dynamic-task';
+// Extrai a mensagem REAL de erro da Edge Function (senão fica só "non-2xx status code").
+async function _iaErr(error){ try{ const j=await error.context.json(); if(j&&j.error) return j.error; }catch(_){} return (error&&error.message)||String(error); }
 function toggleIA(){
   const el=$('iaPanel'); if(!el) return;
   const open=(el.style.display==='none'||!el.style.display);
@@ -1784,7 +1786,7 @@ async function _enviarAnaliseIA(b64, disc, escopo){
   const messages=[{role:'system',content:system},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:user}]}];
   try{
     const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:true, max_tokens:1200 } });
-    if(error) throw error;
+    if(error) throw new Error(await _iaErr(error));
     if(data && data.content){ const p=parseConflitos(data.content); IA_ANALISE_TXT=p.geral||'Análise concluída.'; IA_SUGEST=p.sug; }
     else { IA_ANALISE_TXT='⚠ '+((data&&data.error)||'Não consegui analisar agora.'); IA_SUGEST=[]; }
   }catch(e){ IA_ANALISE_TXT='⚠ Erro ao consultar a IA: '+(e.message||e); IA_SUGEST=[]; }
@@ -1844,7 +1846,7 @@ async function explicarRegiao(b64, disc){
   let resp;
   try{
     const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:true, max_tokens:900 } });
-    if(error) throw error;
+    if(error) throw new Error(await _iaErr(error));
     resp=(data&&data.content)||('⚠ '+((data&&data.error)||'Não consegui explicar agora.'));
   }catch(e){ resp='⚠ Erro ao consultar a IA: '+(e.message||e); }
   IA_CONV[IA_CONV.length-1]={role:'assistant',content:resp};   // substitui o "analisando…"
@@ -1909,7 +1911,7 @@ async function iaEnviar(){
   );
   try{
     const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:!!b64 } });
-    if(error) throw error;
+    if(error) throw new Error(await _iaErr(error));
     if(data && data.content) IA_CONV.push({role:'assistant',content:data.content});
     else IA_CONV.push({role:'assistant',content:'⚠ '+((data&&data.error)||'Não consegui responder agora.')});
   }catch(e){ IA_CONV.push({role:'assistant',content:'⚠ Erro ao consultar a IA: '+(e.message||e)}); }
@@ -2147,9 +2149,23 @@ async function _bimInit(){
   if(!BIM_SDK) BIM_SDK=await import('https://cdn.jsdelivr.net/npm/@xeokit/xeokit-sdk@2.6.109/dist/xeokit-sdk.es.min.js');
   BIM_V=new BIM_SDK.Viewer({ canvasId:'bimCanvas', saoEnabled:true, preserveDrawingBuffer:true, backgroundColor:[0.06,0.07,0.09] });
   BIM_XKT=new BIM_SDK.XKTLoaderPlugin(BIM_V);
-  try{ BIM_V.cameraControl.followPointer=true; }catch(e){}
+  try{
+    BIM_V.cameraControl.navMode='orbit';
+    BIM_V.cameraControl.panRightClick=false;   // botão direito livre p/ apontamento; pan fica no botão do meio (scroll)
+    BIM_V.cameraControl.followPointer=true;
+  }catch(e){}
   BIM_V.scene.on('rendered', ()=>{ try{ bimRenderPins(); }catch(e){} });
-  BIM_V.scene.input.on('mouseclicked', c=>{ try{ _bimClick(c); }catch(e){} });
+  BIM_V.scene.input.on('mouseclicked', c=>{ try{ _bimClick(c,false); }catch(e){} });   // esquerdo: modo "Apontar 3D"
+  // botão DIREITO = criar apontamento no ponto (igual ao 2D); botão do MEIO = pan (padrão do xeokit)
+  const cv=$('bimCanvas');
+  cv.addEventListener('contextmenu', e=>e.preventDefault());
+  cv.addEventListener('pointerdown', e=>{ if(e.button===2) cv._rc=[e.offsetX,e.offsetY]; });
+  cv.addEventListener('pointerup', e=>{
+    if(e.button!==2 || !cv._rc) return;
+    const dx=e.offsetX-cv._rc[0], dy=e.offsetY-cv._rc[1]; cv._rc=null;
+    if(Math.hypot(dx,dy)>6) return;                 // foi arraste (não clique) → ignora
+    try{ _bimClick([e.offsetX,e.offsetY], true); }catch(err){}
+  });
 }
 async function _bimLoadModel(){
   await _bimInit();
@@ -2210,9 +2226,9 @@ function bimAtivarApontar(){
   const b=$('bimApontarBtn'); if(b) b.classList.toggle('on', BIM_APONTAR);
   const c=$('bimCanvas'); if(c) c.classList.toggle('apontar', BIM_APONTAR);
 }
-function _bimClick(canvasPos){
+function _bimClick(canvasPos, force){
   const addEdit=(PIN_EDIT&&APT_EDIT);
-  if(!BIM_APONTAR&&!addEdit) return;
+  if(!force && !BIM_APONTAR && !addEdit) return;   // esquerdo só age em modo Apontar/edição; direito (force) sempre
   if(!BIM_V||!BIM_PROJ) return;
   const hit=BIM_V.scene.pick({ canvasPos:canvasPos, pickSurface:true });
   if(!hit||!hit.worldPos) return;
@@ -2221,7 +2237,7 @@ function _bimClick(canvasPos){
     (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push(pt);
     renderPinsList(); bimRenderPins(); return;
   }
-  bimAtivarApontar();          // one-shot
+  if(BIM_APONTAR) bimAtivarApontar();          // desliga o modo one-shot (se estava ligado)
   novoApontamentoBim(pt);
 }
 function proximoIdBim(disc){
