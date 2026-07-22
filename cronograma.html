@@ -130,8 +130,9 @@ body.light .legend{color:#64748B}
       <input type="checkbox" id="chkHideDone" onchange="toggleHideDone()" style="cursor:pointer"> Ocultar concluídas
     </label>
     <div id="editbar" style="display:flex;align-items:center;gap:6px">
+      <button id="btnImport" class="tbtn primary" onclick="importarXML()" title="Subir um XML do MS Project e publicar no sistema">&#11014; Importar XML</button>
+      <input type="file" id="xmlFile" accept=".xml,application/xml,text/xml" style="display:none">
       <button id="btnEdit" class="tbtn" onclick="toggleEdit()">&#9998; Editar</button>
-      <button id="btnSalvar" class="tbtn primary" style="display:none" onclick="salvarLocal()">&#128190; Salvar</button>
       <button id="btnPublicar" class="tbtn warn" style="display:none" onclick="publicarOnline()">&#9729; Publicar</button>
       <button id="btnAdd" class="tbtn" style="display:none" onclick="addTask()">&#10133; Nova tarefa</button>
       <span id="editmsg" style="font-size:11px;color:#94A3B8"></span>
@@ -455,7 +456,6 @@ function setField(idx,campo,val){
 function toggleEdit(){
   EDIT=!EDIT;
   document.getElementById('btnEdit').innerHTML=EDIT?'&#10003; Concluir':'&#9998; Editar';
-  document.getElementById('btnSalvar').style.display=EDIT?'inline-block':'none';
   document.getElementById('btnPublicar').style.display=EDIT?'inline-block':'none';
   document.getElementById('btnAdd').style.display=EDIT?'inline-block':'none';
   document.getElementById('editmsg').textContent=EDIT
@@ -474,22 +474,84 @@ function _post(url){
   return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_payload())})
     .then(function(r){return r.json();});
 }
-function salvarLocal(){
-  var m=document.getElementById('editmsg'); m.textContent='salvando…';
-  _post('/api/cronograma/save').then(function(res){
-    if(res&&res.ok){ DIRTY=false; m.textContent='salvo localmente ✓'; carregarLastEdit(); }
-    else m.textContent='erro ao salvar';
-  }).catch(function(){m.textContent='erro ao salvar';});
+function salvarLocal(){ /* desktop-only (SQLite); no web só publica */ }
+// ── Importar XML do MS Project (parse no navegador — mesma lógica do desktop) ──
+function _cronoParseXML(xmlText){
+  var doc=new DOMParser().parseFromString(xmlText,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error('XML inválido ou corrompido');
+  var root=doc.documentElement;
+  function kids(el,tag){ var out=[],c=el.children; for(var i=0;i<c.length;i++) if(c[i].localName===tag) out.push(c[i]); return out; }
+  function gt(el,tag){ var k=kids(el,tag); return k.length?(k[0].textContent||''):''; }
+  function _date(s){ if(!s)return ''; var m=String(s).slice(0,10); return /^\d{4}-\d{2}-\d{2}/.test(m)?m:''; }
+  var tasksEl=kids(root,'Tasks')[0], tarefas=[];
+  if(tasksEl){
+    kids(tasksEl,'Task').forEach(function(t){
+      var nome=gt(t,'Name'); if(!nome) return;
+      tarefas.push({
+        uid:gt(t,'UID'), id:gt(t,'ID'), nome:nome,
+        inicio:_date(gt(t,'Start')), fim:_date(gt(t,'Finish')),
+        marco:gt(t,'Milestone')==='1', resumo:gt(t,'Summary')==='1',
+        nivel:parseInt(gt(t,'OutlineLevel')||'0',10)||0,
+        pct:parseInt(gt(t,'PercentComplete')||'0',10)||0,
+        wbs:gt(t,'WBS')
+      });
+    });
+  }
+  return { titulo:(gt(root,'Title')||gt(root,'Name')||'Cronograma'), tarefas:tarefas };
 }
-function publicarOnline(){
-  var m=document.getElementById('editmsg'); m.textContent='publicando…';
-  _post('/api/cronograma/save').then(function(){
-    return fetch('/api/cronograma/publicar',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
-      .then(function(r){return r.json();});
-  }).then(function(res){
-    if(res&&res.ok){ DIRTY=false; m.textContent='publicado online ✓ ('+(res.n||0)+' tarefas)'; carregarLastEdit(); }
-    else m.textContent='erro: '+((res&&res.error)||'falha');
-  }).catch(function(){m.textContent='erro ao publicar';});
+function importarXML(){ var inp=document.getElementById('xmlFile'); inp.value=''; inp.click(); }
+document.getElementById('xmlFile').addEventListener('change', function(e){
+  var f=e.target.files&&e.target.files[0]; if(!f) return;
+  var m=document.getElementById('editmsg'); m.textContent='lendo '+f.name+'…';
+  var rd=new FileReader();
+  rd.onload=function(){
+    var cr; try{ cr=_cronoParseXML(String(rd.result)); }
+    catch(err){ m.textContent=''; alert('Erro ao ler o XML: '+(err.message||err)); return; }
+    if(!cr.tarefas.length){ m.textContent=''; alert('Nenhuma tarefa encontrada no XML.'); return; }
+    DATA={ titulo:cr.titulo, tarefas:cr.tarefas };
+    try{ recalc(); render(DATA); buildTable(); setView('gantt'); }catch(_){}
+    document.getElementById('btnPublicar').style.display='inline-block';
+    m.textContent=cr.tarefas.length+' tarefa(s) importada(s)';
+    if(confirm(cr.tarefas.length+' tarefa(s) importada(s) de "'+f.name+'".\n\nPublicar agora no sistema (visível para a gestão)?')) publicarOnline();
+  };
+  rd.readAsText(f,'utf-8');
+});
+async function publicarOnline(){
+  var m=document.getElementById('editmsg');
+  if(!EMP_ID){ m.textContent=''; alert('Abra o cronograma a partir de um empreendimento.'); return; }
+  var tarefas=(DATA.tarefas||[]).filter(function(t){return t.nome;});
+  if(!tarefas.length){ m.textContent='nada para publicar'; return; }
+  m.textContent='publicando…';
+  try{
+    var s=await _sb.auth.getSession();
+    if(!s.data.session){ m.textContent='faça login para publicar'; return; }
+    var del=await _sb.from('cronograma_auria').delete().eq('empreendimento_id',EMP_ID);
+    if(del.error) throw del.error;
+    var linhas=tarefas.map(function(t,i){
+      return { empreendimento_id:EMP_ID, nome:String(t.nome||'').slice(0,300),
+        data_inicio:t.inicio||null, data_fim:t.fim||null,
+        progresso:Math.max(0,Math.min(100,parseInt(t.pct||0,10)||0)),
+        ordem:i, nivel:parseInt(t.nivel||0,10)||0,
+        tipo:(t.marco?'marco':(t.resumo?'fase':'tarefa')), wbs:t.wbs||null };
+    });
+    var ins=await _sb.from('cronograma_auria').insert(linhas);
+    if(ins.error && /column|schema|find|PGRST204/i.test(ins.error.message)){
+      var base=linhas.map(function(l){ return {empreendimento_id:l.empreendimento_id,nome:l.nome,data_inicio:l.data_inicio,data_fim:l.data_fim,progresso:l.progresso,ordem:l.ordem}; });
+      ins=await _sb.from('cronograma_auria').insert(base);
+    }
+    if(ins.error) throw ins.error;
+    var u=s.data.session.user;
+    _sb.from('cronograma_log_auria').insert({ empreendimento_id:EMP_ID,
+      usuario_nome:(u.user_metadata&&(u.user_metadata.nome||u.user_metadata.full_name))||u.email,
+      usuario_email:u.email, acao:'publicou' }).then(function(){},function(){});
+    DIRTY=false; m.textContent='publicado ✓ ('+linhas.length+' tarefas)';
+    document.getElementById('btnPublicar').style.display='none';
+    carregarLastEdit();
+  }catch(e){
+    var msg=(e&&e.message)||String(e);
+    if(/permission|denied|row-level|42501|policy/i.test(msg)) m.textContent='sem permissão para publicar (apenas gestão)';
+    else m.textContent='erro: '+msg;
+  }
 }
 function setView(v){
   document.getElementById('scroll').style.display=(v==='gantt')?'block':'none';
@@ -511,7 +573,8 @@ applyTheme();
 // ── Dados via Supabase (cronograma_auria publicado pelo desktop) ─────────────
 var _sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
 var EMP_ID=new URLSearchParams(location.search).get('emp')||'';
-var _eb=document.getElementById('editbar'); if(_eb)_eb.style.display='none';   // web = só leitura (edição/publicação é no desktop)
+// editbar visível: importar XML do MS Project e publicar direto no sistema (como no desktop).
+// A publicação é permitida por RLS só a gerente/super_admin; analista vê "sem permissão".
 function _isoD(s){ return s?String(s).slice(0,10):''; }
 async function carregarCron(){
   if(!EMP_ID){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Selecione um empreendimento na estação</h2></div>'; return; }
