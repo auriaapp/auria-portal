@@ -69,7 +69,15 @@
   .tb.on{background:linear-gradient(180deg,#3B82F6,#2563EB);border-color:transparent;color:#fff}
   .tb-info{font-size:12px;color:var(--mut);font-weight:600;min-width:52px;text-align:center}
   .sep{width:1px;height:20px;background:var(--line)}
-  #stage{flex:1;position:relative;overflow:hidden;background:#FFFFFF;cursor:grab}
+  #stage{flex:1;position:relative;overflow:hidden;background:#FFFFFF;cursor:grab;min-width:0}
+  #stageRow{flex:1;display:flex;overflow:hidden;min-height:0}
+  #bimPane{flex:1;min-width:0;display:none;flex-direction:column;background:#0f1117;border-left:2px solid var(--line)}
+  #bimPane.on{display:flex}
+  #bimPane iframe{flex:1;border:none;width:100%;background:#0f1117}
+  .bim-head{display:flex;align-items:center;gap:7px;padding:6px 9px;background:#1a1d27;border-bottom:1px solid #2a2d3a;flex-shrink:0}
+  .bim-head select{font-size:12px;padding:4px 7px;border-radius:7px;border:1px solid #2a2d3a;background:#0f1117;color:#e2e8f0;max-width:150px}
+  .bim-head .bim-x{margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:15px}
+  .bim-msg{flex:1;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;text-align:center;padding:20px}
   #stage.panning{cursor:grabbing}
   #pdfCanvas{position:absolute;top:0;left:0;will-change:transform}
   #dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4B5B78;gap:10px;pointer-events:none}
@@ -217,8 +225,11 @@
         <button class="tb" id="btnCota" onclick="toggleCota()" title="Calibrar escala e medir distâncias (cotas)">📏 Cotas</button>
         <button class="tb" id="btnIA" onclick="toggleIA()" title="Assistente de IA (Groq · Llama 4, com visão)">✦ IA</button>
         <button class="tb" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
+        <span class="sep"></span>
+        <button class="tb" id="btnBim" onclick="bimToggle()" title="Dividir a tela com o modelo 3D (Auria BIM) do pavimento e disciplina">🧊 BIM</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
+      <div id="stageRow">
       <div id="stage">
         <canvas id="pdfCanvas"></canvas>
         <svg id="drawSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
@@ -253,6 +264,21 @@
           “Abrir prancha”, ou arraste um PDF para cá.</p>
         </div>
       </div>
+      <div id="bimPane">
+        <div class="bim-head">
+          <span style="font-size:11px;color:#94a3b8">🧊 BIM</span>
+          <select id="bimDisc" onchange="bimTrocarDisc(this.value)" title="Disciplina / modelo"></select>
+          <select id="bimFloor" onchange="bimSetIframe()" title="Pavimento"></select>
+          <button class="bim-x" onclick="bimPopOut()" title="Abrir o 3D em janela separada (2ª tela)">⧉</button>
+          <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
+        </div>
+        <div id="bimBody" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+          <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
+          <iframe id="bimFrame" title="Auria BIM" style="display:none" allow="fullscreen"></iframe>
+        </div>
+      </div>
+      </div>
+      <!-- /stageRow -->
       <!-- Barra de comando inferior: perguntas à IA + /comandos -->
       <div id="cmdBar" style="flex-shrink:0;background:var(--bg2);border-top:1px solid var(--line);padding:8px 12px;display:flex;align-items:center;gap:8px;position:relative">
         <span style="font-size:14px;color:var(--accent2)">✦</span>
@@ -2031,6 +2057,94 @@ function renderSideRight(){
       +'<button class="sr-btn" style="background:#7D6608" onclick="abrirBI()">📊 Painel de Apontamentos</button></div>';
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Auria BIM — split-screen 2D | 3D (SÓ LEITURA; não toca em nada do BIM)
+// Lê projects/floors do Supabase do BIM e embute o viewer publicado por URL.
+// ══════════════════════════════════════════════════════════════════════════
+const BIM_VIEWER='https://auria-bim.vercel.app/floor.html';
+const _sbBim=window.supabase.createClient(
+  'https://xrgxdfwxsulrjgqtrjrr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhyZ3hkZnd4c3VscmpncXRyanJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDM5NTYsImV4cCI6MjA5MjcxOTk1Nn0.Zl5wObchlzLaSaDs1dWcDyreX-tiS6mKO3B5eoTCu3U',
+  { auth:{ persistSession:false, autoRefreshToken:false } });   // anônimo: não mexe na sessão do app
+let BIM_ON=false, BIM_PROJS=[], BIM_PROJ=null, BIM_FLOORS=[], BIM_BUILDING='';
+function _fold(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function _bimMsg(t){ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } const f=$('bimFrame'); if(f) f.style.display='none'; }
+async function bimToggle(){
+  BIM_ON=!BIM_ON;
+  $('bimPane').classList.toggle('on', BIM_ON);
+  const b=$('btnBim'); if(b) b.classList.toggle('on', BIM_ON);
+  if(BIM_ON) await bimEnsure();
+  if(V.page) setTimeout(()=>{ try{ render(); }catch(e){} }, 90);  // recalcula o canvas na nova largura
+}
+async function bimEnsure(){
+  if(!EMP){ _bimMsg('Selecione um empreendimento.'); return; }
+  if(BIM_BUILDING!==EMP.nome){   // (re)carrega os modelos do empreendimento atual
+    BIM_BUILDING=''; BIM_PROJS=[]; BIM_PROJ=null;
+    _bimMsg('Carregando modelos…');
+    try{
+      const { data, error }=await _sbBim.from('projects')
+        .select('id,name,discipline,building,xkt_url,meta_url').eq('building', EMP.nome);
+      if(error) throw error;
+      BIM_PROJS=data||[]; BIM_BUILDING=EMP.nome;
+    }catch(e){ _bimMsg('Não foi possível carregar os modelos BIM.'); console.warn('BIM projects:',e.message||e); return; }
+    if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); $('bimDisc').innerHTML=''; $('bimFloor').innerHTML=''; return; }
+    // popula seletor de disciplina (modelos disponíveis)
+    $('bimDisc').innerHTML=BIM_PROJS.map((p,i)=>'<option value="'+i+'">'+esc(p.discipline||p.name||('Modelo '+(i+1)))+'</option>').join('');
+  }
+  if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); return; }
+  // escolhe a disciplina que casa com a prancha ativa (senão, a primeira)
+  const alvo=_fold(discAtiva());
+  let best=0, bestScore=0;
+  BIM_PROJS.forEach((p,i)=>{ const d=_fold(p.discipline); let n=0; while(n<d.length&&n<alvo.length&&d[n]===alvo[n])n++; if(n>bestScore&&n>=3){bestScore=n;best=i;} });
+  $('bimDisc').value=String(best);
+  await bimTrocarDisc(best);
+}
+async function bimTrocarDisc(i){
+  BIM_PROJ=BIM_PROJS[+i]||BIM_PROJS[0]; if(!BIM_PROJ){ _bimMsg('Sem modelo.'); return; }
+  _bimMsg('Carregando pavimentos…');
+  try{
+    const { data, error }=await _sbBim.from('floors')
+      .select('id,name,ifc_guid,elevation').eq('project_id', BIM_PROJ.id).order('elevation');
+    if(error) throw error;
+    BIM_FLOORS=data||[];
+  }catch(e){ _bimMsg('Não foi possível carregar os pavimentos.'); console.warn('BIM floors:',e.message||e); return; }
+  const fs=$('bimFloor');
+  if(!BIM_FLOORS.length){ fs.innerHTML=''; bimSetIframe(); return; }
+  fs.innerHTML=BIM_FLOORS.map((f,idx)=>'<option value="'+idx+'">'+esc(f.name||('Pav. '+(idx+1)))+'</option>').join('');
+  // tenta casar o pavimento pelo número presente no nome da prancha ativa
+  const L=LAYERS[FOCO_LI]||LAYERS[0]; const pn=(L&&(L.prancha&&L.prancha.codigo||L.nome))||'';
+  const mnum=(pn.match(/\b(\d{1,2})\b/)||[])[1];
+  let pick=0;
+  if(mnum){ const k=BIM_FLOORS.findIndex(f=>new RegExp('\\b'+mnum+'\\b').test(f.name||'')); if(k>=0)pick=k; }
+  fs.value=String(pick);
+  bimSetIframe();
+}
+function _bimUrl(){
+  if(!BIM_PROJ) return '';
+  const f=BIM_FLOORS[+($('bimFloor').value||0)];
+  const p=new URLSearchParams();
+  p.set('project', BIM_PROJ.id);
+  if(f&&f.ifc_guid) p.set('floor', f.ifc_guid);
+  if(BIM_PROJ.xkt_url)  p.set('xkt',  BIM_PROJ.xkt_url);
+  if(BIM_PROJ.meta_url) p.set('meta', BIM_PROJ.meta_url);
+  p.set('building', BIM_PROJ.building||EMP.nome||'');
+  return BIM_VIEWER+'?'+p.toString();
+}
+function bimSetIframe(){
+  const url=_bimUrl(); if(!url){ _bimMsg('Sem modelo.'); return; }
+  const f=$('bimFrame'), m=$('bimMsg');
+  if(m) m.style.display='none';
+  f.style.display='block'; f.src=url;
+}
+function bimPopOut(){
+  const url=_bimUrl(); if(!url){ alert('Nada para abrir ainda.'); return; }
+  const w=Math.min(1280, Math.round(screen.availWidth*0.7))||1100;
+  const h=Math.min(900, Math.round(screen.availHeight*0.9))||800;
+  const win=window.open(url, 'auria_bim_'+Date.now(),
+    'popup=yes,width='+w+',height='+h+',left='+Math.max(0,(screen.availWidth-w)>>1)+',top='+Math.max(0,(screen.availHeight-h)>>1)+',resizable=yes,scrollbars=yes');
+  if(win){ try{ win.focus(); }catch(e){} } else alert('O navegador bloqueou a janela. Permita pop-ups.');
+}
+
 // ── Editor ──────────────────────────────────────────────────────────────────
 function proximoId(disc){
   // prefixo = 3 primeiras letras SEM acento (EST, ARQ, HID, ELE…), como no desktop
@@ -2051,6 +2165,7 @@ function updateFoco(){
   sel.innerHTML=LAYERS.map((L,i)=>{ const d=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
     return `<option value="${i}"${i===FOCO_LI?' selected':''}>${esc(d)}${i===0?' (base)':''}</option>`; }).join('');
   updateIaPranchaSel();
+  if(BIM_ON) bimEnsure();   // 3D acompanha a disciplina/prancha em foco
 }
 function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
 
