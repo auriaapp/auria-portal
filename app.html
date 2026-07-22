@@ -86,6 +86,17 @@
   .bim-pop label{display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;font-size:12px;color:#e2e8f0;cursor:pointer}
   .bim-pop label:hover{background:#0f1117}
   #bimCanvas.apontar{cursor:crosshair}
+  .bim-props{position:absolute;top:0;right:0;bottom:0;width:272px;max-width:72%;background:#141821;border-left:1px solid #2a2d3a;display:none;flex-direction:column;z-index:6;box-shadow:-8px 0 24px rgba(0,0,0,.4)}
+  .bim-props.on{display:flex}
+  .bp-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #2a2d3a;flex-shrink:0}
+  .bp-body{flex:1;overflow-y:auto;padding:8px 11px}
+  .bp-empty{color:#64748b;font-size:12px;padding:22px 14px;text-align:center;line-height:1.5}
+  .bp-grp{margin-bottom:11px}
+  .bp-t{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#7FB3D3;font-weight:800;margin:2px 0 5px}
+  .bp-row{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;padding:3px 0;border-bottom:1px solid #1e2130}
+  .bp-k{color:#94a3b8;flex-shrink:0}
+  .bp-v{color:#e2e8f0;text-align:right;word-break:break-word}
+  .bp-v.hi{color:#38bdf8;font-weight:700}
   #stage.panning{cursor:grabbing}
   #pdfCanvas{position:absolute;top:0;left:0;will-change:transform}
   #dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4B5B78;gap:10px;pointer-events:none}
@@ -280,6 +291,7 @@
             <button id="bimFloorsBtn" class="bim-tb" onclick="bimFloorsToggle()" title="Pavimentos visíveis (pode marcar vários)">Pav. ▾</button>
             <div id="bimFloorsPop" class="bim-pop"></div>
           </div>
+          <button id="btnBimProps" class="bim-tb" onclick="bimPropsToggle()" title="Propriedades IFC — clique com o botão esquerdo num elemento do modelo">🔍 Propriedades</button>
           <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM: clique com o botão direito no modelo (ou ative aqui p/ o botão esquerdo). Pan = botão do meio (scroll)">➕ Apontar 3D</button>
           <button class="bim-x" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
           <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
@@ -288,6 +300,10 @@
           <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
           <canvas id="bimCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+          <div id="bimProps" class="bim-props">
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🔍 Propriedades IFC</b><button class="bim-x" onclick="bimPropsToggle()" title="Fechar">✕</button></div>
+            <div id="bimPropsBody" class="bp-body"><div class="bp-empty">Clique com o botão esquerdo num elemento do modelo para ver suas propriedades.</div></div>
+          </div>
         </div>
       </div>
       </div>
@@ -2155,7 +2171,10 @@ async function _bimInit(){
     BIM_V.cameraControl.followPointer=true;
   }catch(e){}
   BIM_V.scene.on('rendered', ()=>{ try{ bimRenderPins(); }catch(e){} });
-  BIM_V.scene.input.on('mouseclicked', c=>{ try{ _bimClick(c,false); }catch(e){} });   // esquerdo: modo "Apontar 3D"
+  BIM_V.scene.input.on('mouseclicked', c=>{ try{
+    if(BIM_APONTAR || (PIN_EDIT&&APT_EDIT)){ _bimClick(c,false); return; }   // modo Apontar/edição
+    _bimSelect(c);                                                          // senão: seleciona + propriedades
+  }catch(e){} });
   // botão DIREITO = criar apontamento no ponto (igual ao 2D); botão do MEIO = pan (padrão do xeokit)
   const cv=$('bimCanvas');
   cv.addEventListener('contextmenu', e=>e.preventDefault());
@@ -2267,6 +2286,73 @@ function novoApontamentoBim(pt){
 }
 function _bimPrint(){
   try{ const c=$('bimCanvas'); if(!c) return null; const d=c.toDataURL('image/jpeg',0.72); return (d&&d.length>2000)?d:null; }catch(e){ return null; }
+}
+// ── Propriedades IFC do elemento (card do viewer, reconstruído no app) ──────
+const _IFC_PT={IfcBeam:'Viga',IfcColumn:'Pilar',IfcSlab:'Laje',IfcFooting:'Fundação',IfcPile:'Estaca',IfcWall:'Parede',IfcMember:'Viga',IfcPlate:'Placa',IfcStair:'Escada',IfcStairFlight:'Lance de Escada',IfcRamp:'Rampa',IfcRampFlight:'Lance de Rampa',IfcBuildingStorey:'Pavimento',IfcBuilding:'Edifício',IfcSite:'Terreno',IfcProject:'Projeto',IfcWindow:'Janela',IfcDoor:'Porta',IfcRoof:'Cobertura',IfcCurtainWall:'Pele de Vidro',IfcRailing:'Guarda-corpo',IfcCovering:'Revestimento',IfcSpace:'Ambiente'};
+function _ifcPt(t){ return _IFC_PT[t]||String(t||'').replace('Ifc',''); }
+function _bimStorey(mo){ for(var n=mo&&mo.parent;n;n=n.parent){ if(n.type==='IfcBuildingStorey') return n.name||'—'; } return '—'; }
+function _propVal(p){ return (p&&typeof p.value==='object')?(p.value&&p.value.value):(p?p.value:undefined); }
+function _fmtVal(name,v){
+  if(v==null) return '—';
+  if(typeof v==='number'){ var n=String(name).toLowerCase();
+    if(n.indexOf('volume')>=0) return v.toFixed(2)+' m³';
+    if(n.indexOf('area')>=0) return v.toFixed(2)+' m²';
+    if(/length|height|width|thickness|comprimento|largura|altura|dimensao/i.test(n)) return (v%1?v.toFixed(1):v)+' cm';
+    return v%1===0?String(v):v.toFixed(2); }
+  return String(v);
+}
+function _bpRow(k,v,hi){ return '<div class="bp-row"><span class="bp-k">'+esc(k)+'</span><span class="bp-v'+(hi?' hi':'')+'">'+esc(String(v))+'</span></div>'; }
+function _fmtFck(v){ var s=String(v).trim(); var m=s.match(/C?\s*(\d{2,3})/i); return m?('C'+m[1]+' MPa'):s; }
+// fck: no TQS às vezes está no elemento, às vezes herdado — sobe na hierarquia até o pavimento (como o viewer).
+function _bimFck(mo){
+  for(var node=mo; node; node=node.parent){
+    if(node!==mo && /IfcBuildingStorey|IfcBuilding|IfcSite|IfcProject/i.test(node.type||'')) break;
+    var found=null;
+    (node.propertySets||[]).forEach(function(ps){ (ps.properties||[]).forEach(function(p){
+      if(found) return;
+      if(/^material$|^fck$|resist|classe.*concreto|^concreto$|grau.*concreto|concrete.*grade/i.test(p.name)){ var raw=_propVal(p); if(raw!=null&&String(raw).trim()!=='') found=raw; }
+    }); });
+    if(found) return found;
+  }
+  return null;
+}
+function _bimSelect(canvasPos){
+  if(!BIM_V) return;
+  var hit=BIM_V.scene.pick({ canvasPos:canvasPos, pickSurface:false });
+  try{ BIM_V.scene.setObjectsHighlighted(BIM_V.scene.highlightedObjectIds,false); }catch(e){}
+  if(!hit||!hit.entity) return;
+  var id=hit.entity.id;
+  try{ BIM_V.scene.setObjectsHighlighted([id],true); }catch(e){}
+  _bimShowProps(id);
+}
+function _bimShowProps(id){
+  var mo=BIM_V&&BIM_V.metaScene.metaObjects[id]; if(!mo) return;
+  var vol=null;
+  (mo.propertySets||[]).forEach(function(ps){ (ps.properties||[]).forEach(function(p){
+    var raw=_propVal(p);
+    if(vol==null && /volume/i.test(p.name) && typeof raw==='number') vol=raw;
+  }); });
+  var fck=_bimFck(mo);
+  var h='<div class="bp-grp"><div class="bp-t">Elemento</div>'
+    +_bpRow('Nome',mo.name||id)
+    +_bpRow('Tipo',_ifcPt(mo.type))
+    +_bpRow('Pavimento',_bimStorey(mo))
+    +(vol!=null?_bpRow('Volume',vol.toFixed(2)+' m³',true):'')
+    +(fck?_bpRow('Resistência',_fmtFck(fck),true):'')
+    +_bpRow('GUID',id)
+    +'</div>';
+  (mo.propertySets||[]).forEach(function(ps){
+    if(!ps||!ps.properties||!ps.properties.length) return;
+    var rows=''; ps.properties.forEach(function(p){ var hi=/volume|area|length|height|width|thickness/i.test(p.name); rows+=_bpRow(p.name,_fmtVal(p.name,_propVal(p)),hi); });
+    h+='<div class="bp-grp"><div class="bp-t">'+esc(ps.name||'Propriedades')+'</div>'+rows+'</div>';
+  });
+  $('bimPropsBody').innerHTML=h;
+  $('bimProps').classList.add('on');
+  var b=$('btnBimProps'); if(b) b.classList.add('on');
+}
+function bimPropsToggle(){
+  var p=$('bimProps'), on=p.classList.toggle('on');
+  var b=$('btnBimProps'); if(b) b.classList.toggle('on', on);
 }
 // ── Pins 3D — MESMA estética dos pins 2D (pinSvg) ───────────────────────────
 function bimWorldToScreen(wx,wy,wz){
