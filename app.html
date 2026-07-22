@@ -77,7 +77,15 @@
   .bim-head{display:flex;align-items:center;gap:7px;padding:6px 9px;background:#1a1d27;border-bottom:1px solid #2a2d3a;flex-shrink:0}
   .bim-head select{font-size:12px;padding:4px 7px;border-radius:7px;border:1px solid #2a2d3a;background:#0f1117;color:#e2e8f0;max-width:150px}
   .bim-head .bim-x{margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:15px}
-  .bim-msg{flex:1;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;text-align:center;padding:20px}
+  .bim-head .bim-x+.bim-x{margin-left:0}
+  .bim-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:13px;text-align:center;padding:20px;background:rgba(15,17,23,.85);z-index:5}
+  .bim-tb{font-size:12px;padding:4px 9px;border-radius:7px;border:1px solid #2a2d3a;background:#0f1117;color:#e2e8f0;cursor:pointer;white-space:nowrap}
+  .bim-tb.on{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+  .bim-pop{display:none;position:absolute;top:112%;left:0;z-index:30;background:#1a1d27;border:1px solid #2a2d3a;border-radius:9px;padding:6px;min-width:190px;max-height:300px;overflow:auto;box-shadow:0 12px 34px rgba(0,0,0,.55)}
+  .bim-pop.on{display:block}
+  .bim-pop label{display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;font-size:12px;color:#e2e8f0;cursor:pointer}
+  .bim-pop label:hover{background:#0f1117}
+  #bimCanvas.apontar{cursor:crosshair}
   #stage.panning{cursor:grabbing}
   #pdfCanvas{position:absolute;top:0;left:0;will-change:transform}
   #dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#4B5B78;gap:10px;pointer-events:none}
@@ -268,13 +276,18 @@
         <div class="bim-head">
           <span style="font-size:11px;color:#94a3b8">🧊 BIM</span>
           <select id="bimDisc" onchange="bimTrocarDisc(this.value)" title="Disciplina / modelo"></select>
-          <select id="bimFloor" onchange="bimSetIframe()" title="Pavimento"></select>
-          <button class="bim-x" onclick="bimPopOut()" title="Abrir o 3D em janela separada (2ª tela)">⧉</button>
+          <div style="position:relative">
+            <button id="bimFloorsBtn" class="bim-tb" onclick="bimFloorsToggle()" title="Pavimentos visíveis (pode marcar vários)">Pav. ▾</button>
+            <div id="bimFloorsPop" class="bim-pop"></div>
+          </div>
+          <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM clicando no modelo">➕ Apontar 3D</button>
+          <button class="bim-x" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
           <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
         </div>
-        <div id="bimBody" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+        <div id="bimBody" style="flex:1;position:relative;overflow:hidden">
           <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
-          <iframe id="bimFrame" title="Auria BIM" style="display:none" allow="fullscreen"></iframe>
+          <canvas id="bimCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
+          <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
         </div>
       </div>
       </div>
@@ -1304,6 +1317,7 @@ function renderPins(){
     if(a.prancha_id!==PRANCHA.id) return;
     if(a.id===editId) return;                    // o em edição é desenhado do APT_EDIT (ao vivo)
     (a.pontos_json||[]).forEach((pt,pi)=>{
+      if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
@@ -1314,12 +1328,14 @@ function renderPins(){
   // Apontamento em EDIÇÃO (novo ou existente): pins desenhados AO VIVO do APT_EDIT
   if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
+      if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
     });
   }
   svg.innerHTML=out;
+  try{ bimRenderPins(); }catch(e){}   // mantém o overlay 3D em sincronia
 }
 
 // Barra superior = VISUALIZAÇÃO dos pins (mostrar/ocultar).
@@ -2067,19 +2083,22 @@ const _sbBim=window.supabase.createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhyZ3hkZnd4c3VscmpncXRyanJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDM5NTYsImV4cCI6MjA5MjcxOTk1Nn0.Zl5wObchlzLaSaDs1dWcDyreX-tiS6mKO3B5eoTCu3U',
   { auth:{ persistSession:false, autoRefreshToken:false } });   // anônimo: não mexe na sessão do app
 let BIM_ON=false, BIM_PROJS=[], BIM_PROJ=null, BIM_FLOORS=[], BIM_BUILDING='';
+let BIM_V=null, BIM_XKT=null, BIM_SDK=null, BIM_FSEL=new Set(), BIM_APONTAR=false, BIM_LOADSEQ=0;
 function _fold(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,''); }
-function _bimMsg(t){ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } const f=$('bimFrame'); if(f) f.style.display='none'; }
+function _bimMsg(t){ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } }
+function _bimShow(){ const m=$('bimMsg'); if(m) m.style.display='none'; const c=$('bimCanvas'); if(c) c.style.display='block'; }
 async function bimToggle(){
   BIM_ON=!BIM_ON;
   $('bimPane').classList.toggle('on', BIM_ON);
   const b=$('btnBim'); if(b) b.classList.toggle('on', BIM_ON);
+  if(!BIM_ON && BIM_APONTAR) bimAtivarApontar();   // desliga o modo apontar ao fechar
   if(BIM_ON) await bimEnsure();
   if(V.page) setTimeout(()=>{ try{ render(); }catch(e){} }, 90);  // recalcula o canvas na nova largura
 }
-async function bimEnsure(){
+async function bimEnsure(prefId){
   if(!EMP){ _bimMsg('Selecione um empreendimento.'); return; }
   if(BIM_BUILDING!==EMP.nome){   // (re)carrega os modelos do empreendimento atual
-    BIM_BUILDING=''; BIM_PROJS=[]; BIM_PROJ=null;
+    BIM_BUILDING=''; BIM_PROJS=[]; BIM_PROJ=null; BIM_FLOORS=[]; BIM_FSEL=new Set();
     _bimMsg('Carregando modelos…');
     try{
       const { data, error }=await _sbBim.from('projects')
@@ -2087,16 +2106,20 @@ async function bimEnsure(){
       if(error) throw error;
       BIM_PROJS=data||[]; BIM_BUILDING=EMP.nome;
     }catch(e){ _bimMsg('Não foi possível carregar os modelos BIM.'); console.warn('BIM projects:',e.message||e); return; }
-    if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); $('bimDisc').innerHTML=''; $('bimFloor').innerHTML=''; return; }
+    if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); $('bimDisc').innerHTML=''; $('bimFloorsPop').innerHTML=''; return; }
     // popula seletor de disciplina (modelos disponíveis)
     $('bimDisc').innerHTML=BIM_PROJS.map((p,i)=>'<option value="'+i+'">'+esc(p.discipline||p.name||('Modelo '+(i+1)))+'</option>').join('');
   }
   if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); return; }
-  // escolhe a disciplina que casa com a prancha ativa (senão, a primeira)
-  const alvo=_fold(discAtiva());
-  let best=0, bestScore=0;
-  BIM_PROJS.forEach((p,i)=>{ const d=_fold(p.discipline); let n=0; while(n<d.length&&n<alvo.length&&d[n]===alvo[n])n++; if(n>bestScore&&n>=3){bestScore=n;best=i;} });
+  // modelo preferido (abrir apontamento BIM) ou o que casa com a prancha ativa
+  let best=-1;
+  if(prefId!=null) best=BIM_PROJS.findIndex(p=>p.id===prefId);
+  if(best<0){
+    const alvo=_fold(discAtiva()); let bestScore=0; best=0;
+    BIM_PROJS.forEach((p,i)=>{ const d=_fold(p.discipline); let n=0; while(n<d.length&&n<alvo.length&&d[n]===alvo[n])n++; if(n>bestScore&&n>=3){bestScore=n;best=i;} });
+  }
   $('bimDisc').value=String(best);
+  if(BIM_PROJ===BIM_PROJS[best] && BIM_V && BIM_V.scene.models[BIM_PROJ.id]){ _bimShow(); bimRenderPins(); return; }
   await bimTrocarDisc(best);
 }
 async function bimTrocarDisc(i){
@@ -2108,36 +2131,178 @@ async function bimTrocarDisc(i){
     if(error) throw error;
     BIM_FLOORS=data||[];
   }catch(e){ _bimMsg('Não foi possível carregar os pavimentos.'); console.warn('BIM floors:',e.message||e); return; }
-  const fs=$('bimFloor');
-  if(!BIM_FLOORS.length){ fs.innerHTML=''; bimSetIframe(); return; }
-  fs.innerHTML=BIM_FLOORS.map((f,idx)=>'<option value="'+idx+'">'+esc(f.name||('Pav. '+(idx+1)))+'</option>').join('');
-  // tenta casar o pavimento pelo número presente no nome da prancha ativa
+  // pavimento inicial: tenta casar o número do nome da prancha ativa; senão, TODOS
+  BIM_FSEL=new Set();
   const L=LAYERS[FOCO_LI]||LAYERS[0]; const pn=(L&&(L.prancha&&L.prancha.codigo||L.nome))||'';
   const mnum=(pn.match(/\b(\d{1,2})\b/)||[])[1];
-  let pick=0;
-  if(mnum){ const k=BIM_FLOORS.findIndex(f=>new RegExp('\\b'+mnum+'\\b').test(f.name||'')); if(k>=0)pick=k; }
-  fs.value=String(pick);
-  bimSetIframe();
+  if(mnum){ const f=BIM_FLOORS.find(x=>new RegExp('\\b'+mnum+'\\b').test(x.name||'')); if(f&&f.ifc_guid) BIM_FSEL.add(f.ifc_guid); }
+  bimFloorsRender();
+  await _bimLoadModel();
 }
-function _bimUrl(){
-  if(!BIM_PROJ) return '';
-  const f=BIM_FLOORS[+($('bimFloor').value||0)];
-  const p=new URLSearchParams();
-  p.set('project', BIM_PROJ.id);
-  if(f&&f.ifc_guid) p.set('floor', f.ifc_guid);
-  if(BIM_PROJ.xkt_url)  p.set('xkt',  BIM_PROJ.xkt_url);
-  if(BIM_PROJ.meta_url) p.set('meta', BIM_PROJ.meta_url);
-  p.set('building', BIM_PROJ.building||EMP.nome||'');
-  return BIM_VIEWER+'?'+p.toString();
+
+// ── Engine 3D embutida (xeokit — a MESMA do viewer; só importa os .xkt públicos)
+async function _bimInit(){
+  if(BIM_V) return;
+  _bimMsg('Carregando engine 3D…');
+  if(!BIM_SDK) BIM_SDK=await import('https://cdn.jsdelivr.net/npm/@xeokit/xeokit-sdk@2.6.109/dist/xeokit-sdk.es.min.js');
+  BIM_V=new BIM_SDK.Viewer({ canvasId:'bimCanvas', saoEnabled:true, preserveDrawingBuffer:true, backgroundColor:[0.06,0.07,0.09] });
+  BIM_XKT=new BIM_SDK.XKTLoaderPlugin(BIM_V);
+  try{ BIM_V.cameraControl.followPointer=true; }catch(e){}
+  BIM_V.scene.on('rendered', ()=>{ try{ bimRenderPins(); }catch(e){} });
+  BIM_V.scene.input.on('mouseclicked', c=>{ try{ _bimClick(c); }catch(e){} });
 }
-function bimSetIframe(){
-  const url=_bimUrl(); if(!url){ _bimMsg('Sem modelo.'); return; }
-  const f=$('bimFrame'), m=$('bimMsg');
-  if(m) m.style.display='none';
-  f.style.display='block'; f.src=url;
+async function _bimLoadModel(){
+  await _bimInit();
+  const seq=++BIM_LOADSEQ;
+  Object.values(BIM_V.scene.models||{}).forEach(m=>{ try{ m.destroy(); }catch(e){} });
+  if(!BIM_PROJ||!BIM_PROJ.xkt_url){ _bimMsg('Este modelo não tem arquivo .xkt.'); return; }
+  _bimMsg('Carregando modelo 3D…');
+  const model=BIM_XKT.load({ id:BIM_PROJ.id, src:BIM_PROJ.xkt_url, metaModelSrc:BIM_PROJ.meta_url||undefined, edges:true });
+  model.on('loaded', ()=>{ if(seq!==BIM_LOADSEQ) return; _bimShow(); bimApplyFloors(); });
+  model.on('error', e=>{ if(seq!==BIM_LOADSEQ) return; _bimMsg('Erro ao carregar o modelo: '+e); });
+}
+function _bimStoreyIds(guid){
+  const mo=BIM_V&&BIM_V.metaScene.metaObjects[guid]; if(!mo) return [];
+  let ids=[];
+  try{ ids=mo.getObjectIDsInSubtree().filter(id=>id!==guid); }catch(e){}
+  if(!ids.length){ // fallback (igual ao viewer): objetos cujo parent é o storey
+    try{ ids=BIM_V.scene.objectIds.filter(id=>{ const m=BIM_V.metaScene.metaObjects[id]; return m&&m.type!=='IfcBuildingStorey'&&m.parent&&m.parent.id===guid; }); }catch(e){}
+  }
+  return ids;
+}
+function bimApplyFloors(){
+  if(!BIM_V) return;
+  const sc=BIM_V.scene, all=sc.objectIds;
+  let ids=all;
+  if(BIM_FSEL.size && BIM_FSEL.size<BIM_FLOORS.length){
+    ids=[]; BIM_FSEL.forEach(g=>{ ids=ids.concat(_bimStoreyIds(g)); });
+    ids=[...new Set(ids)];
+    if(!ids.length) ids=all;
+  }
+  sc.setObjectsVisible(all, false);
+  sc.setObjectsVisible(ids, true);
+  sc.setObjectsPickable(ids, true);
+  try{ BIM_V.cameraFlight.flyTo({ aabb: sc.getAABB(ids), duration:0.7 }); }catch(e){}
+  bimRenderPins();
+}
+// ── Pavimentos: seleção MÚLTIPLA (checkboxes) ───────────────────────────────
+function bimFloorsRender(){
+  const pop=$('bimFloorsPop'), btn=$('bimFloorsBtn'); if(!pop||!btn) return;
+  if(!BIM_FLOORS.length){ pop.innerHTML='<div style="padding:6px;font-size:11px;color:#64748b">Sem pavimentos</div>'; btn.textContent='Pav. ▾'; return; }
+  const todos=!BIM_FSEL.size||BIM_FSEL.size>=BIM_FLOORS.length;
+  pop.innerHTML='<label><input type="checkbox" '+(todos?'checked':'')+' onchange="bimFloorsTodos(this.checked)"><b>Todos</b></label>'+
+    BIM_FLOORS.map(f=>'<label><input type="checkbox" '+((!todos&&BIM_FSEL.has(f.ifc_guid))?'checked':'')+' onchange="bimFloorTick(this.getAttribute(\'data-g\'),this.checked)" data-g="'+esc(f.ifc_guid)+'">'+esc(f.name||'—')+'</label>').join('');
+  btn.textContent=todos?'Pav.: todos ▾':('Pav. ('+BIM_FSEL.size+') ▾');
+}
+function bimFloorsToggle(){ const p=$('bimFloorsPop'); if(p) p.classList.toggle('on'); }
+function bimFloorsTodos(on){ if(on) BIM_FSEL=new Set(); bimFloorsRender(); bimApplyFloors(); }
+function bimFloorTick(guid,on){
+  if(on) BIM_FSEL.add(guid); else BIM_FSEL.delete(guid);
+  bimFloorsRender(); bimApplyFloors();
+}
+document.addEventListener('click',function(e){
+  const p=$('bimFloorsPop');
+  if(p&&p.classList.contains('on')&&!e.target.closest('#bimFloorsPop')&&e.target.id!=='bimFloorsBtn') p.classList.remove('on');
+});
+// ── Apontar no 3D → apontamento BIM-<DISC>-n na MESMA central ───────────────
+function bimAtivarApontar(){
+  BIM_APONTAR=!BIM_APONTAR;
+  const b=$('bimApontarBtn'); if(b) b.classList.toggle('on', BIM_APONTAR);
+  const c=$('bimCanvas'); if(c) c.classList.toggle('apontar', BIM_APONTAR);
+}
+function _bimClick(canvasPos){
+  const addEdit=(PIN_EDIT&&APT_EDIT);
+  if(!BIM_APONTAR&&!addEdit) return;
+  if(!BIM_V||!BIM_PROJ) return;
+  const hit=BIM_V.scene.pick({ canvasPos:canvasPos, pickSurface:true });
+  if(!hit||!hit.worldPos) return;
+  const pt={ k3d:1, x:hit.worldPos[0], y:hit.worldPos[1], z:hit.worldPos[2], model:BIM_PROJ.id, mdisc:BIM_PROJ.discipline||'' };
+  if(addEdit){ // apontamento 2D-3D: adiciona pin 3D ao apontamento aberto
+    (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push(pt);
+    renderPinsList(); bimRenderPins(); return;
+  }
+  bimAtivarApontar();          // one-shot
+  novoApontamentoBim(pt);
+}
+function proximoIdBim(disc){
+  const pref='BIM-'+(disc? disc.normalize('NFD').replace(/[̀-ͯ]/g,'').slice(0,3).toUpperCase() : 'GER');
+  let num=1;
+  APTS.forEach(a=>{ const s=String(a.id||''); if(s.indexOf(pref+'-')===0){ const n=parseInt(s.slice(pref.length+1),10); if(n>=num) num=n+1; } });
+  return { id:pref+'-'+num, num };
+}
+function novoApontamentoBim(pt){
+  const mdisc=BIM_PROJ.discipline||BIM_PROJ.name||'Modelo';
+  const g=proximoIdBim(mdisc);
+  const fornEmails=(FORN_DISC[mdisc]&&FORN_DISC[mdisc].emails.join(', '))||'';
+  APT_EDIT={
+    id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
+    disciplina:mdisc, status:'Em aberto', visibilidade:'Coordenação',
+    data_criacao:hojeBr(),
+    participantes:{ [mdisc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
+    log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' no modelo BIM — '+mdisc+'.',tipo:'sistema'}],
+    pontos_json:[pt],
+    drawings_json:[],
+    prancha_id:PRANCHA?PRANCHA.id:null,
+    _novo:true
+  };
+  APT_IMGS=[];
+  const pic=_bimPrint(); if(pic) APT_IMGS.push({data:pic});   // print automático da vista 3D
+  abrirEditor();
+}
+function _bimPrint(){
+  try{ const c=$('bimCanvas'); if(!c) return null; const d=c.toDataURL('image/jpeg',0.72); return (d&&d.length>2000)?d:null; }catch(e){ return null; }
+}
+// ── Pins 3D — MESMA estética dos pins 2D (pinSvg) ───────────────────────────
+function bimWorldToScreen(wx,wy,wz){
+  const c=$('bimCanvas'); if(!c||!BIM_V) return null;
+  const vm=BIM_V.camera.viewMatrix, pm=BIM_V.camera.project.matrix;
+  const vx=vm[0]*wx+vm[4]*wy+vm[8]*wz+vm[12];
+  const vy=vm[1]*wx+vm[5]*wy+vm[9]*wz+vm[13];
+  const vz=vm[2]*wx+vm[6]*wy+vm[10]*wz+vm[14];
+  const vw=vm[3]*wx+vm[7]*wy+vm[11]*wz+vm[15];
+  const cx=pm[0]*vx+pm[4]*vy+pm[8]*vz+pm[12]*vw;
+  const cy=pm[1]*vx+pm[5]*vy+pm[9]*vz+pm[13]*vw;
+  const cw=pm[3]*vx+pm[7]*vy+pm[11]*vz+pm[15]*vw;
+  if(cw<1e-6) return null;   // atrás da câmera
+  return { x:((cx/cw+1)*0.5)*c.clientWidth, y:((1-cy/cw)*0.5)*c.clientHeight };
+}
+function bimRenderPins(){
+  const svg=$('bimPinsSvg'); if(!svg) return;
+  if(!BIM_ON||!BIM_V||!BIM_PROJ){ svg.innerHTML=''; return; }
+  if(!PINS_VISIVEIS && !(PIN_EDIT&&APT_EDIT)){ svg.innerHTML=''; return; }
+  const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
+  let out='';
+  APTS.forEach((a,ai)=>{
+    if(a.id===editId) return;
+    (a.pontos_json||[]).forEach(pt=>{
+      if(!pt.k3d||pt.model!==BIM_PROJ.id) return;
+      const p=bimWorldToScreen(pt.x,pt.y,pt.z); if(!p) return;
+      if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinClick('+ai+');event.stopPropagation()">'+pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
+    });
+  });
+  if(APT_EDIT){  // pins do apontamento em edição, AO VIVO
+    (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
+      if(!pt.k3d||pt.model!==BIM_PROJ.id) return;
+      const p=bimWorldToScreen(pt.x,pt.y,pt.z); if(!p) return;
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinEditClick('+pi+');event.stopPropagation()">'+pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true)+'</g>';
+    });
+  }
+  svg.innerHTML=out;
+}
+function bimPinClick(ai){ abrirAptIdx(ai); }
+function bimPinEditClick(pi){
+  if(PIN_EDIT&&APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPinsList(); bimRenderPins(); }
 }
 function bimPopOut(){
-  const url=_bimUrl(); if(!url){ alert('Nada para abrir ainda.'); return; }
+  if(!BIM_PROJ){ alert('Nada para abrir ainda.'); return; }
+  const p=new URLSearchParams();
+  p.set('project', BIM_PROJ.id);
+  const g=[...BIM_FSEL][0]; if(g) p.set('floor', g);
+  if(BIM_PROJ.xkt_url)  p.set('xkt',  BIM_PROJ.xkt_url);
+  if(BIM_PROJ.meta_url) p.set('meta', BIM_PROJ.meta_url);
+  p.set('building', BIM_PROJ.building||(EMP&&EMP.nome)||'');
+  const url=BIM_VIEWER+'?'+p.toString();
   const w=Math.min(1280, Math.round(screen.availWidth*0.7))||1100;
   const h=Math.min(900, Math.round(screen.availHeight*0.9))||800;
   const win=window.open(url, 'auria_bim_'+Date.now(),
@@ -2215,6 +2380,9 @@ function abrirAptIdx(i){
   APT_EDIT=JSON.parse(JSON.stringify(a)); APT_EDIT._novo=false;
   APT_IMGS=(a.imagens_json||[]).map(u=>({url:u}));
   abrirEditor();
+  // Apontamento com pin 3D → abre o painel BIM já no modelo certo
+  const p3=(a.pontos_json||[]).find(pt=>pt.k3d);
+  if(p3){ if(!BIM_ON){ bimToggle().then(()=>bimEnsure(p3.model)).catch(()=>{}); } else { bimEnsure(p3.model); } }
 }
 function abrirEditor(){
   const a=APT_EDIT;
@@ -2246,9 +2414,9 @@ function renderPinsList(){
   const pts=(APT_EDIT&&APT_EDIT.pontos_json)||[];
   $('apPinsList').innerHTML = pts.length
     ? pts.map((pt,i)=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:2px 6px 2px 10px;margin:0 5px 5px 0;font-size:11px">
-        📍 pág. ${pt.pg||1}
+        ${pt.k3d?('🧊 3D · '+esc(pt.mdisc||'modelo')):('📍 pág. '+(pt.pg||1))}
         <button class="btn-sec" style="padding:1px 6px;font-size:11px;border-radius:10px" onclick="removerPinApt(${i})">✕</button></span>`).join('')
-    : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha.</span>';
+    : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha ou no modelo 3D.</span>';
 }
 function removerPinApt(i){
   if(!APT_EDIT) return;

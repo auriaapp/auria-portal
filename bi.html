@@ -135,6 +135,7 @@ body.light .empty-aval{color:#94A3B8}
   <div class="ms"><button type="button" class="ms-btn" id="msb-disc" onclick="msToggle('disc')">Disciplina ▾</button><div class="ms-pop" id="ms-disc"></div></div>
   <div class="ms"><button type="button" class="ms-btn" id="msb-tipo" onclick="msToggle('tipo')">Tipo ▾</button><div class="ms-pop" id="ms-tipo"></div></div>
   <div class="ms"><button type="button" class="ms-btn" id="msb-crit" onclick="msToggle('crit')">Criticidade ▾</button><div class="ms-pop" id="ms-crit"></div></div>
+  <div class="ms"><button type="button" class="ms-btn" id="msb-orig" onclick="msToggle('orig')">Origem ▾</button><div class="ms-pop" id="ms-orig"></div></div>
   <div class="ms">
     <button type="button" class="ms-btn" id="msb-crd" onclick="msToggle('crd')">Criação ▾</button>
     <div class="ms-pop" id="ms-crd">
@@ -203,8 +204,8 @@ function SCO(){ var c=chTheme(); var co=CO();
 let chs={};
 let _abaAtual='bi';
 let _discList=[];
-const MS={local:new Set(),status:new Set(),disc:new Set(),tipo:new Set(),crit:new Set()};
-const MS_LBL={local:'Local',status:'Status',disc:'Disciplina',tipo:'Tipo',crit:'Criticidade'};
+const MS={local:new Set(),status:new Set(),disc:new Set(),tipo:new Set(),crit:new Set(),orig:new Set()};
+const MS_LBL={local:'Local',status:'Status',disc:'Disciplina',tipo:'Tipo',crit:'Criticidade',orig:'Origem'};
 let _optsBuilt=false, _lastOpts={};
 function _esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
@@ -258,7 +259,7 @@ function render(d){
   // Constrói os filtros multi-seleção uma única vez (preserva seleções)
   if(!_optsBuilt && d.opcoes){
     _lastOpts=d.opcoes;
-    ['local','status','disc','tipo','crit'].forEach(n=>msBuild(n, d.opcoes[n]||[]));
+    ['local','status','disc','tipo','crit','orig'].forEach(n=>msBuild(n, d.opcoes[n]||[]));
     _optsBuilt=true;
   }
   // Tabela
@@ -303,7 +304,7 @@ function limparFiltros(){
   document.getElementById('f-txt').value='';
   ['f-crde','f-crate','f-code','f-coate'].forEach(id=>{const el=document.getElementById(id); if(el)el.value='';});
   refreshDateBtns();
-  ['local','status','disc','tipo','crit'].forEach(n=>{
+  ['local','status','disc','tipo','crit','orig'].forEach(n=>{
     MS[n].clear();
     const b=document.getElementById('msb-'+n);
     if(b){ b.textContent=MS_LBL[n]+' ▾'; b.classList.remove('act'); }
@@ -339,7 +340,7 @@ function _filtros(){
   const p=new URLSearchParams();
   const txt=document.getElementById('f-txt').value.trim();
   if(txt) p.set('texto',txt);
-  ['local','status','disc','tipo','crit'].forEach(n=>{ MS[n].forEach(v=>p.append(n,v)); });
+  ['local','status','disc','tipo','crit','orig'].forEach(n=>{ MS[n].forEach(v=>p.append(n,v)); });
   const dmap={crde:'f-crde',crate:'f-crate',code:'f-code',coate:'f-coate'};
   Object.keys(dmap).forEach(k=>{ const el=document.getElementById(dmap[k]); if(el&&el.value) p.set(k,el.value); });
   return p.toString();
@@ -353,6 +354,7 @@ const _TIPOS_QUALIDADE=new Set(['Interferência / Divergência entre Disciplinas
 const _AV_PESOS={pont:0.39,qual:0.30,resol:0.20,inter:0.11};
 function _stripPrio(p){ p=String(p||'').replace('🔴 ','').replace('🟠 ','').replace('🟡 ',''); const M={'Crítica':'Severa / Imediata','Média':'Importante / Programada','Observação':'Observação / Atenção'}; return M[p]||p; }
 function _corPino(pr){ const p=_stripPrio(pr); if(p.indexOf('Severa / Imediata')>=0)return '#E74C3C'; if(p.indexOf('Importante / Programada')>=0)return '#F39C12'; if(p.indexOf('Observação')>=0)return '#F1C40F'; return '#E74C3C'; }
+function _isBim(i){ return String(i.id||'').indexOf('BIM-')===0; }   // apontamentos criados no modelo 3D
 function _pd(s){ if(!s)return null; s=String(s).trim().slice(0,10); let d;
   if(/^\d{4}-\d{2}-\d{2}/.test(s)){ d=new Date(s+'T00:00:00'); }
   else if(/^\d{2}\/\d{2}\/\d{4}/.test(s)){ const p=s.split('/'); d=new Date(+p[2],+p[1]-1,+p[0]); }
@@ -372,7 +374,7 @@ function _biCompute(f){
   f=f||{};
   const _lst=k=>{ const v=f[k]; return new Set(Array.isArray(v)?v.filter(Boolean):(v?[v]:[])); };
   const _one=k=>{ const v=f[k]; return Array.isArray(v)?(v[0]||''):(v||''); };
-  const fSt=_lst('status'),fDi=_lst('disc'),fTp=_lst('tipo'),fLo=_lst('local'),fCr=_lst('crit');
+  const fSt=_lst('status'),fDi=_lst('disc'),fTp=_lst('tipo'),fLo=_lst('local'),fCr=_lst('crit'),fOr=_lst('orig');
   const fTx=_one('texto').toLowerCase();
   const crDe=_pd(_one('crde')),crAte=_pd(_one('crate')),coDe=_pd(_one('code')),coAte=_pd(_one('coate'));
   const passa=i=>{
@@ -381,6 +383,7 @@ function _biCompute(f){
     if(fDi.size && !fDi.has(i.disciplina||''))return false;
     if(fTp.size && !fTp.has(i.tipo||''))return false;
     if(fCr.size && !fCr.has(_stripPrio(i.prioridade||'')))return false;
+    if(fOr.size && !fOr.has(_isBim(i)?'Modelos BIM':'Pranchas 2D'))return false;
     if(fLo.size){ let ok=false; _locais(i).forEach(x=>{ if(fLo.has(x))ok=true; }); if(!ok)return false; }
     if(crDe||crAte){ const d=_pd(i.data_criacao||''); if(!d||(crDe&&d<crDe)||(crAte&&d>crAte))return false; }
     if(coDe||coAte){ const d=_dataConcl(i); if(!d||(coDe&&d<coDe)||(coAte&&d>coAte))return false; }
@@ -393,7 +396,8 @@ function _biCompute(f){
     disc:[...new Set(ISSUES.map(i=>i.disciplina).filter(Boolean))].sort(),
     tipo:[...new Set(ISSUES.map(i=>i.tipo).filter(Boolean))].sort(),
     local:[...locSet].filter(Boolean).sort(),
-    crit:['Severa / Imediata','Importante / Programada','Observação / Atenção']
+    crit:['Severa / Imediata','Importante / Programada','Observação / Atenção'],
+    orig:['Pranchas 2D','Modelos BIM']
   };
   const hoje=new Date(); hoje.setHours(0,0,0,0);
   const atrasado=i=>{ if(i.status==='Resolvido')return false; const d=_prazoMinDate(i); return d?d<hoje:false; };
@@ -401,7 +405,7 @@ function _biCompute(f){
   const cnt=arr=>{ const o={}; arr.forEach(v=>{ o[v]=(o[v]||0)+1; }); return o; };
   const por_status=cnt(issues.map(i=>i.status||'N/A'));
   const por_prio=cnt(issues.map(i=>_stripPrio(i.prioridade||'N/A')));
-  const por_disc=cnt(issues.map(i=>i.disciplina||'N/A'));
+  const por_disc=cnt(issues.map(i=>(_isBim(i)?'BIM · ':'')+(i.disciplina||'N/A')));
   const por_tipo=cnt(issues.map(i=>i.tipo||'N/A'));
   const dias={};
   issues.forEach(i=>{ const d=_pd(i.data_criacao||''); if(d){ const lbl=('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2); dias[lbl]=(dias[lbl]||0)+1; } });
@@ -433,7 +437,9 @@ function _avalCompute(){
     const msgs=issue.mensagens||[]; const temInter=Array.isArray(msgs)&&msgs.some(m=>m&&typeof m==='object'&&m.de==='projetista'); if(temInter)globalMsgs++;
     const tipo=issue.tipo||''; const peso=(_TIPOS_QUALIDADE.has(tipo))?pesoSev(issue.prioridade||''):0; const sev3=(peso===3);
     const resolvido=issue.status==='Resolvido'; const dcri=_pd(issue.data_criacao||''); const ehQual=_TIPOS_QUALIDADE.has(tipo); const prioTxt=_stripPrio(issue.prioridade||'');
-    pares.forEach(([disc,proj,info])=>{
+    const bimPref=_isBim(issue)?'BIM · ':'';   // categoria à parte na avaliação
+    pares.forEach(([disc0,proj,info])=>{
+      const disc=bimPref+disc0;
       const s=S(disc+'|'+proj); s.disc=disc; s.proj=proj; s.total++; s.sev_soma+=peso;
       if(ehQual)s.qual_count++; if(sev3)s.severos++; if(temInter)s.interacao++;
       const prz=_pd(info.prazo||''),cnc=_pd(info.conclusao||''); let pont='—';
