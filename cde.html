@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria CDE — Padrão de codificação</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#F1F5F9; --panel:#FFFFFF; --panel2:#F8FAFC; --line:#E2E8F0;
+    --txt:#0F172A; --txt2:#334155; --mut:#64748B;
+    --navy:#1E3A5F; --accent:#E8960A; --ok:#1E8449; --err:#A32D2D;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  }
+  body.dark{
+    --bg:#0B1220; --panel:#141C2B; --panel2:#1B2536; --line:#26324A;
+    --txt:#E8EEF6; --txt2:#C2CFDF; --mut:#8496AC;
+    --navy:#7FB3D3; --accent:#F0A72A; --ok:#4ADE80; --err:#F87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:11px 20px;
+         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:20}
+  header img{height:30px}
+  header h1{font-size:15px;font-weight:800;margin:0;flex:1}
+  header .sub{font-size:11.5px;color:#8FA6C0;font-weight:600}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 18px 80px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+  .card h2{font-size:15px;margin:0 0 4px;font-weight:800}
+  .card .hint{font-size:12.5px;color:var(--mut);margin:0 0 16px;max-width:70ch}
+
+  label.lb{display:block;font-size:11px;font-weight:700;text-transform:uppercase;
+           letter-spacing:.05em;color:var(--mut);margin-bottom:5px}
+  select,input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--line);
+       border-radius:8px;background:var(--panel2);color:var(--txt);font-size:13.5px;font-family:inherit;outline:none}
+  select:focus,input:focus{border-color:var(--accent)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row > div{flex:1;min-width:180px}
+
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 16px;
+       font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+  .btn:hover{filter:brightness(1.12)}
+  .btn.pri{background:var(--accent);color:#231703}
+  .btn.sec{background:transparent;color:var(--txt2);border:1px solid var(--line)}
+  .btn.sm{padding:4px 9px;font-size:11.5px;border-radius:7px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  /* Validador */
+  .val-in{font-family:var(--mono);font-size:15px;letter-spacing:.02em}
+  .val-out{margin-top:14px;display:flex;flex-direction:column;gap:6px}
+  .vrow{display:grid;grid-template-columns:22px 130px 1fr;gap:10px;align-items:center;
+        padding:7px 10px;border-radius:8px;background:var(--panel2);font-size:13px}
+  .vrow .ic{font-weight:800;text-align:center}
+  .vrow.ok .ic{color:var(--ok)} .vrow.err .ic{color:var(--err)}
+  .vrow .k{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:700}
+  .vrow .v{font-family:var(--mono)}
+  .vrow .v em{font-style:normal;color:var(--mut);font-family:'Segoe UI',sans-serif}
+  .verdict{margin-top:12px;padding:10px 13px;border-radius:9px;font-size:13px;font-weight:700}
+  .verdict.ok{background:rgba(30,132,73,.12);color:var(--ok)}
+  .verdict.err{background:rgba(163,45,45,.12);color:var(--err)}
+
+  /* Campos */
+  .campo{border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden}
+  .campo-h{display:flex;align-items:center;gap:10px;padding:10px 13px;background:var(--panel2);cursor:pointer}
+  .campo-h .ord{font-family:var(--mono);font-size:11px;color:var(--mut);width:18px}
+  .campo-h .nm{font-weight:700;font-size:13.5px;flex:1}
+  .campo-h .tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;
+                background:var(--panel);border:1px solid var(--line);color:var(--mut)}
+  .campo-b{padding:14px 13px;display:none;border-top:1px solid var(--line)}
+  .campo.open .campo-b{display:block}
+
+  .dom{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .dchip{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);
+         border:1px solid var(--line);border-radius:20px;padding:3px 5px 3px 11px;font-size:12px}
+  .dchip code{font-family:var(--mono);font-weight:700}
+  .dchip span{color:var(--mut)}
+  .dchip button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
+  .dchip button:hover{color:var(--err)}
+
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);
+       padding:11px 20px;display:flex;align-items:center;gap:12px;z-index:15}
+  .bar .msg{flex:1;font-size:12.5px;color:var(--mut)}
+  .ro{background:rgba(232,150,10,.12);border:1px solid var(--accent);color:var(--txt);
+      padding:9px 13px;border-radius:9px;font-size:12.5px;margin-bottom:16px}
+  .load{padding:60px 20px;text-align:center;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo_symbol.png" alt="Auria">
+  <div style="flex:1">
+    <h1>Auria CDE</h1>
+    <div class="sub">Ambiente Comum de Dados · ISO 19650</div>
+  </div>
+  <button class="btn sec" style="color:#C9D6E4;border-color:#2A3850" onclick="tema()">Tema</button>
+</header>
+
+<div class="wrap">
+  <div id="load" class="load">Carregando…</div>
+
+  <div id="app" style="display:none">
+    <div id="roAviso" class="ro" style="display:none">
+      Você pode <b>consultar</b> o padrão, mas apenas gerente ou administrador podem alterá-lo.
+    </div>
+
+    <!-- Escopo -->
+    <div class="card">
+      <h2>Padrão de codificação</h2>
+      <p class="hint">Define como os arquivos são nomeados e o que o sistema aceita ao receber. O padrão do
+         <b>Grupo</b> vale para todas as empresas; uma <b>Empresa</b> pode ter o seu, que prevalece.</p>
+      <div class="row">
+        <div>
+          <label class="lb">Este padrão vale para</label>
+          <select id="escopo" onchange="trocarEscopo()"></select>
+        </div>
+        <div>
+          <label class="lb">Nome do padrão</label>
+          <input type="text" id="nome" placeholder="Ex.: Padrão Diagonal" oninput="marcar()">
+        </div>
+        <div style="max-width:120px">
+          <label class="lb">Separador</label>
+          <input type="text" id="sep" maxlength="3" value="-" oninput="marcar();validar()">
+        </div>
+      </div>
+    </div>
+
+    <!-- Validador -->
+    <div class="card">
+      <h2>Testar um código</h2>
+      <p class="hint">Digite um código real de prancha. A verificação é imediata, campo a campo —
+         use antes de salvar para não recusar arquivo bom no primeiro dia.</p>
+      <input type="text" id="teste" class="val-in" placeholder="PINI-EST-EX-1012-TIP-R02" oninput="validar()">
+      <div id="valOut" class="val-out"></div>
+      <div id="verdict"></div>
+    </div>
+
+    <!-- Campos -->
+    <div class="card">
+      <h2>Campos do código</h2>
+      <p class="hint">Na ordem em que aparecem. <b>Mapeia para</b> é o que permite ao sistema saber qual
+         pedaço é a disciplina e qual é a revisão — mesmo que sua empresa chame o campo de outro nome.</p>
+      <div id="campos"></div>
+      <button class="btn sec sm" style="margin-top:8px" onclick="addCampo()">+ Adicionar campo</button>
+    </div>
+  </div>
+</div>
+
+<div class="bar" id="bar" style="display:none">
+  <span class="msg" id="msg"></span>
+  <button class="btn sec" onclick="recarregar()">Descartar</button>
+  <button class="btn pri" id="btnSalvar" onclick="salvar()">Salvar padrão</button>
+</div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+
+const MAPEIA = [
+  ['',              '— nenhum —'],
+  ['empreendimento','Empreendimento'],
+  ['disciplina',    'Disciplina'],
+  ['fase',          'Fase'],
+  ['numero',        'Número'],
+  ['local',         'Local / Pavimento'],
+  ['origem',        'Origem (projetista)'],
+  ['tipo',          'Tipo de documento'],
+  ['revisao',       'Revisão']
+];
+
+let USER=null, ROLE='', GRUPO=null, CONSTRUTORAS=[], CONV=null, SUJO=false, PODE=false;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function tema(){
+  const d = document.body.classList.toggle('dark');
+  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){}
+}
+try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./'); return; }
+  USER = session.user;
+
+  const { data: perfil } = await sb.from('usuarios_auria')
+    .select('nome,email,role,empresa_id').eq('id', USER.id).maybeSingle();
+  if(!perfil){ $('load').textContent='Perfil não encontrado.'; return; }
+  ROLE = perfil.role || '';
+  PODE = ['gerente','super_admin'].includes(ROLE);
+
+  const { data: g } = await sb.from('empresas_auria')
+    .select('id,nome').eq('id', perfil.empresa_id).maybeSingle();
+  GRUPO = g;
+
+  const { data: cs } = await sb.from('construtoras_auria')
+    .select('id,nome').eq('grupo_id', perfil.empresa_id).order('nome');
+  CONSTRUTORAS = cs || [];
+
+  $('escopo').innerHTML =
+    '<option value="g">Grupo — ' + esc(GRUPO ? GRUPO.nome : '—') + ' (padrão de todas)</option>' +
+    CONSTRUTORAS.map(c => '<option value="c:'+c.id+'">Empresa — '+esc(c.nome)+'</option>').join('');
+
+  if(!PODE){
+    $('roAviso').style.display='block';
+    ['nome','sep','teste'].forEach(i=>{ if(i!=='teste') $(i).disabled=true; });
+  }
+
+  await carregar();
+  $('load').style.display='none';
+  $('app').style.display='block';
+  if(PODE) $('bar').style.display='flex';
+}
+
+function escopoAtual(){
+  const v = $('escopo').value;
+  return v==='g' ? {grupo_id:GRUPO&&GRUPO.id, construtora_id:null}
+                 : {grupo_id:null, construtora_id:v.slice(2)};
+}
+
+async function carregar(){
+  const e = escopoAtual();
+  let q = sb.from('cde_convencao_auria').select('*');
+  q = e.grupo_id ? q.eq('grupo_id', e.grupo_id) : q.eq('construtora_id', e.construtora_id);
+  const { data } = await q.maybeSingle();
+
+  CONV = data || { nome:'', separador:'-', campos:[], exemplo:'' };
+  $('nome').value = CONV.nome || '';
+  $('sep').value  = CONV.separador || '-';
+  $('teste').value = CONV.exemplo || '';
+  renderCampos(); validar(); SUJO=false; msg('');
+}
+async function trocarEscopo(){ await carregar(); }
+async function recarregar(){ await carregar(); }
+
+function marcar(){ SUJO=true; msg('Alterações não salvas'); }
+function msg(t, cor){ const m=$('msg'); m.textContent=t||''; m.style.color = cor||'var(--mut)'; }
+
+// ── Campos ──────────────────────────────────────────────────────────────────
+function renderCampos(){
+  const cs = CONV.campos || [];
+  if(!cs.length){ $('campos').innerHTML='<p class="hint">Nenhum campo. Adicione o primeiro abaixo.</p>'; return; }
+  $('campos').innerHTML = cs.map((c,i)=>{
+    const dom = c.dominio || null;
+    const resumo = dom ? (dom.length+' valores') : ('padrão livre');
+    return `<div class="campo" id="c${i}">
+      <div class="campo-h" onclick="document.getElementById('c${i}').classList.toggle('open')">
+        <span class="ord">${i+1}</span>
+        <span class="nm">${esc(c.rotulo || c.chave)}</span>
+        ${c.mapeia ? '<span class="tag">'+esc(c.mapeia)+'</span>' : ''}
+        ${c.obrigatorio ? '<span class="tag">obrigatório</span>' : ''}
+        <span class="tag">${resumo}</span>
+      </div>
+      <div class="campo-b">
+        <div class="row">
+          <div><label class="lb">Nome na tela</label>
+            <input type="text" value="${esc(c.rotulo||'')}" ${PODE?'':'disabled'} oninput="setC(${i},'rotulo',this.value)"></div>
+          <div><label class="lb">Identificador</label>
+            <input type="text" value="${esc(c.chave||'')}" ${PODE?'':'disabled'} oninput="setC(${i},'chave',this.value)"></div>
+          <div><label class="lb">Mapeia para</label>
+            <select ${PODE?'':'disabled'} onchange="setC(${i},'mapeia',this.value||null)">
+              ${MAPEIA.map(m=>`<option value="${m[0]}"${(c.mapeia||'')===m[0]?' selected':''}>${m[1]}</option>`).join('')}
+            </select></div>
+        </div>
+        <div class="row" style="margin-top:11px">
+          <div style="max-width:150px"><label class="lb">Obrigatório</label>
+            <select ${PODE?'':'disabled'} onchange="setC(${i},'obrigatorio',this.value==='1')">
+              <option value="1"${c.obrigatorio?' selected':''}>Sim</option>
+              <option value="0"${!c.obrigatorio?' selected':''}>Não</option>
+            </select></div>
+          <div><label class="lb">Aceita</label>
+            <select ${PODE?'':'disabled'} onchange="modoDom(${i},this.value)">
+              <option value="lista"${dom?' selected':''}>Lista de valores</option>
+              <option value="livre"${!dom?' selected':''}>Padrão livre (regex)</option>
+            </select></div>
+        </div>
+        ${dom ? `
+          <div style="margin-top:12px">
+            <label class="lb">Valores aceitos</label>
+            <div class="dom" id="dom${i}">${dom.map((d,j)=>{
+              const v = (typeof d==='object') ? d.v : d;
+              const r = (typeof d==='object') ? (d.rotulo||'') : '';
+              return `<span class="dchip"><code>${esc(v)}</code>${r?'<span>'+esc(r)+'</span>':''}
+                ${PODE?`<button title="Remover" onclick="rmDom(${i},${j})">×</button>`:''}</span>`;
+            }).join('')}</div>
+            ${PODE?`<div class="row" style="margin-top:9px">
+              <div style="max-width:110px"><input type="text" id="nv${i}" placeholder="EST"></div>
+              <div><input type="text" id="nr${i}" placeholder="Estrutura Concreto"></div>
+              <div style="max-width:90px"><button class="btn sec sm" onclick="addDom(${i})">Adicionar</button></div>
+            </div>`:''}
+          </div>` : `
+          <div style="margin-top:12px">
+            <label class="lb">Padrão aceito (expressão regular)</label>
+            <input type="text" value="${esc(c.regex||'')}" ${PODE?'':'disabled'}
+                   oninput="setC(${i},'regex',this.value)" placeholder="^[0-9]{3,5}$">
+          </div>`}
+        ${PODE?`<div style="margin-top:14px;display:flex;gap:7px">
+          <button class="btn sec sm" onclick="mover(${i},-1)">↑ Subir</button>
+          <button class="btn sec sm" onclick="mover(${i},1)">↓ Descer</button>
+          <button class="btn sec sm" style="margin-left:auto;color:var(--err)" onclick="rmCampo(${i})">Excluir campo</button>
+        </div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setC(i,k,v){ CONV.campos[i][k]=v; marcar(); if(k!=='rotulo') renderCampos(); validar(); }
+function modoDom(i,modo){
+  const c = CONV.campos[i];
+  if(modo==='lista'){ c.dominio = c.dominio || []; delete c.regex; }
+  else { delete c.dominio; c.regex = c.regex || '^.+$'; }
+  marcar(); renderCampos(); validar();
+}
+function addDom(i){
+  const v=($('nv'+i).value||'').trim(); if(!v) return;
+  const r=($('nr'+i).value||'').trim();
+  CONV.campos[i].dominio.push(r ? {v:v, rotulo:r} : v);
+  marcar(); renderCampos(); validar();
+  const el=document.getElementById('c'+i); if(el) el.classList.add('open');
+}
+function rmDom(i,j){ CONV.campos[i].dominio.splice(j,1); marcar(); renderCampos(); validar();
+  const el=document.getElementById('c'+i); if(el) el.classList.add('open'); }
+function addCampo(){
+  if(!PODE) return;
+  CONV.campos = CONV.campos || [];
+  CONV.campos.push({chave:'campo'+(CONV.campos.length+1), rotulo:'Novo campo',
+                    mapeia:null, obrigatorio:true, regex:'^.+$'});
+  marcar(); renderCampos(); validar();
+}
+function rmCampo(i){ CONV.campos.splice(i,1); marcar(); renderCampos(); validar(); }
+function mover(i,d){
+  const j=i+d; if(j<0||j>=CONV.campos.length) return;
+  const t=CONV.campos[i]; CONV.campos[i]=CONV.campos[j]; CONV.campos[j]=t;
+  marcar(); renderCampos(); validar();
+}
+
+// ── Validador ao vivo ───────────────────────────────────────────────────────
+function valoresDe(c){
+  if(!c.dominio) return null;
+  return c.dominio.map(d => (typeof d==='object') ? d.v : d);
+}
+function rotuloDe(c, v){
+  if(!c.dominio) return '';
+  const d = c.dominio.find(x => ((typeof x==='object') ? x.v : x) === v);
+  return (d && typeof d==='object') ? (d.rotulo||'') : '';
+}
+function validar(){
+  const cod = ($('teste').value||'').trim();
+  const sep = $('sep').value || '-';
+  const campos = CONV.campos || [];
+  const out = $('valOut'), ver = $('verdict');
+  if(!cod){ out.innerHTML=''; ver.innerHTML=''; return; }
+  if(!campos.length){ out.innerHTML=''; ver.innerHTML='<div class="verdict err">Defina os campos abaixo para poder validar.</div>'; return; }
+
+  const partes = cod.split(sep);
+  let ok = true, linhas = '';
+
+  for(let i=0;i<campos.length;i++){
+    const c = campos[i], p = partes[i];
+    let bom, detalhe;
+    if(p===undefined || p===''){
+      bom = !c.obrigatorio;
+      detalhe = bom ? '<em>não informado (opcional)</em>' : '<em>faltando</em>';
+    }else{
+      const vs = valoresDe(c);
+      if(vs){ bom = vs.includes(p);
+        detalhe = bom ? (rotuloDe(c,p) ? '<em>'+esc(rotuloDe(c,p))+'</em>' : '')
+                      : '<em>não está na lista</em>'; }
+      else { let re=null; try{ re=new RegExp(c.regex||'^.+$'); }catch(e){}
+        bom = re ? re.test(p) : false;
+        detalhe = bom ? '' : '<em>fora do padrão '+esc(c.regex||'')+'</em>'; }
+    }
+    ok = ok && bom;
+    linhas += `<div class="vrow ${bom?'ok':'err'}"><span class="ic">${bom?'✓':'✕'}</span>
+      <span class="k">${esc(c.rotulo||c.chave)}</span>
+      <span class="v">${esc(p===undefined?'—':p)} ${detalhe}</span></div>`;
+  }
+  if(partes.length > campos.length){
+    ok = false;
+    linhas += `<div class="vrow err"><span class="ic">✕</span><span class="k">Sobra</span>
+      <span class="v">${esc(partes.slice(campos.length).join(sep))} <em>partes a mais no código</em></span></div>`;
+  }
+  out.innerHTML = linhas;
+  ver.innerHTML = ok
+    ? '<div class="verdict ok">Código válido — seria aceito no recebimento.</div>'
+    : '<div class="verdict err">Código recusado — corrija o código ou ajuste os campos abaixo.</div>';
+}
+
+// ── Salvar ──────────────────────────────────────────────────────────────────
+async function salvar(){
+  if(!PODE) return;
+  const b = $('btnSalvar'); b.disabled=true; msg('Salvando…');
+  const e = escopoAtual();
+  const linha = {
+    grupo_id: e.grupo_id, construtora_id: e.construtora_id,
+    nome: $('nome').value.trim() || null,
+    separador: $('sep').value || '-',
+    campos: CONV.campos || [],
+    exemplo: $('teste').value.trim() || null,
+    atualizado_em: new Date().toISOString()
+  };
+  try{
+    let r;
+    if(CONV && CONV.id) r = await sb.from('cde_convencao_auria').update(linha).eq('id', CONV.id);
+    else                r = await sb.from('cde_convencao_auria').insert(linha);
+    if(r.error) throw r.error;
+    await carregar();
+    msg('Padrão salvo.', 'var(--ok)');
+  }catch(err){
+    const m = (err && err.message) || String(err);
+    msg(/permission|row-level|policy|42501/i.test(m)
+        ? 'Sem permissão para alterar o padrão (apenas gestão).' : 'Erro ao salvar: '+m, 'var(--err)');
+  }finally{ b.disabled=false; }
+}
+
+window.addEventListener('beforeunload', e => { if(SUJO){ e.preventDefault(); e.returnValue=''; } });
+boot();
+</script>
+</body>
+</html>
