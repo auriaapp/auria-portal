@@ -74,7 +74,25 @@ const P_ANALISTA = 'https://auria.solutions/auria_analista.html';
 const sb      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 async function init(){
-  // O Supabase coloca os tokens no hash da URL após o clique no link de convite
+  // ── Fluxo NOVO: link do e-mail aponta para o NOSSO domínio, com token_hash.
+  // Mantém remetente e link no mesmo domínio (auria.solutions), o que evita
+  // que filtros corporativos tratem o convite como phishing.
+  const qs    = new URLSearchParams(window.location.search);
+  const th    = qs.get('token_hash');
+  const qtype = qs.get('type');
+  if(th && ['invite','recovery'].includes(qtype)){
+    const { error } = await sb.auth.verifyOtp({ token_hash: th, type: qtype });
+    if(error){
+      document.getElementById('loadWrap').style.display    = 'none';
+      document.getElementById('invalidWrap').style.display = 'block';
+      return;
+    }
+    document.getElementById('loadWrap').style.display = 'none';
+    document.getElementById('formWrap').style.display = 'block';
+    return;
+  }
+
+  // ── Fluxo ANTIGO (links já enviados): tokens vêm no hash da URL
   const hash = window.location.hash;
   const params = new URLSearchParams(hash.replace('#',''));
   const type   = params.get('type');
