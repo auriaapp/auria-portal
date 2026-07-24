@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria CDE — Documentos</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0;
+    --txt:#0F172A; --txt2:#334155; --mut:#64748B;
+    --navy:#1E3A5F; --accent:#E8960A; --ok:#1E8449; --warn:#B7791F; --err:#A32D2D;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  }
+  body.dark{
+    --bg:#0B1220; --panel:#141C2B; --panel2:#1B2536; --line:#26324A;
+    --txt:#E8EEF6; --txt2:#C2CFDF; --mut:#8496AC;
+    --navy:#7FB3D3; --accent:#F0A72A; --ok:#4ADE80; --warn:#E9B44C; --err:#F87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:11px 20px;
+         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:20}
+  header img{height:28px}
+  header .tt b{font-size:14.5px;font-weight:800;display:block;line-height:1.2}
+  header .tt span{font-size:11.5px;color:#8FA6C0}
+  header .sp{flex:1}
+  .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
+        padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none}
+  .hbtn:hover{background:#243452}
+  .hbtn.pri{background:var(--accent);border-color:var(--accent);color:#231703}
+  .wrap{max-width:1120px;margin:0 auto;padding:20px 18px 70px}
+
+  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .toolbar .busca{flex:1;min-width:200px}
+  .toolbar input,.toolbar select{padding:8px 11px;border:1px solid var(--line);border-radius:9px;
+       background:var(--panel);color:var(--txt);font-size:13px;font-family:inherit;outline:none}
+  .toolbar input:focus,.toolbar select:focus{border-color:var(--accent)}
+  .toolbar .busca input{width:100%}
+
+  .disc-grp{margin-bottom:22px}
+  .disc-h{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
+          color:var(--mut);margin:0 0 9px;display:flex;align-items:center;gap:8px}
+  .disc-h .ct{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+              padding:1px 9px;font-size:11px;color:var(--txt2)}
+  .docs{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:11px}
+  .doc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px;
+       cursor:pointer;display:flex;flex-direction:column;gap:7px}
+  .doc:hover{border-color:var(--accent)}
+  .doc .cod{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--navy)}
+  .doc .tit{font-size:13.5px;font-weight:700;line-height:1.3}
+  .doc .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .doc .rev{font-family:var(--mono);font-size:11.5px;color:var(--mut)}
+  .st{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:11px;color:#fff}
+
+  .empty{background:var(--panel);border:1px dashed var(--line);border-radius:12px;
+         padding:40px 22px;text-align:center;color:var(--mut)}
+  .empty b{color:var(--txt);display:block;margin-bottom:6px;font-size:15px}
+  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+
+  /* Modal recebimento */
+  .ov{position:fixed;inset:0;background:rgba(8,14,26,.62);z-index:40;display:none;
+      align-items:flex-start;justify-content:center;padding:26px 16px;overflow-y:auto}
+  .ov.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:15px;
+         width:min(920px,100%);overflow:hidden;display:flex;flex-direction:column;max-height:92vh}
+  .modal-h{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .modal-h b{font-size:16px;flex:1}
+  .modal-h button.x{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;line-height:1}
+  .modal-b{padding:18px 20px;overflow-y:auto}
+  .modal-f{padding:13px 20px;border-top:1px solid var(--line);display:flex;align-items:center;gap:11px}
+  .modal-f .msg{flex:1;font-size:12.5px;color:var(--mut)}
+
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;
+        color:var(--mut);cursor:pointer;transition:.12s}
+  .drop:hover,.drop.hot{border-color:var(--accent);background:var(--panel2)}
+  .drop b{color:var(--txt);display:block;font-size:15px;margin-bottom:5px}
+  .drop small{font-size:11.5px}
+
+  .prev{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  .prev th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);
+           text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);font-weight:700}
+  .prev td{padding:9px;border-bottom:1px solid var(--line);vertical-align:top}
+  .prev .cod{font-family:var(--mono);font-weight:700;font-size:12.5px}
+  .prev .files{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+  .fchip{font-family:var(--mono);font-size:10.5px;background:var(--panel2);border:1px solid var(--line);
+         border-radius:5px;padding:1px 6px}
+  .fchip.pdf{border-color:#FCA5A5;background:rgba(220,60,60,.08)}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap}
+  .badge.novo{background:rgba(30,132,73,.13);color:var(--ok)}
+  .badge.rev{background:rgba(26,90,150,.13);color:var(--navy)}
+  .badge.dup{background:rgba(183,121,31,.15);color:var(--warn)}
+  .badge.err{background:rgba(163,45,45,.13);color:var(--err)}
+  .erros{font-size:11.5px;color:var(--err);margin-top:3px}
+  .prazoinp{font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;
+            background:var(--panel2);color:var(--txt);font-family:inherit;width:100%}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 17px;
+       font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+  .btn.pri{background:var(--accent);color:#231703}
+  .btn.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo_symbol.png" alt="Auria">
+  <div class="tt"><b>Auria CDE</b><span id="hSub">—</span></div>
+  <span class="sp"></span>
+  <a class="hbtn" id="lnkPadrao" href="cde.html" title="Padrão de codificação (gestão)">⚙ Padrão</a>
+  <a class="hbtn" href="portal.html">← Portal</a>
+  <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Receber arquivos</button>
+</header>
+
+<div class="wrap">
+  <div id="load" class="load">Carregando…</div>
+  <div id="app" style="display:none">
+    <div class="toolbar">
+      <div class="busca"><input type="text" id="busca" placeholder="Buscar por código ou título…" oninput="render()"></div>
+      <select id="fDisc" onchange="render()"><option value="">Todas as disciplinas</option></select>
+      <select id="fStatus" onchange="render()"><option value="">Todos os status</option></select>
+    </div>
+    <div id="lista"></div>
+  </div>
+</div>
+
+<!-- Recebimento em lote -->
+<div class="ov" id="ov" onclick="if(event.target===this)fecharReceber()">
+  <div class="modal">
+    <div class="modal-h"><b>Receber arquivos</b><button class="x" onclick="fecharReceber()">×</button></div>
+    <div class="modal-b">
+      <div class="drop" id="drop" onclick="$('fileInput').click()">
+        <b>Arraste os arquivos aqui</b>
+        <small>PDF, DWG, RVT, SKP, DOC… O código é lido do nome; PDF e DWG do mesmo código entram juntos.</small>
+      </div>
+      <input type="file" id="fileInput" multiple style="display:none" onchange="addFiles(this.files)">
+      <div id="prevWrap" style="display:none;margin-top:16px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <b style="font-size:13px">Pré-visualização</b>
+          <span id="prevResumo" style="font-size:12px;color:var(--mut)"></span>
+          <button class="btn sec" style="margin-left:auto;padding:4px 10px;font-size:11.5px" onclick="limparLote()">Limpar</button>
+        </div>
+        <div style="overflow-x:auto"><table class="prev" id="prev"></table></div>
+      </div>
+    </div>
+    <div class="modal-f">
+      <span class="msg" id="recMsg"></span>
+      <button class="btn sec" onclick="fecharReceber()">Cancelar</button>
+      <button class="btn pri" id="btnConfirmar" onclick="confirmarLote()" disabled>Registrar recebimento</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+
+const $  = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
+
+const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
+let USER=null, EMP=null, CONV=null, STATUS=[], STMAP={}, DOCS=[], LOTE=[];
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./'); return; }
+  USER = session.user;
+  if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no portal.'; return; }
+
+  const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,cidade,estado').eq('id',EMP_ID).maybeSingle();
+  if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
+  EMP = e;
+  $('hSub').textContent = e.nome + (e.cidade? ' · '+e.cidade+(e.estado?'/'+e.estado:'') : '');
+  $('lnkPadrao').href = 'cde.html';
+
+  // Status (rótulos + cores)
+  const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
+  STATUS = st||[]; STMAP={}; STATUS.forEach(s=>STMAP[s.codigo]=s);
+  $('fStatus').innerHTML = '<option value="">Todos os status</option>' +
+    STATUS.map(s=>`<option value="${s.codigo}">${esc(s.rotulo)}</option>`).join('');
+
+  // Convenção do empreendimento (Empresa tem precedência sobre Grupo)
+  try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); CONV = (c&&c[0])||null; }catch(err){ CONV=null; }
+  if(!CONV){
+    $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
+      + '<a href="cde.html" style="color:var(--accent)">Defina o padrão do grupo/empresa</a> antes de receber arquivos.';
+    return;
+  }
+  $('btnReceber').style.display='';
+
+  await carregarDocs();
+  $('load').style.display='none';
+  $('app').style.display='block';
+  render();
+}
+
+async function carregarDocs(){
+  const { data: docs } = await sb.from('cde_documento_auria')
+    .select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
+  const ids = (docs||[]).map(d=>d.id);
+  let revs = [];
+  if(ids.length){
+    const { data: r } = await sb.from('cde_revisao_auria')
+      .select('id,documento_id,revisao,estado,status,recebido_em,ressalvas').in('documento_id',ids);
+    revs = r||[];
+  }
+  // revisão "corrente" por documento: a mais recente
+  const porDoc = {};
+  revs.forEach(r=>{ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
+  DOCS = (docs||[]).map(d=>{
+    const rs = (porDoc[d.id]||[]).sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
+    return { ...d, revs:rs, atual: rs[0]||null, nrev: rs.length };
+  });
+  const discs = [...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
+  $('fDisc').innerHTML = '<option value="">Todas as disciplinas</option>' +
+    discs.map(d=>`<option value="${esc(d)}">${esc(discLabel(d))}</option>`).join('');
+}
+
+function discLabel(v){
+  const c = (CONV.campos||[]).find(c=>c.mapeia==='disciplina');
+  if(c && c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v);
+    if(d && typeof d==='object' && d.rotulo) return v+' — '+d.rotulo; }
+  return v;
+}
+
+// ── Lista de documentos ─────────────────────────────────────────────────────
+function render(){
+  const q=($('busca').value||'').trim().toLowerCase();
+  const fd=$('fDisc').value, fs=$('fStatus').value;
+  let docs = DOCS.filter(d=>{
+    if(fd && d.disciplina!==fd) return false;
+    if(fs && (!d.atual || d.atual.status!==fs)) return false;
+    if(q && !((d.codigo||'').toLowerCase().includes(q) || (d.titulo||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+  if(!DOCS.length){
+    $('lista').innerHTML = '<div class="empty"><b>Nenhum documento ainda</b>'
+      + 'Clique em “Receber arquivos” para registrar a primeira entrega dos projetistas.</div>';
+    return;
+  }
+  if(!docs.length){ $('lista').innerHTML='<div class="empty">Nenhum documento neste filtro.</div>'; return; }
+
+  const grp={}; docs.forEach(d=>{ (grp[d.disciplina||'—']=grp[d.disciplina||'—']||[]).push(d); });
+  $('lista').innerHTML = Object.keys(grp).sort().map(disc=>`
+    <div class="disc-grp">
+      <div class="disc-h">${esc(discLabel(disc))} <span class="ct">${grp[disc].length}</span></div>
+      <div class="docs">${grp[disc].map(cardDoc).join('')}</div>
+    </div>`).join('');
+}
+function cardDoc(d){
+  const s = d.atual ? STMAP[d.atual.status] : null;
+  const stHtml = s ? `<span class="st" style="background:${s.cor||'#64748B'}">${esc(s.rotulo)}</span>`
+                   : '<span class="st" style="background:#94A3B8">Sem revisão</span>';
+  return `<div class="doc" onclick="alert('Detalhe do documento entra na próxima etapa (visualização + mudança de status).')">
+    <div class="cod">${esc(d.codigo)}</div>
+    <div class="tit">${esc(d.titulo||d.codigo)}</div>
+    <div class="meta">${stHtml}
+      <span class="rev">${d.atual?('rev '+esc(d.atual.revisao)):''}${d.nrev>1?(' · '+d.nrev+' revisões'):''}</span></div>
+  </div>`;
+}
+
+// ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
+function valoresDe(c){ return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
+function parseCodigo(nomeArquivo){
+  const base = nomeArquivo.replace(/\.[^.]+$/,'');           // sem extensão
+  const ext  = (nomeArquivo.match(/\.([^.]+)$/)||[])[1] || '';
+  const sep  = CONV.separador || '-';
+  const campos = CONV.campos || [];
+  const partes = base.split(sep);
+  const vals={}; const erros=[]; let ok = campos.length>0;
+  for(let i=0;i<campos.length;i++){
+    const c=campos[i], p=partes[i];
+    if(p===undefined||p===''){ if(c.obrigatorio){ ok=false; erros.push('falta '+(c.rotulo||c.chave)); } continue; }
+    const vs=valoresDe(c);
+    const bom = vs? vs.includes(p) : (c.regex? (()=>{try{return new RegExp(c.regex).test(p)}catch(e){return true}})() : true);
+    if(!bom){ ok=false; erros.push((c.rotulo||c.chave)+': “'+p+'”'); }
+    vals[c.chave]=p;
+  }
+  if(partes.length>campos.length){ ok=false; erros.push('partes a mais'); }
+  const chaveDe = m => (campos.find(c=>c.mapeia===m)||{}).chave;
+  const kRev=chaveDe('revisao'), kDisc=chaveDe('disciplina'), kNum=chaveDe('numero'), kLoc=chaveDe('local');
+  const revisao = kRev? vals[kRev] : null;
+  // código do DOCUMENTO = tudo menos a revisão (a revisão vira atributo, não identidade)
+  const codigoDoc = campos.filter(c=>c.chave!==kRev).map(c=>vals[c.chave]).filter(x=>x!=null).join(sep);
+  return { ok, erros, base, ext:ext.toLowerCase(), vals, revisao, codigoDoc,
+           disciplina:kDisc?vals[kDisc]:null, numero:kNum?vals[kNum]:null, local:kLoc?vals[kLoc]:null };
+}
+
+// ── Recebimento em lote ─────────────────────────────────────────────────────
+function abrirReceber(){ LOTE=[]; $('prevWrap').style.display='none'; $('recMsg').textContent='';
+  $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
+function fecharReceber(){ $('ov').classList.remove('on'); }
+const drop=$('drop');
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+
+function addFiles(fileList){
+  const files=[...fileList]; if(!files.length) return;
+  // agrupa por base (código completo, incl. revisão) → PDF+DWG juntos
+  const grupos={};
+  LOTE.forEach(g=>grupos[g.base]=g);
+  for(const f of files){
+    const p=parseCodigo(f.name);
+    const key=p.base;
+    if(!grupos[key]){ grupos[key]={ base:key, parse:p, arquivos:[] }; LOTE.push(grupos[key]); }
+    if(!grupos[key].arquivos.some(a=>a.name===f.name && a.size===f.size)) grupos[key].arquivos.push(f);
+  }
+  avaliarLote();
+}
+function limparLote(){ LOTE=[]; $('prevWrap').style.display='none'; $('btnConfirmar').disabled=true; $('recMsg').textContent=''; }
+
+function acaoDoGrupo(g){
+  if(!g.parse.ok) return {tipo:'err', txt:'Código fora do padrão'};
+  const doc = DOCS.find(d=>d.codigo===g.parse.codigoDoc);
+  if(!doc) return {tipo:'novo', txt:'Novo documento'};
+  if((doc.revs||[]).some(r=>r.revisao===g.parse.revisao)) return {tipo:'dup', txt:'Revisão já recebida', doc};
+  return {tipo:'rev', txt:'Nova revisão de existente', doc};
+}
+function avaliarLote(){
+  const validos = LOTE.filter(g=>{ g.acao=acaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'; });
+  $('prevResumo').textContent = LOTE.length+' documento(s) · '+validos.length+' a registrar';
+  $('prev').innerHTML =
+    '<thead><tr><th>Código do documento</th><th>Disciplina</th><th>Rev.</th><th>Arquivos</th><th>Situação</th></tr></thead><tbody>'
+    + LOTE.map((g,i)=>{
+      const p=g.parse, a=g.acao;
+      const files = g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+        return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
+      return `<tr>
+        <td><div class="cod">${esc(p.codigoDoc||g.base)}</div>
+            ${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
+        <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td>
+        <td class="cod">${esc(p.revisao||'—')}</td>
+        <td><div class="files">${files}</div></td>
+        <td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td>
+      </tr>`;
+    }).join('') + '</tbody>';
+  $('prevWrap').style.display='block';
+  $('btnConfirmar').disabled = validos.length===0;
+}
+
+async function sha256(file){
+  try{ const buf=await file.arrayBuffer();
+    const h=await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; }
+}
+
+async function confirmarLote(){
+  const alvos = LOTE.filter(g=> g.acao && (g.acao.tipo==='novo'||g.acao.tipo==='rev'));
+  if(!alvos.length) return;
+  const b=$('btnConfirmar'); b.disabled=true;
+  let feito=0, falhas=0;
+  for(const g of alvos){
+    $('recMsg').textContent = 'Enviando '+(feito+1)+'/'+alvos.length+': '+g.parse.codigoDoc+'…';
+    try{
+      // 1) documento (upsert por empreendimento+codigo)
+      let docId = g.acao.doc ? g.acao.doc.id : null;
+      if(!docId){
+        const { data:d, error } = await sb.from('cde_documento_auria').insert({
+          empreendimento_id:EMP_ID, codigo:g.parse.codigoDoc, titulo:g.parse.codigoDoc,
+          disciplina:g.parse.disciplina, campos:g.parse.vals,
+          numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
+        }).select('id').single();
+        if(error) throw error; docId=d.id;
+      }
+      // 2) revisão (estado RECEBIDO, status S0)
+      const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
+        documento_id:docId, revisao:g.parse.revisao||'R00',
+        estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
+      }).select('id').single();
+      if(er) throw er;
+      // 3) arquivos → storage (caminho IMUTÁVEL) + registro
+      for(const f of g.arquivos){
+        const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+        const path = EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
+        const up = await sb.storage.from('cde').upload(path, f, {upsert:false, contentType:f.type||undefined});
+        if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+        await sb.from('cde_arquivo_auria').insert({
+          revisao_id:rev.id, nome:f.name, extensao:ext.toLowerCase(), tamanho_bytes:f.size,
+          sha256: (f.size<25*1024*1024? await sha256(f): null),
+          storage_path:path, eh_principal:(ext.toLowerCase()==='pdf'),
+          visualizavel:(ext.toLowerCase()==='pdf')
+        });
+      }
+      // 4) auditoria
+      await sb.from('cde_evento_auria').insert({
+        revisao_id:rev.id, acao:'recebeu', para_status:'S0',
+        usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
+        nota:g.arquivos.length+' arquivo(s)'
+      });
+      feito++;
+    }catch(e){ falhas++; console.warn('receber',g.base,e.message||e); }
+  }
+  $('recMsg').textContent = feito+' recebido(s)'+(falhas?(' · '+falhas+' falha(s)'):'');
+  await carregarDocs(); render();
+  if(!falhas){ setTimeout(()=>{ fecharReceber(); }, 900); }
+  b.disabled=false;
+}
+
+boot();
+</script>
+</body>
+</html>
