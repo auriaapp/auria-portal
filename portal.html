@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — Portal</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0;
+    --txt:#0F172A; --txt2:#334155; --mut:#64748B;
+    --navy:#1E3A5F; --accent:#E8960A; --ok:#1E8449; --warn:#B7791F; --err:#A32D2D;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  }
+  body.dark{
+    --bg:#0B1220; --panel:#141C2B; --panel2:#1B2536; --line:#26324A;
+    --txt:#E8EEF6; --txt2:#C2CFDF; --mut:#8496AC;
+    --navy:#7FB3D3; --accent:#F0A72A; --ok:#4ADE80; --warn:#E9B44C; --err:#F87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:11px 20px;
+         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:30}
+  header img{height:30px}
+  header h1{font-size:15px;font-weight:800;margin:0}
+  header .who{margin-left:auto;text-align:right;font-size:11.5px;color:#9DB3CA;line-height:1.35}
+  header .who b{color:#fff;font-size:12.5px;display:block}
+  .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
+        padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .hbtn:hover{background:#243452}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 18px 70px}
+
+  h2.sec{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);
+         font-weight:800;margin:26px 0 12px;display:flex;align-items:center;gap:9px}
+  h2.sec:first-child{margin-top:0}
+  h2.sec small{font-weight:600;text-transform:none;letter-spacing:0;font-size:12px;color:var(--mut)}
+
+  /* KPIs gerais */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:11px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+       border-left:3px solid var(--line);cursor:pointer;text-align:left;font-family:inherit;color:var(--txt)}
+  .kpi:hover{border-color:var(--accent)}
+  .kpi .n{font-size:25px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:11.5px;color:var(--mut);margin-top:3px}
+  .kpi.at{border-left-color:var(--err)}  .kpi.at .n{color:var(--err)}
+  .kpi.nf{border-left-color:var(--accent)} .kpi.nf .n{color:var(--accent)}
+  .kpi.ms{border-left-color:var(--navy)}
+  .kpi.pz{border-left-color:var(--warn)} .kpi.pz .n{color:var(--warn)}
+
+  /* Ferramentas gerais */
+  .tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:11px}
+  .tool{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+        border-radius:12px;padding:14px 16px;cursor:pointer;text-align:left;font-family:inherit;color:var(--txt)}
+  .tool:hover{border-color:var(--accent)}
+  .tool .ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
+            justify-content:center;font-size:18px;flex-shrink:0;color:#fff}
+  .tool b{display:block;font-size:13.5px}
+  .tool span{font-size:11.5px;color:var(--mut);line-height:1.4}
+  .tool .bdg{margin-left:auto;background:var(--accent);color:#231703;font-size:11px;font-weight:800;
+             padding:2px 8px;border-radius:11px;font-variant-numeric:tabular-nums}
+
+  /* Cards de empreendimento */
+  .busca{margin:0 0 12px;max-width:340px}
+  .busca input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:9px;
+               background:var(--panel);color:var(--txt);font-size:13.5px;font-family:inherit;outline:none}
+  .busca input:focus{border-color:var(--accent)}
+  .emps{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:13px}
+  .emp{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;
+       cursor:pointer;text-align:left;font-family:inherit;color:var(--txt);display:flex;flex-direction:column}
+  .emp:hover{border-color:var(--accent)}
+  .emp-h{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+  .emp-h b{display:block;font-size:14.5px;line-height:1.3;margin-bottom:3px}
+  .emp-h span{font-size:11.5px;color:var(--mut)}
+  .emp-b{padding:11px 16px;display:flex;gap:16px;flex-wrap:wrap}
+  .st{font-size:11.5px;color:var(--mut);display:flex;align-items:center;gap:5px}
+  .st b{font-size:14px;font-weight:800;color:var(--txt);font-variant-numeric:tabular-nums}
+  .st.at b{color:var(--err)} .st.nf b{color:var(--accent)}
+  .vazio{background:var(--panel);border:1px dashed var(--line);border-radius:12px;
+         padding:34px 20px;text-align:center;color:var(--mut);font-size:13px}
+
+  /* Portal do empreendimento (sobreposto) */
+  .ov{position:fixed;inset:0;background:rgba(8,14,26,.62);z-index:40;display:none;
+      align-items:flex-start;justify-content:center;padding:34px 18px;overflow-y:auto}
+  .ov.on{display:flex}
+  .pemp{background:var(--panel);border:1px solid var(--line);border-radius:15px;
+        width:min(780px,100%);overflow:hidden}
+  .pemp-h{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px}
+  .pemp-h b{font-size:18px;display:block;line-height:1.25}
+  .pemp-h span{font-size:12px;color:var(--mut)}
+  .pemp-h button{margin-left:auto;background:none;border:none;color:var(--mut);
+                 font-size:22px;cursor:pointer;line-height:1;padding:0 4px}
+  .pemp-b{padding:18px 22px 22px}
+  .ptools{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:11px}
+
+  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo_symbol.png" alt="Auria">
+  <h1>Auria</h1>
+  <div class="who"><b id="uNome"></b><span id="uMail"></span></div>
+  <button class="hbtn" onclick="tema()">Tema</button>
+  <button class="hbtn" onclick="sair()">Sair</button>
+</header>
+
+<div class="wrap">
+  <div id="load" class="load">Carregando…</div>
+
+  <div id="app" style="display:none">
+
+    <h2 class="sec">Visão geral <small id="resumoSub"></small></h2>
+    <div class="kpis" id="kpis"></div>
+
+    <h2 class="sec">Suas ferramentas <small>— atravessam todos os empreendimentos</small></h2>
+    <div class="tools" id="tools"></div>
+
+    <h2 class="sec">Empreendimentos <small id="empSub"></small></h2>
+    <div class="busca" id="buscaWrap" style="display:none">
+      <input type="text" id="busca" placeholder="Buscar empreendimento…" oninput="renderEmps()">
+    </div>
+    <div id="emps"></div>
+  </div>
+</div>
+
+<!-- Portal de um empreendimento -->
+<div class="ov" id="ov" onclick="if(event.target===this)fecharEmp()">
+  <div class="pemp">
+    <div class="pemp-h">
+      <div>
+        <b id="peNome"></b>
+        <span id="peSub"></span>
+      </div>
+      <button onclick="fecharEmp()" title="Fechar">×</button>
+    </div>
+    <div class="pemp-b">
+      <div class="ptools" id="peTools"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+
+let USER=null, PERFIL=null, EMPS=[], APTS=[], SOLICIT={}, MSG_NOVAS=0, PRAZOS7=0, NF_VALOR=0;
+
+const $  = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const brl = n => (n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL',maximumFractionDigits:0});
+
+function tema(){ const d=document.body.classList.toggle('dark');
+  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){} }
+try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
+async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
+
+// ── Datas em pt-BR (dd/mm/aaaa) ─────────────────────────────────────────────
+function pdata(s){
+  if(!s) return null;
+  const t=String(s).trim().slice(0,10);
+  if(/^\d{4}-\d{2}-\d{2}/.test(t)) return new Date(t+'T00:00:00');
+  if(/^\d{2}\/\d{2}\/\d{4}/.test(t)){ const p=t.split('/'); return new Date(+p[2],+p[1]-1,+p[0]); }
+  return null;
+}
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./'); return; }
+  USER = session.user;
+
+  const { data: p } = await sb.from('usuarios_auria')
+    .select('nome,email,role,empresa_id').eq('id', USER.id).maybeSingle();
+  if(!p || p.role!=='analista'){ location.replace('./'); return; }
+  PERFIL = p;
+  $('uNome').textContent = p.nome || USER.email;
+  $('uMail').textContent = USER.email;
+
+  await Promise.all([carregarEmps(), carregarApts(), carregarNF(), carregarMsgs()]);
+  carregarPrazos();   // depende de APTS já carregado
+
+  renderKpis(); renderTools(); renderEmps();
+  $('load').style.display='none';
+  $('app').style.display='block';
+}
+
+async function carregarEmps(){
+  try{
+    const { data } = await sb.from('analista_empreendimento_auria')
+      .select('ativo, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+    EMPS = (data||[]).map(r=>r.empreendimentos_auria).filter(e=>e && !e.deleted_at)
+                     .sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
+  }catch(e){ EMPS=[]; }
+}
+
+async function carregarApts(){
+  try{
+    const { data } = await sb.from('apontamentos')
+      .select('id,empreendimento,empreendimento_id,status,prazo_min,participantes').limit(3000);
+    APTS = data||[];
+  }catch(e){ APTS=[]; }
+}
+
+// Solicitações de NF por empreendimento (mesma lógica do painel atual)
+async function carregarNF(){
+  try{
+    const rc = await sb.from('contratos_auria').select('id,empreendimento_id');
+    const map={}; (rc.data||[]).forEach(c=>{ map[c.id]=c.empreendimento_id; });
+    const rp = await sb.from('parcelas_auria')
+      .select('contrato_id,status,valor').eq('status','solicitada');
+    SOLICIT={}; NF_VALOR=0;
+    (rp.data||[]).forEach(p=>{
+      const e=map[p.contrato_id]; if(!e) return;
+      SOLICIT[e]=(SOLICIT[e]||0)+1;
+      NF_VALOR += Number(p.valor||0);
+    });
+  }catch(e){ SOLICIT={}; }
+}
+
+async function carregarMsgs(){
+  MSG_NOVAS = 0;
+  try{
+    const ra = await sb.from('apontamentos').select('mensagens').limit(1000);
+    (ra.data||[]).forEach(a=>{
+      const m = Array.isArray(a.mensagens)?a.mensagens:[];
+      const u = m[m.length-1];
+      if(u && u.de==='projetista') MSG_NOVAS++;
+    });
+    const rt = await sb.from('mensagens_auria')
+      .select('id').eq('de','projetista').eq('lida_analista', false).limit(500);
+    MSG_NOVAS += (rt.data||[]).length;
+  }catch(e){}
+}
+
+async function carregarPrazos(){
+  PRAZOS7 = 0;
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const lim=new Date(hoje.getTime()+7*864e5);
+  APTS.forEach(a=>{
+    if(a.status==='Resolvido') return;
+    const d=pdata(a.prazo_min); if(!d) return;
+    if(d>=hoje && d<=lim) PRAZOS7++;
+  });
+}
+
+// ── Contagens por empreendimento ────────────────────────────────────────────
+function statsDe(emp){
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  let abertos=0, atraso=0;
+  APTS.forEach(a=>{
+    const meu = (a.empreendimento_id && a.empreendimento_id===emp.id)
+             || (!a.empreendimento_id && a.empreendimento===emp.nome);
+    if(!meu || a.status==='Resolvido') return;
+    abertos++;
+    const d=pdata(a.prazo_min);
+    if(d && d<hoje) atraso++;
+  });
+  return { abertos, atraso, nf:(SOLICIT[emp.id]||0) };
+}
+
+// ── Visão geral ─────────────────────────────────────────────────────────────
+function renderKpis(){
+  let atraso=0, abertos=0;
+  EMPS.forEach(e=>{ const s=statsDe(e); atraso+=s.atraso; abertos+=s.abertos; });
+  const nf = Object.values(SOLICIT).reduce((s,n)=>s+n,0);
+
+  $('resumoSub').textContent = '— ' + EMPS.length + (EMPS.length===1?' empreendimento':' empreendimentos');
+  $('kpis').innerHTML =
+    kpi('at', atraso,   'Apontamentos em atraso', "irPara('bi')") +
+    kpi('',   abertos,  'Apontamentos em aberto', "irPara('bi')") +
+    kpi('nf', nf,       'Solicitações de NF' + (NF_VALOR? ' · '+brl(NF_VALOR):''), "irPara('custos')") +
+    kpi('ms', MSG_NOVAS,'Mensagens novas',        "irPara('msg')") +
+    kpi('pz', PRAZOS7,  'Prazos nos próximos 7 dias', "irPara('agenda')");
+}
+function kpi(cls,n,l,onclick){
+  return `<button class="kpi ${cls}" onclick="${onclick}">
+    <div class="n">${n}</div><div class="l">${esc(l)}</div></button>`;
+}
+
+// ── Ferramentas gerais (independem de empreendimento) ───────────────────────
+function renderTools(){
+  const nf = Object.values(SOLICIT).reduce((s,n)=>s+n,0);
+  const t = (ic,cor,nome,desc,acao,badge)=>`
+    <button class="tool" onclick="${acao}">
+      <span class="ic" style="background:${cor}">${ic}</span>
+      <span style="flex:1"><b>${esc(nome)}</b><span>${esc(desc)}</span></span>
+      ${badge?`<span class="bdg">${badge}</span>`:''}
+    </button>`;
+  $('tools').innerHTML =
+    t('✉','#1A5276','Mensagens','Conversas de todos os empreendimentos',"irPara('msg')", MSG_NOVAS||'') +
+    t('📅','#1A6B4A','Agenda','Seus prazos e tarefas do dia',"irPara('agenda')",'') +
+    t('📋','#6C3483','Kanban','Suas tarefas, independente da obra',"irPara('kanban')",'') +
+    t('💰','#B7791F','Custos e NF','Solicitações e faturamento consolidados',"irPara('custos')", nf||'') +
+    t('📊','#7D6608','Painel de Apontamentos','Indicadores de todos os empreendimentos',"irPara('bi')",'');
+}
+
+function irPara(k){
+  const rotas = { msg:'mensagens.html', agenda:'agenda.html', kanban:'kanban.html',
+                  bi:'bi.html', custos:'auria_analista.html#emp' };
+  location.href = rotas[k] || './';
+}
+
+// ── Cards de empreendimento ─────────────────────────────────────────────────
+function renderEmps(){
+  const q = ($('busca') && $('busca').value || '').trim().toLowerCase();
+  $('buscaWrap').style.display = EMPS.length > 6 ? 'block' : 'none';
+  $('empSub').textContent = EMPS.length ? '— clique para abrir as ferramentas da obra' : '';
+
+  const lista = EMPS.filter(e => !q || (e.nome||'').toLowerCase().includes(q));
+  if(!EMPS.length){
+    $('emps').innerHTML = '<div class="vazio">Nenhum empreendimento atribuído a você ainda.<br>'
+      + 'Peça à gestão para liberar o acesso no painel dela.</div>';
+    return;
+  }
+  if(!lista.length){ $('emps').innerHTML = '<div class="vazio">Nenhum empreendimento com esse nome.</div>'; return; }
+
+  $('emps').innerHTML = '<div class="emps">' + lista.map(e=>{
+    const s = statsDe(e);
+    const local = [e.cidade, e.estado].filter(Boolean).join(' · ');
+    return `<button class="emp" onclick="abrirEmp('${e.id}')">
+      <div class="emp-h">
+        <b>${esc(e.nome)}</b>
+        <span>${esc(local || e.tipologia || '—')}</span>
+      </div>
+      <div class="emp-b">
+        <span class="st"><b>${s.abertos}</b> abertos</span>
+        ${s.atraso?`<span class="st at"><b>${s.atraso}</b> em atraso</span>`:''}
+        ${s.nf?`<span class="st nf"><b>${s.nf}</b> NF</span>`:''}
+      </div>
+    </button>`;
+  }).join('') + '</div>';
+}
+
+// ── Portal de um empreendimento ─────────────────────────────────────────────
+function abrirEmp(id){
+  const e = EMPS.find(x=>x.id===id); if(!e) return;
+  const s = statsDe(e);
+  $('peNome').textContent = e.nome;
+  $('peSub').textContent  = [ [e.cidade,e.estado].filter(Boolean).join(' · '),
+                              s.abertos+' apontamentos em aberto',
+                              s.atraso?(s.atraso+' em atraso'):null,
+                              s.nf?(s.nf+' NF aguardando'):null ].filter(Boolean).join('  ·  ');
+
+  const q = encodeURIComponent(e.id), qn = encodeURIComponent(e.nome);
+  const t = (ic,cor,nome,desc,href)=>`
+    <button class="tool" onclick="location.href='${href}'">
+      <span class="ic" style="background:${cor}">${ic}</span>
+      <span style="flex:1"><b>${esc(nome)}</b><span>${esc(desc)}</span></span>
+    </button>`;
+  $('peTools').innerHTML =
+    t('📐','#1D4ED8','Auria App','Pranchas, apontamentos e BIM',      'app.html?emp='+q) +
+    t('🗂','#0E7490','CDE','Arquivos, revisões e aprovações',          'cde.html?emp='+q) +
+    t('🗓','#117A65','Cronograma','Físico da obra',                    'cronograma.html?emp='+q) +
+    t('📊','#7D6608','Apontamentos','Indicadores desta obra',          'bi.html?emp='+qn) +
+    t('💼','#B7791F','Contratos e Faturas','Parcelas, NF e aditivos',  'auria_analista.html#emp');
+
+  $('ov').classList.add('on');
+}
+function fecharEmp(){ $('ov').classList.remove('on'); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') fecharEmp(); });
+
+boot();
+</script>
+</body>
+</html>
