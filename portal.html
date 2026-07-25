@@ -180,12 +180,19 @@ async function boot(){
   $('uNome').textContent = p.nome || USER.email;
   $('uMail').textContent = USER.email;
 
-  await Promise.all([carregarEmps(), carregarApts(), carregarNF(), carregarMsgs()]);
+  // Carga essencial (empreendimentos + apontamentos + NF). Com teto de tempo:
+  // se uma consulta ficar lenta, a tela abre mesmo assim em vez de travar.
+  const _timeout = new Promise(r=>setTimeout(()=>r('timeout'), 12000));
+  await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
   carregarPrazos();   // depende de APTS já carregado
 
   renderKpis(); renderTools(); renderEmps();
   $('load').style.display='none';
   $('app').style.display='block';
+
+  // Mensagens são pesadas (campo mensagens de muitos apontamentos) → em segundo
+  // plano, sem segurar a tela; o KPI e o badge se atualizam quando chegam.
+  carregarMsgs().then(()=>{ try{ renderKpis(); renderTools(); }catch(e){} }).catch(()=>{});
 }
 
 async function carregarEmps(){
