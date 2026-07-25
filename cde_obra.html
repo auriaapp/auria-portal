@@ -101,6 +101,24 @@
   .btn.pri{background:var(--accent);color:#231703}
   .btn.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
   .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn.sm{padding:5px 11px;font-size:12px;border-radius:8px}
+
+  /* Detalhe: revisões */
+  .rev-item{border:1px solid var(--line);border-radius:11px;margin-bottom:11px;overflow:hidden}
+  .rev-top{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--panel2);flex-wrap:wrap}
+  .rev-top .rv{font-family:var(--mono);font-weight:800;font-size:14px}
+  .rev-top .dt{font-size:11.5px;color:var(--mut);margin-left:auto}
+  .rev-files{padding:8px 14px;display:flex;flex-direction:column;gap:6px}
+  .afile{display:flex;align-items:center;gap:9px;font-size:13px}
+  .afile .ext{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--navy);
+              border-radius:5px;padding:2px 7px;min-width:38px;text-align:center}
+  .afile .ext.pdf{background:#B91C1C}
+  .afile .nm{flex:1;word-break:break-all}
+  .afile .sz{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .rev-acts{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  .rev-acts .lbl{font-size:11.5px;color:var(--mut);margin-right:3px}
+  .ressalva{font-size:12px;color:var(--warn);background:var(--warn-bg,rgba(183,121,31,.1));
+            border:1px solid var(--line);border-radius:8px;padding:7px 11px;margin:0 14px 10px}
 </style>
 </head>
 <body>
@@ -150,6 +168,20 @@
       <button class="btn sec" onclick="fecharReceber()">Cancelar</button>
       <button class="btn pri" id="btnConfirmar" onclick="confirmarLote()" disabled>Registrar recebimento</button>
     </div>
+  </div>
+</div>
+
+<!-- Detalhe do documento -->
+<div class="ov" id="ovDoc" onclick="if(event.target===this)fecharDoc()">
+  <div class="modal">
+    <div class="modal-h">
+      <div style="flex:1">
+        <div class="cod" id="dCod" style="font-family:var(--mono);font-weight:700;color:var(--navy);font-size:13px"></div>
+        <b id="dTit" style="font-size:16px"></b>
+      </div>
+      <button class="x" onclick="fecharDoc()">×</button>
+    </div>
+    <div class="modal-b" id="dBody"></div>
   </div>
 </div>
 
@@ -256,7 +288,7 @@ function cardDoc(d){
   const s = d.atual ? STMAP[d.atual.status] : null;
   const stHtml = s ? `<span class="st" style="background:${s.cor||'#64748B'}">${esc(s.rotulo)}</span>`
                    : '<span class="st" style="background:#94A3B8">Sem revisão</span>';
-  return `<div class="doc" onclick="alert('Detalhe do documento entra na próxima etapa (visualização + mudança de status).')">
+  return `<div class="doc" onclick="abrirDoc('${d.id}')">
     <div class="cod">${esc(d.codigo)}</div>
     <div class="tit">${esc(d.titulo||d.codigo)}</div>
     <div class="meta">${stHtml}
@@ -400,6 +432,125 @@ async function confirmarLote(){
   await carregarDocs(); render();
   if(!falhas){ setTimeout(()=>{ fecharReceber(); }, 900); }
   b.disabled=false;
+}
+
+// ── Detalhe do documento: arquivos + fluxo de status ────────────────────────
+let DOC_ABERTO=null;
+
+// Próximas transições possíveis a partir de cada status (rótulo do botão).
+const TRANSICOES = {
+  S0:          [['S3','Enviar para análise'],['DEVOLVIDO','Devolver ao projetista']],
+  S3:          [['A1','Liberar para obra'],['B1','Liberar com ressalvas'],['DEVOLVIDO','Devolver'],['S0','Voltar p/ recebido']],
+  B1:          [['A1','Liberar para obra'],['DEVOLVIDO','Devolver']],
+  A1:          [['AS_BUILT','Marcar como as-built'],['S3','Reabrir análise']],
+  AS_BUILT:    [],
+  DEVOLVIDO:   [['S0','Reabrir']],
+  SUBSTITUIDO: []
+};
+
+function fmtBytes(n){ if(!n) return ''; const u=['B','KB','MB','GB']; let i=0,v=n;
+  while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+' '+u[i]; }
+function fmtData(s){ if(!s) return ''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
+
+async function abrirDoc(id){
+  DOC_ABERTO = DOCS.find(d=>d.id===id); if(!DOC_ABERTO) return;
+  $('dCod').textContent = DOC_ABERTO.codigo;
+  $('dTit').textContent = DOC_ABERTO.titulo || DOC_ABERTO.codigo;
+  $('dBody').innerHTML = '<div style="padding:24px;color:var(--mut)">Carregando revisões…</div>';
+  $('ovDoc').classList.add('on');
+  await renderDoc();
+}
+function fecharDoc(){ $('ovDoc').classList.remove('on'); DOC_ABERTO=null; }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); } });
+
+async function renderDoc(){
+  const d = DOC_ABERTO; if(!d) return;
+  // arquivos de todas as revisões do documento
+  const revIds = (d.revs||[]).map(r=>r.id);
+  let arqs = [];
+  if(revIds.length){
+    const { data } = await sb.from('cde_arquivo_auria')
+      .select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds);
+    arqs = data||[];
+  }
+  const porRev = {}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
+
+  const revs = (d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
+  $('dBody').innerHTML = revs.map((r,idx)=>{
+    const s = STMAP[r.status] || {rotulo:r.status, cor:'#64748B'};
+    const files = (porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
+    const filesHtml = files.length ? files.map(a=>`
+      <div class="afile">
+        <span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span>
+        <span class="nm">${esc(a.nome)}</span>
+        <span class="sz">${fmtBytes(a.tamanho_bytes)}</span>
+        <button class="btn sec sm" onclick="baixar('${a.id}','${esc(a.storage_path)}','${esc(a.nome)}')">Baixar</button>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
+
+    const trans = TRANSICOES[r.status] || [];
+    const podeAgir = idx===0 && r.status!=='SUBSTITUIDO';   // age na revisão mais recente
+    const actsHtml = podeAgir && trans.length ? `<div class="rev-acts"><span class="lbl">Mover para:</span>${
+      trans.map(([to,label])=>{
+        const cor = STMAP[to] ? STMAP[to].cor : 'var(--navy)';
+        return `<button class="btn sm" style="background:${cor};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`;
+      }).join('')}</div>` : '';
+
+    return `<div class="rev-item">
+      <div class="rev-top">
+        <span class="rv">${esc(r.revisao)}</span>
+        <span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span>
+        <span class="dt">recebida ${fmtData(r.recebido_em)}</span>
+      </div>
+      ${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}
+      <div class="rev-files">${filesHtml}</div>
+      ${actsHtml}
+    </div>`;
+  }).join('') || '<div style="padding:20px;color:var(--mut)">Sem revisões.</div>';
+}
+
+async function baixar(id, path, nome){
+  try{
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 120, { download: nome });
+    if(error) throw error;
+    window.open(data.signedUrl, '_blank');
+  }catch(e){ alert('Não foi possível gerar o link: '+((e&&e.message)||e)); }
+}
+
+async function mudarStatus(revId, novo){
+  const est = (STMAP[novo] && STMAP[novo].estado) || 'RECEBIDO';
+  const upd = { status:novo, estado:est };
+  const agora = new Date().toISOString();
+
+  if(novo==='S3'){ upd.analisado_por=USER.id; upd.analisado_em=agora; }
+  if(novo==='A1' || novo==='B1' || novo==='AS_BUILT'){ upd.aprovado_por=USER.id; upd.aprovado_em=agora; }
+  if(novo==='B1'){
+    const r = prompt('Descreva as ressalvas (pendências que a obra deve saber):','');
+    if(r===null) return; upd.ressalvas = r.trim();
+  }
+  if(novo==='DEVOLVIDO'){
+    const r = prompt('Motivo da devolução ao projetista:','');
+    if(r===null) return; upd.motivo_devolucao = r.trim();
+  }
+  const rev = (DOC_ABERTO.revs||[]).find(x=>x.id===revId);
+  const deStatus = rev ? rev.status : null;
+
+  try{
+    const { error } = await sb.from('cde_revisao_auria').update(upd).eq('id',revId);
+    if(error) throw error;
+    // auditoria (o gatilho de substituição da revisão anterior roda no banco)
+    sb.from('cde_evento_auria').insert({
+      revisao_id:revId, acao:'status', de_status:deStatus, para_status:novo,
+      usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
+      nota: upd.ressalvas || upd.motivo_devolucao || null
+    }).then(()=>{},()=>{});
+    await carregarDocs();
+    DOC_ABERTO = DOCS.find(d=>d.id===DOC_ABERTO.id) || null;
+    if(DOC_ABERTO) await renderDoc(); else fecharDoc();
+    render();
+  }catch(e){
+    const m=(e&&e.message)||String(e);
+    alert(/permission|row-level|policy|42501/i.test(m) ? 'Sem permissão para alterar o status.' : 'Erro: '+m);
+  }
 }
 
 boot();
