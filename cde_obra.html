@@ -585,7 +585,7 @@ async function confirmarLote(){
   const totalFiles=alvos.reduce((s,g)=>s+g.arquivos.length,0); let done=0;
   $('progwrap').style.display='block'; $('progbar').style.width='2%';
   const prog=()=>{ $('progbar').style.width=Math.max(2,Math.round(done/totalFiles*100))+'%'; };
-  let feito=0,falhas=0;
+  let feito=0,falhas=0; const recebidos=[];
   for(const g of alvos){
     try{
       let docId=g.acao.doc?g.acao.doc.id:null;
@@ -617,6 +617,9 @@ async function confirmarLote(){
         revisao_id:rev.id, acao:'recebeu', para_status:'S0',
         usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:g.arquivos.length+' arquivo(s)'
       });
+      recebidos.push({ codigo:g.parse.codigoDoc, disciplina:g.parse.disciplina,
+        disciplinaLabel:g.parse.disciplina?(g.parse.disciplina+' — '+discLabel(g.parse.disciplina)):'—',
+        revisao:g.parse.revisao||'R00', novo:(g.acao.tipo==='novo') });
       feito++;
     }catch(e){ falhas++; done+=g.arquivos.length; prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
@@ -626,7 +629,11 @@ async function confirmarLote(){
   $('progbar').style.width='100%';
   const err1=(alvos.find(g=>g._erro)||{})._erro;
   $('recMsg').textContent=feito+' recebido(s)'+(falhas?(' · '+falhas+' com falha'+(err1?': '+err1:'')):'');
-  await carregarDocs(); renderRail();
+  // Avisa analistas + gestores por e-mail (fire-and-forget, tolerante a falha).
+  if(recebidos.length){
+    sb.functions.invoke('notify-cde-upload', { body:{ emp_id:EMP_ID, itens:recebidos } }).then(()=>{},()=>{});
+  }
+  await carregarDocs(); await carregarGrupos(); renderRail();
   if(!falhas){ setTimeout(()=>{ fecharReceber(); $('progwrap').style.display='none'; }, 1000); }
   b.disabled=false;
 }
