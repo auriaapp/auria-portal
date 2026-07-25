@@ -6,6 +6,7 @@
 <title>Auria CDE — Documentos</title>
 <link rel="icon" href="logo_symbol.png" type="image/png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
   :root{
     --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0;
@@ -19,48 +20,78 @@
     --navy:#7FB3D3; --accent:#F0A72A; --ok:#4ADE80; --warn:#E9B44C; --err:#F87171;
   }
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--txt);
-       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
-  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:11px 20px;
-         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:20}
-  header img{height:28px}
-  header .tt b{font-size:14.5px;font-weight:800;display:block;line-height:1.2}
-  header .tt span{font-size:11.5px;color:#8FA6C0}
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55;
+       display:flex;flex-direction:column;overflow:hidden}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:10px 18px;
+         display:flex;align-items:center;gap:12px;flex-shrink:0}
+  header img{height:26px}
+  header .tt b{font-size:14px;font-weight:800;display:block;line-height:1.15}
+  header .tt span{font-size:11px;color:#8FA6C0}
   header .sp{flex:1}
   .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
         padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none}
   .hbtn:hover{background:#243452}
   .hbtn.pri{background:var(--accent);border-color:var(--accent);color:#231703}
-  .wrap{max-width:1120px;margin:0 auto;padding:20px 18px 70px}
 
-  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-  .toolbar .busca{flex:1;min-width:200px}
-  .toolbar input,.toolbar select{padding:8px 11px;border:1px solid var(--line);border-radius:9px;
-       background:var(--panel);color:var(--txt);font-size:13px;font-family:inherit;outline:none}
-  .toolbar input:focus,.toolbar select:focus{border-color:var(--accent)}
-  .toolbar .busca input{width:100%}
+  .main{flex:1;display:flex;overflow:hidden}
 
-  .disc-grp{margin-bottom:22px}
-  .disc-h{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;
-          color:var(--mut);margin:0 0 9px;display:flex;align-items:center;gap:8px}
-  .disc-h .ct{background:var(--panel2);border:1px solid var(--line);border-radius:20px;
-              padding:1px 9px;font-size:11px;color:var(--txt2)}
-  .docs{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:11px}
-  .doc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px;
-       cursor:pointer;display:flex;flex-direction:column;gap:7px}
-  .doc:hover{border-color:var(--accent)}
-  .doc .cod{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--navy)}
-  .doc .tit{font-size:13.5px;font-weight:700;line-height:1.3}
-  .doc .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
-  .doc .rev{font-family:var(--mono);font-size:11.5px;color:var(--mut)}
+  /* ── Canvas central ─────────────────────────────────────── */
+  .viewer{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+  .vtool{display:flex;align-items:center;gap:9px;padding:8px 14px;background:var(--panel);
+         border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
+  .vtool .cod{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--navy)}
+  .vtool .tit{font-size:13px;color:var(--txt2)}
+  .vtool .sp{flex:1}
+  .tb{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
+      padding:5px 10px;font-size:12.5px;cursor:pointer;font-family:inherit;font-weight:600}
+  .tb:hover{border-color:var(--accent)}
+  .tb:disabled{opacity:.4;cursor:default}
   .st{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:11px;color:#fff}
+  #pdfScroll{flex:1;overflow:auto;background:#5b6675;cursor:grab;position:relative}
+  body.dark #pdfScroll{background:#0d1420}
+  #pdfScroll.grab{cursor:grabbing}
+  #pdfCanvas{display:block;margin:22px auto;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff}
+  .vempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+          color:var(--mut);gap:8px;text-align:center;padding:30px}
+  .vempty .big{font-size:40px}
+  .vmsg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;
+        font-size:14px;text-align:center;background:rgba(15,23,42,.7);padding:14px 20px;border-radius:10px}
 
-  .empty{background:var(--panel);border:1px dashed var(--line);border-radius:12px;
-         padding:40px 22px;text-align:center;color:var(--mut)}
-  .empty b{color:var(--txt);display:block;margin-bottom:6px;font-size:15px}
-  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+  /* ── Coluna direita: navegação ──────────────────────────── */
+  .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line)}
+  .navpanel{flex:1;min-width:0;overflow-y:auto;padding:12px}
+  .navpanel h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);
+               margin:2px 0 10px;font-weight:800}
+  .nav-hint{color:var(--mut);font-size:12.5px;padding:10px 4px;line-height:1.5}
+  .folder{border:1px solid var(--line);border-radius:9px;margin-bottom:8px;overflow:hidden}
+  .folder-h{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:var(--panel2)}
+  .folder-h .fic{font-size:14px}
+  .folder-h .fnm{font-weight:700;font-size:13px;flex:1}
+  .folder-h .fct{font-family:var(--mono);font-size:11px;color:var(--mut);background:var(--panel);
+                 border:1px solid var(--line);border-radius:10px;padding:0 7px}
+  .folder-b{display:none;padding:4px}
+  .folder.open .folder-b{display:block}
+  .fdoc{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;cursor:pointer}
+  .fdoc:hover{background:var(--panel2)}
+  .fdoc.sel{background:rgba(232,150,10,.13);outline:1px solid var(--accent)}
+  .fdoc .fc{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--navy);line-height:1.2}
+  .fdoc .ft{font-size:11px;color:var(--mut);line-height:1.2}
+  .fdoc .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 
-  /* Modal recebimento */
+  /* trilho de tags verticais */
+  .rail{width:46px;flex-shrink:0;border-left:1px solid var(--line);background:var(--panel2);
+        display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 0;overflow-y:auto}
+  .tag{writing-mode:vertical-rl;text-orientation:mixed;font-family:var(--mono);font-weight:700;
+       font-size:12px;letter-spacing:.05em;color:var(--txt2);background:var(--panel);
+       border:1px solid var(--line);border-radius:8px;padding:10px 4px;cursor:pointer;
+       min-height:52px;display:flex;align-items:center;justify-content:center;transition:.12s}
+  .tag:hover{border-color:var(--accent);color:var(--txt)}
+  .tag.sel{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .rail .none{writing-mode:vertical-rl;font-size:10px;color:var(--mut);margin-top:8px}
+
+  /* ── Modais (recebimento + detalhe) ─────────────────────── */
   .ov{position:fixed;inset:0;background:rgba(8,14,26,.62);z-index:40;display:none;
       align-items:flex-start;justify-content:center;padding:26px 16px;overflow-y:auto}
   .ov.on{display:flex}
@@ -68,6 +99,7 @@
          width:min(920px,100%);overflow:hidden;display:flex;flex-direction:column;max-height:92vh}
   .modal-h{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
   .modal-h b{font-size:16px;flex:1}
+  .modal-h .cod{font-family:var(--mono);font-weight:700;color:var(--navy);font-size:13px}
   .modal-h button.x{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;line-height:1}
   .modal-b{padding:18px 20px;overflow-y:auto}
   .modal-f{padding:13px 20px;border-top:1px solid var(--line);display:flex;align-items:center;gap:11px}
@@ -75,20 +107,16 @@
   .prog{height:7px;background:var(--panel2);border:1px solid var(--line);border-radius:5px;overflow:hidden}
   .prog>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
 
-  .drop{border:2px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;
-        color:var(--mut);cursor:pointer;transition:.12s}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;color:var(--mut);cursor:pointer;transition:.12s}
   .drop:hover,.drop.hot{border-color:var(--accent);background:var(--panel2)}
   .drop b{color:var(--txt);display:block;font-size:15px;margin-bottom:5px}
   .drop small{font-size:11.5px}
-
   .prev{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
-  .prev th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);
-           text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);font-weight:700}
+  .prev th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);font-weight:700}
   .prev td{padding:9px;border-bottom:1px solid var(--line);vertical-align:top}
   .prev .cod{font-family:var(--mono);font-weight:700;font-size:12.5px}
   .prev .files{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
-  .fchip{font-family:var(--mono);font-size:10.5px;background:var(--panel2);border:1px solid var(--line);
-         border-radius:5px;padding:1px 6px}
+  .fchip{font-family:var(--mono);font-size:10.5px;background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
   .fchip.pdf{border-color:#FCA5A5;background:rgba(220,60,60,.08)}
   .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap}
   .badge.novo{background:rgba(30,132,73,.13);color:var(--ok)}
@@ -96,31 +124,26 @@
   .badge.dup{background:rgba(183,121,31,.15);color:var(--warn)}
   .badge.err{background:rgba(163,45,45,.13);color:var(--err)}
   .erros{font-size:11.5px;color:var(--err);margin-top:3px}
-  .prazoinp{font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;
-            background:var(--panel2);color:var(--txt);font-family:inherit;width:100%}
-  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 17px;
-       font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 17px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
   .btn.pri{background:var(--accent);color:#231703}
   .btn.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
   .btn.sm{padding:5px 11px;font-size:12px;border-radius:8px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
 
-  /* Detalhe: revisões */
   .rev-item{border:1px solid var(--line);border-radius:11px;margin-bottom:11px;overflow:hidden}
   .rev-top{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--panel2);flex-wrap:wrap}
   .rev-top .rv{font-family:var(--mono);font-weight:800;font-size:14px}
   .rev-top .dt{font-size:11.5px;color:var(--mut);margin-left:auto}
   .rev-files{padding:8px 14px;display:flex;flex-direction:column;gap:6px}
   .afile{display:flex;align-items:center;gap:9px;font-size:13px}
-  .afile .ext{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--navy);
-              border-radius:5px;padding:2px 7px;min-width:38px;text-align:center}
+  .afile .ext{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--navy);border-radius:5px;padding:2px 7px;min-width:38px;text-align:center}
   .afile .ext.pdf{background:#B91C1C}
   .afile .nm{flex:1;word-break:break-all}
   .afile .sz{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
   .rev-acts{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
   .rev-acts .lbl{font-size:11.5px;color:var(--mut);margin-right:3px}
-  .ressalva{font-size:12px;color:var(--warn);background:var(--warn-bg,rgba(183,121,31,.1));
-            border:1px solid var(--line);border-radius:8px;padding:7px 11px;margin:0 14px 10px}
+  .ressalva{font-size:12px;color:var(--warn);border:1px solid var(--line);border-radius:8px;padding:7px 11px;margin:0 14px 10px}
+  .load{flex:1;display:flex;align-items:center;justify-content:center;color:var(--mut)}
 </style>
 </head>
 <body>
@@ -134,16 +157,39 @@
   <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Receber arquivos</button>
 </header>
 
-<div class="wrap">
-  <div id="load" class="load">Carregando…</div>
-  <div id="app" style="display:none">
-    <div class="toolbar">
-      <div class="busca"><input type="text" id="busca" placeholder="Buscar por código ou título…" oninput="render()"></div>
-      <select id="fDisc" onchange="render()"><option value="">Todas as disciplinas</option></select>
-      <select id="fStatus" onchange="render()"><option value="">Todos os status</option></select>
+<div id="load" class="load">Carregando…</div>
+
+<div class="main" id="main" style="display:none">
+  <!-- Canvas -->
+  <div class="viewer">
+    <div class="vtool" id="vtool" style="display:none">
+      <span class="cod" id="vCod"></span>
+      <span class="st" id="vSt"></span>
+      <span class="tit" id="vTit"></span>
+      <span class="sp"></span>
+      <button class="tb" onclick="pdfZoom(-1)" title="Diminuir">−</button>
+      <button class="tb" onclick="pdfFit()" title="Ajustar à tela">Ajustar</button>
+      <button class="tb" onclick="pdfZoom(1)" title="Aumentar">+</button>
+      <span style="width:8px"></span>
+      <button class="tb" id="vPrev" onclick="pdfPage(-1)">◀</button>
+      <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
+      <button class="tb" id="vNext" onclick="pdfPage(1)">▶</button>
+      <span style="width:8px"></span>
+      <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
-    <div id="lista"></div>
+    <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
+    <div class="vempty" id="vEmpty">
+      <div class="big">🗂️</div>
+      <div><b>Selecione um documento</b> na coluna à direita para visualizar.</div>
+      <div style="font-size:12px">Clique numa disciplina, abra a etapa e escolha a prancha.</div>
+    </div>
   </div>
+
+  <!-- Navegação -->
+  <aside class="nav">
+    <div class="navpanel" id="navPanel"></div>
+    <div class="rail" id="rail"></div>
+  </aside>
 </div>
 
 <!-- Recebimento em lote -->
@@ -180,10 +226,7 @@
 <div class="ov" id="ovDoc" onclick="if(event.target===this)fecharDoc()">
   <div class="modal">
     <div class="modal-h">
-      <div style="flex:1">
-        <div class="cod" id="dCod" style="font-family:var(--mono);font-weight:700;color:var(--navy);font-size:13px"></div>
-        <b id="dTit" style="font-size:16px"></b>
-      </div>
+      <div style="flex:1"><div class="cod" id="dCod"></div><b id="dTit" style="font-size:16px"></b></div>
       <button class="x" onclick="fecharDoc()">×</button>
     </div>
     <div class="modal-b" id="dBody"></div>
@@ -191,16 +234,17 @@
 </div>
 
 <script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 const sb = window.supabase.createClient(
   'https://sabzccokueowpromwxdg.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
-
 const $  = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
 
 const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
-let USER=null, EMP=null, CONV=null, STATUS=[], STMAP={}, DOCS=[], LOTE=[];
+let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
+let SEL_DISC=null, DOC_SEL=null;
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 async function boot(){
@@ -213,15 +257,10 @@ async function boot(){
   if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
   EMP = e;
   $('hSub').textContent = e.nome + (e.cidade? ' · '+e.cidade+(e.estado?'/'+e.estado:'') : '');
-  $('lnkPadrao').href = 'cde.html';
 
-  // Status (rótulos + cores)
   const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
-  STATUS = st||[]; STMAP={}; STATUS.forEach(s=>STMAP[s.codigo]=s);
-  $('fStatus').innerHTML = '<option value="">Todos os status</option>' +
-    STATUS.map(s=>`<option value="${s.codigo}">${esc(s.rotulo)}</option>`).join('');
+  STMAP={}; (st||[]).forEach(s=>STMAP[s.codigo]=s);
 
-  // Convenção do empreendimento (Empresa tem precedência sobre Grupo)
   try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); CONV = (c&&c[0])||null; }catch(err){ CONV=null; }
   if(!CONV){
     $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
@@ -229,339 +268,318 @@ async function boot(){
     return;
   }
   $('btnReceber').style.display='';
-
   await carregarDocs();
   $('load').style.display='none';
-  $('app').style.display='block';
-  render();
+  $('main').style.display='flex';
+  renderRail();
+}
+
+// Campo da etapa: prioriza o mapeamento; se não houver, cai na chave "fase".
+function faseCampo(){ const cs=CONV.campos||[]; return cs.find(c=>c.mapeia==='fase') || cs.find(c=>c.chave==='fase') || null; }
+function faseKey(){ return (faseCampo()||{}).chave; }
+function faseLabel(v){
+  const c=faseCampo();
+  if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v); if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
+  return v||'—';
+}
+function discLabel(v){
+  const c=(CONV.campos||[]).find(c=>c.mapeia==='disciplina');
+  if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v); if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
+  return v||'—';
 }
 
 async function carregarDocs(){
   const { data: docs } = await sb.from('cde_documento_auria')
     .select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
   const ids = (docs||[]).map(d=>d.id);
-  let revs = [];
+  let revs=[];
   if(ids.length){
-    const { data: r } = await sb.from('cde_revisao_auria')
+    const { data:r } = await sb.from('cde_revisao_auria')
       .select('id,documento_id,revisao,estado,status,recebido_em,ressalvas').in('documento_id',ids);
-    revs = r||[];
+    revs=r||[];
   }
-  // revisão "corrente" por documento: a mais recente
-  const porDoc = {};
-  revs.forEach(r=>{ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
+  const porDoc={}; revs.forEach(r=>{ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
   DOCS = (docs||[]).map(d=>{
-    const rs = (porDoc[d.id]||[]).sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
-    return { ...d, revs:rs, atual: rs[0]||null, nrev: rs.length };
+    const rs=(porDoc[d.id]||[]).sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
+    const fk=faseKey();
+    return { ...d, revs:rs, atual:rs[0]||null, etapa:(d.campos&&fk)?d.campos[fk]:null };
   });
-  const discs = [...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
-  $('fDisc').innerHTML = '<option value="">Todas as disciplinas</option>' +
-    discs.map(d=>`<option value="${esc(d)}">${esc(discLabel(d))}</option>`).join('');
 }
 
-function discLabel(v){
-  const c = (CONV.campos||[]).find(c=>c.mapeia==='disciplina');
-  if(c && c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v);
-    if(d && typeof d==='object' && d.rotulo) return v+' — '+d.rotulo; }
-  return v;
+// ── Coluna direita: trilho de disciplinas + pastas por etapa ────────────────
+function renderRail(){
+  const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
+  $('rail').innerHTML = discs.length
+    ? discs.map(d=>`<div class="tag ${SEL_DISC===d?'sel':''}" title="${esc(discLabel(d))}" onclick="selDisc('${esc(d)}')">${esc(d)}</div>`).join('')
+    : '<div class="none">sem arquivos</div>';
+  if(SEL_DISC && !discs.includes(SEL_DISC)) SEL_DISC=null;
+  renderNav();
 }
+function selDisc(d){ SEL_DISC = (SEL_DISC===d?null:d); renderRail(); }
 
-// ── Lista de documentos ─────────────────────────────────────────────────────
-function render(){
-  const q=($('busca').value||'').trim().toLowerCase();
-  const fd=$('fDisc').value, fs=$('fStatus').value;
-  let docs = DOCS.filter(d=>{
-    if(fd && d.disciplina!==fd) return false;
-    if(fs && (!d.atual || d.atual.status!==fs)) return false;
-    if(q && !((d.codigo||'').toLowerCase().includes(q) || (d.titulo||'').toLowerCase().includes(q))) return false;
-    return true;
-  });
-  if(!DOCS.length){
-    $('lista').innerHTML = '<div class="empty"><b>Nenhum documento ainda</b>'
-      + 'Clique em “Receber arquivos” para registrar a primeira entrega dos projetistas.</div>';
-    return;
-  }
-  if(!docs.length){ $('lista').innerHTML='<div class="empty">Nenhum documento neste filtro.</div>'; return; }
+function renderNav(){
+  const p=$('navPanel');
+  if(!DOCS.length){ p.innerHTML='<div class="nav-hint">Nenhum documento ainda. Clique em <b>Receber arquivos</b> para registrar a primeira entrega.</div>'; return; }
+  if(!SEL_DISC){ p.innerHTML='<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>'; return; }
 
-  const grp={}; docs.forEach(d=>{ (grp[d.disciplina||'—']=grp[d.disciplina||'—']||[]).push(d); });
-  $('lista').innerHTML = Object.keys(grp).sort().map(disc=>`
-    <div class="disc-grp">
-      <div class="disc-h">${esc(discLabel(disc))} <span class="ct">${grp[disc].length}</span></div>
-      <div class="docs">${grp[disc].map(cardDoc).join('')}</div>
-    </div>`).join('');
+  const doDisc = DOCS.filter(d=>d.disciplina===SEL_DISC);
+  // etapas presentes (ordem do vocabulário de fase)
+  const ordemFase = (faseCampo()||{}).dominio || [];
+  const idx = v => { const i=ordemFase.findIndex(x=>((typeof x==='object')?x.v:x)===v); return i<0?99:i; };
+  const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
+
+  p.innerHTML = `<h3>${esc(discLabel(SEL_DISC))}</h3>` + etapas.map(et=>{
+    const ds=doDisc.filter(d=>(d.etapa||'—')===et).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    const open = et===_etapaAberta;
+    return `<div class="folder ${open?'open':''}" id="fold-${esc(et)}">
+      <div class="folder-h" onclick="toggleEtapa('${esc(et)}')">
+        <span class="fic">${open?'📂':'📁'}</span>
+        <span class="fnm">${esc(faseLabel(et))}</span>
+        <span class="fct">${ds.length}</span>
+      </div>
+      <div class="folder-b">${ds.map(cardFdoc).join('')}</div>
+    </div>`;
+  }).join('');
 }
-function cardDoc(d){
-  const s = d.atual ? STMAP[d.atual.status] : null;
-  const stHtml = s ? `<span class="st" style="background:${s.cor||'#64748B'}">${esc(s.rotulo)}</span>`
-                   : '<span class="st" style="background:#94A3B8">Sem revisão</span>';
-  return `<div class="doc" onclick="abrirDoc('${d.id}')">
-    <div class="cod">${esc(d.codigo)}</div>
-    <div class="tit">${esc(d.titulo||d.codigo)}</div>
-    <div class="meta">${stHtml}
-      <span class="rev">${d.atual?('rev '+esc(d.atual.revisao)):''}${d.nrev>1?(' · '+d.nrev+' revisões'):''}</span></div>
+let _etapaAberta=null;
+function toggleEtapa(et){ _etapaAberta = (_etapaAberta===et?null:et); renderNav(); }
+
+function cardFdoc(d){
+  const s=d.atual?STMAP[d.atual.status]:null;
+  const cor=s?s.cor:'#94A3B8';
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="abrirDoc('${d.id}')">
+    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
+    <span style="flex:1;min-width:0"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span></span>
   </div>`;
 }
+
+// ── Abrir documento no canvas ───────────────────────────────────────────────
+async function abrirDoc(id){
+  DOC_SEL = DOCS.find(d=>d.id===id); if(!DOC_SEL) return;
+  renderNav();
+  const s = DOC_SEL.atual?STMAP[DOC_SEL.atual.status]:null;
+  $('vCod').textContent = DOC_SEL.codigo;
+  $('vTit').textContent = DOC_SEL.titulo && DOC_SEL.titulo!==DOC_SEL.codigo ? DOC_SEL.titulo : '';
+  $('vSt').textContent  = s?s.rotulo:'sem revisão';
+  $('vSt').style.background = s?s.cor:'#94A3B8';
+  $('vtool').style.display='flex';
+  $('vEmpty').style.display='none';
+  $('pdfScroll').style.display='block';
+
+  // arquivo principal (PDF) da revisão atual
+  const rev = DOC_SEL.atual;
+  if(!rev){ pdfMsg('Este documento ainda não tem revisão com arquivo.'); return; }
+  const { data: arqs } = await sb.from('cde_arquivo_auria')
+    .select('nome,extensao,storage_path,eh_principal').eq('revisao_id',rev.id);
+  const pdf = (arqs||[]).find(a=>(a.extensao||'').toLowerCase()==='pdf') || (arqs||[]).find(a=>a.eh_principal);
+  if(!pdf){ pdfMsg('Sem PDF para visualizar. Baixe o arquivo em “Detalhes / status”.'); return; }
+  await carregarPdf(pdf.storage_path);
+}
+
+// ── Visualizador PDF (PDF.js) ───────────────────────────────────────────────
+let PDF=null, PDF_PG=1, PDF_ZOOM=1, PDF_FIT=true;
+function pdfMsg(t){ $('pdfCanvas').style.display='none'; const m=$('vLoad'); m.style.display='block'; m.textContent=t; $('vPg').textContent='—'; }
+async function carregarPdf(path){
+  pdfMsg('Abrindo prancha…');
+  try{
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300);
+    if(error) throw error;
+    const task = pdfjsLib.getDocument({ url: data.signedUrl });
+    PDF = await task.promise;
+    PDF_PG=1; PDF_FIT=true; PDF_ZOOM=1;
+    $('pdfCanvas').style.display='block'; $('vLoad').style.display='none';
+    await renderPdf();
+  }catch(e){ pdfMsg('Não foi possível abrir: '+((e&&e.message)||e)); }
+}
+async function renderPdf(){
+  if(!PDF) return;
+  const page = await PDF.getPage(PDF_PG);
+  const scroll=$('pdfScroll');
+  let scale;
+  if(PDF_FIT){
+    const vp1=page.getViewport({scale:1});
+    scale=Math.min((scroll.clientWidth-44)/vp1.width, (scroll.clientHeight-44)/vp1.height);
+    if(!isFinite(scale)||scale<=0) scale=1;
+    PDF_ZOOM=scale;
+  }else scale=PDF_ZOOM;
+  const vp=page.getViewport({scale});
+  const cv=$('pdfCanvas'), ctx=cv.getContext('2d');
+  const dpr=Math.min(window.devicePixelRatio||1, 2);
+  cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
+  cv.style.width=Math.floor(vp.width)+'px'; cv.style.height=Math.floor(vp.height)+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  await page.render({ canvasContext:ctx, viewport:vp }).promise;
+  $('vPg').textContent = PDF_PG+' / '+PDF.numPages;
+  $('vPrev').disabled = PDF_PG<=1; $('vNext').disabled = PDF_PG>=PDF.numPages;
+}
+function pdfZoom(dir){ if(!PDF) return; PDF_FIT=false; PDF_ZOOM=Math.max(.2,Math.min(6, PDF_ZOOM*(dir>0?1.25:.8))); renderPdf(); }
+function pdfFit(){ if(!PDF) return; PDF_FIT=true; renderPdf(); }
+function pdfPage(d){ if(!PDF) return; const n=PDF_PG+d; if(n>=1&&n<=PDF.numPages){ PDF_PG=n; renderPdf(); } }
+// pan por arraste
+(function(){ const s=$('pdfScroll'); let down=false,sx,sy,l,t;
+  s.addEventListener('mousedown',e=>{ down=true; s.classList.add('grab'); sx=e.clientX;sy=e.clientY;l=s.scrollLeft;t=s.scrollTop; });
+  window.addEventListener('mouseup',()=>{ down=false; s.classList.remove('grab'); });
+  window.addEventListener('mousemove',e=>{ if(!down)return; s.scrollLeft=l-(e.clientX-sx); s.scrollTop=t-(e.clientY-sy); });
+})();
+window.addEventListener('resize',()=>{ if(PDF&&PDF_FIT) renderPdf(); });
 
 // ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
 function valoresDe(c){ return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
 function parseCodigo(nomeArquivo){
-  const base = nomeArquivo.replace(/\.[^.]+$/,'');           // sem extensão
-  const ext  = (nomeArquivo.match(/\.([^.]+)$/)||[])[1] || '';
-  const sep  = CONV.separador || '-';
-  const campos = CONV.campos || [];
-  const partes = base.split(sep);
-  const vals={}; const erros=[]; let ok = campos.length>0;
+  const base=nomeArquivo.replace(/\.[^.]+$/,''); const ext=(nomeArquivo.match(/\.([^.]+)$/)||[])[1]||'';
+  const sep=CONV.separador||'-'; const campos=CONV.campos||[]; const partes=base.split(sep);
+  const vals={}; const erros=[]; let ok=campos.length>0;
   for(let i=0;i<campos.length;i++){
     const c=campos[i], p=partes[i];
-    if(p===undefined||p===''){ if(c.obrigatorio){ ok=false; erros.push('falta '+(c.rotulo||c.chave)); } continue; }
+    if(p===undefined||p===''){ if(c.obrigatorio){ok=false;erros.push('falta '+(c.rotulo||c.chave));} continue; }
     const vs=valoresDe(c);
-    const bom = vs? vs.includes(p) : (c.regex? (()=>{try{return new RegExp(c.regex).test(p)}catch(e){return true}})() : true);
-    if(!bom){ ok=false; erros.push((c.rotulo||c.chave)+': “'+p+'”'); }
+    const bom=vs?vs.includes(p):(c.regex?(()=>{try{return new RegExp(c.regex).test(p)}catch(e){return true}})():true);
+    if(!bom){ok=false;erros.push((c.rotulo||c.chave)+': “'+p+'”');}
     vals[c.chave]=p;
   }
   if(partes.length>campos.length){ ok=false; erros.push('partes a mais'); }
-  const chaveDe = m => (campos.find(c=>c.mapeia===m)||{}).chave;
-  const kRev=chaveDe('revisao'), kDisc=chaveDe('disciplina'), kNum=chaveDe('numero'), kLoc=chaveDe('local');
-  const revisao = kRev? vals[kRev] : null;
-  // código do DOCUMENTO = tudo menos a revisão (a revisão vira atributo, não identidade)
-  const codigoDoc = campos.filter(c=>c.chave!==kRev).map(c=>vals[c.chave]).filter(x=>x!=null).join(sep);
+  const chaveDe=m=>(campos.find(c=>c.mapeia===m)||{}).chave;
+  const kRev=chaveDe('revisao'),kDisc=chaveDe('disciplina'),kNum=chaveDe('numero'),kLoc=chaveDe('local');
+  const revisao=kRev?vals[kRev]:null;
+  const codigoDoc=campos.filter(c=>c.chave!==kRev).map(c=>vals[c.chave]).filter(x=>x!=null).join(sep);
   return { ok, erros, base, ext:ext.toLowerCase(), vals, revisao, codigoDoc,
            disciplina:kDisc?vals[kDisc]:null, numero:kNum?vals[kNum]:null, local:kLoc?vals[kLoc]:null };
 }
 
 // ── Recebimento em lote ─────────────────────────────────────────────────────
-function abrirReceber(){ LOTE=[]; $('prevWrap').style.display='none'; $('recMsg').textContent='';
-  $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
+function abrirReceber(){ LOTE=[]; $('prevWrap').style.display='none'; $('recMsg').textContent=''; $('progwrap').style.display='none'; $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
 function fecharReceber(){ $('ov').classList.remove('on'); }
-const drop=$('drop');
-['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
-['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
-drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
-
+(function(){ const drop=$('drop');
+  ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+  drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+})();
 function addFiles(fileList){
   const files=[...fileList]; if(!files.length) return;
-  // agrupa por base (código completo, incl. revisão) → PDF+DWG juntos
-  const grupos={};
-  LOTE.forEach(g=>grupos[g.base]=g);
+  const grupos={}; LOTE.forEach(g=>grupos[g.base]=g);
   for(const f of files){
-    const p=parseCodigo(f.name);
-    const key=p.base;
-    if(!grupos[key]){ grupos[key]={ base:key, parse:p, arquivos:[] }; LOTE.push(grupos[key]); }
-    if(!grupos[key].arquivos.some(a=>a.name===f.name && a.size===f.size)) grupos[key].arquivos.push(f);
+    const p=parseCodigo(f.name); const key=p.base;
+    if(!grupos[key]){ grupos[key]={base:key,parse:p,arquivos:[]}; LOTE.push(grupos[key]); }
+    if(!grupos[key].arquivos.some(a=>a.name===f.name&&a.size===f.size)) grupos[key].arquivos.push(f);
   }
   avaliarLote();
 }
 function limparLote(){ LOTE=[]; $('prevWrap').style.display='none'; $('btnConfirmar').disabled=true; $('recMsg').textContent=''; }
-
 function acaoDoGrupo(g){
-  if(!g.parse.ok) return {tipo:'err', txt:'Código fora do padrão'};
-  const doc = DOCS.find(d=>d.codigo===g.parse.codigoDoc);
-  if(!doc) return {tipo:'novo', txt:'Novo documento'};
-  if((doc.revs||[]).some(r=>r.revisao===g.parse.revisao)) return {tipo:'dup', txt:'Revisão já recebida', doc};
-  return {tipo:'rev', txt:'Nova revisão de existente', doc};
+  if(!g.parse.ok) return {tipo:'err',txt:'Código fora do padrão'};
+  const doc=DOCS.find(d=>d.codigo===g.parse.codigoDoc);
+  if(!doc) return {tipo:'novo',txt:'Novo documento'};
+  if((doc.revs||[]).some(r=>r.revisao===g.parse.revisao)) return {tipo:'dup',txt:'Revisão já recebida',doc};
+  return {tipo:'rev',txt:'Nova revisão de existente',doc};
 }
 function avaliarLote(){
-  const validos = LOTE.filter(g=>{ g.acao=acaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'; });
-  $('prevResumo').textContent = LOTE.length+' documento(s) · '+validos.length+' a registrar';
-  $('prev').innerHTML =
-    '<thead><tr><th>Código do documento</th><th>Disciplina</th><th>Rev.</th><th>Arquivos</th><th>Situação</th></tr></thead><tbody>'
-    + LOTE.map((g,i)=>{
-      const p=g.parse, a=g.acao;
-      const files = g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
-        return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
-      return `<tr>
-        <td><div class="cod">${esc(p.codigoDoc||g.base)}</div>
-            ${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
-        <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td>
-        <td class="cod">${esc(p.revisao||'—')}</td>
-        <td><div class="files">${files}</div></td>
-        <td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td>
-      </tr>`;
-    }).join('') + '</tbody>';
+  const validos=LOTE.filter(g=>{ g.acao=acaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'; });
+  $('prevResumo').textContent=LOTE.length+' documento(s) · '+validos.length+' a registrar';
+  $('prev').innerHTML='<thead><tr><th>Código do documento</th><th>Disciplina</th><th>Rev.</th><th>Arquivos</th><th>Situação</th></tr></thead><tbody>'
+    + LOTE.map(g=>{ const p=g.parse,a=g.acao;
+      const files=g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||''; return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
+      return `<tr><td><div class="cod">${esc(p.codigoDoc||g.base)}</div>${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
+        <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td><td class="cod">${esc(p.revisao||'—')}</td>
+        <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`;
+    }).join('')+'</tbody>';
   $('prevWrap').style.display='block';
-  $('btnConfirmar').disabled = validos.length===0;
+  $('btnConfirmar').disabled=validos.length===0;
 }
-
-async function sha256(file){
-  try{ const buf=await file.arrayBuffer();
-    const h=await crypto.subtle.digest('SHA-256', buf);
-    return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; }
-}
-
+async function sha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; } }
 async function confirmarLote(){
-  const alvos = LOTE.filter(g=> g.acao && (g.acao.tipo==='novo'||g.acao.tipo==='rev'));
-  if(!alvos.length) return;
+  const alvos=LOTE.filter(g=> g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev')); if(!alvos.length) return;
   const b=$('btnConfirmar'); b.disabled=true;
-  const totalFiles = alvos.reduce((s,g)=>s+g.arquivos.length,0);
-  let done=0;
+  const totalFiles=alvos.reduce((s,g)=>s+g.arquivos.length,0); let done=0;
   $('progwrap').style.display='block'; $('progbar').style.width='2%';
-  const prog = ()=>{ $('progbar').style.width = Math.max(2, Math.round(done/totalFiles*100))+'%'; };
-  let feito=0, falhas=0;
+  const prog=()=>{ $('progbar').style.width=Math.max(2,Math.round(done/totalFiles*100))+'%'; };
+  let feito=0,falhas=0;
   for(const g of alvos){
     try{
-      // 1) documento (upsert por empreendimento+codigo)
-      let docId = g.acao.doc ? g.acao.doc.id : null;
+      let docId=g.acao.doc?g.acao.doc.id:null;
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
           empreendimento_id:EMP_ID, codigo:g.parse.codigoDoc, titulo:g.parse.codigoDoc,
-          disciplina:g.parse.disciplina, campos:g.parse.vals,
-          numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
+          disciplina:g.parse.disciplina, campos:g.parse.vals, numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
         }).select('id').single();
         if(error) throw error; docId=d.id;
       }
-      // 2) revisão (estado RECEBIDO, status S0)
       const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
-        documento_id:docId, revisao:g.parse.revisao||'R00',
-        estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
+        documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
       }).select('id').single();
       if(er) throw er;
-      // 3) arquivos → storage (caminho IMUTÁVEL) + registro
       for(const f of g.arquivos){
         const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
-        $('recMsg').textContent = 'Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
-        const path = EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        const up = await sb.storage.from('cde').upload(path, f, {upsert:false, contentType:f.type||undefined});
+        $('recMsg').textContent='Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
+        const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
+        const up=await sb.storage.from('cde').upload(path,f,{upsert:false,contentType:f.type||undefined});
         if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
         await sb.from('cde_arquivo_auria').insert({
           revisao_id:rev.id, nome:f.name, extensao:ext.toLowerCase(), tamanho_bytes:f.size,
-          sha256: (f.size<10*1024*1024? await sha256(f): null),   // hash só p/ arquivos menores
-          storage_path:path, eh_principal:(ext.toLowerCase()==='pdf'),
-          visualizavel:(ext.toLowerCase()==='pdf')
+          sha256:(f.size<10*1024*1024?await sha256(f):null), storage_path:path,
+          eh_principal:(ext.toLowerCase()==='pdf'), visualizavel:(ext.toLowerCase()==='pdf')
         });
         done++; prog();
       }
-      // 4) auditoria
       await sb.from('cde_evento_auria').insert({
         revisao_id:rev.id, acao:'recebeu', para_status:'S0',
-        usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
-        nota:g.arquivos.length+' arquivo(s)'
+        usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:g.arquivos.length+' arquivo(s)'
       });
       feito++;
-    }catch(e){ falhas++; done += g.arquivos.length; prog(); console.warn('receber',g.base,e.message||e); }
+    }catch(e){ falhas++; done+=g.arquivos.length; prog(); console.warn('receber',g.base,e.message||e); }
   }
   $('progbar').style.width='100%';
-  $('recMsg').textContent = feito+' documento(s) recebido(s)'+(falhas?(' · '+falhas+' com falha'):'');
-  await carregarDocs(); render();
+  $('recMsg').textContent=feito+' documento(s) recebido(s)'+(falhas?(' · '+falhas+' com falha'):'');
+  await carregarDocs(); renderRail();
   if(!falhas){ setTimeout(()=>{ fecharReceber(); $('progwrap').style.display='none'; }, 1000); }
   b.disabled=false;
 }
 
-// ── Detalhe do documento: arquivos + fluxo de status ────────────────────────
-let DOC_ABERTO=null;
-
-// Próximas transições possíveis a partir de cada status (rótulo do botão).
+// ── Detalhe: revisões, arquivos, status ─────────────────────────────────────
 const TRANSICOES = {
-  S0:          [['S3','Enviar para análise'],['DEVOLVIDO','Devolver ao projetista']],
-  S3:          [['A1','Liberar para obra'],['B1','Liberar com ressalvas'],['DEVOLVIDO','Devolver'],['S0','Voltar p/ recebido']],
-  B1:          [['A1','Liberar para obra'],['DEVOLVIDO','Devolver']],
-  A1:          [['AS_BUILT','Marcar como as-built'],['S3','Reabrir análise']],
-  AS_BUILT:    [],
-  DEVOLVIDO:   [['S0','Reabrir']],
-  SUBSTITUIDO: []
+  S0:[['S3','Enviar para análise'],['DEVOLVIDO','Devolver ao projetista']],
+  S3:[['A1','Liberar para obra'],['B1','Liberar com ressalvas'],['DEVOLVIDO','Devolver'],['S0','Voltar p/ recebido']],
+  B1:[['A1','Liberar para obra'],['DEVOLVIDO','Devolver']],
+  A1:[['AS_BUILT','Marcar como as-built'],['S3','Reabrir análise']],
+  AS_BUILT:[], DEVOLVIDO:[['S0','Reabrir']], SUBSTITUIDO:[]
 };
+function fmtBytes(n){ if(!n)return''; const u=['B','KB','MB','GB'];let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+' '+u[i]; }
+function fmtData(s){ if(!s)return''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return''; } }
+function abrirDetalhes(){ if(!DOC_SEL) return; $('dCod').textContent=DOC_SEL.codigo; $('dTit').textContent=DOC_SEL.titulo||DOC_SEL.codigo; $('dBody').innerHTML='<div style="padding:20px;color:var(--mut)">Carregando…</div>'; $('ovDoc').classList.add('on'); renderDetalhe(); }
+function fecharDoc(){ $('ovDoc').classList.remove('on'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); } });
 
-function fmtBytes(n){ if(!n) return ''; const u=['B','KB','MB','GB']; let i=0,v=n;
-  while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+' '+u[i]; }
-function fmtData(s){ if(!s) return ''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
-
-async function abrirDoc(id){
-  DOC_ABERTO = DOCS.find(d=>d.id===id); if(!DOC_ABERTO) return;
-  $('dCod').textContent = DOC_ABERTO.codigo;
-  $('dTit').textContent = DOC_ABERTO.titulo || DOC_ABERTO.codigo;
-  $('dBody').innerHTML = '<div style="padding:24px;color:var(--mut)">Carregando revisões…</div>';
-  $('ovDoc').classList.add('on');
-  await renderDoc();
-}
-function fecharDoc(){ $('ovDoc').classList.remove('on'); DOC_ABERTO=null; }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); } });
-
-async function renderDoc(){
-  const d = DOC_ABERTO; if(!d) return;
-  // arquivos de todas as revisões do documento
-  const revIds = (d.revs||[]).map(r=>r.id);
-  let arqs = [];
-  if(revIds.length){
-    const { data } = await sb.from('cde_arquivo_auria')
-      .select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds);
-    arqs = data||[];
-  }
-  const porRev = {}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
-
-  const revs = (d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
+async function renderDetalhe(){
+  const d=DOC_SEL; if(!d) return;
+  const revIds=(d.revs||[]).map(r=>r.id); let arqs=[];
+  if(revIds.length){ const { data } = await sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds); arqs=data||[]; }
+  const porRev={}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
+  const revs=(d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
   $('dBody').innerHTML = revs.map((r,idx)=>{
-    const s = STMAP[r.status] || {rotulo:r.status, cor:'#64748B'};
-    const files = (porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
-    const filesHtml = files.length ? files.map(a=>`
-      <div class="afile">
-        <span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span>
-        <span class="nm">${esc(a.nome)}</span>
-        <span class="sz">${fmtBytes(a.tamanho_bytes)}</span>
-        <button class="btn sec sm" onclick="baixar('${a.id}','${esc(a.storage_path)}','${esc(a.nome)}')">Baixar</button>
-      </div>`).join('') : '<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
-
-    const trans = TRANSICOES[r.status] || [];
-    const podeAgir = idx===0 && r.status!=='SUBSTITUIDO';   // age na revisão mais recente
-    const actsHtml = podeAgir && trans.length ? `<div class="rev-acts"><span class="lbl">Mover para:</span>${
-      trans.map(([to,label])=>{
-        const cor = STMAP[to] ? STMAP[to].cor : 'var(--navy)';
-        return `<button class="btn sm" style="background:${cor};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`;
-      }).join('')}</div>` : '';
-
-    return `<div class="rev-item">
-      <div class="rev-top">
-        <span class="rv">${esc(r.revisao)}</span>
-        <span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span>
-        <span class="dt">recebida ${fmtData(r.recebido_em)}</span>
-      </div>
-      ${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}
-      <div class="rev-files">${filesHtml}</div>
-      ${actsHtml}
-    </div>`;
+    const s=STMAP[r.status]||{rotulo:r.status,cor:'#64748B'};
+    const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
+    const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
+    const trans=TRANSICOES[r.status]||[]; const podeAgir=idx===0&&r.status!=='SUBSTITUIDO';
+    const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
+    return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
   }).join('') || '<div style="padding:20px;color:var(--mut)">Sem revisões.</div>';
 }
-
-async function baixar(id, path, nome){
-  try{
-    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 120, { download: nome });
-    if(error) throw error;
-    window.open(data.signedUrl, '_blank');
-  }catch(e){ alert('Não foi possível gerar o link: '+((e&&e.message)||e)); }
+async function baixar(path,nome){
+  try{ const { data, error } = await sb.storage.from('cde').createSignedUrl(path,120,{download:nome}); if(error)throw error; window.open(data.signedUrl,'_blank'); }
+  catch(e){ alert('Não foi possível gerar o link: '+((e&&e.message)||e)); }
 }
-
-async function mudarStatus(revId, novo){
-  const est = (STMAP[novo] && STMAP[novo].estado) || 'RECEBIDO';
-  const upd = { status:novo, estado:est };
-  const agora = new Date().toISOString();
-
+async function mudarStatus(revId,novo){
+  const est=(STMAP[novo]&&STMAP[novo].estado)||'RECEBIDO'; const upd={status:novo,estado:est}; const agora=new Date().toISOString();
   if(novo==='S3'){ upd.analisado_por=USER.id; upd.analisado_em=agora; }
-  if(novo==='A1' || novo==='B1' || novo==='AS_BUILT'){ upd.aprovado_por=USER.id; upd.aprovado_em=agora; }
-  if(novo==='B1'){
-    const r = prompt('Descreva as ressalvas (pendências que a obra deve saber):','');
-    if(r===null) return; upd.ressalvas = r.trim();
-  }
-  if(novo==='DEVOLVIDO'){
-    const r = prompt('Motivo da devolução ao projetista:','');
-    if(r===null) return; upd.motivo_devolucao = r.trim();
-  }
-  const rev = (DOC_ABERTO.revs||[]).find(x=>x.id===revId);
-  const deStatus = rev ? rev.status : null;
-
+  if(['A1','B1','AS_BUILT'].includes(novo)){ upd.aprovado_por=USER.id; upd.aprovado_em=agora; }
+  if(novo==='B1'){ const r=prompt('Descreva as ressalvas (pendências que a obra deve saber):',''); if(r===null)return; upd.ressalvas=r.trim(); }
+  if(novo==='DEVOLVIDO'){ const r=prompt('Motivo da devolução ao projetista:',''); if(r===null)return; upd.motivo_devolucao=r.trim(); }
+  const rev=(DOC_SEL.revs||[]).find(x=>x.id===revId); const de=rev?rev.status:null;
   try{
-    const { error } = await sb.from('cde_revisao_auria').update(upd).eq('id',revId);
-    if(error) throw error;
-    // auditoria (o gatilho de substituição da revisão anterior roda no banco)
-    sb.from('cde_evento_auria').insert({
-      revisao_id:revId, acao:'status', de_status:deStatus, para_status:novo,
-      usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
-      nota: upd.ressalvas || upd.motivo_devolucao || null
-    }).then(()=>{},()=>{});
-    await carregarDocs();
-    DOC_ABERTO = DOCS.find(d=>d.id===DOC_ABERTO.id) || null;
-    if(DOC_ABERTO) await renderDoc(); else fecharDoc();
-    render();
-  }catch(e){
-    const m=(e&&e.message)||String(e);
-    alert(/permission|row-level|policy|42501/i.test(m) ? 'Sem permissão para alterar o status.' : 'Erro: '+m);
-  }
+    const { error } = await sb.from('cde_revisao_auria').update(upd).eq('id',revId); if(error) throw error;
+    sb.from('cde_evento_auria').insert({ revisao_id:revId, acao:'status', de_status:de, para_status:novo, usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:upd.ressalvas||upd.motivo_devolucao||null }).then(()=>{},()=>{});
+    await carregarDocs(); DOC_SEL=DOCS.find(d=>d.id===DOC_SEL.id)||null; renderRail();
+    if(DOC_SEL){ await renderDetalhe(); abrirDoc(DOC_SEL.id); } else fecharDoc();
+  }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para alterar o status.':'Erro: '+m); }
 }
 
 boot();
