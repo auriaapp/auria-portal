@@ -73,20 +73,20 @@ const P_GESTAO   = 'https://auria.solutions/auria_gerencia.html';
 const P_ANALISTA = 'https://auria.solutions/auria_analista.html';
 const sb      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
+let PENDING = null;   // {token_hash, type} — só é validado quando o usuário define a senha
+
 async function init(){
   // ── Fluxo NOVO: link do e-mail aponta para o NOSSO domínio, com token_hash.
-  // Mantém remetente e link no mesmo domínio (auria.solutions), o que evita
-  // que filtros corporativos tratem o convite como phishing.
   const qs    = new URLSearchParams(window.location.search);
   const th    = qs.get('token_hash');
   const qtype = qs.get('type');
   if(th && ['invite','recovery'].includes(qtype)){
-    const { error } = await sb.auth.verifyOtp({ token_hash: th, type: qtype });
-    if(error){
-      document.getElementById('loadWrap').style.display    = 'none';
-      document.getElementById('invalidWrap').style.display = 'block';
-      return;
-    }
+    // NÃO valida agora. Filtros de e-mail corporativo (Microsoft Safe Links/
+    // Defender) ABREM o link automaticamente para escanear — e isso consumiria
+    // o token de uso único antes de a pessoa clicar ("expirado" sem ser).
+    // Guardamos o token e só o validamos quando o usuário enviar a senha, o
+    // que um scanner não faz.
+    PENDING = { token_hash: th, type: qtype };
     document.getElementById('loadWrap').style.display = 'none';
     document.getElementById('formWrap').style.display = 'block';
     return;
@@ -152,6 +152,18 @@ async function ativar(){
 
   const btn = document.getElementById('btnAtivar');
   btn.disabled = true; btn.textContent = 'Ativando...';
+
+  // Fluxo novo: só AGORA (ação humana) consumimos o token de uso único.
+  if(PENDING){
+    const { error:ev } = await sb.auth.verifyOtp({ token_hash: PENDING.token_hash, type: PENDING.type });
+    if(ev){
+      errBox.textContent = 'Este link expirou ou já foi usado. Peça um novo convite ao administrador.';
+      errBox.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Ativar conta e entrar no painel';
+      return;
+    }
+    PENDING = null;
+  }
 
   const { error } = await sb.auth.updateUser({ password: pass1 });
 
