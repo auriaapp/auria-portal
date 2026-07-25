@@ -64,6 +64,13 @@
   .navpanel{flex:1;min-width:0;overflow-y:auto;padding:12px}
   .navpanel h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);
                margin:2px 0 10px;font-weight:800}
+  .navtog{display:flex;gap:6px;margin-bottom:12px}
+  .navtog button{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt2);
+                 border-radius:8px;padding:6px 8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .navtog button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .grp-back{font-size:12px;color:var(--navy);cursor:pointer;margin-bottom:8px;font-weight:700}
+  .fdoc .gx{background:none;border:none;color:var(--mut);cursor:pointer;font-size:16px;line-height:1;padding:0 4px}
+  .fdoc .gx:hover{color:var(--err)}
   .nav-hint{color:var(--mut);font-size:12.5px;padding:10px 4px;line-height:1.5}
   .folder{border:1px solid var(--line);border-radius:9px;margin-bottom:8px;overflow:hidden}
   .folder-h{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:var(--panel2)}
@@ -175,6 +182,7 @@
       <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
       <button class="tb" id="vNext" onclick="pdfPage(1)">▶</button>
       <span style="width:8px"></span>
+      <button class="tb" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
     <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
@@ -245,6 +253,7 @@ try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.ad
 const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null, DOC_SEL=null;
+let GRUPOS=[], GRUPO_SEL=null, NAV_MODE='disc';   // navegação: 'disc' (disciplina/etapa) ou 'grupo'
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 async function boot(){
@@ -269,9 +278,21 @@ async function boot(){
   }
   $('btnReceber').style.display='';
   await carregarDocs();
+  await carregarGrupos();
   $('load').style.display='none';
   $('main').style.display='flex';
   renderRail();
+}
+
+async function carregarGrupos(){
+  try{
+    const { data: gs } = await sb.from('cde_grupo_auria').select('*').eq('empreendimento_id',EMP_ID).order('nome');
+    const ids=(gs||[]).map(g=>g.id);
+    let itens=[];
+    if(ids.length){ const { data: it } = await sb.from('cde_grupo_item_auria').select('grupo_id,documento_id').in('grupo_id',ids); itens=it||[]; }
+    const porG={}; itens.forEach(i=>{ (porG[i.grupo_id]=porG[i.grupo_id]||[]).push(i.documento_id); });
+    GRUPOS=(gs||[]).map(g=>({ ...g, docIds:(porG[g.id]||[]) }));
+  }catch(e){ GRUPOS=[]; }
 }
 
 // Campo da etapa: prioriza o mapeamento; se não houver, cai na chave "fase".
@@ -315,34 +336,106 @@ function renderRail(){
   if(SEL_DISC && !discs.includes(SEL_DISC)) SEL_DISC=null;
   renderNav();
 }
-function selDisc(d){ SEL_DISC = (SEL_DISC===d?null:d); renderRail(); }
+function selDisc(d){ SEL_DISC = (SEL_DISC===d?null:d); NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
 
 function renderNav(){
   const p=$('navPanel');
-  if(!DOCS.length){ p.innerHTML='<div class="nav-hint">Nenhum documento ainda. Clique em <b>Receber arquivos</b> para registrar a primeira entrega.</div>'; return; }
-  if(!SEL_DISC){ p.innerHTML='<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>'; return; }
+  const toggle = `<div class="navtog">
+    <button class="${NAV_MODE==='disc'?'on':''}" onclick="setNavMode('disc')">Disciplinas</button>
+    <button class="${NAV_MODE==='grupo'?'on':''}" onclick="setNavMode('grupo')">Grupos${GRUPOS.length?(' ('+GRUPOS.length+')'):''}</button>
+  </div>`;
+  if(!DOCS.length){ p.innerHTML=toggle+'<div class="nav-hint">Nenhum documento ainda. Clique em <b>Receber arquivos</b> para registrar a primeira entrega.</div>'; return; }
+  p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
+}
+function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); renderNav(); renderRail(); }
 
+let _etapaAberta=null;
+function toggleEtapa(et){ _etapaAberta = (_etapaAberta===et?null:et); renderNav(); }
+
+function navDisciplina(){
+  if(!SEL_DISC) return '<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>';
   const doDisc = DOCS.filter(d=>d.disciplina===SEL_DISC);
-  // etapas presentes (ordem do vocabulário de fase)
   const ordemFase = (faseCampo()||{}).dominio || [];
   const idx = v => { const i=ordemFase.findIndex(x=>((typeof x==='object')?x.v:x)===v); return i<0?99:i; };
   const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
-
-  p.innerHTML = `<h3>${esc(discLabel(SEL_DISC))}</h3>` + etapas.map(et=>{
+  return `<h3>${esc(discLabel(SEL_DISC))}</h3>` + etapas.map(et=>{
     const ds=doDisc.filter(d=>(d.etapa||'—')===et).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     const open = et===_etapaAberta;
-    return `<div class="folder ${open?'open':''}" id="fold-${esc(et)}">
+    return `<div class="folder ${open?'open':''}">
       <div class="folder-h" onclick="toggleEtapa('${esc(et)}')">
-        <span class="fic">${open?'📂':'📁'}</span>
-        <span class="fnm">${esc(faseLabel(et))}</span>
-        <span class="fct">${ds.length}</span>
-      </div>
-      <div class="folder-b">${ds.map(cardFdoc).join('')}</div>
-    </div>`;
+        <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${esc(faseLabel(et))}</span><span class="fct">${ds.length}</span>
+      </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
   }).join('');
 }
-let _etapaAberta=null;
-function toggleEtapa(et){ _etapaAberta = (_etapaAberta===et?null:et); renderNav(); }
+
+// ── Grupos: coleções com nome próprio (não tocam no código; camada opcional) ──
+function navGrupos(){
+  if(GRUPO_SEL){
+    const g=GRUPOS.find(x=>x.id===GRUPO_SEL);
+    if(!g) { GRUPO_SEL=null; return navGrupos(); }
+    const ds=DOCS.filter(d=>g.docIds.includes(d.id)).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    return `<div class="grp-back" onclick="GRUPO_SEL=null;renderNav()">← Grupos</div>
+      <h3>${esc(g.nome)}</h3>
+      ${g.descricao?`<div class="nav-hint" style="padding:0 0 8px">${esc(g.descricao)}</div>`:''}
+      ${ds.length? ds.map(d=>cardFdocGrupo(d,g.id)).join('')
+        : '<div class="nav-hint">Grupo vazio. Abra um documento e use <b>＋ Grupo</b> na barra para incluí-lo aqui.</div>'}
+      <div style="margin-top:12px;display:flex;gap:7px">
+        <button class="btn sec sm" onclick="renomearGrupo('${g.id}')">Renomear</button>
+        <button class="btn sec sm" style="color:var(--err)" onclick="apagarGrupo('${g.id}')">Apagar grupo</button>
+      </div>`;
+  }
+  return `<div style="margin-bottom:10px"><button class="btn sec sm" onclick="novoGrupo()">＋ Novo grupo</button></div>` +
+    (GRUPOS.length? GRUPOS.map(g=>`<div class="folder"><div class="folder-h" onclick="GRUPO_SEL='${g.id}';renderNav()">
+        <span class="fic">🗂️</span><span class="fnm">${esc(g.nome)}</span><span class="fct">${g.docIds.length}</span></div></div>`).join('')
+      : '<div class="nav-hint">Nenhum grupo ainda. Grupos são coleções livres (ex.: “Pacote aprovação prefeitura”) — não mudam o código dos arquivos.</div>');
+}
+function cardFdocGrupo(d,gid){
+  const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
+    <span class="dot" style="background:${cor}" onclick="abrirDoc('${d.id}')"></span>
+    <span style="flex:1;min-width:0" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')}</span></span>
+    <button class="gx" title="Remover do grupo" onclick="removeDoGrupo('${gid}','${d.id}')">×</button>
+  </div>`;
+}
+
+async function novoGrupo(){
+  const nome=prompt('Nome do grupo (ex.: “Pacote aprovação prefeitura”):',''); if(nome===null) return;
+  const n=nome.trim(); if(!n) return;
+  try{
+    const { data, error } = await sb.from('cde_grupo_auria').insert({ empreendimento_id:EMP_ID, nome:n, criado_por:USER.id }).select('*').single();
+    if(error) throw error;
+    await carregarGrupos(); GRUPO_SEL=data.id; renderNav();
+  }catch(e){ alert(/duplicate|unique/i.test(e.message||'')?'Já existe um grupo com esse nome.':'Erro: '+(e.message||e)); }
+}
+async function renomearGrupo(id){
+  const g=GRUPOS.find(x=>x.id===id); if(!g) return;
+  const nome=prompt('Novo nome do grupo:',g.nome); if(nome===null) return; const n=nome.trim(); if(!n) return;
+  try{ const { error } = await sb.from('cde_grupo_auria').update({nome:n}).eq('id',id); if(error) throw error; await carregarGrupos(); renderNav(); }
+  catch(e){ alert('Erro: '+(e.message||e)); }
+}
+async function apagarGrupo(id){
+  if(!confirm('Apagar este grupo? Os documentos NÃO são apagados — só a coleção.')) return;
+  try{ const { error } = await sb.from('cde_grupo_auria').delete().eq('id',id); if(error) throw error; GRUPO_SEL=null; await carregarGrupos(); renderNav(); }
+  catch(e){ alert('Erro: '+(e.message||e)); }
+}
+async function removeDoGrupo(gid,did){
+  try{ await sb.from('cde_grupo_item_auria').delete().eq('grupo_id',gid).eq('documento_id',did); await carregarGrupos(); renderNav(); }catch(e){ alert('Erro: '+(e.message||e)); }
+}
+async function addAoGrupo(){
+  if(!DOC_SEL){ alert('Abra um documento primeiro.'); return; }
+  if(!GRUPOS.length){ if(confirm('Ainda não há grupos. Criar um agora?')) await novoGrupo(); return; }
+  const lista = GRUPOS.map((g,i)=>(i+1)+') '+g.nome).join('\n');
+  const r=prompt('Adicionar “'+DOC_SEL.codigo+'” a qual grupo? (número, ou nome de um novo grupo)\n\n'+lista,''); if(r===null) return;
+  const t=r.trim(); if(!t) return;
+  let g = /^\d+$/.test(t) ? GRUPOS[+t-1] : GRUPOS.find(x=>x.nome.toLowerCase()===t.toLowerCase());
+  try{
+    if(!g){ const { data, error } = await sb.from('cde_grupo_auria').insert({empreendimento_id:EMP_ID,nome:t,criado_por:USER.id}).select('*').single(); if(error) throw error; g=data; }
+    await sb.from('cde_grupo_item_auria').upsert({ grupo_id:g.id, documento_id:DOC_SEL.id }, { onConflict:'grupo_id,documento_id' });
+    await carregarGrupos(); if(NAV_MODE==='grupo') renderNav();
+    $('recMsg2')&&($('recMsg2').textContent='');
+    alert('“'+DOC_SEL.codigo+'” adicionado ao grupo “'+g.nome+'”.');
+  }catch(e){ alert('Erro: '+(e.message||e)); }
+}
 
 function cardFdoc(d){
   const s=d.atual?STMAP[d.atual.status]:null;
