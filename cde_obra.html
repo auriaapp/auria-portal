@@ -150,6 +150,13 @@
   .rev-acts{padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
   .rev-acts .lbl{font-size:11.5px;color:var(--mut);margin-right:3px}
   .ressalva{font-size:12px;color:var(--warn);border:1px solid var(--line);border-radius:8px;padding:7px 11px;margin:0 14px 10px}
+  .det-recep{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:14px}
+  .det-log{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+  .det-log h4{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px;font-weight:800}
+  .logrow{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .logrow .lg-ic{font-weight:600}
+  .logrow .lg-me{color:var(--mut);font-size:11.5px}
+  .logrow .lg-dt{grid-row:1/3;align-self:center;color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
   .load{flex:1;display:flex;align-items:center;justify-content:center;color:var(--mut)}
 </style>
 </head>
@@ -654,18 +661,58 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ fecharDoc(); fech
 
 async function renderDetalhe(){
   const d=DOC_SEL; if(!d) return;
-  const revIds=(d.revs||[]).map(r=>r.id); let arqs=[];
-  if(revIds.length){ const { data } = await sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds); arqs=data||[]; }
+  const revIds=(d.revs||[]).map(r=>r.id); let arqs=[], evs=[];
+  if(revIds.length){
+    const [ra, re] = await Promise.all([
+      sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds),
+      sb.from('cde_evento_auria').select('revisao_id,acao,de_status,para_status,usuario_nome,nota,quando').in('revisao_id',revIds).order('quando',{ascending:false}).limit(40)
+    ]);
+    arqs=ra.data||[]; evs=re.data||[];
+  }
   const porRev={}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
   const revs=(d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
-  $('dBody').innerHTML = revs.map((r,idx)=>{
+
+  // Ação de recepção (avisa o projetista da disciplina)
+  const topo = `<div class="det-recep">
+      <button class="btn sm" onclick="confirmarRecepcao()">✓ Confirmar recebimento ao projetista</button>
+      <span style="font-size:11.5px;color:var(--mut)">avisa o projetista da disciplina que os arquivos chegaram</span>
+    </div>`;
+
+  const revsHtml = revs.map((r,idx)=>{
     const s=STMAP[r.status]||{rotulo:r.status,cor:'#64748B'};
     const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
     const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
     const trans=TRANSICOES[r.status]||[]; const podeAgir=idx===0&&r.status!=='SUBSTITUIDO';
     const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
     return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
-  }).join('') || '<div style="padding:20px;color:var(--mut)">Sem revisões.</div>';
+  }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
+
+  // Histórico / log do documento
+  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada' };
+  const logHtml = evs.length ? `<div class="det-log"><h4>Histórico</h4>${evs.map(e=>{
+      let txt=ACAO[e.acao]||e.acao;
+      if(e.acao==='status') txt='🔁 '+(STMAP[e.de_status]?STMAP[e.de_status].rotulo:e.de_status||'')+' → '+(STMAP[e.para_status]?STMAP[e.para_status].rotulo:e.para_status||'');
+      return `<div class="logrow"><span class="lg-ic">${esc(txt)}</span><span class="lg-me">${esc(e.usuario_nome||'')}${e.nota?(' · '+esc(e.nota)):''}</span><span class="lg-dt">${fmtData(e.quando)}</span></div>`;
+    }).join('')}</div>` : '';
+
+  $('dBody').innerHTML = topo + revsHtml + logHtml;
+}
+async function confirmarRecepcao(){
+  if(!DOC_SEL) return;
+  const disc=discLabel(DOC_SEL.disciplina)||'—';
+  if(!confirm('Enviar confirmação de recebimento ao projetista da disciplina "'+disc+'"?')) return;
+  try{
+    const { data, error } = await sb.functions.invoke('notify-cde-recepcao', { body:{ documento_id:DOC_SEL.id, disciplina_label:disc } });
+    if(error){ let m=error.message; try{ const jb=await error.context.json(); if(jb&&jb.error)m=jb.error; }catch(_){} throw new Error(m); }
+    if(data && data.enviados>0){
+      const rev=DOC_SEL.atual;
+      if(rev) await sb.from('cde_evento_auria').insert({ revisao_id:rev.id, acao:'recepcao', usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:'Avisado o projetista ('+data.enviados+')' });
+      alert('Recepção confirmada e projetista avisado ('+data.enviados+' destinatário(s)).');
+      renderDetalhe();
+    }else{
+      alert((data&&data.aviso)||'Nenhum projetista cadastrado para essa disciplina. Cadastre-o no painel do analista (Fornecedores).');
+    }
+  }catch(e){ alert('Erro: '+((e&&e.message)||e)); }
 }
 async function baixar(path,nome){
   try{ const { data, error } = await sb.storage.from('cde').createSignedUrl(path,120,{download:nome}); if(error)throw error; window.open(data.signedUrl,'_blank'); }
