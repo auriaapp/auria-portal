@@ -58,6 +58,14 @@
   .vempty .big{font-size:40px}
   .vmsg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;
         font-size:14px;text-align:center;background:rgba(15,23,42,.7);padding:14px 20px;border-radius:10px}
+  #dxfWrap{flex:1;position:relative;background:#20262f;overflow:hidden}
+  #dxfWrap canvas{display:block}
+  .vmsg2{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:13.5px;
+         text-align:center;background:rgba(15,23,42,.75);padding:14px 20px;border-radius:10px;max-width:80%;line-height:1.5}
+  .vfmt{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .vfmt button{background:var(--panel2);border:none;color:var(--txt2);padding:5px 12px;font-size:12px;
+               font-weight:700;cursor:pointer;font-family:inherit}
+  .vfmt button.on{background:var(--navy);color:#fff}
 
   /* ── Coluna direita: navegação ──────────────────────────── */
   .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line)}
@@ -179,20 +187,25 @@
     <div class="vtool" id="vtool" style="display:none">
       <span class="cod" id="vCod"></span>
       <span class="st" id="vSt"></span>
+      <span class="vfmt" id="vFmt" style="display:none"></span>
       <span class="tit" id="vTit"></span>
       <span class="sp"></span>
-      <button class="tb" onclick="pdfZoom(-1)" title="Diminuir">−</button>
-      <button class="tb" onclick="pdfFit()" title="Ajustar à tela">Ajustar</button>
-      <button class="tb" onclick="pdfZoom(1)" title="Aumentar">+</button>
-      <span style="width:8px"></span>
-      <button class="tb" id="vPrev" onclick="pdfPage(-1)">◀</button>
-      <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
-      <button class="tb" id="vNext" onclick="pdfPage(1)">▶</button>
+      <span id="pdfCtrls" style="display:inline-flex;align-items:center;gap:9px">
+        <button class="tb" onclick="pdfZoom(-1)" title="Diminuir">−</button>
+        <button class="tb" onclick="pdfFit()" title="Ajustar à tela">Ajustar</button>
+        <button class="tb" onclick="pdfZoom(1)" title="Aumentar">+</button>
+        <span style="width:8px"></span>
+        <button class="tb" id="vPrev" onclick="pdfPage(-1)">◀</button>
+        <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
+        <button class="tb" id="vNext" onclick="pdfPage(1)">▶</button>
+      </span>
+      <span id="dxfHint" class="tit" style="display:none">role/arraste para navegar</span>
       <span style="width:8px"></span>
       <button class="tb" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
     <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
+    <div id="dxfWrap" style="display:none"></div>
     <div class="vempty" id="vEmpty">
       <div class="big">🗂️</div>
       <div><b>Selecione um documento</b> na coluna à direita para visualizar.</div>
@@ -454,6 +467,7 @@ function cardFdoc(d){
 }
 
 // ── Abrir documento no canvas ───────────────────────────────────────────────
+let VIEW_FILES={}, VIEW_FMT=null;
 async function abrirDoc(id){
   DOC_SEL = DOCS.find(d=>d.id===id); if(!DOC_SEL) return;
   renderNav();
@@ -464,16 +478,62 @@ async function abrirDoc(id){
   $('vSt').style.background = s?s.cor:'#94A3B8';
   $('vtool').style.display='flex';
   $('vEmpty').style.display='none';
-  $('pdfScroll').style.display='block';
 
-  // arquivo principal (PDF) da revisão atual
+  // arquivos visualizáveis (PDF, DXF) da revisão atual
+  VIEW_FILES={};
   const rev = DOC_SEL.atual;
-  if(!rev){ pdfMsg('Este documento ainda não tem revisão com arquivo.'); return; }
-  const { data: arqs } = await sb.from('cde_arquivo_auria')
-    .select('nome,extensao,storage_path,eh_principal').eq('revisao_id',rev.id);
-  const pdf = (arqs||[]).find(a=>(a.extensao||'').toLowerCase()==='pdf') || (arqs||[]).find(a=>a.eh_principal);
-  if(!pdf){ pdfMsg('Sem PDF para visualizar. Baixe o arquivo em “Detalhes / status”.'); return; }
-  await carregarPdf(pdf.storage_path);
+  if(rev){
+    const { data: arqs } = await sb.from('cde_arquivo_auria')
+      .select('nome,extensao,storage_path,eh_principal').eq('revisao_id',rev.id);
+    (arqs||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
+      if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome }; });
+  }
+  renderFmtToggle();
+  const fmt = VIEW_FILES.pdf ? 'pdf' : (VIEW_FILES.dxf ? 'dxf' : null);
+  if(!fmt){
+    $('pdfScroll').style.display='block'; $('dxfWrap').style.display='none';
+    $('pdfCtrls').style.display='none'; $('dxfHint').style.display='none';
+    pdfMsg(rev?'Sem PDF nem DXF para visualizar. Baixe o arquivo em “Detalhes / status”.'
+              :'Este documento ainda não tem revisão com arquivo.');
+    return;
+  }
+  await mostrarFormato(fmt);
+}
+function renderFmtToggle(){
+  const el=$('vFmt'); const fmts=['pdf','dxf'].filter(f=>VIEW_FILES[f]);
+  if(fmts.length>1){ el.style.display='inline-flex';
+    el.innerHTML=fmts.map(f=>`<button class="${VIEW_FMT===f?'on':''}" onclick="mostrarFormato('${f}')">${f.toUpperCase()}</button>`).join(''); }
+  else { el.style.display='none'; }
+}
+async function mostrarFormato(fmt){
+  VIEW_FMT=fmt; renderFmtToggle();
+  const isPdf = fmt==='pdf';
+  $('pdfScroll').style.display = isPdf?'block':'none';
+  $('dxfWrap').style.display   = isPdf?'none':'block';
+  $('pdfCtrls').style.display  = isPdf?'inline-flex':'none';
+  $('dxfHint').style.display   = isPdf?'none':'inline';
+  if(isPdf) await carregarPdf(VIEW_FILES.pdf.path);
+  else await carregarDxf(VIEW_FILES.dxf.path);
+}
+
+// ── Visualizador DXF (dxf-viewer, three.js) — carregado sob demanda ─────────
+let DXF_LIB=null, DXFV=null;
+async function carregarDxf(path){
+  const box=$('dxfWrap');
+  box.innerHTML='<div class="vmsg2">Abrindo DXF…</div>';
+  try{
+    if(!DXF_LIB) DXF_LIB = await import('https://esm.sh/dxf-viewer@1.0.48');
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300);
+    if(error) throw error;
+    try{ if(DXFV) DXFV.Destroy(); }catch(e){}
+    box.innerHTML='';
+    DXFV = new DXF_LIB.DxfViewer(box, { autoResize:true, colorCorrection:true });
+    await DXFV.Load({ url:data.signedUrl, fonts:[], workerFactory:null, progressCbk:null });
+  }catch(e){
+    box.innerHTML='<div class="vmsg2">Não foi possível renderizar o DXF: '+esc((e&&e.message)||e)
+      +'<br><br>O arquivo está guardado — baixe em “Detalhes / status”.</div>';
+    console.warn('dxf', e);
+  }
 }
 
 // ── Visualizador PDF (PDF.js) ───────────────────────────────────────────────
