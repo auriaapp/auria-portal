@@ -71,7 +71,9 @@
   .modal-h button.x{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;line-height:1}
   .modal-b{padding:18px 20px;overflow-y:auto}
   .modal-f{padding:13px 20px;border-top:1px solid var(--line);display:flex;align-items:center;gap:11px}
-  .modal-f .msg{flex:1;font-size:12.5px;color:var(--mut)}
+  .modal-f .msg{font-size:12.5px;color:var(--mut);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .prog{height:7px;background:var(--panel2);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .prog>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
 
   .drop{border:2px dashed var(--line);border-radius:12px;padding:34px 20px;text-align:center;
         color:var(--mut);cursor:pointer;transition:.12s}
@@ -164,7 +166,10 @@
       </div>
     </div>
     <div class="modal-f">
-      <span class="msg" id="recMsg"></span>
+      <div style="flex:1;min-width:0">
+        <div class="prog" id="progwrap" style="display:none;margin-bottom:6px"><i id="progbar"></i></div>
+        <span class="msg" id="recMsg"></span>
+      </div>
       <button class="btn sec" onclick="fecharReceber()">Cancelar</button>
       <button class="btn pri" id="btnConfirmar" onclick="confirmarLote()" disabled>Registrar recebimento</button>
     </div>
@@ -386,9 +391,12 @@ async function confirmarLote(){
   const alvos = LOTE.filter(g=> g.acao && (g.acao.tipo==='novo'||g.acao.tipo==='rev'));
   if(!alvos.length) return;
   const b=$('btnConfirmar'); b.disabled=true;
+  const totalFiles = alvos.reduce((s,g)=>s+g.arquivos.length,0);
+  let done=0;
+  $('progwrap').style.display='block'; $('progbar').style.width='2%';
+  const prog = ()=>{ $('progbar').style.width = Math.max(2, Math.round(done/totalFiles*100))+'%'; };
   let feito=0, falhas=0;
   for(const g of alvos){
-    $('recMsg').textContent = 'Enviando '+(feito+1)+'/'+alvos.length+': '+g.parse.codigoDoc+'…';
     try{
       // 1) documento (upsert por empreendimento+codigo)
       let docId = g.acao.doc ? g.acao.doc.id : null;
@@ -409,15 +417,17 @@ async function confirmarLote(){
       // 3) arquivos → storage (caminho IMUTÁVEL) + registro
       for(const f of g.arquivos){
         const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+        $('recMsg').textContent = 'Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
         const path = EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
         const up = await sb.storage.from('cde').upload(path, f, {upsert:false, contentType:f.type||undefined});
         if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
         await sb.from('cde_arquivo_auria').insert({
           revisao_id:rev.id, nome:f.name, extensao:ext.toLowerCase(), tamanho_bytes:f.size,
-          sha256: (f.size<25*1024*1024? await sha256(f): null),
+          sha256: (f.size<10*1024*1024? await sha256(f): null),   // hash só p/ arquivos menores
           storage_path:path, eh_principal:(ext.toLowerCase()==='pdf'),
           visualizavel:(ext.toLowerCase()==='pdf')
         });
+        done++; prog();
       }
       // 4) auditoria
       await sb.from('cde_evento_auria').insert({
@@ -426,11 +436,12 @@ async function confirmarLote(){
         nota:g.arquivos.length+' arquivo(s)'
       });
       feito++;
-    }catch(e){ falhas++; console.warn('receber',g.base,e.message||e); }
+    }catch(e){ falhas++; done += g.arquivos.length; prog(); console.warn('receber',g.base,e.message||e); }
   }
-  $('recMsg').textContent = feito+' recebido(s)'+(falhas?(' · '+falhas+' falha(s)'):'');
+  $('progbar').style.width='100%';
+  $('recMsg').textContent = feito+' documento(s) recebido(s)'+(falhas?(' · '+falhas+' com falha'):'');
   await carregarDocs(); render();
-  if(!falhas){ setTimeout(()=>{ fecharReceber(); }, 900); }
+  if(!falhas){ setTimeout(()=>{ fecharReceber(); $('progwrap').style.display='none'; }, 1000); }
   b.disabled=false;
 }
 
