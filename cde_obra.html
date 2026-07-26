@@ -640,48 +640,55 @@ async function abrirPagina(){
   PDF_FIT_ZOOM=Math.min((scroll.clientWidth-44)/PDF_BASE_W, (scroll.clientHeight-44)/PDF_BASE_H);
   if(!isFinite(PDF_FIT_ZOOM)||PDF_FIT_ZOOM<=0) PDF_FIT_ZOOM=1;
   PDF_ZOOM=PDF_FIT_ZOOM;
-  // Rasteriza numa escala GENEROSA: o dobro do "fit" e no mínimo 1×, sempre
-  // multiplicado pelo devicePixelRatio. Assim linhas finas ficam nítidas mesmo
-  // ao ampliar sem re-render.
-  await renderNaEscala(Math.max(PDF_FIT_ZOOM*2, 1));
   aplicarZoom();
+  // Rasteriza na escala EXATA da tela × DPR — nada de super-amostragem que o
+  // browser depois reduziria (aí que vinham as linhas grossas por interpolação).
+  await renderNaEscala(PDF_ZOOM);
   $('pdfCanvas').style.display='block'; $('vLoad').style.display='none';
   $('vPg').textContent = PDF_PG+' / '+PDF.numPages;
   $('vPrev').disabled = PDF_PG<=1; $('vNext').disabled = PDF_PG>=PDF.numPages;
 }
 
+// Rasteriza em CANVAS OFFSCREEN e faz swap atômico no visível: nunca há um
+// frame branco no meio do render — some o "piscar" e o layout/scroll ficam
+// intocados até a nova página estar pronta.
+let _renderTok=0;
 async function renderNaEscala(scale){
   if(!PDF_PAGE) return;
-  PDF_RENDER_SCALE=scale;
+  const tok=++_renderTok;                    // cancela o resultado se outro render entrou
   const dpr=Math.min(window.devicePixelRatio||1, 2);
   const vp=PDF_PAGE.getViewport({scale:scale*dpr});
-  const cv=$('pdfCanvas'), ctx=cv.getContext('2d');
-  cv.width=Math.floor(vp.width); cv.height=Math.floor(vp.height);
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
-  await PDF_PAGE.render({ canvasContext:ctx, viewport:vp, background:'#fff' }).promise;
+  const off=document.createElement('canvas');
+  off.width=Math.max(1,Math.floor(vp.width));
+  off.height=Math.max(1,Math.floor(vp.height));
+  const octx=off.getContext('2d', { alpha:false });
+  octx.fillStyle='#fff'; octx.fillRect(0,0,off.width,off.height);
+  try{ await PDF_PAGE.render({ canvasContext:octx, viewport:vp, background:'#fff' }).promise; }
+  catch(e){ return; }
+  if(tok!==_renderTok) return;               // usuário deu mais zoom — descarta este
+  const cv=$('pdfCanvas'); const ctx=cv.getContext('2d', { alpha:false });
+  cv.width=off.width; cv.height=off.height;
+  ctx.drawImage(off, 0, 0);
+  PDF_RENDER_SCALE=scale;
 }
 
-// Aplica o zoom lógico só mexendo no tamanho CSS do canvas: o browser interpola
-// e o pan segue funcionando via scrollLeft/Top do container.
+// Aplica o zoom lógico só mexendo no tamanho CSS do canvas: o browser
+// interpola (pode ficar borrado 150ms) até o re-render nítido chegar.
 function aplicarZoom(){
   const cv=$('pdfCanvas');
   cv.style.width  = Math.round(PDF_BASE_W*PDF_ZOOM)+'px';
   cv.style.height = Math.round(PDF_BASE_H*PDF_ZOOM)+'px';
 }
 
-// Se o zoom subiu bem acima da rasterização atual, agenda re-render nítido
-// (debounced, para não bater no worker a cada tick da roda).
+// Re-render depois que o usuário para de girar a roda: rasteriza no zoom
+// exato — nada de folga que engrossaria as linhas por redução do browser.
 function agendarRerender(){
   if(!PDF_PAGE) return;
   clearTimeout(_rerenderT);
-  _rerenderT=setTimeout(async ()=>{
-    if(PDF_ZOOM > PDF_RENDER_SCALE*0.9){
-      const alvo=Math.min(PDF_ZOOM*1.4, 8);   // teto pra não estourar memória
-      await renderNaEscala(alvo);
-      aplicarZoom();
-    }
-  }, 220);
+  _rerenderT=setTimeout(()=>{
+    if(Math.abs(PDF_ZOOM - PDF_RENDER_SCALE) < 0.02) return;
+    renderNaEscala(PDF_ZOOM);   // swap atômico via double buffer; sem pisca, sem mexer no scroll
+  }, 140);
 }
 
 function pdfZoom(dir){ if(!PDF) return;
