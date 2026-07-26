@@ -52,7 +52,7 @@
   #pdfScroll{flex:1;overflow:auto;background:#5b6675;cursor:grab;position:relative}
   body.dark #pdfScroll{background:#0d1420}
   #pdfScroll.grab{cursor:grabbing}
-  #pdfCanvas{display:block;margin:22px auto;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff}
+  #pdfCanvas{display:block;margin:22px;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto}
   .vempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
           color:var(--mut);gap:8px;text-align:center;padding:30px}
   .vempty .big{font-size:40px}
@@ -606,8 +606,19 @@ async function carregarDxf(path){
 }
 
 // ── Visualizador PDF (PDF.js) ───────────────────────────────────────────────
-let PDF=null, PDF_PG=1, PDF_ZOOM=1, PDF_FIT=true;
+//  Estratégia: rasteriza a página em RESOLUÇÃO ALTA (canvas de pixels ~2x o
+//  tamanho de tela × DPR) e faz o ZOOM via CSS width/height — instantâneo,
+//  ancorado no cursor, sem "piscar" a cada scroll. Só re-rasteriza quando o
+//  zoom passa de PDF_RENDER_SCALE (debounced) para manter a nitidez.
+let PDF=null, PDF_PG=1, PDF_PAGE=null;
+let PDF_FIT_ZOOM=1;        // zoom que faz a página caber (referência de "Ajustar")
+let PDF_ZOOM=1;            // zoom lógico atual (1 = tamanho natural da página em CSS px)
+let PDF_RENDER_SCALE=1;    // escala em que o canvas foi rasterizado por último
+let PDF_BASE_W=0, PDF_BASE_H=0;   // tamanho da página em CSS px @ zoom=1
+let _rerenderT=null;
+
 function pdfMsg(t){ $('pdfCanvas').style.display='none'; const m=$('vLoad'); m.style.display='block'; m.textContent=t; $('vPg').textContent='—'; }
+
 async function carregarPdf(path){
   pdfMsg('Abrindo prancha…');
   try{
@@ -615,56 +626,129 @@ async function carregarPdf(path){
     if(error) throw error;
     const task = pdfjsLib.getDocument({ url: data.signedUrl });
     PDF = await task.promise;
-    PDF_PG=1; PDF_FIT=true; PDF_ZOOM=1;
-    $('pdfCanvas').style.display='block'; $('vLoad').style.display='none';
-    await renderPdf();
+    PDF_PG=1;
+    await abrirPagina();
   }catch(e){ pdfMsg('Não foi possível abrir: '+((e&&e.message)||e)); }
 }
-async function renderPdf(){
+
+async function abrirPagina(){
   if(!PDF) return;
-  const page = await PDF.getPage(PDF_PG);
+  PDF_PAGE = await PDF.getPage(PDF_PG);
+  const vp1=PDF_PAGE.getViewport({scale:1});
+  PDF_BASE_W=vp1.width; PDF_BASE_H=vp1.height;
   const scroll=$('pdfScroll');
-  let scale;
-  if(PDF_FIT){
-    const vp1=page.getViewport({scale:1});
-    scale=Math.min((scroll.clientWidth-44)/vp1.width, (scroll.clientHeight-44)/vp1.height);
-    if(!isFinite(scale)||scale<=0) scale=1;
-    PDF_ZOOM=scale;
-  }else scale=PDF_ZOOM;
-  const vp=page.getViewport({scale});
-  const cv=$('pdfCanvas'), ctx=cv.getContext('2d');
-  const dpr=Math.min(window.devicePixelRatio||1, 2);
-  cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
-  cv.style.width=Math.floor(vp.width)+'px'; cv.style.height=Math.floor(vp.height)+'px';
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-  await page.render({ canvasContext:ctx, viewport:vp }).promise;
+  PDF_FIT_ZOOM=Math.min((scroll.clientWidth-44)/PDF_BASE_W, (scroll.clientHeight-44)/PDF_BASE_H);
+  if(!isFinite(PDF_FIT_ZOOM)||PDF_FIT_ZOOM<=0) PDF_FIT_ZOOM=1;
+  PDF_ZOOM=PDF_FIT_ZOOM;
+  // Rasteriza numa escala GENEROSA: o dobro do "fit" e no mínimo 1×, sempre
+  // multiplicado pelo devicePixelRatio. Assim linhas finas ficam nítidas mesmo
+  // ao ampliar sem re-render.
+  await renderNaEscala(Math.max(PDF_FIT_ZOOM*2, 1));
+  aplicarZoom();
+  $('pdfCanvas').style.display='block'; $('vLoad').style.display='none';
   $('vPg').textContent = PDF_PG+' / '+PDF.numPages;
   $('vPrev').disabled = PDF_PG<=1; $('vNext').disabled = PDF_PG>=PDF.numPages;
 }
-function pdfZoom(dir){ if(!PDF) return; PDF_FIT=false; PDF_ZOOM=Math.max(.2,Math.min(6, PDF_ZOOM*(dir>0?1.25:.8))); renderPdf(); }
-function pdfFit(){ if(!PDF) return; PDF_FIT=true; renderPdf(); }
-function pdfPage(d){ if(!PDF) return; const n=PDF_PG+d; if(n>=1&&n<=PDF.numPages){ PDF_PG=n; renderPdf(); } }
-// pan por arraste (botão esquerdo ou botão do meio) + zoom pela roda do mouse
-(function(){ const s=$('pdfScroll'); let down=false,sx,sy,l,t;
-  s.addEventListener('mousedown',e=>{ if(e.button!==0 && e.button!==1) return;
-    if(e.button===1) e.preventDefault();              // sem autoscroll do botão do meio
-    down=true; s.classList.add('grab'); sx=e.clientX;sy=e.clientY;l=s.scrollLeft;t=s.scrollTop; });
-  window.addEventListener('mouseup',()=>{ down=false; s.classList.remove('grab'); });
-  window.addEventListener('mousemove',e=>{ if(!down)return; s.scrollLeft=l-(e.clientX-sx); s.scrollTop=t-(e.clientY-sy); });
-  s.addEventListener('auxclick',e=>{ if(e.button===1) e.preventDefault(); });
-  // zoom com a roda, ancorado no cursor
-  s.addEventListener('wheel',e=>{
+
+async function renderNaEscala(scale){
+  if(!PDF_PAGE) return;
+  PDF_RENDER_SCALE=scale;
+  const dpr=Math.min(window.devicePixelRatio||1, 2);
+  const vp=PDF_PAGE.getViewport({scale:scale*dpr});
+  const cv=$('pdfCanvas'), ctx=cv.getContext('2d');
+  cv.width=Math.floor(vp.width); cv.height=Math.floor(vp.height);
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  await PDF_PAGE.render({ canvasContext:ctx, viewport:vp, background:'#fff' }).promise;
+}
+
+// Aplica o zoom lógico só mexendo no tamanho CSS do canvas: o browser interpola
+// e o pan segue funcionando via scrollLeft/Top do container.
+function aplicarZoom(){
+  const cv=$('pdfCanvas');
+  cv.style.width  = Math.round(PDF_BASE_W*PDF_ZOOM)+'px';
+  cv.style.height = Math.round(PDF_BASE_H*PDF_ZOOM)+'px';
+}
+
+// Se o zoom subiu bem acima da rasterização atual, agenda re-render nítido
+// (debounced, para não bater no worker a cada tick da roda).
+function agendarRerender(){
+  if(!PDF_PAGE) return;
+  clearTimeout(_rerenderT);
+  _rerenderT=setTimeout(async ()=>{
+    if(PDF_ZOOM > PDF_RENDER_SCALE*0.9){
+      const alvo=Math.min(PDF_ZOOM*1.4, 8);   // teto pra não estourar memória
+      await renderNaEscala(alvo);
+      aplicarZoom();
+    }
+  }, 220);
+}
+
+function pdfZoom(dir){ if(!PDF) return;
+  const prev=PDF_ZOOM;
+  PDF_ZOOM=Math.max(.15,Math.min(8, PDF_ZOOM*(dir>0?1.25:.8)));
+  ancorarNoCentro(prev);
+  aplicarZoom(); agendarRerender();
+}
+function pdfFit(){ if(!PDF) return;
+  const scroll=$('pdfScroll');
+  PDF_FIT_ZOOM=Math.min((scroll.clientWidth-44)/PDF_BASE_W, (scroll.clientHeight-44)/PDF_BASE_H);
+  if(!isFinite(PDF_FIT_ZOOM)||PDF_FIT_ZOOM<=0) PDF_FIT_ZOOM=1;
+  PDF_ZOOM=PDF_FIT_ZOOM; aplicarZoom();
+  scroll.scrollLeft=0; scroll.scrollTop=0;
+}
+function ancorarNoCentro(prevZoom){
+  const s=$('pdfScroll'); const k=PDF_ZOOM/prevZoom;
+  const cx=s.scrollLeft + s.clientWidth/2;
+  const cy=s.scrollTop  + s.clientHeight/2;
+  requestAnimationFrame(()=>{ s.scrollLeft=cx*k - s.clientWidth/2; s.scrollTop=cy*k - s.clientHeight/2; });
+}
+function pdfPage(d){ if(!PDF) return; const n=PDF_PG+d; if(n>=1&&n<=PDF.numPages){ PDF_PG=n; abrirPagina(); } }
+
+// ── Interação: zoom pela roda + pan (botão esquerdo OU botão do meio) ──────
+(function(){
+  const s=$('pdfScroll');
+
+  // Zoom pela roda, ancorado no cursor. Só CSS: nada de re-render aqui.
+  s.addEventListener('wheel', e=>{
     if(!PDF) return; e.preventDefault();
     const rect=s.getBoundingClientRect();
-    const px=e.clientX-rect.left, py=e.clientY-rect.top;      // cursor na viewport
-    const cx=px+s.scrollLeft, cy=py+s.scrollTop;              // ponto no conteúdo
-    const prev=PDF_ZOOM; PDF_FIT=false;
-    PDF_ZOOM=Math.max(.2,Math.min(8, PDF_ZOOM*(e.deltaY<0?1.15:1/1.15)));
+    const px=e.clientX-rect.left, py=e.clientY-rect.top;
+    const cx=px+s.scrollLeft, cy=py+s.scrollTop;
+    const prev=PDF_ZOOM;
+    // deltaY vem em px, linhas ou páginas — normaliza pra passo suave
+    const step = e.deltaMode===1 ? 1.2 : (e.deltaMode===2 ? 1.5 : 1.12);
+    PDF_ZOOM=Math.max(.15,Math.min(8, PDF_ZOOM*(e.deltaY<0?step:1/step)));
     const k=PDF_ZOOM/prev;
-    renderPdf().then(()=>{ s.scrollLeft=cx*k-px; s.scrollTop=cy*k-py; });
+    aplicarZoom();
+    s.scrollLeft=cx*k-px; s.scrollTop=cy*k-py;
+    agendarRerender();
   }, {passive:false});
+
+  // Pan com Pointer Events + setPointerCapture: garante o arraste mesmo se o
+  // cursor sair do container, e evita o autoscroll do botão do meio no Chrome.
+  let pan=null;
+  s.addEventListener('pointerdown', e=>{
+    if(e.button!==0 && e.button!==1) return;
+    if(e.button===1) e.preventDefault();
+    try{ s.setPointerCapture(e.pointerId); }catch(_){}
+    pan={ id:e.pointerId, sx:e.clientX, sy:e.clientY, l:s.scrollLeft, t:s.scrollTop };
+    s.classList.add('grab');
+  });
+  s.addEventListener('pointermove', e=>{
+    if(!pan||e.pointerId!==pan.id) return;
+    s.scrollLeft = pan.l - (e.clientX - pan.sx);
+    s.scrollTop  = pan.t - (e.clientY - pan.sy);
+  });
+  const endPan = e=>{ if(!pan||(e && e.pointerId!==pan.id)) return;
+    try{ s.releasePointerCapture(pan.id); }catch(_){} pan=null; s.classList.remove('grab'); };
+  s.addEventListener('pointerup', endPan);
+  s.addEventListener('pointercancel', endPan);
+  // impede o menu de contexto do botão do meio virar autoscroll no Firefox
+  s.addEventListener('auxclick', e=>{ if(e.button===1) e.preventDefault(); });
 })();
-window.addEventListener('resize',()=>{ if(PDF&&PDF_FIT) renderPdf(); });
+
+window.addEventListener('resize',()=>{ if(PDF) pdfFit(); });
 
 // ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
 function valoresDe(c){ return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
