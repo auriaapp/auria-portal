@@ -358,7 +358,7 @@ async function carregarDocs(){
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       const { data:a } = await sb.from('cde_arquivo_auria')
-        .select('id,revisao_id,nome,extensao,storage_path,eh_principal').in('revisao_id',revIds);
+        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal').in('revisao_id',revIds);
       arqs=a||[];
     }
   }
@@ -534,7 +534,7 @@ function docMenuAct(id,ext,mode){
   if(mode==='rev'){ DOC_SEL=d; renderNav(); abrirDetalhes(); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
   if(mode==='view') abrirDoc(id, ext);
-  else baixar(a.storage_path, a.nome);
+  else baixar(a.storage_path, a.nome, a.storage_provider);
 }
 
 // ── Abrir documento no canvas ───────────────────────────────────────────────
@@ -554,7 +554,7 @@ async function abrirDoc(id, preferFmt){
   VIEW_FILES={};
   const rev = DOC_SEL.atual;
   ((rev&&rev.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
-    if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome }; });
+    if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' }; });
   renderFmtToggle();
   // Prioriza SEMPRE o PDF; só abre outro formato se o menu pedir explicitamente.
   const fmt = (preferFmt && VIEW_FILES[preferFmt]) ? preferFmt
@@ -581,23 +581,22 @@ async function mostrarFormato(fmt){
   $('dxfWrap').style.display   = isPdf?'none':'block';
   $('pdfCtrls').style.display  = isPdf?'inline-flex':'none';
   $('dxfHint').style.display   = isPdf?'none':'inline';
-  if(isPdf) await carregarPdf(VIEW_FILES.pdf.path);
-  else await carregarDxf(VIEW_FILES.dxf.path);
+  if(isPdf) await carregarPdf(VIEW_FILES.pdf.path, VIEW_FILES.pdf.provider);
+  else await carregarDxf(VIEW_FILES.dxf.path, VIEW_FILES.dxf.provider);
 }
 
 // ── Visualizador DXF (dxf-viewer, three.js) — carregado sob demanda ─────────
 let DXF_LIB=null, DXFV=null;
-async function carregarDxf(path){
+async function carregarDxf(path, provider){
   const box=$('dxfWrap');
   box.innerHTML='<div class="vmsg2">Abrindo DXF…</div>';
   try{
     if(!DXF_LIB) DXF_LIB = await import('https://esm.sh/dxf-viewer@1.0.48');
-    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300);
-    if(error) throw error;
+    const url = await cdeSignedUrl(path, provider);
     try{ if(DXFV) DXFV.Destroy(); }catch(e){}
     box.innerHTML='';
     DXFV = new DXF_LIB.DxfViewer(box, { autoResize:true, colorCorrection:true });
-    await DXFV.Load({ url:data.signedUrl, fonts:[], workerFactory:null, progressCbk:null });
+    await DXFV.Load({ url, fonts:[], workerFactory:null, progressCbk:null });
   }catch(e){
     box.innerHTML='<div class="vmsg2">Não foi possível renderizar o DXF: '+esc((e&&e.message)||e)
       +'<br><br>O arquivo está guardado — baixe em “Detalhes / status”.</div>';
@@ -618,12 +617,11 @@ let _rendering=false, _renderJob=0, _renderTimer=null;
 
 function pdfMsg(t){ $('pdfCanvas').style.display='none'; const m=$('vLoad'); m.style.display='block'; m.textContent=t; $('vPg').textContent='—'; }
 
-async function carregarPdf(path){
+async function carregarPdf(path, provider){
   pdfMsg('Abrindo prancha…');
   try{
-    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300);
-    if(error) throw error;
-    V.doc = await pdfjsLib.getDocument({ url: data.signedUrl }).promise;
+    const url = await cdeSignedUrl(path, provider);
+    V.doc = await pdfjsLib.getDocument({ url }).promise;
     PDF = V.doc;                        // compat com o resto do código
     V.pageNum=1; F.valido=false;
     await carregarPagina();
@@ -782,6 +780,54 @@ async function pdfPage(delta){
 
 window.addEventListener('resize',()=>{ if(V.page) fitPage(); });
 
+// ── Storage híbrido: Supabase (pequenos) + R2 (grandes/BIM) ────────────────
+//  Regra: extensões pesadas (IFC, RVT, RFA, NWD, NWC, SKP) OU arquivo >48MB
+//  vão para o bucket R2 privado via edge function cde-r2 (presigned URL).
+//  Os demais (PDF/DXF/DWG normais) continuam no Supabase Storage — bem mais
+//  rápido, sem edge function no meio.
+const R2_EXT = new Set(['ifc','rvt','rfa','nwd','nwc','skp']);
+const R2_SIZE_LIMIT = 48*1024*1024;       // Supabase Free tem teto ~50MB por upload
+function provedorPara(nome, tam){
+  const ext=((String(nome||'').match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
+  if(R2_EXT.has(ext)) return 'r2';
+  if(tam && tam>R2_SIZE_LIMIT) return 'r2';
+  return 'supabase';
+}
+
+// Upload unificado: escolhe o destino, retorna o path gravado (idêntico nos
+// dois provedores para preservar o padrão <emp>/<codigo>/<rev>/<arquivo>).
+async function cdeUpload(path, file){
+  const prov = provedorPara(file.name, file.size);
+  if(prov==='supabase'){
+    const up=await sb.storage.from('cde').upload(path, file, {upsert:false, contentType:file.type||undefined});
+    if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+    return 'supabase';
+  }
+  // R2: edge function devolve presigned URL; browser faz PUT direto no bucket.
+  const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'upload', path, contentType:file.type||'application/octet-stream' } });
+  if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
+  if(!data||!data.url) throw new Error('R2 não devolveu URL');
+  const put = await fetch(data.url, { method:'PUT', headers:{ 'Content-Type': file.type||'application/octet-stream' }, body:file });
+  if(!put.ok){ const t=await put.text().catch(()=>''); throw new Error('R2 PUT '+put.status+': '+(t||put.statusText).slice(0,200)); }
+  return 'r2';
+}
+
+// Devolve uma URL curta para o browser abrir/baixar — sem se importar com o
+// provedor. Aceita opções { download: 'nome.ext' }.
+async function cdeSignedUrl(path, provider, opts){
+  opts = opts||{};
+  const p = provider || 'supabase';
+  if(p==='supabase'){
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300, opts.download?{download:opts.download}:undefined);
+    if(error) throw error;
+    return data.signedUrl;
+  }
+  const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'download', path } });
+  if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
+  if(!data||!data.url) throw new Error('R2 não devolveu URL');
+  return data.url;
+}
+
 // ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
 function valoresDe(c){ return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
 function parseCodigo(nomeArquivo){
@@ -887,15 +933,16 @@ async function confirmarLote(){
       let temPdf=(g.acao.rev&&(g.acao.rev.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'));
       for(const f of g._upload){
         const el=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
-        $('recMsg').textContent='Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
+        const prov = provedorPara(f.name, f.size);
+        $('recMsg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
         const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        const up=await sb.storage.from('cde').upload(path,f,{upsert:false,contentType:f.type||undefined});
-        if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+        await cdeUpload(path, f);
         const ehPdf = el==='pdf' && !temPdf; if(el==='pdf') temPdf=true;
         await sb.from('cde_arquivo_auria').insert({
           revisao_id:revId, nome:f.name, extensao:el, tamanho_bytes:f.size,
           sha256:(f.size<10*1024*1024?await sha256(f):null), storage_path:path,
-          eh_principal:ehPdf, visualizavel:(el==='pdf'||el==='dxf')
+          eh_principal:ehPdf, visualizavel:(el==='pdf'||el==='dxf'),
+          storage_provider:prov
         });
         done++; prog();
       }
@@ -944,7 +991,7 @@ async function renderDetalhe(){
   const revIds=(d.revs||[]).map(r=>r.id); let arqs=[], evs=[];
   if(revIds.length){
     const [ra, re] = await Promise.all([
-      sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,eh_principal').in('revisao_id',revIds),
+      sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal').in('revisao_id',revIds),
       sb.from('cde_evento_auria').select('revisao_id,acao,de_status,para_status,usuario_nome,nota,quando').in('revisao_id',revIds).order('quando',{ascending:false}).limit(40)
     ]);
     arqs=ra.data||[]; evs=re.data||[];
@@ -961,7 +1008,7 @@ async function renderDetalhe(){
   const revsHtml = revs.map((r,idx)=>{
     const s=STMAP[r.status]||{rotulo:r.status,cor:'#64748B'};
     const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
-    const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
+    const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
     const trans=TRANSICOES[r.status]||[]; const podeAgir=idx===0&&r.status!=='SUBSTITUIDO';
     const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
     return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
@@ -994,8 +1041,8 @@ async function confirmarRecepcao(){
     }
   }catch(e){ alert('Erro: '+((e&&e.message)||e)); }
 }
-async function baixar(path,nome){
-  try{ const { data, error } = await sb.storage.from('cde').createSignedUrl(path,120,{download:nome}); if(error)throw error; window.open(data.signedUrl,'_blank'); }
+async function baixar(path,nome,provider){
+  try{ const url = await cdeSignedUrl(path, provider, {download:nome}); window.open(url,'_blank'); }
   catch(e){ alert('Não foi possível gerar o link: '+((e&&e.message)||e)); }
 }
 async function mudarStatus(revId,novo){

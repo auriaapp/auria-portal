@@ -1916,15 +1916,16 @@ async function cdeConfirmar(){
       }).select('id').single();
       if(er) throw er;
       for(const f of g.arquivos){
-        const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
-        cdeEl('cde-msg').textContent='Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
+        const ext=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
+        const prov = cdeProvedorPara(f.name, f.size);
+        cdeEl('cde-msg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
         const path=CDE_CUR.id+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        const up=await sb.storage.from('cde').upload(path,f,{upsert:false,contentType:f.type||undefined});
-        if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+        await cdeUploadArquivo(path, f);
         await sb.from('cde_arquivo_auria').insert({
-          revisao_id:rev.id, nome:f.name, extensao:ext.toLowerCase(), tamanho_bytes:f.size,
+          revisao_id:rev.id, nome:f.name, extensao:ext, tamanho_bytes:f.size,
           sha256:(f.size<10*1024*1024?await cdeSha256(f):null), storage_path:path,
-          eh_principal:(ext.toLowerCase()==='pdf'), visualizavel:(ext.toLowerCase()==='pdf')
+          eh_principal:(ext==='pdf'), visualizavel:(ext==='pdf'||ext==='dxf'),
+          storage_provider:prov
         });
         done++; prog();
       }
@@ -1958,15 +1959,52 @@ async function cdeBaixar(docId){
   const d=CDE_DOCS.find(function(x){ return x.id===docId; }); if(!d||!d.atual) return;
   try{
     const { data: arqs } = await sb.from('cde_arquivo_auria')
-      .select('nome,storage_path,eh_principal').eq('revisao_id',d.atual.id);
+      .select('nome,storage_path,storage_provider,eh_principal').eq('revisao_id',d.atual.id);
     if(!arqs||!arqs.length){ alert('Sem arquivos nesta revisão.'); return; }
     arqs.sort(function(a,b){ return (b.eh_principal?1:0)-(a.eh_principal?1:0); });
     for(const a of arqs){
-      const { data, error } = await sb.storage.from('cde').createSignedUrl(a.storage_path,120,{download:a.nome});
-      if(error) throw error;
-      window.open(data.signedUrl,'_blank');
+      const url = await cdeSignedUrl(a.storage_path, a.storage_provider, {download:a.nome});
+      window.open(url,'_blank');
     }
   }catch(e){ alert('Não foi possível gerar o link: '+((e&&e.message)||e)); }
+}
+
+// ── Storage híbrido: Supabase (pequenos) + R2 (IFC/RVT/>48MB) ──────────────
+//  Mesma regra do cde_obra.html: extensões pesadas ou tamanho >48MB vão para
+//  o bucket R2 privado (edge function cde-r2); o resto continua no Supabase.
+var CDE_R2_EXT = { ifc:1, rvt:1, rfa:1, nwd:1, nwc:1, skp:1 };
+var CDE_R2_LIMIT = 48*1024*1024;
+function cdeProvedorPara(nome, tam){
+  const ext=((String(nome||'').match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
+  if(CDE_R2_EXT[ext]) return 'r2';
+  if(tam && tam>CDE_R2_LIMIT) return 'r2';
+  return 'supabase';
+}
+async function cdeUploadArquivo(path, file){
+  const prov = cdeProvedorPara(file.name, file.size);
+  if(prov==='supabase'){
+    const up=await sb.storage.from('cde').upload(path, file, {upsert:false, contentType:file.type||undefined});
+    if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+    return;
+  }
+  const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'upload', path, contentType:file.type||'application/octet-stream' } });
+  if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
+  if(!data||!data.url) throw new Error('R2 não devolveu URL');
+  const put = await fetch(data.url, { method:'PUT', headers:{ 'Content-Type': file.type||'application/octet-stream' }, body:file });
+  if(!put.ok){ const t=await put.text().catch(function(){return'';}); throw new Error('R2 PUT '+put.status+': '+(t||put.statusText).slice(0,200)); }
+}
+async function cdeSignedUrl(path, provider, opts){
+  opts = opts||{};
+  const p = provider || 'supabase';
+  if(p==='supabase'){
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300, opts.download?{download:opts.download}:undefined);
+    if(error) throw error;
+    return data.signedUrl;
+  }
+  const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'download', path } });
+  if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
+  if(!data||!data.url) throw new Error('R2 não devolveu URL');
+  return data.url;
 }
 
 // ── Init (sessão única via SDK) ──────────────────────────────
