@@ -1675,10 +1675,18 @@ async function cdeBootCheck(){
     CDE_ENT = data||[];
     if(CDE_ENT.length){
       const por={};
+      // A RPC agora traz disciplinas de ENTREGA e de LEITURA concedida pelo analista.
+      // discs = as que o projetista ENTREGA (upload liberado); discs_ler = as que
+      // ele PODE LER além delas (só download/visualização).
       CDE_ENT.forEach(function(r){
         if(!por[r.empreendimento_id]) por[r.empreendimento_id]={ id:r.empreendimento_id, nome:r.empreendimento_nome,
-          projetista_id:r.projetista_id, fornecedor:r.fornecedor_nome, discs:[] };
-        if(r.disciplina && !por[r.empreendimento_id].discs.includes(r.disciplina)) por[r.empreendimento_id].discs.push(r.disciplina);
+          projetista_id:r.projetista_id, fornecedor:r.fornecedor_nome, discs:[], discs_ler:[] };
+        if(!r.disciplina) return;
+        if(r.pode_entregar!==false){
+          if(!por[r.empreendimento_id].discs.includes(r.disciplina)) por[r.empreendimento_id].discs.push(r.disciplina);
+        }else{
+          if(!por[r.empreendimento_id].discs_ler.includes(r.disciplina)) por[r.empreendimento_id].discs_ler.push(r.disciplina);
+        }
       });
       CDE_EMPS = Object.values(por);
       var b=cdeEl('btn-cde'); if(b) b.style.display='';
@@ -1788,8 +1796,11 @@ function cdeRender(){
         return '<span class="cde-chip" style="cursor:pointer;'+(e.id===CDE_CUR.id?'background:#185FA5;color:#fff':'')+'" onclick="cdeAbrirEmp(\''+e.id+'\')">'+escH(e.nome)+'</span>';
       }).join('')+'</div>' : '';
   const discChips=(CDE_CUR.discs||[]).map(function(d){ return '<span class="cde-chip">'+escH(d)+'</span>'; }).join('');
+  const lerChips=(CDE_CUR.discs_ler||[]).map(function(d){ return '<span class="cde-chip" style="background:#EEF2F7;color:#475569" title="somente leitura — concedido pelo analista para compatibilização">'+escH(d)+' 👁</span>'; }).join('');
   var upload;
-  if(!CDE_CONV){
+  if(!(CDE_CUR.discs||[]).length){
+    upload='<div class="cde-warn">Você tem <b>acesso somente de leitura</b> neste empreendimento (concedido pelo analista para compatibilização). O envio de arquivos fica desabilitado.</div>';
+  }else if(!CDE_CONV){
     upload='<div class="cde-warn">Este empreendimento ainda não tem <b>padrão de codificação</b> definido pela construtora. As entregas ficam liberadas assim que a gestão definir o padrão.</div>';
   }else{
     upload =
@@ -1809,9 +1820,10 @@ function cdeRender(){
   const docsHtml=cdeDocsHtml();
   cdeEl('cde-body').innerHTML = sel
     +'<div class="cde-sec"><h3>Enviar arquivos — '+escH(CDE_CUR.nome)+'</h3>'
-    +'<div style="margin-bottom:10px;font-size:12px;color:#7A9AB8">Suas disciplinas: '+(discChips||'—')+'</div>'
+    +'<div style="margin-bottom:6px;font-size:12px;color:#7A9AB8">Suas disciplinas (entrega): '+(discChips||'—')+'</div>'
+    +(lerChips?'<div style="margin-bottom:10px;font-size:12px;color:#7A9AB8">Somente leitura (compatibilização): '+lerChips+'</div>':'')
     +upload+'</div>'
-    +'<div class="cde-sec"><h3>Meus documentos neste empreendimento</h3>'+docsHtml+'</div>';
+    +'<div class="cde-sec"><h3>Documentos deste empreendimento</h3>'+docsHtml+'</div>';
   if(CDE_CONV){
     const drop=cdeEl('cde-drop');
     ['dragover','dragenter'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.add('hot'); }); });
@@ -1822,15 +1834,29 @@ function cdeRender(){
 }
 
 function cdeFmtData(s){ if(!s)return''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return''; } }
+// Um documento é "meu" (posso entregar/gerenciar) se sua disciplina bate com
+// as disciplinas de ENTREGA do meu fornecedor neste empreendimento. As demais
+// aparecem com o badge 👁 somente leitura.
+function cdeDocEhMeu(d){
+  const discs=(CDE_CUR&&CDE_CUR.discs)||[];
+  return discs.some(function(x){ return cdeAcMatchC(x, d.disciplina); });
+}
+function cdeAcMatchC(a, cod){
+  const rot=(cdeDiscLabel(cod)||'').toLowerCase();
+  return String(a||'').toUpperCase()===String(cod).toUpperCase()
+      || (rot && String(a||'').toLowerCase()===rot);
+}
 function cdeDocsHtml(){
-  if(!CDE_DOCS.length) return '<div class="empty" style="padding:22px">Nenhum documento seu ainda. A primeira entrega aparece aqui com o status de análise.</div>';
+  if(!CDE_DOCS.length) return '<div class="empty" style="padding:22px">Nenhum documento aqui ainda.</div>';
   return '<div style="overflow-x:auto"><table class="cde-tbl"><thead><tr><th>Código</th><th>Disciplina</th><th>Rev.</th><th>Status</th><th>Recebido</th><th></th></tr></thead><tbody>'
     + CDE_DOCS.map(function(d){
         const r=d.atual; const s=r?(CDE_ST&&CDE_ST[r.status]):null;
+        const meu=cdeDocEhMeu(d);
         var extra='';
-        if(r&&r.status==='DEVOLVIDO'&&r.motivo_devolucao) extra+='<div class="cde-doc-extra" style="color:#A32D2D">↩ Motivo da devolução: '+escH(r.motivo_devolucao)+' — reenvie com nova revisão.</div>';
-        if(r&&r.ressalvas) extra+='<div class="cde-doc-extra" style="color:#854F0B">⚠ Ressalvas: '+escH(r.ressalvas)+'</div>';
-        return '<tr><td><span class="cde-cod">'+escH(d.codigo)+'</span>'+extra+'</td>'
+        if(meu && r && r.status==='DEVOLVIDO' && r.motivo_devolucao) extra+='<div class="cde-doc-extra" style="color:#A32D2D">↩ Motivo da devolução: '+escH(r.motivo_devolucao)+' — reenvie com nova revisão.</div>';
+        if(meu && r && r.ressalvas) extra+='<div class="cde-doc-extra" style="color:#854F0B">⚠ Ressalvas: '+escH(r.ressalvas)+'</div>';
+        const ler = meu?'' : ' <span class="cde-chip" style="background:#EEF2F7;color:#475569;font-size:9.5px;padding:1px 6px" title="somente leitura">👁 leitura</span>';
+        return '<tr><td><span class="cde-cod">'+escH(d.codigo)+'</span>'+ler+extra+'</td>'
           +'<td>'+escH(cdeDiscLabel(d.disciplina))+'</td>'
           +'<td class="cde-cod">'+escH(r?r.revisao:'—')+'</td>'
           +'<td>'+(s?'<span class="cde-badge" style="background:'+s.cor+'">'+escH(s.rotulo)+'</span>':'—')+'</td>'

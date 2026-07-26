@@ -227,6 +227,18 @@ body.embed .content{padding-top:14px}
 .parc-tbl input,.parc-tbl select{border:1px solid #CBD5E1;border-radius:6px;padding:5px 6px;font-size:12px;font-family:inherit}
 .parc-tbl .n{width:48px;text-align:center}
 .parc-tbl .v{width:110px}.parc-tbl .d{width:130px}.parc-tbl .marco{width:160px}
+/* CDE — Acessos por disciplina */
+table.cde-ac{width:100%;border-collapse:collapse;font-size:13px}
+table.cde-ac th{padding:10px 8px;font-size:11px;color:#64748B;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #E2E8F0;text-align:left;font-weight:800}
+table.cde-ac td{padding:9px 8px;border-bottom:1px solid #EEF2F7;vertical-align:middle}
+table.cde-ac tr.cde-ac-forn td{background:#F8FAFC;color:#1A2F4A;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:8px 12px;border-top:1px solid #E2E8F0}
+.cde-ac-dth{text-align:center !important;min-width:60px;padding:8px 4px !important}
+.cde-ac-dv{font-family:ui-monospace,Consolas,monospace;font-weight:800;color:#1A2F4A;font-size:12px}
+.cde-ac-dr{font-size:9.5px;color:#94A3B8;font-weight:600;text-transform:none;letter-spacing:0;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px}
+.cde-ac-c{text-align:center}
+.cde-ac-c input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:#1D4ED8}
+.cde-ac-lock{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#DCFCE7;color:#166534;font-weight:800;font-size:13px;cursor:default}
+.cde-ac-orig{display:inline-block;background:#DCFCE7;color:#166534;border-radius:6px;padding:3px 9px;font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:11.5px}
 .parc-st{font-size:11px;font-weight:700;padding:2px 9px;border-radius:14px;white-space:nowrap}
 .st-af{background:#F1F5F9;color:#64748B}
 .st-so{background:#FEF3C7;color:#92400E}
@@ -672,6 +684,7 @@ async function openEmp(id){
       <div class="tab" id="t-cro" onclick="empTab('cro')">🗓 Cronograma</div>
       <div class="tab" id="t-ctr" onclick="empTab('ctr')">💼 Contratos & Faturas${(SOLICIT_POR_EMP[emp.id]||0)>0?` <span id="tab-ctr-badge" style="background:#E8960A;color:#fff;font-size:11px;font-weight:800;padding:1px 7px;border-radius:10px;margin-left:2px">${SOLICIT_POR_EMP[emp.id]}</span>`:''}</div>
       <div class="tab" id="t-fin" onclick="empTab('fin')">💰 Financeiro</div>
+      <div class="tab" id="t-cde" onclick="empTab('cde')">🗂 CDE — Acessos</div>
     </div>
     <div id="empView"><div class="loading">Carregando…</div></div>`;
   c.dataset.emp=emp.nome;
@@ -679,12 +692,13 @@ async function openEmp(id){
   empTab('apt');
 }
 function empTab(t){
-  ['apt','cro','ctr','fin'].forEach(x=>{var el=document.getElementById('t-'+x); if(el) el.classList.toggle('active',t===x);});
+  ['apt','cro','ctr','fin','cde'].forEach(x=>{var el=document.getElementById('t-'+x); if(el) el.classList.toggle('active',t===x);});
   const ds=document.getElementById('content').dataset;
   if(t==='apt')loadApontamentos(ds.emp);
   else if(t==='cro')loadCronograma(ds.empid);
   else if(t==='ctr')loadContratos(ds.empid);
   else if(t==='fin')loadFinanceiro(ds.empid);
+  else if(t==='cde')loadCdeAcessos(ds.empid);
 }
 
 async function loadApontamentos(empNome){
@@ -1155,6 +1169,117 @@ function fmtDate(s){ if(!s)return ''; var p=String(s).split('-'); return p[2]+'/
 function parcCls(s){ return {a_faturar:'st-af',solicitada:'st-so',autorizada:'st-au',recusada:'st-re',faturada:'st-fa',paga:'st-pg',cancelada:'st-cn'}[s]||'st-af'; }
 function parcLbl(s){ return {a_faturar:'A faturar',solicitada:'Solicitada',autorizada:'Autorizada',recusada:'Recusada',faturada:'Faturada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
 function _fileToDataURL(file){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsDataURL(file); }); }
+
+// ── CDE: Acessos por disciplina (analista concede leitura a projetistas) ────
+//  Comportamento: a disciplina do fornecedor do projetista está SEMPRE
+//  habilitada (entrega+leitura) e não pode ser desmarcada. As outras
+//  disciplinas do empreendimento aparecem como checkbox — marcar concede
+//  leitura extra (aditiva). O SQL respeita a mesma resolução (código OU rótulo).
+var CDE_AC_LIST=[], CDE_AC_DISCS=[], CDE_AC_CONV=null, CDE_AC_EMPID=null;
+function cdeAcDiscLabel(cod){
+  if(!CDE_AC_CONV) return cod;
+  const c=(CDE_AC_CONV.campos||[]).find(x=>x.mapeia==='disciplina');
+  if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===cod);
+    if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
+  return cod;
+}
+function cdeAcMatch(a, cod){        // "esse acesso concede essa disciplina?"
+  const rot=(cdeAcDiscLabel(cod)||'').toLowerCase();
+  return String(a||'').toUpperCase()===String(cod).toUpperCase()
+      || (rot && String(a||'').toLowerCase()===rot);
+}
+async function loadCdeAcessos(empId){
+  CDE_AC_EMPID=empId;
+  const v=document.getElementById('empView'); v.innerHTML='<div class="loading">Carregando acessos do CDE…</div>';
+  try{
+    // 1) convenção do empreendimento (para os rótulos das disciplinas)
+    try{ const c=await sb.rpc('cde_convencao',{p_emp:empId}); CDE_AC_CONV=(c.data&&c.data[0])||null; }
+    catch(_){ CDE_AC_CONV=null; }
+    // 2) disciplinas atribuídas ao empreendimento (base para os checkboxes)
+    const df=await sb.from('disciplina_fornecedor_auria').select('disciplina').eq('empreendimento_id',empId);
+    CDE_AC_DISCS=[...new Set((df.data||[]).map(x=>x.disciplina).filter(Boolean))].sort();
+    // 3) projetistas do empreendimento + acessos atuais (RPC agrega tudo)
+    const r=await sb.rpc('cde_projetistas_do_emp',{p_emp:empId});
+    if(r.error) throw r.error;
+    CDE_AC_LIST=r.data||[];
+  }catch(e){
+    v.innerHTML='<div class="empty"><div class="emoji">🗂</div><h3>Não foi possível carregar</h3><p>'+esc(e.message||e)+'</p></div>';
+    return;
+  }
+  renderCdeAcessos();
+}
+function renderCdeAcessos(){
+  const v=document.getElementById('empView');
+  if(!CDE_AC_DISCS.length){
+    v.innerHTML='<div class="empty"><div class="emoji">🗂</div><h3>Sem disciplinas atribuídas</h3>'
+      +'<p>Atribua fornecedores por disciplina em <b>Fornecedores</b> antes de configurar acessos.</p></div>';
+    return;
+  }
+  if(!CDE_AC_LIST.length){
+    v.innerHTML='<div class="empty"><div class="emoji">👥</div><h3>Sem projetistas cadastrados</h3>'
+      +'<p>Cadastre projetistas nos fornecedores atribuídos a este empreendimento.</p></div>';
+    return;
+  }
+  // agrupa por fornecedor
+  const porForn={}, ordem=[];
+  CDE_AC_LIST.forEach(p=>{ if(!porForn[p.fornecedor_id]){ porForn[p.fornecedor_id]={nome:p.fornecedor_nome,lista:[]}; ordem.push(p.fornecedor_id); } porForn[p.fornecedor_id].lista.push(p); });
+  const headDiscs = CDE_AC_DISCS.map(d=>`<th class="cde-ac-dth" title="${esc(cdeAcDiscLabel(d))}"><div class="cde-ac-dv">${esc(d)}</div><div class="cde-ac-dr">${esc(cdeAcDiscLabel(d))}</div></th>`).join('');
+  let html = `
+    <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#1E3A8A;font-size:13px;line-height:1.5">
+      <b>Acessos ao CDE por disciplina.</b> A disciplina do fornecedor do projetista (verde) fica sempre liberada — ele entrega e lê nela. Marque as demais para conceder <b>leitura</b> extra (compatibilização).
+    </div>
+    <div class="tbl-card" style="overflow-x:auto">
+      <table class="cde-ac">
+        <thead>
+          <tr><th style="min-width:220px">Projetista</th><th style="min-width:160px">Disciplina do fornecedor</th>${headDiscs}</tr>
+        </thead>
+        <tbody>`;
+  ordem.forEach(fid=>{
+    const g=porForn[fid];
+    html += `<tr class="cde-ac-forn"><td colspan="${2+CDE_AC_DISCS.length}">${esc(g.nome||'—')}</td></tr>`;
+    g.lista.forEach(p=>{
+      const cells = CDE_AC_DISCS.map(d=>{
+        const eDoFornec = cdeAcMatch(p.disciplina_origem, d);
+        const concedido = (p.acessos||[]).some(a=>cdeAcMatch(a,d));
+        if(eDoFornec) return `<td class="cde-ac-c"><span class="cde-ac-lock" title="Disciplina do fornecedor — sempre liberada">✓</span></td>`;
+        return `<td class="cde-ac-c"><input type="checkbox" ${concedido?'checked':''} onchange="toggleCdeAcesso('${p.projetista_id}','${esc(d)}',this)"></td>`;
+      }).join('');
+      html += `<tr>
+        <td><div style="font-weight:600;color:#1A2F4A">${esc(p.projetista_nome||'—')}</div>
+            <div style="font-size:11px;color:#7A9AB8">${esc(p.projetista_email||'')}${p.ativo===false?' · <span style="color:#B23B2E">inativo</span>':''}</div></td>
+        <td><span class="cde-ac-orig" title="${esc(cdeAcDiscLabel(p.disciplina_origem))}">${esc(p.disciplina_origem||'—')}</span></td>
+        ${cells}
+      </tr>`;
+    });
+  });
+  html += `</tbody></table></div>`;
+  v.innerHTML = html;
+}
+async function toggleCdeAcesso(projetistaId, disciplina, cb){
+  cb.disabled=true;
+  try{
+    if(cb.checked){
+      const r=await sb.from('cde_projetista_acesso_auria').upsert({
+        empreendimento_id: CDE_AC_EMPID, projetista_id: projetistaId, disciplina: disciplina
+      }, { onConflict:'empreendimento_id,projetista_id,disciplina' });
+      if(r.error) throw r.error;
+    }else{
+      const r=await sb.from('cde_projetista_acesso_auria').delete()
+        .eq('empreendimento_id', CDE_AC_EMPID).eq('projetista_id', projetistaId).eq('disciplina', disciplina);
+      if(r.error) throw r.error;
+    }
+    // atualiza memória local sem recarregar
+    const p=CDE_AC_LIST.find(x=>String(x.projetista_id)===String(projetistaId));
+    if(p){
+      p.acessos = (p.acessos||[]).filter(a=>!cdeAcMatch(a,disciplina));
+      if(cb.checked) p.acessos.push(disciplina);
+    }
+  }catch(e){
+    cb.checked=!cb.checked;
+    alert('Não foi possível atualizar: '+(e.message||e));
+  }
+  cb.disabled=false;
+}
 
 async function loadContratos(empId){
   CTR_EMP_ID=empId;
