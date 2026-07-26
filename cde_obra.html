@@ -94,6 +94,22 @@
   .fdoc .fc{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--navy);line-height:1.2}
   .fdoc .ft{font-size:11px;color:var(--mut);line-height:1.2}
   .fdoc .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .fdoc .fmeta{flex:1;min-width:0}
+  .fdoc .fchips{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
+  .fmini{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--mut);background:var(--panel2);
+         border:1px solid var(--line);border-radius:4px;padding:0 4px;line-height:15px}
+  .fmini.pdf{color:#B91C1C;border-color:#FCA5A5;background:rgba(220,60,60,.08)}
+  .fkebab{background:none;border:none;color:var(--mut);cursor:pointer;font-size:17px;line-height:1;
+          padding:2px 5px;border-radius:6px;flex-shrink:0;align-self:flex-start}
+  .fkebab:hover{color:var(--txt);background:var(--panel)}
+  .docmenu{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+           box-shadow:0 12px 34px rgba(8,14,26,.42);padding:5px;min-width:200px}
+  .docmenu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:var(--txt);
+                  font-family:inherit;font-size:12.5px;font-weight:600;text-align:left;padding:8px 10px;border-radius:7px;cursor:pointer}
+  .docmenu button:hover{background:var(--panel2)}
+  .docmenu .mi{width:16px;text-align:center;font-size:12px}
+  .docmenu .dm-sep{height:1px;background:var(--line);margin:4px 6px}
+  .docmenu .dm-empty{font-size:11.5px;color:var(--mut);padding:6px 10px}
 
   /* trilho de tags verticais */
   .rail{width:46px;flex-shrink:0;border-left:1px solid var(--line);background:var(--panel2);
@@ -137,6 +153,7 @@
   .badge.novo{background:rgba(30,132,73,.13);color:var(--ok)}
   .badge.rev{background:rgba(26,90,150,.13);color:var(--navy)}
   .badge.dup{background:rgba(183,121,31,.15);color:var(--warn)}
+  .badge.add{background:rgba(14,116,144,.14);color:#0E7490}
   .badge.err{background:rgba(163,45,45,.13);color:var(--err)}
   .erros{font-size:11.5px;color:var(--err);margin-top:3px}
   .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 17px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
@@ -333,12 +350,22 @@ async function carregarDocs(){
   const { data: docs } = await sb.from('cde_documento_auria')
     .select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
   const ids = (docs||[]).map(d=>d.id);
-  let revs=[];
+  let revs=[], arqs=[];
   if(ids.length){
     const { data:r } = await sb.from('cde_revisao_auria')
       .select('id,documento_id,revisao,estado,status,recebido_em,ressalvas').in('documento_id',ids);
     revs=r||[];
+    const revIds=revs.map(x=>x.id);
+    if(revIds.length){
+      const { data:a } = await sb.from('cde_arquivo_auria')
+        .select('id,revisao_id,nome,extensao,storage_path,eh_principal').in('revisao_id',revIds);
+      arqs=a||[];
+    }
   }
+  // Anexa os arquivos a cada revisão (o card mostra os formatos; o recebimento
+  // sabe o que já existe para não recusar um formato novo da mesma revisão).
+  const porRev={}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
+  revs.forEach(r=>{ r.arqs = porRev[r.id]||[]; });
   const porDoc={}; revs.forEach(r=>{ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
   DOCS = (docs||[]).map(d=>{
     const rs=(porDoc[d.id]||[]).sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
@@ -413,7 +440,8 @@ function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
     <span class="dot" style="background:${cor}" onclick="abrirDoc('${d.id}')"></span>
-    <span style="flex:1;min-width:0" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')}</span></span>
+    <span class="fmeta" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <button class="gx" title="Remover do grupo" onclick="removeDoGrupo('${gid}','${d.id}')">×</button>
   </div>`;
 }
@@ -457,18 +485,61 @@ async function addAoGrupo(){
   }catch(e){ alert('Erro: '+(e.message||e)); }
 }
 
+const FMT_ORDER=['pdf','dxf','dwg','ifc','rvt','skp'];
+function fmtsDe(d){
+  const exts=[...new Set(((d.atual&&d.atual.arqs)||[]).map(a=>(a.extensao||'').toLowerCase()).filter(Boolean))];
+  return exts.sort((a,b)=>{ const i=FMT_ORDER.indexOf(a),j=FMT_ORDER.indexOf(b); return (i<0?99:i)-(j<0?99:j); });
+}
+function fmtChips(d){ return fmtsDe(d).map(e=>`<span class="fmini ${e==='pdf'?'pdf':''}">${esc(e.toUpperCase())}</span>`).join(''); }
+
 function cardFdoc(d){
   const s=d.atual?STMAP[d.atual.status]:null;
   const cor=s?s.cor:'#94A3B8';
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="abrirDoc('${d.id}')">
-    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
-    <span style="flex:1;min-width:0"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span></span>
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
+    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="abrirDoc('${d.id}')"></span>
+    <span class="fmeta" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
+}
+
+// ── Menu de contexto do card (⋮): abrir por formato + controle de revisão ────
+let DOC_MENU_EL=null;
+function docMenuClose(){ if(DOC_MENU_EL){ DOC_MENU_EL.remove(); DOC_MENU_EL=null; } }
+document.addEventListener('mousedown',e=>{ if(DOC_MENU_EL && !DOC_MENU_EL.contains(e.target)) docMenuClose(); }, true);
+window.addEventListener('resize',docMenuClose);
+function docMenuOpen(ev,id){
+  ev.stopPropagation();
+  const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc===id;
+  docMenuClose(); if(reabrir) return;
+  const d=DOCS.find(x=>x.id===id); if(!d) return;
+  const byExt={}; ((d.atual&&d.atual.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase(); if(e&&!byExt[e]) byExt[e]=a; });
+  const rows=[];
+  FMT_ORDER.filter(e=>byExt[e]).forEach(e=>{ const view=(e==='pdf'||e==='dxf');
+    rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
+  });
+  if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
+  rows.push('<div class="dm-sep"></div>');
+  rows.push(`<button onclick="docMenuAct('${id}','','rev')"><span class="mi">🕓</span>Controle de revisão</button>`);
+  const m=document.createElement('div'); m.className='docmenu'; m._doc=id; m.innerHTML=rows.join('');
+  document.body.appendChild(m);
+  const r=ev.currentTarget.getBoundingClientRect(), w=210, h=m.offsetHeight;
+  let left=r.right-w; if(left<8) left=8;
+  let top=r.bottom+5; if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-5);
+  m.style.left=left+'px'; m.style.top=top+'px';
+  DOC_MENU_EL=m;
+}
+function docMenuAct(id,ext,mode){
+  docMenuClose();
+  const d=DOCS.find(x=>x.id===id); if(!d) return;
+  if(mode==='rev'){ DOC_SEL=d; renderNav(); abrirDetalhes(); return; }
+  const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
+  if(mode==='view') abrirDoc(id, ext);
+  else baixar(a.storage_path, a.nome);
 }
 
 // ── Abrir documento no canvas ───────────────────────────────────────────────
 let VIEW_FILES={}, VIEW_FMT=null;
-async function abrirDoc(id){
+async function abrirDoc(id, preferFmt){
   DOC_SEL = DOCS.find(d=>d.id===id); if(!DOC_SEL) return;
   renderNav();
   const s = DOC_SEL.atual?STMAP[DOC_SEL.atual.status]:null;
@@ -479,17 +550,15 @@ async function abrirDoc(id){
   $('vtool').style.display='flex';
   $('vEmpty').style.display='none';
 
-  // arquivos visualizáveis (PDF, DXF) da revisão atual
+  // arquivos visualizáveis (PDF, DXF) da revisão atual — já carregados em rev.arqs
   VIEW_FILES={};
   const rev = DOC_SEL.atual;
-  if(rev){
-    const { data: arqs } = await sb.from('cde_arquivo_auria')
-      .select('nome,extensao,storage_path,eh_principal').eq('revisao_id',rev.id);
-    (arqs||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
-      if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome }; });
-  }
+  ((rev&&rev.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
+    if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome }; });
   renderFmtToggle();
-  const fmt = VIEW_FILES.pdf ? 'pdf' : (VIEW_FILES.dxf ? 'dxf' : null);
+  // Prioriza SEMPRE o PDF; só abre outro formato se o menu pedir explicitamente.
+  const fmt = (preferFmt && VIEW_FILES[preferFmt]) ? preferFmt
+            : (VIEW_FILES.pdf ? 'pdf' : (VIEW_FILES.dxf ? 'dxf' : null));
   if(!fmt){
     $('pdfScroll').style.display='block'; $('dxfWrap').style.display='none';
     $('pdfCtrls').style.display='none'; $('dxfHint').style.display='none';
@@ -575,11 +644,25 @@ async function renderPdf(){
 function pdfZoom(dir){ if(!PDF) return; PDF_FIT=false; PDF_ZOOM=Math.max(.2,Math.min(6, PDF_ZOOM*(dir>0?1.25:.8))); renderPdf(); }
 function pdfFit(){ if(!PDF) return; PDF_FIT=true; renderPdf(); }
 function pdfPage(d){ if(!PDF) return; const n=PDF_PG+d; if(n>=1&&n<=PDF.numPages){ PDF_PG=n; renderPdf(); } }
-// pan por arraste
+// pan por arraste (botão esquerdo ou botão do meio) + zoom pela roda do mouse
 (function(){ const s=$('pdfScroll'); let down=false,sx,sy,l,t;
-  s.addEventListener('mousedown',e=>{ down=true; s.classList.add('grab'); sx=e.clientX;sy=e.clientY;l=s.scrollLeft;t=s.scrollTop; });
+  s.addEventListener('mousedown',e=>{ if(e.button!==0 && e.button!==1) return;
+    if(e.button===1) e.preventDefault();              // sem autoscroll do botão do meio
+    down=true; s.classList.add('grab'); sx=e.clientX;sy=e.clientY;l=s.scrollLeft;t=s.scrollTop; });
   window.addEventListener('mouseup',()=>{ down=false; s.classList.remove('grab'); });
   window.addEventListener('mousemove',e=>{ if(!down)return; s.scrollLeft=l-(e.clientX-sx); s.scrollTop=t-(e.clientY-sy); });
+  s.addEventListener('auxclick',e=>{ if(e.button===1) e.preventDefault(); });
+  // zoom com a roda, ancorado no cursor
+  s.addEventListener('wheel',e=>{
+    if(!PDF) return; e.preventDefault();
+    const rect=s.getBoundingClientRect();
+    const px=e.clientX-rect.left, py=e.clientY-rect.top;      // cursor na viewport
+    const cx=px+s.scrollLeft, cy=py+s.scrollTop;              // ponto no conteúdo
+    const prev=PDF_ZOOM; PDF_FIT=false;
+    PDF_ZOOM=Math.max(.2,Math.min(8, PDF_ZOOM*(e.deltaY<0?1.15:1/1.15)));
+    const k=PDF_ZOOM/prev;
+    renderPdf().then(()=>{ s.scrollLeft=cx*k-px; s.scrollTop=cy*k-py; });
+  }, {passive:false});
 })();
 window.addEventListener('resize',()=>{ if(PDF&&PDF_FIT) renderPdf(); });
 
@@ -628,16 +711,26 @@ function limparLote(){ LOTE=[]; $('prevWrap').style.display='none'; $('btnConfir
 function acaoDoGrupo(g){
   if(!g.parse.ok) return {tipo:'err',txt:'Código fora do padrão'};
   const doc=DOCS.find(d=>d.codigo===g.parse.codigoDoc);
-  if(!doc) return {tipo:'novo',txt:'Novo documento'};
-  if((doc.revs||[]).some(r=>r.revisao===g.parse.revisao)) return {tipo:'dup',txt:'Revisão já recebida',doc};
-  return {tipo:'rev',txt:'Nova revisão de existente',doc};
+  if(!doc) return {tipo:'novo',txt:'Novo documento',doc:null};
+  const rev=(doc.revs||[]).find(r=>r.revisao===g.parse.revisao);
+  if(!rev) return {tipo:'rev',txt:'Nova revisão',doc};
+  // A revisão já existe. Uma prancha tem vários formatos (PDF, DXF, DWG…) com o
+  // MESMO nome: aceitar os formatos que ainda não estão nesta revisão em vez de
+  // recusar o lote inteiro como duplicado. Só é 'dup' se nada for novo.
+  const tem=new Set((rev.arqs||[]).map(a=>(a.nome||'').toLowerCase()));
+  const novos=g.arquivos.filter(f=>!tem.has(f.name.toLowerCase()));
+  if(!novos.length) return {tipo:'dup',txt:'Arquivo(s) já enviado(s)',doc,rev};
+  return {tipo:'add',txt:'Adicionar formato',doc,rev,novos};
 }
 function avaliarLote(){
-  const validos=LOTE.filter(g=>{ g.acao=acaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'; });
+  const validos=LOTE.filter(g=>{ g.acao=acaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'||g.acao.tipo==='add'; });
   $('prevResumo').textContent=LOTE.length+' documento(s) · '+validos.length+' a registrar';
   $('prev').innerHTML='<thead><tr><th>Código do documento</th><th>Disciplina</th><th>Rev.</th><th>Arquivos</th><th>Situação</th></tr></thead><tbody>'
     + LOTE.map(g=>{ const p=g.parse,a=g.acao;
-      const files=g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||''; return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
+      const jaTem = a.tipo==='add' ? new Set((a.rev.arqs||[]).map(x=>(x.nome||'').toLowerCase())) : null;
+      const files=g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+        const antigo=jaTem&&jaTem.has(f.name.toLowerCase());
+        return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}" style="${antigo?'opacity:.4':''}" title="${antigo?'já enviado':'novo'}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
       return `<tr><td><div class="cod">${esc(p.codigoDoc||g.base)}</div>${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
         <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td><td class="cod">${esc(p.revisao||'—')}</td>
         <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`;
@@ -647,9 +740,11 @@ function avaliarLote(){
 }
 async function sha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; } }
 async function confirmarLote(){
-  const alvos=LOTE.filter(g=> g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev')); if(!alvos.length) return;
+  const alvos=LOTE.filter(g=> g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'||g.acao.tipo==='add')); if(!alvos.length) return;
+  // Em 'add' só sobem os formatos que faltam; nos demais, todos os arquivos do grupo.
+  alvos.forEach(g=>{ g._upload = g.acao.tipo==='add' ? g.acao.novos : g.arquivos; });
   const b=$('btnConfirmar'); b.disabled=true;
-  const totalFiles=alvos.reduce((s,g)=>s+g.arquivos.length,0); let done=0;
+  const totalFiles=alvos.reduce((s,g)=>s+g._upload.length,0); let done=0;
   $('progwrap').style.display='block'; $('progbar').style.width='2%';
   const prog=()=>{ $('progbar').style.width=Math.max(2,Math.round(done/totalFiles*100))+'%'; };
   let feito=0,falhas=0; const recebidos=[];
@@ -663,32 +758,41 @@ async function confirmarLote(){
         }).select('id').single();
         if(error) throw error; docId=d.id;
       }
-      const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
-        documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
-      }).select('id').single();
-      if(er) throw er;
-      for(const f of g.arquivos){
-        const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+      // 'add' reaproveita a revisão existente; senão, cria uma nova (RECEBIDO/S0).
+      let revId;
+      if(g.acao.tipo==='add'){ revId=g.acao.rev.id; }
+      else{
+        const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
+          documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
+        }).select('id').single();
+        if(er) throw er; revId=rev.id;
+      }
+      // Só um PDF é o "principal" da revisão (o que a obra abre por padrão).
+      let temPdf=(g.acao.rev&&(g.acao.rev.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'));
+      for(const f of g._upload){
+        const el=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
         $('recMsg').textContent='Enviando arquivo '+(done+1)+' de '+totalFiles+': '+f.name;
         const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
         const up=await sb.storage.from('cde').upload(path,f,{upsert:false,contentType:f.type||undefined});
         if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
+        const ehPdf = el==='pdf' && !temPdf; if(el==='pdf') temPdf=true;
         await sb.from('cde_arquivo_auria').insert({
-          revisao_id:rev.id, nome:f.name, extensao:ext.toLowerCase(), tamanho_bytes:f.size,
+          revisao_id:revId, nome:f.name, extensao:el, tamanho_bytes:f.size,
           sha256:(f.size<10*1024*1024?await sha256(f):null), storage_path:path,
-          eh_principal:(ext.toLowerCase()==='pdf'), visualizavel:(ext.toLowerCase()==='pdf')
+          eh_principal:ehPdf, visualizavel:(el==='pdf'||el==='dxf')
         });
         done++; prog();
       }
       await sb.from('cde_evento_auria').insert({
-        revisao_id:rev.id, acao:'recebeu', para_status:'S0',
-        usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:g.arquivos.length+' arquivo(s)'
+        revisao_id:revId, acao:'recebeu', para_status:'S0',
+        usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
+        nota:(g.acao.tipo==='add'?'Formato adicional · ':'')+g._upload.length+' arquivo(s)'
       });
       recebidos.push({ codigo:g.parse.codigoDoc, disciplina:g.parse.disciplina,
         disciplinaLabel:g.parse.disciplina?(g.parse.disciplina+' — '+discLabel(g.parse.disciplina)):'—',
         revisao:g.parse.revisao||'R00', novo:(g.acao.tipo==='novo') });
       feito++;
-    }catch(e){ falhas++; done+=g.arquivos.length; prog();
+    }catch(e){ falhas++; done+=g._upload.length; prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
       console.warn('receber',g.base,g._erro);
     }
