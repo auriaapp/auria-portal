@@ -155,10 +155,24 @@ async function ativar(){
 
   // Fluxo novo: só AGORA (ação humana) consumimos o token de uso único.
   if(PENDING){
-    const { error:ev } = await sb.auth.verifyOtp({ token_hash: PENDING.token_hash, type: PENDING.type });
+    const { data:ok, error:ev } = await sb.auth.verifyOtp({ token_hash: PENDING.token_hash, type: PENDING.type });
     if(ev){
-      errBox.textContent = 'Este link expirou ou já foi usado. Peça um novo convite ao administrador.';
+      // Mostra o erro EXATO do Supabase — ajuda o admin a diferenciar
+      // "otp_expired" (venceu de fato) de "invalid_credentials" (o token não
+      // é o mais recente do usuário → foi reenviado outro convite depois) etc.
+      const codigo = ev.code || ev.name || 'erro';
+      const httpSt = (ev.status || (ev.__isAuthError ? '?' : '')) + '';
+      const msg = (ev.message || String(ev)).replace(/</g,'&lt;');
+      let dica = '';
+      if(/expired/i.test(codigo+msg))       dica = 'O link passou do prazo. Peça um novo convite.';
+      else if(/already|used|consumed/i.test(codigo+msg)) dica = 'Este link já foi usado. Faça login com sua senha em auria.solutions.';
+      else if(/invalid|otp_disabled|not_found/i.test(codigo+msg)) dica = 'O convite foi invalidado — provavelmente porque um novo convite foi enviado depois. Peça o mais recente ao administrador e clique nele.';
+      else                                  dica = 'Falha ao validar o convite. Copie a mensagem técnica abaixo e envie ao administrador.';
+      errBox.innerHTML = '<b>Não foi possível ativar a conta.</b><br>'+dica
+        +'<div style="margin-top:10px;font-size:11px;color:#94A3B8;font-family:ui-monospace,Consolas,monospace;text-align:left;word-break:break-all">'
+        + 'código: '+codigo+' · http '+httpSt+'<br>' + msg + '</div>';
       errBox.style.display = 'block';
+      console.warn('verifyOtp erro:', ev);
       btn.disabled = false; btn.textContent = 'Ativar conta e entrar no painel';
       return;
     }
