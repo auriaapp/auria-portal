@@ -802,6 +802,9 @@ async function pdfPage(delta){
   stage.addEventListener('pointerdown', function(e){
     if(!V.page) return;
     if(e.button!==0 && e.button!==1) return;
+    // Pin do App tem prioridade — se o clique é em cima de um pin (esquerdo),
+    // deixa passar sem virar pan (senão o pointerCapture rouba o click event).
+    if(e.button===0 && e.target && e.target.closest && e.target.closest('.cdePin')) return;
     if(e.button===1) e.preventDefault();
     try{ stage.setPointerCapture(e.pointerId); }catch(_){}
     drag={ id:e.pointerId, x:e.clientX, y:e.clientY, px:V.panX, py:V.panY };
@@ -822,6 +825,17 @@ async function pdfPage(delta){
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
   stage.addEventListener('auxclick', function(e){ if(e.button===1) e.preventDefault(); });
+  // Delegation p/ o card de pin do App: sobrevive a re-renders no meio do gesto
+  // (renderPinsCDE recria os pin divs a cada updateCss, então não dá pra pendurar
+  // o listener direto no elemento). O click bubbla até aqui via pointer-events.
+  stage.addEventListener('click', function(e){
+    const pinEl = e.target && e.target.closest && e.target.closest('.cdePin');
+    if(!pinEl) return;
+    e.stopPropagation();
+    const aptId = pinEl.dataset.apt;
+    const apt = CDE_APTS.find(a => String(a.id) === String(aptId));
+    if(apt) mostrarCdePinCard(apt, e.clientX, e.clientY);
+  });
 })();
 
 window.addEventListener('resize',()=>{ if(V.page) fitPage(); });
@@ -1152,7 +1166,6 @@ function renderPinsCDE(){
       el.style.left = x+'px'; el.style.top = y+'px';
       el.title = a.id + ' — ' + (a.titulo || '');
       el.dataset.apt = a.id; el.dataset.pi = idx;
-      el.addEventListener('click', (ev)=>{ ev.stopPropagation(); mostrarCdePinCard(a, ev.clientX, ev.clientY); });
       wrap.appendChild(el);
     });
   });
