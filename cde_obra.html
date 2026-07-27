@@ -53,6 +53,24 @@
   body.dark #pdfScroll{background:#0d1420}
   #pdfScroll.grab{cursor:grabbing}
   #pdfCanvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto}
+  /* Overlay de pins do App sobre o canvas do CDE (Elo C) */
+  #cdePinsWrap{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
+  .cdePin{position:absolute;width:26px;height:34px;margin-left:-13px;margin-top:-30px;pointer-events:auto;cursor:pointer;
+          background:transparent url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 34'><path d='M13 1c6.6 0 12 5.1 12 11.4 0 8.6-12 20.6-12 20.6S1 21 1 12.4C1 6.1 6.4 1 13 1z' fill='%23E8960A' stroke='%23fff' stroke-width='1.6'/><circle cx='13' cy='12' r='4' fill='%23fff'/></svg>") no-repeat center/contain;
+          filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));transition:transform .12s}
+  .cdePin.sel,.cdePin:hover{transform:scale(1.18)}
+  .cdePin.resolvido{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(80deg) saturate(1.2)}
+  .cdePin.atrasado{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(-30deg) saturate(1.4)}
+  .cdePinCard{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:11px;
+              box-shadow:0 14px 40px rgba(8,14,26,.45);padding:12px 14px;min-width:250px;max-width:340px;font-size:12.5px}
+  .cdePinCard .tit{font-weight:800;color:var(--txt);font-size:13px;margin:0 0 4px}
+  .cdePinCard .cod{font-family:var(--mono);color:var(--navy);font-weight:700;font-size:11px}
+  .cdePinCard .row{display:flex;gap:6px;align-items:center;margin-top:5px;color:var(--txt2);font-size:11.5px;flex-wrap:wrap}
+  .cdePinCard .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:700;color:#fff}
+  .cdePinCard .desc{margin-top:8px;color:var(--txt2);line-height:1.5;font-size:12px;max-height:80px;overflow:hidden}
+  .cdePinCard .acts{margin-top:11px;display:flex;gap:7px}
+  .cdePinCard .acts button{background:var(--navy);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .cdePinCard .acts button.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
   .vempty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
           color:var(--mut);gap:8px;text-align:center;padding:30px}
   .vempty .big{font-size:40px}
@@ -222,7 +240,8 @@
       <button class="tb" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
-    <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
+    <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="cdePinsWrap"></div><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
+    <div id="cdePinCard" class="cdePinCard" style="display:none"></div>
     <div id="dxfWrap" style="display:none"></div>
     <div class="vempty" id="vEmpty">
       <div class="big">🗂️</div>
@@ -561,6 +580,10 @@ function abrirNoApp(){
 let VIEW_FILES={}, VIEW_FMT=null;
 async function abrirDoc(id, preferFmt){
   DOC_SEL = DOCS.find(d=>d.id===id); if(!DOC_SEL) return;
+  // Elo C — resetar pins do App e carregar os do documento aberto (assíncrono,
+  // não bloqueia a renderização do PDF/DXF; renderPinsCDE fica no-op até chegar).
+  CDE_APTS=[]; CDE_PRANCHA_ID=null; renderPinsCDE();
+  carregarPinsCDE(DOC_SEL.id).catch(e=>console.warn('pins CDE:', e.message||e));
   renderNav();
   const s = DOC_SEL.atual?STMAP[DOC_SEL.atual.status]:null;
   $('vCod').textContent = DOC_SEL.codigo;
@@ -668,6 +691,7 @@ function updateCss(){
   cv.style.transformOrigin='0 0';
   cv.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
   $('vPg').textContent = V.pageNum+' / '+V.doc.numPages;
+  renderPinsCDE();     // pins do App acompanham zoom/pan em tempo real
 }
 
 // O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
@@ -1081,6 +1105,110 @@ async function mudarStatus(revId,novo){
     if(DOC_SEL){ await renderDetalhe(); abrirDoc(DOC_SEL.id); } else fecharDoc();
   }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para alterar o status.':'Erro: '+m); }
 }
+
+// ── Elo C: pins do Auria App sobreposto ao canvas do CDE ───────────────────
+//  Encontra a prancha_id no App via cde_documento_id do documento aberto e
+//  renderiza os pins (pontos_json nx,ny,pg) sobre o canvas do PDF. Posição em
+//  CSS absolutos calculada a partir de V.zoom, V.panX, V.panY e page.view —
+//  updateCss chama renderPinsCDE, então zoom e pan seguem em tempo real.
+let CDE_APTS = [], CDE_PRANCHA_ID = null, CDE_PIN_SEL = null;
+
+async function carregarPinsCDE(cdeDocId){
+  // 1) prancha do App amarrada a este documento (se existir)
+  const { data: pr } = await sb.from('pranchas_auria')
+    .select('id').eq('empreendimento_id', EMP_ID).eq('cde_documento_id', cdeDocId).maybeSingle();
+  if(!pr){ CDE_PRANCHA_ID=null; CDE_APTS=[]; renderPinsCDE(); return; }
+  CDE_PRANCHA_ID = pr.id;
+  // 2) apontamentos daquela prancha (com pins). RLS já filtra por empreendimento.
+  const { data: apts, error } = await sb.from('apontamentos')
+    .select('id,titulo,descricao,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id')
+    .eq('prancha_id', pr.id);
+  if(error){ console.warn('apts CDE:', error.message); CDE_APTS=[]; }
+  else CDE_APTS = apts||[];
+  renderPinsCDE();
+}
+
+function renderPinsCDE(){
+  const wrap = $('cdePinsWrap'); if(!wrap) return;
+  wrap.innerHTML = '';
+  if(!CDE_APTS.length || !V.page || VIEW_FMT!=='pdf') return;
+  const [ , , pw, ph ] = V.page.view;   // dimensões da página em pontos @72dpi
+  const pg = V.pageNum;
+  CDE_APTS.forEach(a=>{
+    (a.pontos_json||[]).forEach((pt,idx)=>{
+      if(!pt) return;
+      // pontos_json usa {nx,ny,pg} do Auria App (nx/ny normalizados [0,1]).
+      // Pins sem pg (do desktop antigo) assumem página 1.
+      const ptPg = pt.pg || 1;
+      if(ptPg !== pg) return;
+      const x = (pt.nx||0) * pw * V.zoom - V.panX;
+      const y = (pt.ny||0) * ph * V.zoom - V.panY;
+      // Fora do viewport visível → não desenha (economiza DOM em plantas com muitos pins)
+      const stage = $('pdfScroll');
+      if(x < -30 || y < -40 || x > stage.clientWidth+30 || y > stage.clientHeight+10) return;
+      const cls = a.status==='Resolvido' ? 'cdePin resolvido' : (a.atrasado ? 'cdePin atrasado' : 'cdePin');
+      const el = document.createElement('div');
+      el.className = cls + (CDE_PIN_SEL===a.id?' sel':'');
+      el.style.left = x+'px'; el.style.top = y+'px';
+      el.title = a.id + ' — ' + (a.titulo || '');
+      el.dataset.apt = a.id; el.dataset.pi = idx;
+      el.addEventListener('click', (ev)=>{ ev.stopPropagation(); mostrarCdePinCard(a, ev.clientX, ev.clientY); });
+      wrap.appendChild(el);
+    });
+  });
+}
+
+function mostrarCdePinCard(a, cx, cy){
+  CDE_PIN_SEL = a.id; renderPinsCDE();
+  const c = $('cdePinCard');
+  const st = a.status || '—';
+  const stCor = st==='Resolvido' ? '#1E8449' : (a.atrasado ? '#A32D2D' : (st==='Em análise' ? '#B7791F' : '#185FA5'));
+  const prCor = a.prioridade && /severa|imediata/i.test(a.prioridade) ? '#A32D2D'
+              : a.prioridade && /importante|programada/i.test(a.prioridade) ? '#B7791F'
+              : '#64748B';
+  const dt = (a.data_criacao || '').split('T')[0] || '';
+  c.innerHTML =
+    '<div class="cod">'+esc(a.id||'')+'</div>'
+    + '<div class="tit">'+esc(a.titulo||'(sem título)')+'</div>'
+    + '<div class="row"><span class="pill" style="background:'+stCor+'">'+esc(st)+'</span>'
+    + (a.prioridade?'<span class="pill" style="background:'+prCor+'">'+esc(a.prioridade)+'</span>':'')
+    + (a.disciplina?'<span style="color:var(--mut)">· '+esc(a.disciplina)+'</span>':'')+'</div>'
+    + '<div class="row"><span style="color:var(--mut)">'+esc(a.analista||'')+(dt?' · '+esc(dt):'')+'</span></div>'
+    + (a.descricao?'<div class="desc">'+esc(a.descricao)+'</div>':'')
+    + '<div class="acts">'
+    + '<button onclick="abrirAptNoApp(\''+esc(a.id)+'\')">Abrir no App</button>'
+    + '<button class="sec" onclick="esconderCdePinCard()">Fechar</button>'
+    + '</div>';
+  // posiciona: à direita do clique, mas dentro da janela
+  c.style.display='block';
+  const w=c.offsetWidth, h=c.offsetHeight;
+  let L = cx + 14, T = cy - 10;
+  if(L + w > window.innerWidth - 8) L = cx - w - 14;
+  if(T + h > window.innerHeight - 8) T = window.innerHeight - h - 8;
+  if(T < 8) T = 8;
+  c.style.left = L+'px'; c.style.top = T+'px';
+}
+function esconderCdePinCard(){ const c=$('cdePinCard'); if(c) c.style.display='none'; CDE_PIN_SEL=null; renderPinsCDE(); }
+// Fecha o card ao clicar fora
+document.addEventListener('mousedown', (e)=>{
+  const c=$('cdePinCard'); if(!c || c.style.display==='none') return;
+  if(c.contains(e.target)) return;
+  if(e.target.classList && e.target.classList.contains('cdePin')) return;
+  esconderCdePinCard();
+}, true);
+
+function abrirAptNoApp(aptId){
+  if(!DOC_SEL) return;
+  const rev = DOC_SEL.atual;
+  const url = 'app.html?emp='+encodeURIComponent(EMP_ID)
+            + '&cde_doc='+encodeURIComponent(DOC_SEL.id)
+            + (rev?'&cde_rev='+encodeURIComponent(rev.id):'')
+            + '&apt='+encodeURIComponent(aptId);
+  window.open(url, '_blank');
+}
+
+// Re-render quando trocar de página do PDF ou redimensionar a janela
+window.addEventListener('resize', ()=>{ setTimeout(renderPinsCDE, 60); });
 
 boot();
 </script>
