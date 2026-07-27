@@ -518,8 +518,29 @@ async function boot(){
   renderFiltroChips(); renderSideRight();
   // Contexto vindo do CDE: ?cde_doc=<id>&cde_rev=<id> abre a prancha do CDE
   // já amarrada ao documento. Requer ?emp=<id> antes (trocarEmp acima).
-  const _cdeDoc=_qs.get('cde_doc'), _cdeRev=_qs.get('cde_rev');
-  if(_cdeDoc && EMP){ abrirDoCDE(_cdeDoc, _cdeRev).catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e))); }
+  // Se vier ?apt=<id> junto, o App abre o editor daquele apontamento assim
+  // que a prancha e os apontamentos estiverem carregados.
+  const _cdeDoc=_qs.get('cde_doc'), _cdeRev=_qs.get('cde_rev'), _apt=_qs.get('apt');
+  if(_cdeDoc && EMP){
+    abrirDoCDE(_cdeDoc, _cdeRev)
+      .then(()=>{ if(_apt) focarApontamento(_apt); })
+      .catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e)));
+  }
+}
+
+// Espera APTS carregar e abre o apontamento pedido pelo ?apt=<id>.
+// trocarEmp dispara carregarApts assíncrono; a prancha vem do abrirDoCDE
+// (também assíncrono). Poll curto (12×250ms) até APTS aparecer.
+function focarApontamento(aptId){
+  let tent=0;
+  const tentar=()=>{
+    tent++;
+    const idx = (APTS||[]).findIndex(a=>String(a.id)===String(aptId));
+    if(idx>=0){ abrirAptIdx(idx); return; }
+    if(tent<12) setTimeout(tentar, 250);
+    else console.warn('apontamento', aptId, 'não encontrado em APTS');
+  };
+  tentar();
 }
 
 function trocarEmp(){
