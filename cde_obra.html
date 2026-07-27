@@ -86,8 +86,11 @@
   /* Taskbar de janelas minimizadas — só aparece se houver alguma */
   #cdeTaskbar{display:none;flex-wrap:wrap;gap:6px;padding:6px 10px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
   .cdeTask{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
-           padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+           padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cdeTask:hover{border-color:var(--accent)}
+  .cdeTask.act{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .cdeTask.min{opacity:.55}
+  .cdeTask.min:hover{opacity:1}
   .vempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--mut);gap:8px;text-align:center;padding:30px;pointer-events:none}
   .vempty.hidden{display:none}
   /* Overlay de pins do App sobre o canvas do CDE (Elo C) */
@@ -97,7 +100,7 @@
   .cdePin.sel,.cdePin:hover{transform:scale(1.18)}
   .cdePin.resolvido{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(80deg) saturate(1.2)}
   .cdePin.atrasado{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(-30deg) saturate(1.4)}
-  .cdePinCard{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line);border-radius:11px;
+  .cdePinCard{position:fixed;z-index:99999;background:var(--panel);border:1px solid var(--line);border-radius:11px;
               box-shadow:0 14px 40px rgba(8,14,26,.45);padding:12px 14px;min-width:250px;max-width:340px;font-size:12.5px}
   .cdePinCard .tit{font-weight:800;color:var(--txt);font-size:13px;margin:0 0 4px}
   .cdePinCard .cod{font-family:var(--mono);color:var(--navy);font-weight:700;font-size:11px}
@@ -736,9 +739,16 @@ class CdeWin {
       const apt = this.CDE_APTS.find(a=> String(a.id)===String(pin.dataset.apt));
       if(apt) mostrarCdePinCard(apt, e.clientX, e.clientY, this);
     });
-    // Observa o próprio stage — mudança de tamanho (restore, max, resize, browser)
+    // Observa o próprio stage — mudança de tamanho (restore, max, resize, browser).
+    // PRESERVA a vista (zoom/pan/página): só re-rasteriza no tamanho novo. O fit
+    // automático acontece uma única vez, no primeiro carregamento do PDF.
     if(window.ResizeObserver){
-      const ro = new ResizeObserver(()=>{ if(this.V.page) this.fitPage(); });
+      const ro = new ResizeObserver(()=>{
+        if(!this.V.page) return;
+        if(this.stage.clientWidth<=0 || this.stage.clientHeight<=0) return;  // minimizada
+        if(!this._fitted){ this.fitPage(); return; }
+        this.F.valido=false; this.scheduleRender(80);
+      });
       ro.observe(this.stage);
     }
   }
@@ -765,7 +775,8 @@ class CdeWin {
     focar(this); atualizarTaskbar();
   }
   minimizar(){
-    this.state='min'; this.el.classList.add('min'); this.el.classList.remove('max');
+    this._preMin = this.state;              // lembra se estava max ou restaurada
+    this.state='min'; this.el.classList.add('min');
     if(WIN_STATE.act===this){
       const outra = WIN_STATE.list.find(w=>w!==this && w.state!=='min');
       if(outra) focar(outra); else { WIN_STATE.act=null; atualizarToolbar(); }
@@ -793,6 +804,7 @@ class CdeWin {
     this.subEl.textContent = doc.titulo && doc.titulo!==doc.codigo ? doc.titulo : '';
     this.statusEl.textContent = s ? s.rotulo : 'sem revisão';
     this.statusEl.style.background = s ? s.cor : '#94A3B8';
+    atualizarTaskbar();                     // aba ganha o código da prancha
     // arquivos visualizáveis da revisão vigente
     this.VIEW_FILES = {};
     const rev = doc.atual;
@@ -905,6 +917,7 @@ class CdeWin {
     const pw=x2-x1, ph=y2-y1;
     const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
     if(cw<=0||ch<=0) return;
+    this._fitted=true;
     this.V.zoom=Math.min(cw/pw, ch/ph)*0.96;
     const sz=this.pageSizePx();
     this.V.panX=-(cw-sz.w)/2;
@@ -971,6 +984,7 @@ function focar(w){
   w.el.style.zIndex = ++WIN_STATE.zTop;
   WIN_STATE.list.forEach(x=> x.el.classList.toggle('act', x===w));
   atualizarToolbar();
+  atualizarTaskbar();
 }
 
 function atualizarToolbar(){
@@ -1008,15 +1022,26 @@ function atualizarPageLbl(w){
   $('vPrev').disabled = w.V.pageNum<=1;
   $('vNext').disabled = w.V.pageNum>=w.V.doc.numPages;
 }
+// Taskbar SEMPRE visível quando há janelas — é o alternador entre projetos:
+// clicar numa aba foca a janela (restaurando se estava minimizada). A ativa
+// fica destacada; minimizadas ficam esmaecidas.
 function atualizarTaskbar(){
   const bar = $('cdeTaskbar');
-  const mins = WIN_STATE.list.filter(w=>w.state==='min');
-  if(!mins.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  if(!WIN_STATE.list.length){ bar.style.display='none'; bar.innerHTML=''; return; }
   bar.style.display='flex';
-  bar.innerHTML = mins.map(w=>{
+  bar.innerHTML = WIN_STATE.list.map(w=>{
     const cod = w.DOC_SEL ? w.DOC_SEL.codigo : '(sem prancha)';
-    return `<button class="cdeTask" onclick="restaurarWin('${w.id}')" title="Restaurar">📄 ${esc(cod)}</button>`;
+    const cls = 'cdeTask' + (WIN_STATE.act===w && w.state!=='min' ? ' act' : '') + (w.state==='min' ? ' min' : '');
+    return `<button class="${cls}" onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'}">📄 ${esc(cod)}</button>`;
   }).join('');
+}
+function cdeTaskClick(id){
+  const w = WIN_STATE.list.find(x=>x.id===id); if(!w) return;
+  if(w.state==='min'){
+    // volta ao estado que tinha antes de minimizar (max ou restaurada)
+    if(w._preMin==='restored' && w.restoredBox) w.restaurar(); else w.maximizar();
+  } else focar(w);
+  atualizarTaskbar();
 }
 function atualizarVempty(){
   const v = $('vEmpty'); if(!v) return;
