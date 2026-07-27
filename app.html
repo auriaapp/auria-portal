@@ -512,9 +512,14 @@ async function boot(){
     : '<option value="">Nenhum empreendimento atribuído</option>';
   $('loading').style.display='none'; $('app').style.display='flex';
   // Contexto vindo do portal: ?emp=<id> já entra no empreendimento certo.
-  const _empUrl=new URLSearchParams(location.search).get('emp');
+  const _qs=new URLSearchParams(location.search);
+  const _empUrl=_qs.get('emp');
   if(_empUrl && EMPS.some(e=>e.id===_empUrl)){ $('selEmp').value=_empUrl; trocarEmp(); }
   renderFiltroChips(); renderSideRight();
+  // Contexto vindo do CDE: ?cde_doc=<id>&cde_rev=<id> abre a prancha do CDE
+  // já amarrada ao documento. Requer ?emp=<id> antes (trocarEmp acima).
+  const _cdeDoc=_qs.get('cde_doc'), _cdeRev=_qs.get('cde_rev');
+  if(_cdeDoc && EMP){ abrirDoCDE(_cdeDoc, _cdeRev).catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e))); }
 }
 
 function trocarEmp(){
@@ -667,18 +672,136 @@ async function abrirPdfLocal(file, overlay){
 }
 
 // Reconhece o arquivo pelo hash; registra se for novo. Devolve o registro.
-async function registrarPranchaDb(nome, hash, doc, page){
+//   opts.cde_documento_id — quando vem do CDE, a prancha é identificada pelo
+//     documento (não pelo hash), para reusar escala/pins através das revisões
+//     mesmo quando o PDF muda. Atualiza hash/nome se a revisão trouxe outro
+//     arquivo. opts.cde_disciplina preenche a disciplina se ainda vazia.
+async function registrarPranchaDb(nome, hash, doc, page, opts){
+  opts = opts||{};
   const [ , , w, h ] = page.view;
+  // Prancha vinda do CDE: casa pelo cde_documento_id (identidade lógica).
+  if(opts.cde_documento_id){
+    const { data:prCde } = await sb.from('pranchas_auria').select('*')
+      .eq('empreendimento_id',EMP.id).eq('cde_documento_id',opts.cde_documento_id).maybeSingle();
+    if(prCde){
+      // Nova revisão do CDE pode ter mudado o PDF → atualiza hash/nome/tamanho.
+      const upd={};
+      if(prCde.arquivo_hash!==hash) upd.arquivo_hash=hash;
+      if(prCde.arquivo_nome!==nome) upd.arquivo_nome=nome;
+      if(prCde.n_pages!==doc.numPages) upd.n_pages=doc.numPages;
+      if(Number(prCde.width_pts)!==w) upd.width_pts=w;
+      if(Number(prCde.height_pts)!==h) upd.height_pts=h;
+      if(!prCde.disciplina && opts.cde_disciplina) upd.disciplina=opts.cde_disciplina;
+      if(Object.keys(upd).length){
+        try{ const r=await sb.from('pranchas_auria').update(upd).eq('id',prCde.id).select().single();
+             if(r.data) Object.assign(prCde,r.data); }catch(e){ console.warn('prancha update:',e.message||e); }
+      }
+      prCde._nova=false; prCde._hash=hash; prCde._doc=doc; prCde._fromCDE=true;
+      return prCde;
+    }
+  }
+  // Fallback tradicional: casa pelo hash (fluxo do PDF local).
   let { data:pr }=await sb.from('pranchas_auria').select('*')
     .eq('empreendimento_id',EMP.id).eq('arquivo_hash',hash).maybeSingle();
-  if(pr){ pr._nova=false; pr._hash=hash; pr._doc=doc; return pr; }
-  const ins=await sb.from('pranchas_auria').insert({
-    empreendimento_id:EMP.id, arquivo_nome:nome, arquivo_hash:hash,
-    n_pages:doc.numPages, width_pts:w, height_pts:h, criado_por:USER.id
-  }).select().single();
+  if(pr){
+    // Se veio do CDE mas achamos por hash, amarra ao documento agora.
+    if(opts.cde_documento_id && !pr.cde_documento_id){
+      try{ await sb.from('pranchas_auria').update({cde_documento_id:opts.cde_documento_id}).eq('id',pr.id);
+           pr.cde_documento_id=opts.cde_documento_id; }catch(e){ console.warn('prancha link cde:',e.message||e); }
+    }
+    pr._nova=false; pr._hash=hash; pr._doc=doc; return pr;
+  }
+  const linha={ empreendimento_id:EMP.id, arquivo_nome:nome, arquivo_hash:hash,
+                n_pages:doc.numPages, width_pts:w, height_pts:h, criado_por:USER.id };
+  if(opts.cde_documento_id) linha.cde_documento_id = opts.cde_documento_id;
+  if(opts.cde_disciplina)   linha.disciplina       = opts.cde_disciplina;
+  const ins=await sb.from('pranchas_auria').insert(linha).select().single();
   if(ins.error) throw ins.error;
   ins.data._nova=true; ins.data._hash=hash; ins.data._doc=doc;
+  ins.data._fromCDE=!!opts.cde_documento_id;
   return ins.data;
+}
+
+// ── Abrir prancha vinda do CDE (item 7 · Elo A) ─────────────────────────────
+//  Chamado quando a URL trouxer ?cde_doc=<uuid>[&cde_rev=<uuid>]. Busca o PDF
+//  principal da revisão indicada (ou da vigente), baixa via signed URL, e
+//  registra a prancha no App AMARRADA ao documento do CDE — assim novas
+//  revisões reaproveitam a mesma "prancha" (escala e pins herdados).
+window.CDE_REV_ID = null;   // usado depois pra amarrar os apontamentos à revisão vista
+async function abrirDoCDE(cdeDocId, cdeRevId){
+  if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
+  const dropHint = $('dropHint'); if(dropHint) dropHint.innerHTML='<div>Abrindo prancha do CDE…</div>';
+  // 1) documento (código, disciplina)
+  const { data:doc, error:docErr } = await sb.from('cde_documento_auria')
+    .select('id,codigo,titulo,disciplina,empreendimento_id').eq('id',cdeDocId).maybeSingle();
+  if(docErr) throw docErr;
+  if(!doc){ throw new Error('Documento não encontrado ou sem permissão.'); }
+  if(doc.empreendimento_id!==EMP.id){ throw new Error('Documento é de outro empreendimento.'); }
+  // 2) revisão: a explícita, ou a vigente publicada
+  let rev=null;
+  if(cdeRevId){
+    const r=await sb.from('cde_revisao_auria').select('id,revisao,status,estado').eq('id',cdeRevId).maybeSingle();
+    rev=r.data;
+  }
+  if(!rev){
+    const vig = await sb.from('cde_vigente_auria').select('revisao_id,revisao').eq('documento_id',cdeDocId).maybeSingle();
+    if(vig.data) rev={ id:vig.data.revisao_id, revisao:vig.data.revisao };
+  }
+  if(!rev){
+    // Sem publicada — pega a mais recente RECEBIDA (RLS já filtra por acesso).
+    const r=await sb.from('cde_revisao_auria').select('id,revisao,recebido_em')
+      .eq('documento_id',cdeDocId).order('recebido_em',{ascending:false}).limit(1).maybeSingle();
+    rev=r.data;
+  }
+  if(!rev) throw new Error('Este documento ainda não tem revisão.');
+  window.CDE_REV_ID = rev.id;
+  // 3) PDF principal da revisão (ou primeiro PDF disponível)
+  const { data: arqs } = await sb.from('cde_arquivo_auria')
+    .select('nome,extensao,storage_path,storage_provider,eh_principal').eq('revisao_id',rev.id);
+  const pdfs=(arqs||[]).filter(a=>(a.extensao||'').toLowerCase()==='pdf');
+  const arq = pdfs.find(a=>a.eh_principal) || pdfs[0];
+  if(!arq) throw new Error('Esta revisão não tem PDF (só DXF/DWG/IFC). O Auria App abre PDFs.');
+  // 4) baixa o PDF
+  const url = await cdeSignedUrlApp(arq.storage_path, arq.storage_provider);
+  const resp = await fetch(url);
+  if(!resp.ok) throw new Error('Falha ao baixar o PDF do CDE ('+resp.status+').');
+  const buf = await resp.arrayBuffer();
+  const hash = await sha256Hex(buf);
+  const pdoc = await pdfjsLib.getDocument({data:buf}).promise;
+  const page = await pdoc.getPage(1);
+  // 5) registra amarrado ao cde_documento_id
+  const pr = await registrarPranchaDb(arq.nome, hash, pdoc, page, {
+    cde_documento_id: cdeDocId,
+    cde_disciplina: doc.disciplina || null,
+  });
+  pr._cde_revisao_id = rev.id;   // apontamentos criados aqui nascem amarrados a esta revisão
+  // 6) carrega como camada base (mesmo caminho do abrirPdfLocal)
+  const L={ prancha:pr, doc:pdoc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
+            opacity:1, cor:null, visible:true, nome:arq.nome };
+  LAYERS=[L]; setBaseShims();
+  F.valido=false;
+  $('pageLbl').textContent='1 / '+pdoc.numPages;
+  fitPage();
+  $('dropHint').style.display='none';
+  $('btnAddCam').disabled=false;
+  renderCamadas(); renderPins(); renderListaApts();
+  try{ carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); }); }catch(e){}
+  atualizarCardBase(hash);
+}
+
+// Signed URL: escolhe Supabase Storage ou R2 (via edge function cde-r2).
+// Duplicado do cde_obra.html — só o helper de download.
+async function cdeSignedUrlApp(path, provider){
+  const p = provider || 'supabase';
+  if(p==='supabase'){
+    const { data, error } = await sb.storage.from('cde').createSignedUrl(path, 300);
+    if(error) throw error;
+    return data.signedUrl;
+  }
+  const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'download', path } });
+  if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
+  if(!data||!data.url) throw new Error('R2 não devolveu URL');
+  return data.url;
 }
 function atualizarCardBase(hash){
   const tag=PRANCHA._nova?'nova':'reconhecida';
@@ -2281,6 +2404,7 @@ function novoApontamentoBim(pt){
     pontos_json:[pt],
     drawings_json:[],
     prancha_id:PRANCHA?PRANCHA.id:null,
+    cde_revisao_id: (PRANCHA && PRANCHA._cde_revisao_id) || null,
     _novo:true
   };
   APT_IMGS=[];
@@ -2474,6 +2598,7 @@ function novoApontamento(nx,ny){
     pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
     drawings_json:[],
     prancha_id:PRANCHA?PRANCHA.id:null,
+    cde_revisao_id: (PRANCHA && PRANCHA._cde_revisao_id) || null,
     _novo:true
   };
   APT_IMGS=[];
@@ -2720,7 +2845,10 @@ async function salvarApt(){
       prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
       participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs,
       pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
-      prancha_id:a.prancha_id||null
+      prancha_id:a.prancha_id||null,
+      // Se a prancha veio do CDE, marca em qual revisão o apontamento nasceu.
+      // Só grava em CRIAÇÃO — edições posteriores não sobrescrevem a origem.
+      cde_revisao_id: (a._novo && a.cde_revisao_id) ? a.cde_revisao_id : undefined
     };
     const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento,id' });
     if(error) throw error;

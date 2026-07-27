@@ -219,6 +219,7 @@
       <span id="dxfHint" class="tit" style="display:none">role/arraste para navegar</span>
       <span style="width:8px"></span>
       <button class="tb" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
+      <button class="tb" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
     <div id="pdfScroll" style="display:none"><canvas id="pdfCanvas"></canvas><div id="vLoad" class="vmsg" style="display:none">Abrindo prancha…</div></div>
@@ -518,6 +519,10 @@ function docMenuOpen(ev,id){
     rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
   });
   if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
+  if(byExt.pdf){
+    rows.push('<div class="dm-sep"></div>');
+    rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
+  }
   rows.push('<div class="dm-sep"></div>');
   rows.push(`<button onclick="docMenuAct('${id}','','rev')"><span class="mi">🕓</span>Controle de revisão</button>`);
   const m=document.createElement('div'); m.className='docmenu'; m._doc=id; m.innerHTML=rows.join('');
@@ -532,9 +537,24 @@ function docMenuAct(id,ext,mode){
   docMenuClose();
   const d=DOCS.find(x=>x.id===id); if(!d) return;
   if(mode==='rev'){ DOC_SEL=d; renderNav(); abrirDetalhes(); return; }
+  if(mode==='app'){ DOC_SEL=d; abrirNoApp(); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
   if(mode==='view') abrirDoc(id, ext);
   else baixar(a.storage_path, a.nome, a.storage_provider);
+}
+
+// Abre a prancha atual no Auria App para marcação de pins/apontamentos.
+// O App detecta ?cde_doc=<id> e faz todo o download + amarração ao documento.
+function abrirNoApp(){
+  if(!DOC_SEL){ alert('Selecione uma prancha primeiro.'); return; }
+  const rev = DOC_SEL.atual;
+  if(!rev || !((rev.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'))){
+    alert('Esta prancha ainda não tem PDF na revisão atual — o Auria App abre PDFs.'); return;
+  }
+  const url = 'app.html?emp='+encodeURIComponent(EMP_ID)
+            + '&cde_doc='+encodeURIComponent(DOC_SEL.id)
+            + '&cde_rev='+encodeURIComponent(rev.id);
+  window.open(url, '_blank');
 }
 
 // ── Abrir documento no canvas ───────────────────────────────────────────────
@@ -556,6 +576,8 @@ async function abrirDoc(id, preferFmt){
   ((rev&&rev.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
     if((e==='pdf'||e==='dxf') && !VIEW_FILES[e]) VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' }; });
   renderFmtToggle();
+  // "Analisar no App" só faz sentido com PDF (é o que o Auria App abre).
+  const bA=$('btnAnalisar'); if(bA) bA.style.display = VIEW_FILES.pdf ? 'inline-flex' : 'none';
   // Prioriza SEMPRE o PDF; só abre outro formato se o menu pedir explicitamente.
   const fmt = (preferFmt && VIEW_FILES[preferFmt]) ? preferFmt
             : (VIEW_FILES.pdf ? 'pdf' : (VIEW_FILES.dxf ? 'dxf' : null));
