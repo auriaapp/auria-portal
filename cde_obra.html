@@ -373,6 +373,7 @@ const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null, DOC_SEL=null;
 let GRUPOS=[], GRUPO_SEL=null, NAV_MODE='disc';   // navegação: 'disc' (disciplina/etapa) ou 'grupo'
+let AUTOGRP_MODE=null, AUTOGRP_SEL=null;   // grupos automáticos dentro da aba Grupos: 'local' | 'etapa'
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 async function boot(){
@@ -448,6 +449,14 @@ function faseLabel(v){
 }
 function discLabel(v){
   const c=(CONV.campos||[]).find(c=>c.mapeia==='disciplina');
+  if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v); if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
+  return v||'—';
+}
+// Campo de LOCAL/PAVIMENTO — usado pelo grupo automático "Por localização".
+function localCampo(){ const cs=CONV.campos||[]; return cs.find(c=>c.mapeia==='local') || cs.find(c=>c.chave==='local') || null; }
+function localKey(){ return (localCampo()||{}).chave; }
+function localLabel(v){
+  const c=localCampo();
   if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v); if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
   return v||'—';
 }
@@ -584,7 +593,7 @@ function renderNav(){
   if(!DOCS.length){ p.innerHTML=toggle+'<div class="nav-hint">Nenhum documento ainda. Clique em <b>Receber arquivos</b> para registrar a primeira entrega.</div>'; return; }
   p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
 }
-function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); renderNav(); renderRail(); }
+function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); if(m!=='grupo'){ AUTOGRP_MODE=null; AUTOGRP_SEL=null; } renderNav(); renderRail(); }
 
 // Pastas (etapa dentro de disciplina) abertas — memória entre sessões via
 // localStorage, por empreendimento. Chave "disciplina::etapa" porque a mesma
@@ -649,10 +658,49 @@ function navGrupos(){
         <button class="btn sec sm" style="color:var(--err)" onclick="apagarGrupo('${g.id}')">Apagar grupo</button>
       </div>`;
   }
-  return `<div style="margin-bottom:10px"><button class="btn sec sm" onclick="novoGrupo()">＋ Novo grupo</button></div>` +
+  if(AUTOGRP_MODE) return navAutoGrupo(AUTOGRP_MODE);
+  const qtdLocais = new Set(DOCS.map(d=>{ const k=localKey(); return k&&d.campos?d.campos[k]:null; }).filter(Boolean)).size;
+  const qtdEtapas = new Set(DOCS.map(d=>d.etapa).filter(Boolean)).size;
+  return `<div style="margin-bottom:10px"><button class="btn sec sm" onclick="novoGrupo()">＋ Novo grupo</button></div>
+    <div class="folder"><div class="folder-h" onclick="AUTOGRP_MODE='local';AUTOGRP_SEL=null;renderNav()">
+      <span class="fic">📍</span><span class="fnm">Por localização</span><span class="fct">${qtdLocais}</span></div></div>
+    <div class="folder"><div class="folder-h" onclick="AUTOGRP_MODE='etapa';AUTOGRP_SEL=null;renderNav()">
+      <span class="fic">🏗</span><span class="fnm">Por etapa</span><span class="fct">${qtdEtapas}</span></div></div>
+    <div style="border-top:1px solid var(--line);margin:11px 0 9px;padding-top:9px">
+      <span style="font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;font-weight:800">Meus grupos</span></div>` +
     (GRUPOS.length? GRUPOS.map(g=>`<div class="folder"><div class="folder-h" onclick="GRUPO_SEL='${g.id}';renderNav()">
         <span class="fic">🗂️</span><span class="fnm">${esc(g.nome)}</span><span class="fct">${g.docIds.length}</span></div></div>`).join('')
       : '<div class="nav-hint">Nenhum grupo ainda. Grupos são coleções livres (ex.: “Pacote aprovação prefeitura”) — não mudam o código dos arquivos.</div>');
+}
+
+// Grupos AUTOMÁTICOS (por localização/etapa) — computados a partir dos campos
+// já mapeados na convenção da construtora; nunca precisam de curadoria manual,
+// sempre refletem os documentos atuais.
+function navAutoGrupo(modo){
+  const isLocal = modo==='local';
+  const key = isLocal ? localKey() : faseKey();
+  const titulo = isLocal ? 'localização' : 'etapa';
+  const icone = isLocal ? '📍' : '🏗';
+  if(!key) return `<div class="grp-back" onclick="AUTOGRP_MODE=null;renderNav()">← Grupos</div>
+    <div class="nav-hint">Este empreendimento não tem o campo de ${titulo} configurado na convenção de codificação.</div>`;
+  const porValor={};
+  DOCS.forEach(d=>{ const v=isLocal ? ((d.campos&&d.campos[key])||null) : (d.etapa||null); if(!v) return; (porValor[v]=porValor[v]||[]).push(d); });
+  const label = isLocal ? localLabel : faseLabel;
+  let valores=Object.keys(porValor);
+  if(isLocal) valores.sort();
+  else{ const ordem=(faseCampo()||{}).dominio||[]; const idx=v=>{ const i=ordem.findIndex(x=>((typeof x==='object')?x.v:x)===v); return i<0?99:i; }; valores.sort((a,b)=>idx(a)-idx(b)); }
+
+  if(AUTOGRP_SEL && porValor[AUTOGRP_SEL]){
+    const ds=porValor[AUTOGRP_SEL].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    return `<div class="grp-back" onclick="AUTOGRP_SEL=null;renderNav()">← Por ${titulo}</div>
+      <h3>${icone} ${esc(label(AUTOGRP_SEL))}</h3>
+      ${ds.map(cardFdoc).join('')}`;
+  }
+  return `<div class="grp-back" onclick="AUTOGRP_MODE=null;renderNav()">← Grupos</div>
+    <h3>${icone} Por ${titulo}</h3>` +
+    (valores.length ? valores.map(v=>`<div class="folder"><div class="folder-h" onclick="AUTOGRP_SEL='${esc(v)}';renderNav()">
+        <span class="fic">${icone}</span><span class="fnm">${esc(label(v))}</span><span class="fct">${porValor[v].length}</span></div></div>`).join('')
+      : `<div class="nav-hint">Nenhum documento com ${titulo} definida ainda.</div>`);
 }
 function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
