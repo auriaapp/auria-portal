@@ -161,6 +161,33 @@
   .btn-sec{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer}
   .btn-sec:hover{border-color:var(--accent)}
   .mfoot{display:flex;justify-content:space-between;gap:10px;margin-top:14px}
+
+  /* Escolha de origem da prancha: local vs CDE */
+  .origPop{position:fixed;z-index:9500;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+           box-shadow:0 14px 40px rgba(0,0,0,.5);padding:6px;min-width:220px}
+  .origPop button{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;color:var(--txt);
+                  font-family:inherit;font-size:13px;font-weight:600;text-align:left;padding:10px 12px;border-radius:9px;cursor:pointer}
+  .origPop button:hover{background:var(--panel2)}
+  .origPop .ic{font-size:16px;width:20px;text-align:center}
+
+  /* Modal genérico (overlay + card), reaproveitado pelo seletor do CDE */
+  .aOv{position:fixed;inset:0;background:rgba(5,9,18,.68);z-index:9400;display:none;align-items:flex-start;justify-content:center;padding:30px 16px;overflow-y:auto}
+  .aOv.on{display:flex}
+  .aModal{background:var(--panel);border:1px solid var(--line);border-radius:15px;width:min(560px,100%);
+          overflow:hidden;display:flex;flex-direction:column;max-height:88vh}
+  .aModal-h{padding:15px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .aModal-h b{font-size:15px;flex:1}
+  .aModal-h button.x{background:none;border:none;color:var(--mut);font-size:21px;cursor:pointer;line-height:1}
+  .aModal-b{padding:14px 18px;overflow-y:auto}
+  .aModal input[type=text]{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;
+                            background:var(--panel2);color:var(--txt);outline:none;margin-bottom:10px}
+  .cdeDocRow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;cursor:pointer}
+  .cdeDocRow:hover{background:var(--panel2)}
+  .cdeDocRow .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .cdeDocRow .meta{flex:1;min-width:0}
+  .cdeDocRow .cod{font-family:ui-monospace,Consolas,monospace;font-weight:700;font-size:12.5px;color:var(--accent2)}
+  .cdeDocRow .tit{font-size:11.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cdeDocGrp{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);font-weight:800;padding:10px 10px 4px}
 </style>
 </head>
 <body>
@@ -182,14 +209,23 @@
         <select id="selEmp" onchange="trocarEmp()"></select>
       </div>
       <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0], PDF_OVERLAY)">
+      <div class="aOv" id="ovCdePick" onclick="if(event.target===this)fecharSeletorCDE()">
+        <div class="aModal">
+          <div class="aModal-h"><b>Abrir prancha do CDE</b><button class="x" onclick="fecharSeletorCDE()">&times;</button></div>
+          <div class="aModal-b">
+            <input type="text" id="cdePickBusca" placeholder="Buscar por código ou título…" oninput="renderCdePick()">
+            <div id="cdePickList"><div style="padding:20px;color:var(--mut)">Carregando…</div></div>
+          </div>
+        </div>
+      </div>
       <input type="file" id="pdfInputMulti" accept="application/pdf" multiple style="display:none" onchange="onMultiFiles(this.files)">
 
       <!-- Disciplinas e Pranchas -->
       <div>
         <label>Disciplinas e Pranchas</label>
         <div id="camList" style="margin:6px 0"></div>
-        <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="adicionarPrancha()" disabled>＋ Adicionar Prancha</button>
-        <div class="hint" style="margin-top:8px">O PDF fica no seu computador — o Auria registra a identidade da prancha e guarda pins, apontamentos e calibração. Abrir o mesmo arquivo recupera tudo.</div>
+        <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="abrirEscolhaOrigem(event)" disabled>＋ Adicionar Prancha</button>
+        <div class="hint" style="margin-top:8px">Do computador: o PDF fica local, o Auria guarda identidade/pins/calibração. Do CDE: baixa a revisão vigente e amarra a prancha ao documento.</div>
       </div>
 
       <!-- Análises salvas -->
@@ -572,6 +608,77 @@ function abrirDialogo(overlay){
 // "+ Adicionar Prancha": abre a BASE se ainda não houver; senão, adiciona sobreposição
 function adicionarPrancha(){ abrirDialogo(!!(PRANCHA && LAYERS.length)); }
 
+// ── Escolha de origem: computador ou CDE ────────────────────────────────────
+function abrirEscolhaOrigem(ev){
+  const overlay = !!(PRANCHA && LAYERS.length);
+  fecharEscolhaOrigem();
+  const pop=document.createElement('div');
+  pop.className='origPop'; pop.id='origPop';
+  pop.innerHTML =
+    `<button onclick="fecharEscolhaOrigem();abrirDialogo(${overlay})"><span class="ic">💻</span>Do meu computador</button>`
+    +`<button onclick="fecharEscolhaOrigem();abrirSeletorCDE(${overlay})"><span class="ic">🗂</span>Do CDE</button>`;
+  document.body.appendChild(pop);
+  const r=ev.currentTarget.getBoundingClientRect(), w=220, h=pop.offsetHeight;
+  let left=r.left, top=r.bottom+6;
+  if(left+w>window.innerWidth-10) left=window.innerWidth-w-10;
+  if(top+h>window.innerHeight-10) top=Math.max(8, r.top-h-6);
+  pop.style.left=left+'px'; pop.style.top=top+'px';
+}
+function fecharEscolhaOrigem(){ const p=$('origPop'); if(p) p.remove(); }
+document.addEventListener('mousedown', e=>{
+  const p=$('origPop'); if(!p) return;
+  if(p.contains(e.target) || (e.target.id==='btnAddCam')) return;
+  fecharEscolhaOrigem();
+}, true);
+
+// ── Seletor de documento do CDE (para abrir como base OU sobreposição) ─────
+let CDE_PICK_DOCS=[], CDE_PICK_OVERLAY=false;
+async function abrirSeletorCDE(overlay){
+  if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
+  CDE_PICK_OVERLAY=!!overlay;
+  $('ovCdePick').classList.add('on');
+  $('cdePickBusca').value='';
+  $('cdePickList').innerHTML='<div style="padding:20px;color:var(--mut)">Carregando…</div>';
+  try{
+    const { data:docs, error } = await sb.from('cde_documento_auria')
+      .select('id,codigo,titulo,disciplina').eq('empreendimento_id',EMP.id).eq('arquivado',false).order('codigo');
+    if(error) throw error;
+    const ids=(docs||[]).map(d=>d.id);
+    let vig=[];
+    if(ids.length){
+      const { data:v } = await sb.from('cde_vigente_auria').select('documento_id,status').in('documento_id',ids);
+      vig=v||[];
+    }
+    const vigMap={}; vig.forEach(x=>vigMap[x.documento_id]=x.status);
+    CDE_PICK_DOCS=(docs||[]).map(d=>({...d, _vigente:!!vigMap[d.id]}));
+    renderCdePick();
+  }catch(e){ $('cdePickList').innerHTML='<div style="padding:20px;color:var(--danger)">Erro: '+esc(e.message||e)+'</div>'; }
+}
+function fecharSeletorCDE(){ $('ovCdePick').classList.remove('on'); }
+function renderCdePick(){
+  const q=($('cdePickBusca').value||'').toLowerCase().trim();
+  let lista=CDE_PICK_DOCS;
+  if(q) lista=lista.filter(d=>(d.codigo||'').toLowerCase().includes(q)||(d.titulo||'').toLowerCase().includes(q));
+  if(!lista.length){ $('cdePickList').innerHTML='<div style="padding:20px;color:var(--mut)">Nenhum documento encontrado.</div>'; return; }
+  const porDisc={}; lista.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
+  let html='';
+  Object.keys(porDisc).sort().forEach(disc=>{
+    html+='<div class="cdeDocGrp">'+esc(disc)+'</div>';
+    porDisc[disc].forEach(d=>{
+      html+=`<div class="cdeDocRow" onclick="selecionarCdePick('${d.id}')">`
+        +`<span class="dot" title="${d._vigente?'tem revisão vigente':'sem publicação'}" style="background:${d._vigente?'#27AE60':'#8CA0C4'}"></span>`
+        +`<span class="meta"><span class="cod">${esc(d.codigo)}</span><br><span class="tit">${esc(d.titulo||'')}</span></span>`
+        +`</div>`;
+    });
+  });
+  $('cdePickList').innerHTML=html;
+}
+async function selecionarCdePick(docId){
+  fecharSeletorCDE();
+  try{ await abrirDoCDE(docId, null, CDE_PICK_OVERLAY); }
+  catch(e){ alert('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
+}
+
 // ═══ ANÁLISES SALVAS ════════════════════════════════════════════════════════
 // Guarda o CONJUNTO de pranchas/camadas (ordem + identidade por hash) em
 // analises_auria. Reabrir: seleciona os PDFs (multi) → casa por hash → remonta.
@@ -750,8 +857,9 @@ async function registrarPranchaDb(nome, hash, doc, page, opts){
 //  registra a prancha no App AMARRADA ao documento do CDE — assim novas
 //  revisões reaproveitam a mesma "prancha" (escala e pins herdados).
 window.CDE_REV_ID = null;   // usado depois pra amarrar os apontamentos à revisão vista
-async function abrirDoCDE(cdeDocId, cdeRevId){
+async function abrirDoCDE(cdeDocId, cdeRevId, overlay){
   if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
+  if(overlay && !PRANCHA){ alert('Abra a prancha base primeiro.'); return; }
   const dropHint = $('dropHint'); if(dropHint) dropHint.innerHTML='<div>Abrindo prancha do CDE…</div>';
   // 1) documento (código, disciplina)
   const { data:doc, error:docErr } = await sb.from('cde_documento_auria')
@@ -797,17 +905,25 @@ async function abrirDoCDE(cdeDocId, cdeRevId){
     cde_disciplina: doc.disciplina || null,
   });
   pr._cde_revisao_id = rev.id;   // apontamentos criados aqui nascem amarrados a esta revisão
-  // 6) carrega como camada base (mesmo caminho do abrirPdfLocal)
+  // 6) carrega como camada — BASE (substitui) ou SOBREPOSIÇÃO (empilha), mesmo
+  //    comportamento dual do abrirPdfLocal.
   const L={ prancha:pr, doc:pdoc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0,
             opacity:1, cor:null, visible:true, nome:arq.nome };
-  LAYERS=[L]; setBaseShims();
-  F.valido=false;
-  $('pageLbl').textContent='1 / '+pdoc.numPages;
-  fitPage();
-  $('dropHint').style.display='none';
-  $('btnAddCam').disabled=false;
-  renderCamadas(); renderPins(); renderListaApts();
-  try{ carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); }); }catch(e){}
+  if(overlay){
+    L.opacity=0.7; L.cor='#E74C3C';
+    await carregarEstadoCamada(L);
+    LAYERS.push(L);
+    renderCamadas(); F.valido=false; render();
+  }else{
+    LAYERS=[L]; setBaseShims();
+    F.valido=false;
+    $('pageLbl').textContent='1 / '+pdoc.numPages;
+    fitPage();
+    $('dropHint').style.display='none';
+    $('btnAddCam').disabled=false;
+    renderCamadas(); renderPins(); renderListaApts();
+    try{ carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); }); }catch(e){}
+  }
 }
 
 // Signed URL: escolhe Supabase Storage ou R2 (via edge function cde-r2).

@@ -93,13 +93,12 @@
   .cdeTask.min:hover{opacity:1}
   .vempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--mut);gap:8px;text-align:center;padding:30px;pointer-events:none}
   .vempty.hidden{display:none}
-  /* Overlay de pins do App sobre o canvas do CDE (Elo C) */
-  .cdePin{position:absolute;width:26px;height:34px;margin-left:-13px;margin-top:-30px;pointer-events:auto;cursor:pointer;
-          background:transparent url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 34'><path d='M13 1c6.6 0 12 5.1 12 11.4 0 8.6-12 20.6-12 20.6S1 21 1 12.4C1 6.1 6.4 1 13 1z' fill='%23E8960A' stroke='%23fff' stroke-width='1.6'/><circle cx='13' cy='12' r='4' fill='%23fff'/></svg>") no-repeat center/contain;
+  /* Overlay de pins do App sobre o canvas do CDE (Elo C) — mesma estética do
+     Auria App: balão circular numerado + ponteiro, cor por PRIORIDADE. */
+  .cdePin{position:absolute;width:26px;height:34px;margin-left:-13px;margin-top:-32px;pointer-events:auto;cursor:pointer;
           filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));transition:transform .12s}
+  .cdePin svg{display:block}
   .cdePin.sel,.cdePin:hover{transform:scale(1.18)}
-  .cdePin.resolvido{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(80deg) saturate(1.2)}
-  .cdePin.atrasado{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35)) hue-rotate(-30deg) saturate(1.4)}
   .cdePinCard{position:fixed;z-index:99999;background:var(--panel);border:1px solid var(--line);border-radius:11px;
               box-shadow:0 14px 40px rgba(8,14,26,.45);padding:12px 14px;min-width:250px;max-width:340px;font-size:12.5px}
   .cdePinCard .tit{font-weight:800;color:var(--txt);font-size:13px;margin:0 0 4px}
@@ -1129,7 +1128,7 @@ class CdeWin {
     if(!pr){ this.CDE_PRANCHA_ID=null; this.CDE_APTS=[]; this.renderPinsCDE(); return; }
     this.CDE_PRANCHA_ID = pr.id;
     const { data: apts, error } = await sb.from('apontamentos')
-      .select('id,titulo,descricao,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id')
+      .select('id,id_num,titulo,descricao,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id')
       .eq('prancha_id', pr.id);
     if(error){ console.warn('apts CDE:', error.message); this.CDE_APTS=[]; }
     else this.CDE_APTS = apts||[];
@@ -1146,12 +1145,12 @@ class CdeWin {
         const x = (pt.nx||0) * pw * this.V.zoom - this.V.panX;
         const y = (pt.ny||0) * ph * this.V.zoom - this.V.panY;
         if(x < -30 || y < -40 || x > this.stage.clientWidth+30 || y > this.stage.clientHeight+10) return;
-        const cls = a.status==='Resolvido' ? 'cdePin resolvido' : (a.atrasado ? 'cdePin atrasado' : 'cdePin');
         const el = document.createElement('div');
-        el.className = cls + (this.CDE_PIN_SEL===a.id?' sel':'');
+        el.className = 'cdePin' + (this.CDE_PIN_SEL===a.id?' sel':'');
         el.style.left = x+'px'; el.style.top = y+'px';
         el.title = a.id + ' — ' + (a.titulo || '');
         el.dataset.apt = a.id; el.dataset.pi = idx;
+        el.innerHTML = cdePinSvg(a.id_num, cdeCorPrio(a.prioridade));
         wrap.appendChild(el);
       });
     });
@@ -1551,6 +1550,25 @@ async function mudarStatus(revId,novo){
     await carregarDocs(); DOC_SEL=DOCS.find(d=>d.id===DOC_SEL.id)||null; renderRail();
     if(DOC_SEL){ await renderDetalhe(); abrirDoc(DOC_SEL.id); } else fecharDoc();
   }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para alterar o status.':'Erro: '+m); }
+}
+
+// ── Marcador do pin — MESMA estética do Auria App (balão numerado + ponteiro,
+//    cor por PRIORIDADE, não por status — igual ao pinSvg do app.html) ───────
+function cdeCorPrio(p){
+  if(!p) return '#7F8C8D';
+  if(p.indexOf('Severa')>=0) return '#E74C3C';
+  if(p.indexOf('Importante')>=0) return '#E67E22';
+  if(p.indexOf('Observação')>=0) return '#C29D0B';
+  return '#7F8C8D';
+}
+function cdePinSvg(num, cor){
+  const px=13, py=32, r=9, H=19, cy=py-H;
+  const ptr=`M ${px} ${py} L ${(px-6).toFixed(1)} ${(cy+r*0.55).toFixed(1)} L ${(px+6).toFixed(1)} ${(cy+r*0.55).toFixed(1)} Z`;
+  return `<svg viewBox="0 0 26 34" width="26" height="34">`
+    + `<path d="${ptr}" fill="${cor}"/>`
+    + `<circle cx="${px}" cy="${cy}" r="${r}" fill="${cor}" stroke="#fff" stroke-width="1.6"/>`
+    + `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="800" fill="#fff">${esc(String(num||''))}</text>`
+    + `</svg>`;
 }
 
 // ── Card de detalhes do pin (Elo C) — global, opera na janela que abriu ────
