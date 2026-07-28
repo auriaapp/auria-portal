@@ -1558,6 +1558,21 @@ const DISCS=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
   'Paisagismo','Luminotécnico','Esquadrias','Fachada','Heliponto','Segurança',
   'Sinalização / Comunicação Visual','ETA / ETE','Climatização / Pressurização / Exaustão',
   'Fundação','Contenção'];
+// Disciplina tem DUAS grafias convivendo: código curto do CDE (ELE, HID…, usado
+// quando o apontamento nasce numa prancha vinda do CDE) e nome completo (usado
+// no fluxo local/fornecedores). Sem resolver, a mesma disciplina aparecia
+// duplicada em filtros/listas — uma vez como código, outra como nome completo.
+// discFullName normaliza pra EXIBIÇÃO (nunca reescreve o banco): resolve o
+// código pro nome completo; se já for nome completo (ou desconhecido), devolve
+// como veio, sem quebrar nada.
+const DISC_FULLNAME = {
+  ARQ:'Arquitetura', EST:'Estrutura Concreto', MET:'Estrutura Metálica',
+  HID:'Instalações Hidráulicas', SAN:'Instalações Sanitárias', ELE:'Instalações Elétricas',
+  GAS:'Instalações de Gás', CLI:'Climatização / Pressurização / Exaustão',
+  INC:'Instalações de Combate à Incêndio', TEL:'Telecomunicações', IMP:'Impermeabilização',
+  TOP:'Topografia / Sondagem', PAI:'Paisagismo', MLD:'Moldura/ABA'
+};
+function discFullName(v){ if(!v) return v; return DISC_FULLNAME[v] || v; }
 const NIVEIS=['Pendência','Informação','Validação'];
 function corPrio(p){
   if(!p) return '#7F8C8D';
@@ -1731,7 +1746,7 @@ function pinClick(ai, pi){
       <b>${esc(a.id)}</b> <span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>
       <button class="pb-x" onclick="fecharPinBalao()">✕</button></div>
     <div class="pb-t">${esc(a.titulo||'Sem título')}</div>
-    <div class="pb-m">${esc(a.disciplina||'')}${a.prioridade?' · '+esc(a.prioridade):''}</div>
+    <div class="pb-m">${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade):''}</div>
     <div class="pb-m">📅 ${prazo}${a.local_txt?(' · 📍 '+esc(a.local_txt)):''}</div>
     ${a.descricao?`<div class="pb-d">${esc(a.descricao)}</div>`:''}
     <button class="pb-open" onclick="abrirAptIdx(${ai});fecharPinBalao()">Abrir apontamento ›</button>`;
@@ -2915,8 +2930,8 @@ function abrirEditor(){
   const a=APT_EDIT;
   $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id);
   $('apId').value=a.id;
-  { const ds=discsEd().slice(); if(a.disciplina && !ds.includes(a.disciplina)) ds.unshift(a.disciplina);
-    $('apDisc').innerHTML=ds.map(d=>`<option${d===a.disciplina?' selected':''}>${esc(d)}</option>`).join(''); }
+  { const dFull=discFullName(a.disciplina); const ds=discsEd().slice(); if(dFull && !ds.includes(dFull)) ds.unshift(dFull);
+    $('apDisc').innerHTML=ds.map(d=>`<option${d===dFull?' selected':''}>${esc(d)}</option>`).join(''); }
   $('apTitulo').value=a.titulo||'';
   $('apDesc').value=a.descricao||'';
   $('apTipo').innerHTML='<option value=""></option>'+TIPOS_APT.map(t=>`<option${t===a.tipo?' selected':''}>${esc(t)}</option>`).join('');
@@ -3218,7 +3233,7 @@ function _atualizaBtnFiltro(){ const b=$('fApFiltBtn'); if(!b) return; const abe
 function popularFiltroDisc(){
   const sel=$('fApDisc'); if(!sel) return;
   const cur=sel.value;
-  const discs=[...new Set(APTS.map(a=>a.disciplina).filter(Boolean))].sort();
+  const discs=[...new Set(APTS.map(a=>discFullName(a.disciplina)).filter(Boolean))].sort();
   sel.innerHTML='<option value="">Todas as disciplinas</option>'+discs.map(d=>`<option${d===cur?' selected':''}>${esc(d)}</option>`).join('');
 }
 function renderListaApts(){
@@ -3234,8 +3249,8 @@ function renderListaApts(){
     if(statuses.length && statuses.indexOf(a.status)<0) return false;
     if(atrasoOn && !estaAtrasado(a)) return false;
     if(prio && a.prioridade!==prio) return false;
-    if(disc && a.disciplina!==disc) return false;
-    if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
+    if(disc && discFullName(a.disciplina)!==disc) return false;
+    if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+discFullName(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
     return true;
   }).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
   const filtrando=APT_FILT.size||txt||prio||disc;
@@ -3259,7 +3274,7 @@ function renderListaApts(){
       const local=a.local_txt?(' · 📍 '+esc(a.local_txt)):'';
       return `<div class="ap-card" style="${cs}" onclick="clicarAptLista(${i})">
         <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
-        <div class="m" style="color:${mc};margin-top:3px">${tags} ${esc(a.disciplina||'')}${a.prioridade?' · '+esc(a.prioridade.replace(/^[^\wÀ-ÿ]+/,'')):''}</div>
+        <div class="m" style="color:${mc};margin-top:3px">${tags} ${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade.replace(/^[^\wÀ-ÿ]+/,'')):''}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
         ${(prazo||local||nesta)?`<div style="font-size:10.5px;color:${mc};margin-top:5px;opacity:.9">${prazo}${local}${nesta?' · 📌 nesta prancha':''}</div>`:''}
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
@@ -3267,7 +3282,7 @@ function renderListaApts(){
     }
     return `<div class="ap-card" style="${cs}" onclick="clicarAptLista(${i})">
       <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
-      <div class="m" style="color:${mc}">${tags} ${esc(a.disciplina||'')}${nesta?' · 📍 nesta prancha':''}</div>
+      <div class="m" style="color:${mc}">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</div>
     </div>`;
   }).join('');
 }
