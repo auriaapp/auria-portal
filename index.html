@@ -54,9 +54,22 @@
       <label>Senha</label>
       <input id="senha" type="password" placeholder="Sua senha" autocomplete="current-password">
       <button class="btn" id="btnEntrar" onclick="entrar()">Entrar &rarr;</button>
+      <div class="linkline"><a onclick="mostrar('esqueci')">Esqueci minha senha</a></div>
       <div class="linkline">É projetista e ainda não tem acesso?
         <a onclick="mostrar('cadastro')">Solicitar cadastro de projetista</a>
       </div>
+    </div>
+
+    <!-- ESQUECI MINHA SENHA -->
+    <div id="viewEsqueci" class="hide">
+      <h2>Redefinir senha</h2>
+      <div class="sub">Informe o e-mail da sua conta — enviaremos um link para você criar uma nova senha.</div>
+      <div class="err" id="errE"></div>
+      <div class="msg" id="msgE"></div>
+      <label>E-mail</label>
+      <input id="eEmail" type="email" placeholder="voce@email.com" autocomplete="email">
+      <button class="btn" id="btnEsqueci" onclick="enviarRecuperacao()">Enviar link de redefinição</button>
+      <div class="linkline"><a onclick="mostrar('login')">&larr; Voltar para o login</a></div>
     </div>
 
     <!-- CADASTRO (projetista) -->
@@ -89,7 +102,38 @@ function showErr(el,txt){ el.textContent=txt; el.style.display=txt?'block':'none
 function mostrar(v){
   $('viewLogin').classList.toggle('hide', v!=='login');
   $('viewCadastro').classList.toggle('hide', v!=='cadastro');
+  $('viewEsqueci').classList.toggle('hide', v!=='esqueci');
   showErr($('err'),''); showErr($('msg'),''); showErr($('errC'),''); showErr($('msgC'),'');
+  showErr($('errE'),''); showErr($('msgE'),'');
+  if(v==='esqueci') $('eEmail').value = $('email').value||'';
+}
+
+// "Esqueci minha senha": Supabase envia o e-mail padrão (via SMTP configurado,
+// Resend) com um link de recovery para ativar_conta.html. Essa página já trata
+// type=recovery (tanto pelo token_hash quanto pelo hash antigo #access_token).
+async function enviarRecuperacao(){
+  const email=$('eEmail').value.trim();
+  showErr($('errE'),''); showErr($('msgE'),'');
+  if(!email){ showErr($('errE'),'Informe seu e-mail.'); return; }
+  const btn=$('btnEsqueci'); btn.disabled=true; btn.textContent='Enviando…';
+  try{
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname.replace(/index\.html$/,'') + 'ativar_conta.html'
+    });
+    if(error) throw error;
+    showErr($('msgE'), 'Se este e-mail tiver uma conta no Auria, um link de redefinição foi enviado. Verifique também o spam.');
+    $('eEmail').value='';
+  }catch(e){
+    // Não revelamos se o e-mail existe ou não (evita enumeração de contas) —
+    // mesma mensagem de sucesso é mostrada mesmo em erro "usuário não encontrado".
+    if(/not.*found|user.*not.*exist/i.test(e.message||'')){
+      showErr($('msgE'), 'Se este e-mail tiver uma conta no Auria, um link de redefinição foi enviado. Verifique também o spam.');
+      $('eEmail').value='';
+    }else{
+      showErr($('errE'), e.message||'Falha ao enviar. Tente novamente.');
+    }
+  }
+  btn.disabled=false; btn.textContent='Enviar link de redefinição';
 }
 
 // Descobre o papel e redireciona para o painel certo.

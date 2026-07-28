@@ -292,7 +292,7 @@
     <div class="login-badge">PAINEL DO PROJETISTA</div>
     <h2>Acesse sua conta</h2>
     <p>Acesso para projetistas e fornecedores</p>
-    <div class="tabs">
+    <div class="tabs" id="loginTabs">
       <button class="tab active" onclick="setModo('login')">Entrar</button>
       <button class="tab" onclick="setModo('cadastro')">Criar conta</button>
     </div>
@@ -302,10 +302,14 @@
     </div>
     <div class="field-lbl">E-mail</div>
     <input class="field-inp" id="inp-email" type="email" placeholder="seu@email.com">
-    <div class="field-lbl">Senha</div>
+    <div class="field-lbl" id="lbl-senha">Senha</div>
     <input class="field-inp" id="inp-senha" type="password" placeholder="Sua senha">
     <button class="btn-primary" onclick="acao()" id="btn-acao">Entrar →</button>
     <div class="login-err" id="login-err"></div>
+    <div style="text-align:center;margin-top:8px;font-size:12.5px">
+      <a onclick="toggleEsqueci(true)" id="lnk-esqueci" style="color:#7A9AB8;cursor:pointer;text-decoration:underline">Esqueci minha senha</a>
+      <a onclick="toggleEsqueci(false)" id="lnk-voltar" style="display:none;color:#7A9AB8;cursor:pointer;text-decoration:underline">← Voltar ao login</a>
+    </div>
   </div>
 </div>
 
@@ -511,6 +515,40 @@ function setModo(m) {
   document.getElementById('campo-nome').style.display = m==='cadastro'?'block':'none';
   document.getElementById('btn-acao').textContent = m==='login'?'Entrar →':'Criar conta →';
   document.getElementById('login-err').textContent='';
+}
+
+// "Esqueci minha senha": Supabase envia o e-mail de recovery (via SMTP/Resend
+// já configurado) apontando pra ativar_conta.html, que já sabe tratar
+// type=recovery (troca a senha e redireciona ao painel certo pelo role).
+function toggleEsqueci(on){
+  document.getElementById('loginTabs').style.display = on?'none':'flex';
+  document.getElementById('inp-senha').style.display = on?'none':'block';
+  document.getElementById('lbl-senha').style.display = on?'none':'block';
+  document.getElementById('campo-nome').style.display = 'none';
+  document.getElementById('lnk-esqueci').style.display = on?'none':'inline';
+  document.getElementById('lnk-voltar').style.display = on?'inline':'none';
+  const btn=document.getElementById('btn-acao');
+  btn.textContent = on ? 'Enviar link de redefinição' : (MODO==='login'?'Entrar →':'Criar conta →');
+  btn.onclick = on ? enviarRecuperacaoProjetista : acao;
+  document.getElementById('login-err').textContent='';
+}
+async function enviarRecuperacaoProjetista(){
+  const email=document.getElementById('inp-email').value.trim();
+  const err=document.getElementById('login-err');
+  if(!email){ err.style.color='#E74C3C'; err.textContent='Informe seu e-mail.'; return; }
+  const btn=document.getElementById('btn-acao'); btn.disabled=true; btn.textContent='Enviando…';
+  try{
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/ativar_conta.html'
+    });
+    if(error) throw error;
+    err.style.color='#1E8449';
+    err.textContent='Se este e-mail tiver conta no Auria, enviamos um link de redefinição. Verifique também o spam.';
+  }catch(e){
+    err.style.color='#E74C3C';
+    err.textContent = e.message || 'Falha ao enviar. Tente novamente.';
+  }
+  btn.disabled=false; btn.textContent='Enviar link de redefinição';
 }
 
 async function acao() {

@@ -74,6 +74,17 @@ const P_ANALISTA = 'https://auria.solutions/auria_analista.html';
 const sb      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 let PENDING = null;   // {token_hash, type} — só é validado quando o usuário define a senha
+let IS_RECOVERY = false;   // true = veio de "esqueci minha senha" (troca a copy do formulário)
+
+// "Ativar conta" (convite) e "Redefinir senha" (recovery) usam o MESMO
+// formulário — só a copy muda, pra não confundir quem já tem conta.
+function aplicarCopyFormulario(){
+  if(!IS_RECOVERY) return;
+  const h2=document.querySelector('#formWrap h2'), sub=document.querySelector('#formWrap .sub'), btn=document.getElementById('btnAtivar');
+  if(h2)  h2.textContent  = 'Redefinir senha';
+  if(sub) sub.textContent = 'Escolha uma nova senha para acessar o Auria.';
+  if(btn) btn.textContent = 'Salvar nova senha e entrar';
+}
 
 async function init(){
   // ── Fluxo NOVO: link do e-mail aponta para o NOSSO domínio, com token_hash.
@@ -87,12 +98,15 @@ async function init(){
     // Guardamos o token e só o validamos quando o usuário enviar a senha, o
     // que um scanner não faz.
     PENDING = { token_hash: th, type: qtype };
+    IS_RECOVERY = (qtype === 'recovery');
+    aplicarCopyFormulario();
     document.getElementById('loadWrap').style.display = 'none';
     document.getElementById('formWrap').style.display = 'block';
     return;
   }
 
-  // ── Fluxo ANTIGO (links já enviados): tokens vêm no hash da URL
+  // ── Fluxo ANTIGO (links já enviados, ou e-mail padrão do Supabase para
+  //    "esqueci minha senha"): tokens vêm no hash da URL.
   const hash = window.location.hash;
   const params = new URLSearchParams(hash.replace('#',''));
   const type   = params.get('type');
@@ -103,6 +117,7 @@ async function init(){
     document.getElementById('invalidWrap').style.display = 'block';
     return;
   }
+  IS_RECOVERY = (type === 'recovery');
 
   // Seta a sessão com o token do convite mas NÃO redireciona ainda
   const { error } = await sb.auth.setSession({
@@ -117,6 +132,7 @@ async function init(){
   }
 
   // Mostra formulário de definição de senha
+  aplicarCopyFormulario();
   document.getElementById('loadWrap').style.display  = 'none';
   document.getElementById('formWrap').style.display  = 'block';
 }
@@ -151,7 +167,8 @@ async function ativar(){
   }
 
   const btn = document.getElementById('btnAtivar');
-  btn.disabled = true; btn.textContent = 'Ativando...';
+  const txtOk = IS_RECOVERY ? 'Salvar nova senha e entrar' : 'Ativar conta e entrar no painel';
+  btn.disabled = true; btn.textContent = IS_RECOVERY ? 'Salvando...' : 'Ativando...';
 
   // Fluxo novo: só AGORA (ação humana) consumimos o token de uso único.
   if(PENDING){
@@ -173,7 +190,7 @@ async function ativar(){
         + 'código: '+codigo+' · http '+httpSt+'<br>' + msg + '</div>';
       errBox.style.display = 'block';
       console.warn('verifyOtp erro:', ev);
-      btn.disabled = false; btn.textContent = 'Ativar conta e entrar no painel';
+      btn.disabled = false; btn.textContent = txtOk;
       return;
     }
     PENDING = null;
@@ -184,7 +201,7 @@ async function ativar(){
   if(error){
     errBox.textContent = 'Erro: ' + error.message;
     errBox.style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Ativar conta e entrar no painel';
+    btn.disabled = false; btn.textContent = txtOk;
     return;
   }
 
@@ -198,7 +215,7 @@ async function ativar(){
     }
   }catch(e){}
 
-  okBox.textContent = '✅ Conta ativada! Redirecionando...';
+  okBox.textContent = IS_RECOVERY ? '✅ Senha redefinida! Redirecionando...' : '✅ Conta ativada! Redirecionando...';
   okBox.style.display = 'block';
   btn.style.display = 'none';
 
