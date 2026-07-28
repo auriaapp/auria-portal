@@ -726,21 +726,87 @@ async function salvarAnalise(){
   if(!LAYERS.length){ alert('Abra ao menos a prancha base antes de salvar a análise.'); return; }
   const nomeDefault=(LAYERS[0].prancha.arquivo_nome||'Análise')+' — '+new Date().toLocaleDateString('pt-BR');
   const nome=prompt('Nome da análise:', nomeDefault); if(!nome) return;
-  const pranchas=LAYERS.map((L,i)=>({ prancha_id:L.prancha.id, arquivo_nome:L.prancha.arquivo_nome||L.nome, arquivo_hash:L.prancha.arquivo_hash||L.prancha._hash, ordem:i }));
+  // Pranchas vindas do CDE são recarregadas por download (cde_documento_id),
+  // sem depender do usuário re-selecionar um arquivo local. As demais seguem
+  // pelo casamento de hash de sempre.
+  const pranchas=LAYERS.map((L,i)=>({
+    prancha_id:L.prancha.id, arquivo_nome:L.prancha.arquivo_nome||L.nome,
+    arquivo_hash:L.prancha.arquivo_hash||L.prancha._hash, ordem:i,
+    origem: L.prancha.cde_documento_id ? 'cde' : 'local',
+    cde_documento_id: L.prancha.cde_documento_id || null
+  }));
   try{
     const { error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome, pranchas, criado_por:USER.id });
     if(error) throw error;
     await carregarAnalises();
-    alert('Análise salva. Para retomá-la depois, selecione-a e clique 📂, escolhendo os mesmos PDFs.');
+    const nCde=pranchas.filter(p=>p.origem==='cde').length;
+    alert('Análise salva.'+(nCde===pranchas.length ? ' Como é 100% do CDE, reabre sozinha — sem pedir arquivo nenhum.'
+      : nCde>0 ? ' As '+nCde+' prancha(s) do CDE reabrem sozinhas; as demais pedem o mesmo PDF local.'
+      : ' Para retomá-la depois, selecione-a e clique 📂, escolhendo os mesmos PDFs.'));
   }catch(e){ alert('Erro ao salvar análise: '+(e.message||e)); }
 }
+// Uma prancha é "do CDE" na análise salva se tiver cde_documento_id — essas
+// recarregam por download (abrirDoCDE), sem depender de o usuário ter o
+// arquivo local. Compatível com análises salvas ANTES desta correção: sem
+// os campos novos, tudo cai no caminho local de sempre (hash).
+function _metaEhCde(m){ return m && m.origem==='cde' && !!m.cde_documento_id; }
 function abrirAnaliseSel(){
   const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
   const an=ANALISES.find(a=>a.id===id); if(!an) return;
+  const metas=an.pranchas||[];
+  const locais=metas.filter(m=>!_metaEhCde(m));
+  if(!locais.length){
+    // 100% do CDE — recarrega sozinha, sem pedir nada ao usuário.
+    restaurarAnalise(an, {}).catch(e=>alert('Erro ao abrir a análise: '+((e&&e.message)||e)));
+    return;
+  }
   _analisePend=an;
-  const n=(an.pranchas||[]).length;
-  alert('Selecione os '+n+' PDF(s) desta análise (pode escolher todos de uma vez). O Auria remonta as camadas, escala, cotas e apontamentos.');
+  const nCde=metas.length-locais.length;
+  alert('Selecione '+locais.length+' PDF(s) local(is) desta análise'
+    +(nCde?' (as '+nCde+' do CDE são recarregadas automaticamente)':'')+'.');
   const inp=$('pdfInputMulti'); inp.value=''; inp.click();
+}
+// Restaura uma análise salva, remontando LAYERS na ordem original.
+// localFilesByHash: {hash:{file,doc,page}} dos PDFs locais que o usuário
+// acabou de selecionar (objeto vazio se a análise for 100% do CDE).
+async function restaurarAnalise(an, localFilesByHash){
+  localFilesByHash = localFilesByHash || {};
+  const metas=(an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+  const faltando=[];
+  let baseFeita=false;
+  for(const m of metas){
+    const overlay=baseFeita;
+    if(_metaEhCde(m)){
+      try{ await abrirDoCDE(m.cde_documento_id, null, overlay); baseFeita=true; }
+      catch(e){ faltando.push(m.arquivo_nome||'(CDE)'); console.warn('restaurarAnalise cde:',(e&&e.message)||e); }
+      continue;
+    }
+    const hit=localFilesByHash[m.arquivo_hash];
+    if(!hit){ faltando.push(m.arquivo_nome||'(sem nome)'); continue; }
+    try{
+      const pr=await registrarPranchaDb(hit.file.name, m.arquivo_hash, hit.doc, hit.page);
+      const L={ prancha:pr, doc:hit.doc, page:hit.page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:hit.file.name };
+      if(!baseFeita){
+        LAYERS=[L]; setBaseShims();
+        F.valido=false;
+        $('pageLbl').textContent='1 / '+L.doc.numPages;
+        fitPage();
+        $('dropHint').style.display='none';
+        $('btnAddCam').disabled=false;
+        renderPins(); renderListaApts();
+        carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); });
+        baseFeita=true;
+      }else{
+        L.opacity=0.7; L.cor='#E74C3C';
+        await carregarEstadoCamada(L);
+        LAYERS.push(L);
+      }
+    }catch(e){ faltando.push(m.arquivo_nome||'(sem nome)'); console.warn('restaurarAnalise local:',(e&&e.message)||e); }
+  }
+  if(!baseFeita){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
+  renderCamadas();
+  renderAnalises();
+  if(faltando.length) alert('Análise aberta. Faltaram: '+faltando.join(', ')+'.');
 }
 async function excluirAnaliseSel(){
   const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
@@ -761,29 +827,8 @@ async function onMultiFiles(files){
       const doc=await pdfjsLib.getDocument({data:buf}).promise; const page=await doc.getPage(1);
       byHash[hash]={file:f,doc,page};
     }
-    const metas=(an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0));
-    const montadas=[]; const faltando=[];
-    for(const m of metas){
-      const hit=byHash[m.arquivo_hash];
-      if(!hit){ faltando.push(m.arquivo_nome||'(sem nome)'); continue; }
-      const pr=await registrarPranchaDb(hit.file.name, m.arquivo_hash, hit.doc, hit.page);
-      const L={ prancha:pr, doc:hit.doc, page:hit.page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:hit.file.name };
-      montadas.push({ L, base:(m.ordem||0)===0 });
-    }
-    if(!montadas.length){ alert('Nenhum dos arquivos selecionados corresponde a esta análise.'); return; }
-    const base=montadas.find(x=>x.base)||montadas[0];
-    LAYERS=[base.L]; setBaseShims();                    // base = referência (offset 0 / escala 1)
-    for(const x of montadas){ if(x===base) continue; await carregarEstadoCamada(x.L); LAYERS.push(x.L); }
-    F.valido=false;
-    $('pageLbl').textContent='1 / '+base.L.doc.numPages;
-    fitPage();
-    $('dropHint').style.display='none';
-    $('btnAddCam').disabled=false;
-    renderCamadas(); renderPins(); renderListaApts();
-    carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); });
-    renderAnalises();
-    if(faltando.length) alert('Análise aberta. Não encontrei nos arquivos selecionados: '+faltando.join(', ')+'. Adicione-os depois com "+ Adicionar Prancha".');
-  }catch(e){ console.error(e); alert('Erro ao abrir a análise: '+(e.message||e)); }
+    await restaurarAnalise(an, byHash);
+  }catch(e){ console.error(e); alert('Erro ao abrir a análise: '+((e&&e.message)||e)); }
 }
 
 async function abrirPdfLocal(file, overlay){

@@ -855,6 +855,48 @@ const WIN_STATE = { list: [], act: null, zTop: 100 };
 const MARGEM = 0.3;              // rasteriza 30% além da tela (por janela)
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
+// Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
+// renderizando numa resolução baixa (rápido) em canvas descartável e
+// escaneando os pixels. Devolve {left,top,w,h} no MESMO referencial de
+// V.panX/V.panY/V.zoom (origem no canto superior esquerdo da página tal como
+// exibida — não no mediabox bruto do PDF, que pode ter offset/rotação
+// próprios; getViewport() já absorve isso, tanto aqui quanto no render()
+// principal, então os dois espaços de pixel são diretamente comparáveis).
+async function computeContentBBoxPx(page){
+  const ALVO_PX = 900;             // resolução de detecção — não precisa ser nítido, só preciso
+  const vp0 = page.getViewport({ scale:1 });
+  const s = ALVO_PX / Math.max(vp0.width, vp0.height);
+  const vp = page.getViewport({ scale:s });
+  const cv = document.createElement('canvas');
+  cv.width  = Math.max(1, Math.ceil(vp.width));
+  cv.height = Math.max(1, Math.ceil(vp.height));
+  const ctx = cv.getContext('2d', { willReadFrequently:true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  try{ await page.render({ canvasContext:ctx, viewport:vp, background:'#fff' }).promise; }
+  catch(e){ return null; }
+  let img;
+  try{ img = ctx.getImageData(0,0,cv.width,cv.height).data; }
+  catch(e){ return null; }
+  const W=cv.width, H=cv.height, THRESH=248;   // <248 em qualquer canal conta como "tinta"
+  let minX=W, minY=H, maxX=-1, maxY=-1;
+  for(let y=0;y<H;y++){
+    const rowBase=y*W*4;
+    for(let x=0;x<W;x++){
+      const i=rowBase+x*4;
+      if(img[i]<THRESH || img[i+1]<THRESH || img[i+2]<THRESH){
+        if(x<minX) minX=x; if(x>maxX) maxX=x;
+        if(y<minY) minY=y; if(y>maxY) maxY=y;
+      }
+    }
+  }
+  if(maxX<0) return null;   // página em branco — sem conteúdo detectável, cai pra página inteira
+  let left=minX/s, top=minY/s, w=(maxX-minX+1)/s, h=(maxY-minY+1)/s;
+  const pad=Math.max(w,h)*0.02;   // pequeno respiro pra não colar o desenho na borda da tela
+  left=Math.max(0, left-pad); top=Math.max(0, top-pad);
+  w=Math.min(vp0.width-left, w+2*pad); h=Math.min(vp0.height-top, h+2*pad);
+  return { left, top, w, h };
+}
+
 function cdeAtiva(){ return WIN_STATE.act; }
 // DOC_SEL virtual: as funções antigas (abrirDetalhes, mudarStatus, addAoGrupo,
 // abrirNoApp) continuam lendo esta variável — que passa a espelhar a janela
@@ -877,6 +919,7 @@ class CdeWin {
     this.VIEW_FILES = {}; this.VIEW_FMT = null;
     this.CDE_APTS = []; this.CDE_PRANCHA_ID = null; this.CDE_PIN_SEL = null;
     this.DXFV = null;
+    this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
     this._build();
     this._bind();
     $('winSpace').appendChild(this.el);
@@ -1081,10 +1124,25 @@ class CdeWin {
       this.V.doc = await pdfjsLib.getDocument({ url }).promise;
       this.V.pageNum=1; this.F.valido=false;
       this.V.page = await this.V.doc.getPage(this.V.pageNum);
+      this._bbox=null;
       this.hideMsg();
-      this.fitPage();
+      this.fitPage();          // enquadra a página inteira já, sem esperar o scan
+      this._ajustarBBox();     // e assim que o scan terminar, aperta pro desenho
       if(cdeAtiva()===this) atualizarToolbar();
     }catch(e){ this.msg('Não foi possível abrir: '+((e&&e.message)||e)); }
+  }
+  // Recalcula o bounding box do CONTEÚDO da página (ignora a margem branca) e,
+  // se ainda for a página atual, reaplica o fit mais justo. Assíncrono e não
+  // bloqueante — a prancha aparece na hora com a página inteira, e "aperta"
+  // pro desenho assim que o scan terminar (rápido: canvas de detecção pequeno).
+  async _ajustarBBox(){
+    const page=this.V.page;
+    try{
+      const bb = await computeContentBBoxPx(page);
+      if(this.V.page!==page) return;   // trocou de página/prancha enquanto calculava
+      this._bbox = bb;
+      if(bb) this.fitPage();
+    }catch(e){ console.warn('bbox:', (e&&e.message)||e); }
   }
   async carregarDxf(path, provider){
     const box=this.dxfWrap;
@@ -1160,15 +1218,20 @@ class CdeWin {
   }
   fitPage(){
     if(!this.V.page) return;
+    // Enquadra o BOUNDING BOX DO CONTEÚDO (this._bbox, detectado por scan de
+    // pixels) quando disponível — remove a margem branca do PDF. Enquanto o
+    // scan não termina (ou a página é branca), cai de volta pra página inteira.
     const [x1,y1,x2,y2]=this.V.page.view;
-    const pw=x2-x1, ph=y2-y1;
+    const b=this._bbox;
+    const left = b ? b.left : 0, top = b ? b.top : 0;
+    const pw = b ? b.w : (x2-x1), ph = b ? b.h : (y2-y1);
     const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
     if(cw<=0||ch<=0) return;
     this._fitted=true;
     this.V.zoom=Math.min(cw/pw, ch/ph)*0.96;
-    const sz=this.pageSizePx();
-    this.V.panX=-(cw-sz.w)/2;
-    this.V.panY=-(ch-sz.h)/2;
+    const contentW=pw*this.V.zoom, contentH=ph*this.V.zoom;
+    this.V.panX = left*this.V.zoom - (cw-contentW)/2;
+    this.V.panY = top*this.V.zoom  - (ch-contentH)/2;
     this.F.valido=false;
     this.updateCss(); this.render();
   }
@@ -1185,7 +1248,9 @@ class CdeWin {
     const n=this.V.pageNum+delta; if(n<1||n>this.V.doc.numPages) return;
     this.V.pageNum=n; this.F.valido=false;
     this.V.page = await this.V.doc.getPage(this.V.pageNum);
+    this._bbox=null;
     this.fitPage();
+    this._ajustarBBox();
     if(cdeAtiva()===this) atualizarToolbar();
   }
   // Elo C — pins do Auria App sobrepostos ao canvas
