@@ -584,7 +584,7 @@ function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   // troca de empreendimento zera a prancha/camadas abertas
   LAYERS=[]; setBaseShims(); F.valido=false;
-  TRENA={ m_por_pt:null, cotas:[] };
+  TRENA={ m_por_pt:null, cotas:[], areas:[] };
   $('btnAddCam').disabled = !EMP;
   $('dropHint').style.display='flex'; $('pinsSvg').innerHTML=''; $('drawSvg').innerHTML='';
   const cv=$('pdfCanvas'); if(cv){ const c=cv.getContext('2d'); c&&c.clearRect(0,0,cv.width,cv.height); }
@@ -1398,6 +1398,7 @@ async function mudarPagina(delta){
     if(e.target.closest && e.target.closest('#cotaPanel,#iaPanel')) return;   // cliques nos painéis não medem/desenham
     if(e.button!==0) return;                                   // só o esquerdo navega/desenha (direito = apontar)
     if(IA_REGIAO){ iaRegStart(e); return; }                    // seleção de região p/ a IA
+    if(COTA_MODE==='area') return;                             // área é por CLIQUE (tratado no mouseup)
     if(cotaActive()){ cotaStart(e); return; }                  // medição/cota tem prioridade
     if(drawActive()){                                          // desenho tem prioridade sobre o pan
       if(DRAW_TOOL==='polygon') return;                        // polígono é por CLIQUE (tratado no mouseup)
@@ -1406,9 +1407,11 @@ async function mudarPagina(delta){
     drag={ x:e.clientX, y:e.clientY, px:V.panX, py:V.panY };
     stage.classList.add('panning');
   });
-  // Botão DIREITO sobre a prancha → cria apontamento no local do clique e abre o editor
+  // Botão DIREITO: conclui o polígono de área (se em construção) OU cria
+  // apontamento no local do clique e abre o editor.
   stage.addEventListener('contextmenu', function(e){
     e.preventDefault();
+    if(COTA_MODE==='area' && _areaPoly){ areaFinish(); return; }
     if(!V.page || !PRANCHA) return;
     if(e.target.closest && e.target.closest('#cotaPanel,#iaPanel')) return;
     const r=stage.getBoundingClientRect();
@@ -1418,6 +1421,7 @@ async function mudarPagina(delta){
   });
   window.addEventListener('mousemove', function(e){
     if(_iaSel){ iaRegMove(e); return; }
+    if(COTA_MODE==='area' && _areaPoly){ areaMoveAt(e); return; }
     if(_cota){ cotaMove(e); return; }
     if(_draw){ drawMove(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon' && _poly){ polyMoveAt(e); return; }
@@ -1428,6 +1432,7 @@ async function mudarPagina(delta){
   });
   window.addEventListener('mouseup', function(e){
     if(_iaSel){ iaRegEnd(e); return; }
+    if(COTA_MODE==='area'){ if(e.button===0) areaClickAt(e); return; }   // clique = vértice do polígono
     if(_cota){ cotaEnd(e); return; }
     if(_draw){ drawEnd(e); return; }
     if(drawActive() && DRAW_TOOL==='polygon'){ polyClickAt(e); return; }   // clique = ponto do polígono
@@ -1819,6 +1824,34 @@ function shapeToSvg(s, preview){
   }
   return '';
 }
+// Polígono de ÁREA finalizado: preenchimento translúcido + rótulo em m² no centróide.
+function areaToSvg(a){
+  const P=p=>pageToScreen(p.nx,p.ny), pts=(a.pts||[]).map(P), col=a.color||AREA_COLOR;
+  if(pts.length<3) return '';
+  let d='M'+pts[0].x.toFixed(1)+' '+pts[0].y.toFixed(1);
+  for(let i=1;i<pts.length;i++) d+=' L'+pts[i].x.toFixed(1)+' '+pts[i].y.toFixed(1);
+  d+=' Z';
+  let out=`<path d="${d}" fill="${col}" fill-opacity="0.16" stroke="${col}" stroke-width="2"/>`;
+  if(a.m2!=null){
+    const cx=pts.reduce((s,p)=>s+p.x,0)/pts.length, cy=pts.reduce((s,p)=>s+p.y,0)/pts.length;
+    const label=a.m2.toFixed(2).replace('.',',')+' m²';
+    const w=Math.max(48, label.length*7.4);
+    out+=`<rect x="${(cx-w/2).toFixed(1)}" y="${(cy-11).toFixed(1)}" width="${w.toFixed(1)}" height="21" rx="6" fill="#0F172A" opacity="0.84"/>`;
+    out+=`<text x="${cx.toFixed(1)}" y="${(cy+1).toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="11.5" font-weight="800" fill="#fff">${label}</text>`;
+  }
+  return out;
+}
+// Prévia do polígono de área em construção (linha tracejada + vértices + elástico)
+function areaPreviewSvg(){
+  if(!_areaPoly || !_areaPoly.pts.length) return '';
+  const P=p=>pageToScreen(p.nx,p.ny), q=_areaPoly.pts.map(P);
+  let d='M'+q[0].x.toFixed(1)+' '+q[0].y.toFixed(1);
+  for(let i=1;i<q.length;i++) d+=' L'+q[i].x.toFixed(1)+' '+q[i].y.toFixed(1);
+  if(_areaCur){ const c=P(_areaCur); d+=' L'+c.x.toFixed(1)+' '+c.y.toFixed(1); }
+  let out=`<path d="${d}" stroke="${AREA_COLOR}" stroke-width="2" fill="none" stroke-dasharray="6 4" opacity="0.9"/>`;
+  q.forEach((p,i)=>{ out+=`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i===0?4.5:3}" fill="${i===0?'#fff':AREA_COLOR}" stroke="${AREA_COLOR}" stroke-width="1.5"/>`; });
+  return out;
+}
 // Prévia do polígono em construção (linha tracejada + vértices + elástico)
 function polyPreviewSvg(){
   if(!_poly||!_poly.pts.length) return '';
@@ -1857,6 +1890,9 @@ function renderDrawings(){
   // Cotas — nível de prancha (independem de apontamento aberto)
   (TRENA.cotas||[]).filter(naPagina).forEach(c=>{ out+=cotaToSvg(c, false); });
   if(_cota){ const m=TRENA.m_por_pt?_ptLen(_cota.a,_cota.b)*TRENA.m_por_pt:null; out+=cotaToSvg({a:_cota.a,b:_cota.b,metros:m,color:COTA_COLOR}, true); }
+  // Áreas por polígono — nível de prancha
+  (TRENA.areas||[]).filter(naPagina).forEach(a=>{ out+=areaToSvg(a); });
+  out+=areaPreviewSvg();
   let defs=''; _patNeeded.forEach(k=>{ const i=k.indexOf('|'); defs+=patDef(k.slice(0,i), k.slice(i+1)); });
   svg.innerHTML=(defs?`<defs>${defs}</defs>`:'')+out;
   _patNeeded=null;
@@ -1864,25 +1900,40 @@ function renderDrawings(){
 
 // ═══ COTAS / TRENA (W3): medição em nível de prancha ═════════════════════════
 // Persistidas em camadas_estado_auria.trena_json da prancha BASE:
-//   { m_por_pt:number|null, cotas:[{a:{nx,ny}, b:{nx,ny}, pg, metros, color}] }
+//   { m_por_pt:number|null, cotas:[{a:{nx,ny}, b:{nx,ny}, pg, metros, color}],
+//     areas:[{pts:[{nx,ny}...], pg, m2, color}] }
 // m_por_pt = metros por ponto-PDF (a distância é medida em pontos da página, que
 // são uniformes, ao contrário das coords normalizadas por eixo).
-let TRENA={ m_por_pt:null, cotas:[] };
-let COTA_MODE=null;               // 'cal' | 'cota' | null
-let _cota=null;                   // segmento em construção
+let TRENA={ m_por_pt:null, cotas:[], areas:[] };
+let COTA_MODE=null;               // 'cal' | 'cota' | 'area' | null
+let _cota=null;                   // segmento em construção (cal/cota)
+let _areaPoly=null, _areaCur=null;   // polígono de área em construção (clique a clique)
 const COTA_COLOR='#0EA5E9';
+const AREA_COLOR='#22D3EE';
 
 function cotaActive(){ return !!(COTA_MODE && PRANCHA && V.page); }
 function _basePageDims(){ const [x1,y1,x2,y2]=V.page.view; return {w:x2-x1,h:y2-y1}; }
 function _ptLen(a,b){ const d=_basePageDims(); return Math.hypot((b.nx-a.nx)*d.w,(b.ny-a.ny)*d.h); }
+// Área do polígono (shoelace) em pontos-PDF² → m² usando a MESMA escala linear
+// da calibração (m_por_pt), elevada ao quadrado.
+function _polyAreaM2(pts){
+  if(!TRENA.m_por_pt || pts.length<3) return null;
+  const d=_basePageDims();
+  let a=0;
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i], q=pts[(i+1)%pts.length];
+    a += (p.nx*d.w)*(q.ny*d.h) - (q.nx*d.w)*(p.ny*d.h);
+  }
+  return Math.abs(a)/2 * TRENA.m_por_pt * TRENA.m_por_pt;
+}
 
 async function carregarTrena(){
-  TRENA={ m_por_pt:null, cotas:[] };
+  TRENA={ m_por_pt:null, cotas:[], areas:[] };
   if(!(EMP&&PRANCHA)) return;
   try{
     const { data }=await sb.from('camadas_estado_auria').select('trena_json')
       .eq('empreendimento_id',EMP.id).eq('prancha_id',PRANCHA.id).maybeSingle();
-    if(data&&data.trena_json){ TRENA={ m_por_pt:data.trena_json.m_por_pt||null, cotas:data.trena_json.cotas||[] }; }
+    if(data&&data.trena_json){ TRENA={ m_por_pt:data.trena_json.m_por_pt||null, cotas:data.trena_json.cotas||[], areas:data.trena_json.areas||[] }; }
   }catch(e){ console.warn('carregarTrena:',e.message||e); }
 }
 let _saveTrenaTimer=null;
@@ -1908,11 +1959,16 @@ function toggleCota(){
 function renderCotaPanel(){
   const el=$('cotaPanel'); if(!el||el.style.display==='none') return;
   const calOk=!!TRENA.m_por_pt;
-  const lista=(TRENA.cotas||[]).map((c,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
+  const listaCotas=(TRENA.cotas||[]).map((c,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
       <span style="width:9px;height:9px;border-radius:2px;background:${c.color||COTA_COLOR}"></span>
       <span style="flex:1">${c.metros!=null?c.metros.toFixed(2).replace('.',',')+' m':'—'}</span>
       <button onclick="delCota(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`).join('')
       || '<div style="font-size:10.5px;color:var(--mut);margin-top:4px">Nenhuma cota.</div>';
+  const listaAreas=(TRENA.areas||[]).map((a,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
+      <span style="width:9px;height:9px;border-radius:2px;background:${a.color||AREA_COLOR}"></span>
+      <span style="flex:1">${a.m2!=null?a.m2.toFixed(2).replace('.',',')+' m²':'—'}</span>
+      <button onclick="delArea(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`).join('')
+      || '<div style="font-size:10.5px;color:var(--mut);margin-top:4px">Nenhuma área.</div>';
   el.innerHTML=`<div style="display:flex;align-items:center;margin-bottom:6px">
       <b style="flex:1;font-size:12px">📏 Cotas</b>
       <button onclick="toggleCota()" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">✕</button></div>
@@ -1921,17 +1977,48 @@ function renderCotaPanel(){
       <button class="btn-sec" onclick="setCotaMode('cal')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cal'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">🎯 Calibrar</button>
       <button class="btn-sec" onclick="setCotaMode('cota')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cota'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">📏 Medir</button>
     </div>
-    <div style="max-height:130px;overflow:auto">${lista}</div>`;
+    <div style="max-height:105px;overflow:auto">${listaCotas}</div>
+    <div style="border-top:1px solid var(--line);margin-top:9px;padding-top:9px">
+      <button class="btn-sec" onclick="setCotaMode('area')" ${calOk?'':'disabled title="Calibre a escala primeiro"'}
+        style="width:100%;padding:5px;font-size:11px${COTA_MODE==='area'?';background:var(--accent);border-color:var(--accent);color:#fff':''}${calOk?'':';opacity:.5;cursor:not-allowed'}">📐 Área (polígono)</button>
+      ${COTA_MODE==='area'?'<div style="font-size:10px;color:var(--mut);margin-top:5px">clique para marcar os vértices · botão direito conclui</div>':''}
+      <div style="max-height:105px;overflow:auto;margin-top:6px">${listaAreas}</div>
+    </div>`;
 }
 function setCotaMode(m){
+  if(m==='area' && !TRENA.m_por_pt){ alert('Calibre a escala primeiro no botão 🎯 Calibrar.'); return; }
+  const saindoDeArea = COTA_MODE==='area' && m!=='area';
   COTA_MODE=(COTA_MODE===m?null:m);
+  if(saindoDeArea || COTA_MODE!=='area'){ _areaPoly=null; _areaCur=null; }   // cancela polígono pendente ao trocar de modo
   $('stage').classList.toggle('modo-pin', !!COTA_MODE||!!DRAW_TOOL||PIN_EDIT||APONTAR);
   $('modoHint').textContent = COTA_MODE==='cal' ? 'arraste sobre um comprimento CONHECIDO e informe os metros'
     : COTA_MODE==='cota' ? 'arraste para medir uma distância'
+    : COTA_MODE==='area' ? 'clique para marcar os vértices do polígono · botão direito conclui'
     : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
-  renderCotaPanel();
+  renderDrawings(); renderCotaPanel();
 }
 function delCota(i){ if(TRENA.cotas&&i>=0&&i<TRENA.cotas.length){ TRENA.cotas.splice(i,1); salvarTrena(); renderDrawings(); renderCotaPanel(); } }
+function delArea(i){ if(TRENA.areas&&i>=0&&i<TRENA.areas.length){ TRENA.areas.splice(i,1); salvarTrena(); renderDrawings(); renderCotaPanel(); } }
+
+// Polígono de área — clique a clique (como a ferramenta de desenho poligonal),
+// mas em nível de PRANCHA (TRENA), não de apontamento. Botão direito finaliza.
+function areaClickAt(e){
+  const pt=_drawPt(e);
+  if(!_areaPoly) _areaPoly={ pts:[] };
+  _areaPoly.pts.push({nx:pt.nx, ny:pt.ny});
+  _areaCur=null;
+  renderDrawings(); renderCotaPanel();
+}
+function areaMoveAt(e){ if(!_areaPoly) return; _areaCur=_drawPt(e); renderDrawings(); }
+function areaFinish(){
+  if(!_areaPoly || _areaPoly.pts.length<3){ _areaPoly=null; _areaCur=null; renderDrawings(); return; }
+  const m2=_polyAreaM2(_areaPoly.pts);
+  TRENA.areas=TRENA.areas||[];
+  TRENA.areas.push({ pts:_areaPoly.pts, pg:V.pageNum, m2, color:AREA_COLOR });
+  salvarTrena();
+  _areaPoly=null; _areaCur=null;
+  renderDrawings(); renderCotaPanel();
+}
 
 function cotaStart(e){ const pt=_drawPt(e); _cota={ a:{nx:pt.nx,ny:pt.ny}, b:{nx:pt.nx,ny:pt.ny} }; }
 function cotaMove(e){ if(!_cota) return; const pt=_drawPt(e); _cota.b={nx:pt.nx,ny:pt.ny}; renderDrawings(); }
