@@ -35,7 +35,7 @@
   .hbtn:hover{background:#243452}
   .hbtn.pri{background:var(--accent);border-color:var(--accent);color:#231703}
 
-  .main{flex:1;display:flex;overflow:hidden}
+  .main{flex:1;display:flex;overflow:hidden;position:relative}
 
   /* ── Canvas central ─────────────────────────────────────── */
   .viewer{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;position:relative}
@@ -119,7 +119,15 @@
   .vfmt button.on{background:var(--navy);color:#fff}
 
   /* ── Coluna direita: navegação ──────────────────────────── */
-  .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line)}
+  .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line);
+       transition:width .16s ease;overflow:hidden}
+  .nav.collapsed{width:0;border-left:none}
+  .navToggleBtn{position:absolute;top:50%;right:322px;transform:translate(50%,-50%);z-index:30;
+                width:22px;height:44px;border-radius:8px;background:var(--panel);border:1px solid var(--line);
+                color:var(--txt2);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;
+                box-shadow:0 2px 8px rgba(8,14,26,.15);transition:right .16s ease}
+  .navToggleBtn:hover{border-color:var(--accent);color:var(--txt)}
+  .navToggleBtn.collapsed{right:0}
   .navpanel{flex:1;min-width:0;overflow-y:auto;padding:12px}
   .navpanel h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);
                margin:2px 0 10px;font-weight:800}
@@ -148,7 +156,8 @@
   .fdoc .fmeta{flex:1;min-width:0}
   .fdoc .fchips{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
   .fmini{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--mut);background:var(--panel2);
-         border:1px solid var(--line);border-radius:4px;padding:0 4px;line-height:15px}
+         border:1px solid var(--line);border-radius:4px;padding:0 4px;line-height:15px;cursor:pointer}
+  .fmini:hover{border-color:var(--accent);color:var(--txt)}
   .fmini.pdf{color:#B91C1C;border-color:#FCA5A5;background:rgba(220,60,60,.08)}
   .fkebab{background:none;border:none;color:var(--mut);cursor:pointer;font-size:17px;line-height:1;
           padding:2px 5px;border-radius:6px;flex-shrink:0;align-self:flex-start}
@@ -294,10 +303,11 @@
   </div>
 
   <!-- Navegação -->
-  <aside class="nav">
+  <aside class="nav" id="navAside">
     <div class="navpanel" id="navPanel"></div>
     <div class="rail" id="rail"></div>
   </aside>
+  <button class="navToggleBtn" id="navToggleBtn" onclick="toggleNav()" title="Recolher/expandir a coluna de arquivos">›</button>
 </div>
 
 <!-- Recebimento em lote -->
@@ -371,6 +381,7 @@ async function boot(){
   if(!session){ location.replace('./'); return; }
   USER = session.user;
   if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no portal.'; return; }
+  carregarPastasAbertas();
 
   const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,cidade,estado').eq('id',EMP_ID).maybeSingle();
   if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
@@ -392,6 +403,29 @@ async function boot(){
   $('load').style.display='none';
   $('main').style.display='flex';
   renderRail();
+  restaurarNavColapsada();
+}
+
+// Coluna de arquivos recolhível — libera área do canvas. Estado lembrado
+// entre sessões (por navegador, não por empreendimento — é uma preferência
+// pessoal de layout).
+function toggleNav(){
+  const nav=$('navAside'), btn=$('navToggleBtn');
+  const colapsada = nav.classList.toggle('collapsed');
+  btn.classList.toggle('collapsed', colapsada);
+  btn.textContent = colapsada ? '‹' : '›';
+  try{ localStorage.setItem('cde_nav_colapsada', colapsada?'1':'0'); }catch(_){}
+  // Janelas abertas precisam re-renderizar no novo tamanho do canvas.
+  setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V.page){ w.F.valido=false; w.scheduleRender(0); } }); }, 180);
+}
+function restaurarNavColapsada(){
+  let colapsada=false;
+  try{ colapsada = localStorage.getItem('cde_nav_colapsada')==='1'; }catch(_){}
+  if(colapsada){
+    $('navAside').classList.add('collapsed');
+    $('navToggleBtn').classList.add('collapsed');
+    $('navToggleBtn').textContent='‹';
+  }
 }
 
 async function carregarGrupos(){
@@ -553,8 +587,27 @@ function renderNav(){
 }
 function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); renderNav(); renderRail(); }
 
-let _etapaAberta=null;
-function toggleEtapa(et){ _etapaAberta = (_etapaAberta===et?null:et); renderNav(); }
+// Pastas (etapa dentro de disciplina) abertas — memória entre sessões via
+// localStorage, por empreendimento. Chave "disciplina::etapa" porque a mesma
+// etapa (ex. "EX") existe em várias disciplinas.
+let PASTAS_ABERTAS = new Set();
+let PASTAS_DISC_VISITADAS = new Set();   // disciplinas que já receberam o default nesta máquina
+function pastasKey(){ return 'cde_pastas_'+EMP_ID; }
+function carregarPastasAbertas(){
+  try{
+    const raw = localStorage.getItem(pastasKey());
+    if(raw){ const o=JSON.parse(raw); PASTAS_ABERTAS=new Set(o.abertas||[]); PASTAS_DISC_VISITADAS=new Set(o.visitadas||[]); }
+  }catch(_){}
+}
+function salvarPastasAbertas(){
+  try{ localStorage.setItem(pastasKey(), JSON.stringify({ abertas:[...PASTAS_ABERTAS], visitadas:[...PASTAS_DISC_VISITADAS] })); }catch(_){}
+}
+function toggleEtapa(et){
+  const key=SEL_DISC+'::'+et;
+  if(PASTAS_ABERTAS.has(key)) PASTAS_ABERTAS.delete(key); else PASTAS_ABERTAS.add(key);
+  salvarPastasAbertas();
+  renderNav();
+}
 
 function navDisciplina(){
   if(!SEL_DISC) return '<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>';
@@ -562,9 +615,18 @@ function navDisciplina(){
   const ordemFase = (faseCampo()||{}).dominio || [];
   const idx = v => { const i=ordemFase.findIndex(x=>((typeof x==='object')?x.v:x)===v); return i<0?99:i; };
   const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
+  // Primeira vez que esta disciplina é vista nesta máquina: abre só a etapa
+  // MAIS AVANÇADA disponível (ex.: se o Executivo já foi postado, só ele
+  // abre — não EP/AP/PL/PE também). Visitas seguintes respeitam o que o
+  // usuário deixou aberto/fechado manualmente.
+  if(!PASTAS_DISC_VISITADAS.has(SEL_DISC)){
+    PASTAS_DISC_VISITADAS.add(SEL_DISC);
+    if(etapas.length) PASTAS_ABERTAS.add(SEL_DISC+'::'+etapas[etapas.length-1]);
+    salvarPastasAbertas();
+  }
   return `<h3>${esc(discLabel(SEL_DISC))}</h3>` + etapas.map(et=>{
     const ds=doDisc.filter(d=>(d.etapa||'—')===et).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
-    const open = et===_etapaAberta;
+    const open = PASTAS_ABERTAS.has(SEL_DISC+'::'+et);
     return `<div class="folder ${open?'open':''}">
       <div class="folder-h" onclick="toggleEtapa('${esc(et)}')">
         <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${esc(faseLabel(et))}</span><span class="fct">${ds.length}</span>
@@ -647,7 +709,17 @@ function fmtsDe(d){
   const exts=[...new Set(((d.atual&&d.atual.arqs)||[]).map(a=>(a.extensao||'').toLowerCase()).filter(Boolean))];
   return exts.sort((a,b)=>{ const i=FMT_ORDER.indexOf(a),j=FMT_ORDER.indexOf(b); return (i<0?99:i)-(j<0?99:j); });
 }
-function fmtChips(d){ return fmtsDe(d).map(e=>`<span class="fmini ${e==='pdf'?'pdf':''}">${esc(e.toUpperCase())}</span>`).join(''); }
+function fmtChips(d){ return fmtsDe(d).map(e=>
+  `<span class="fmini ${e==='pdf'?'pdf':''}" title="Baixar ${e.toUpperCase()}" onclick="event.stopPropagation();baixarFormatoDoc('${d.id}','${e}')">${esc(e.toUpperCase())}</span>`
+).join(''); }
+// Clique numa tag de formato (PDF/DXF/DWG/IFC…) no card baixa AQUELE arquivo
+// específico, sem precisar abrir o menu ⋮.
+function baixarFormatoDoc(docId, ext){
+  const d=DOCS.find(x=>x.id===docId); if(!d) return;
+  const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext);
+  if(!a) return;
+  baixar(a.storage_path, a.nome, a.storage_provider);
+}
 
 function cardFdoc(d){
   const s=d.atual?STMAP[d.atual.status]:null;
