@@ -109,6 +109,13 @@
   .cdePinCard .acts{margin-top:11px;display:flex;gap:7px}
   .cdePinCard .acts button{background:var(--navy);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
   .cdePinCard .acts button.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
+  /* Seleção múltipla → abrir juntas no App */
+  .multiChk{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);flex-shrink:0}
+  .multiBar{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:8000;
+    background:var(--navy);color:#fff;border-radius:14px;box-shadow:0 14px 40px rgba(8,14,26,.45);
+    padding:10px 16px;display:none;align-items:center;gap:12px;font-size:13px;font-weight:700}
+  .multiBar button{background:var(--accent);color:#231703;border:none;border-radius:9px;padding:8px 16px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit}
+  .multiBar button.sec{background:rgba(255,255,255,.14);color:#fff}
   .vempty .big{font-size:40px}
   .vmsg2{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:13.5px;
          text-align:center;background:rgba(15,23,42,.75);padding:14px 20px;border-radius:10px;max-width:80%;line-height:1.5}
@@ -300,6 +307,7 @@
     </div>
     <div id="cdePinCard" class="cdePinCard" style="display:none"></div>
   </div>
+  <div id="multiBar" class="multiBar"></div>
 
   <!-- Navegação -->
   <aside class="nav" id="navAside">
@@ -374,6 +382,7 @@ let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null, DOC_SEL=null;
 let GRUPOS=[], GRUPO_SEL=null, NAV_MODE='disc';   // navegação: 'disc' (disciplina/etapa) ou 'grupo'
 let AUTOGRP_MODE=null, AUTOGRP_SEL=null;   // grupos automáticos dentro da aba Grupos: 'local' | 'etapa'
+let MULTI_MODE=false, MULTI_SEL=new Set();   // seleção múltipla → abrir juntas no App (uma análise só)
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 async function boot(){
@@ -589,9 +598,11 @@ function renderNav(){
   const toggle = `<div class="navtog">
     <button class="${NAV_MODE==='disc'?'on':''}" onclick="setNavMode('disc')">Disciplinas</button>
     <button class="${NAV_MODE==='grupo'?'on':''}" onclick="setNavMode('grupo')">Grupos${GRUPOS.length?(' ('+GRUPOS.length+')'):''}</button>
-  </div>`;
+  </div>
+  <button class="btn sec sm" onclick="toggleMultiMode()" style="width:100%;margin-top:8px${MULTI_MODE?';background:var(--accent);border-color:var(--accent);color:#231703':''}">☑ ${MULTI_MODE?'Cancelar seleção':'Selecionar várias'}</button>`;
   if(!DOCS.length){ p.innerHTML=toggle+'<div class="nav-hint">Nenhum documento ainda. Clique em <b>Receber arquivos</b> para registrar a primeira entrega.</div>'; return; }
   p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
+  renderMultiBar();
 }
 function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); if(m!=='grupo'){ AUTOGRP_MODE=null; AUTOGRP_SEL=null; } renderNav(); renderRail(); }
 
@@ -651,6 +662,7 @@ function navGrupos(){
     return `<div class="grp-back" onclick="GRUPO_SEL=null;renderNav()">← Grupos</div>
       <h3>${esc(g.nome)}</h3>
       ${g.descricao?`<div class="nav-hint" style="padding:0 0 8px">${esc(g.descricao)}</div>`:''}
+      ${ds.length?`<button class="btn sec sm" style="margin-bottom:8px" onclick='selecionarTodosGrupo(${JSON.stringify(ds.map(d=>d.id))})'>☑ Selecionar todas (${ds.length})</button>`:''}
       ${ds.length? ds.map(d=>cardFdocGrupo(d,g.id)).join('')
         : '<div class="nav-hint">Grupo vazio. Abra um documento e use <b>＋ Grupo</b> na barra para incluí-lo aqui.</div>'}
       <div style="margin-top:12px;display:flex;gap:7px">
@@ -694,6 +706,7 @@ function navAutoGrupo(modo){
     const ds=porValor[AUTOGRP_SEL].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     return `<div class="grp-back" onclick="AUTOGRP_SEL=null;renderNav()">← Por ${titulo}</div>
       <h3>${icone} ${esc(label(AUTOGRP_SEL))}</h3>
+      <button class="btn sec sm" style="margin-bottom:8px" onclick='selecionarTodosGrupo(${JSON.stringify(ds.map(d=>d.id))})'>☑ Selecionar todas (${ds.length})</button>
       ${ds.map(cardFdoc).join('')}`;
   }
   return `<div class="grp-back" onclick="AUTOGRP_MODE=null;renderNav()">← Grupos</div>
@@ -704,9 +717,12 @@ function navAutoGrupo(modo){
 }
 function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
+  const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
+  const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
-    <span class="dot" style="background:${cor}" onclick="abrirDoc('${d.id}')"></span>
-    <span class="fmeta" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')}</span><span class="fchips">${fmtChips(d)}</span></span>
+    ${chk}
+    <span class="dot" style="background:${cor}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')}</span><span class="fchips">${fmtChips(d)}</span></span>
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <button class="gx" title="Remover do grupo" onclick="removeDoGrupo('${gid}','${d.id}')">×</button>
   </div>`;
@@ -771,9 +787,12 @@ function baixarFormatoDoc(docId, ext){
 function cardFdoc(d){
   const s=d.atual?STMAP[d.atual.status]:null;
   const cor=s?s.cor:'#94A3B8';
+  const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
+  const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
-    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="abrirDoc('${d.id}')"></span>
-    <span class="fmeta" onclick="abrirDoc('${d.id}')"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    ${chk}
+    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
 }
@@ -1317,6 +1336,48 @@ function abrirNoApp(){
   const url = 'app.html?emp='+encodeURIComponent(EMP_ID)
             + '&cde_doc='+encodeURIComponent(doc.id)
             + '&cde_rev='+encodeURIComponent(rev.id);
+  window.open(url, '_blank');
+}
+
+// ── Seleção múltipla: marcar várias pranchas (ou um grupo inteiro) e abrir
+//    TODAS juntas no Auria App, como uma única análise (1 base + N sobreposições) ─
+function toggleMultiMode(){
+  MULTI_MODE=!MULTI_MODE;
+  if(!MULTI_MODE) MULTI_SEL.clear();
+  renderNav();
+}
+function toggleMultiSel(docId){
+  if(MULTI_SEL.has(docId)) MULTI_SEL.delete(docId); else MULTI_SEL.add(docId);
+  renderNav();
+}
+function selecionarTodosGrupo(ids){
+  MULTI_MODE=true;
+  ids.forEach(id=>MULTI_SEL.add(id));
+  renderNav();
+}
+function renderMultiBar(){
+  const bar=$('multiBar');
+  if(!MULTI_MODE || !MULTI_SEL.size){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex';
+  bar.innerHTML = `<span>${MULTI_SEL.size} prancha(s) selecionada(s)</span>
+    <button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>
+    <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
+}
+function abrirMultiNoApp(){
+  if(!MULTI_SEL.size) return;
+  // Só documentos com PDF na revisão atual entram na análise — avisa e deixa
+  // o usuário decidir se segue mesmo assim quando algum ficar de fora.
+  const ids=[...MULTI_SEL];
+  const validos=[], invalidos=[];
+  ids.forEach(id=>{
+    const d=DOCS.find(x=>x.id===id);
+    const temPdf = d && d.atual && (d.atual.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf');
+    if(temPdf) validos.push(id); else invalidos.push(d?d.codigo:id);
+  });
+  if(!validos.length){ alert('Nenhuma das pranchas selecionadas tem PDF na revisão atual.'); return; }
+  if(invalidos.length && !confirm(invalidos.length+' prancha(s) sem PDF ficarão de fora: '+invalidos.join(', ')+'.\n\nAbrir as outras '+validos.length+' mesmo assim?')) return;
+  const url = 'app.html?emp='+encodeURIComponent(EMP_ID)
+            + '&cde_multi='+validos.map(encodeURIComponent).join(',');
   window.open(url, '_blank');
 }
 

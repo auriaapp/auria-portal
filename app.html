@@ -557,12 +557,37 @@ async function boot(){
   // já amarrada ao documento. Requer ?emp=<id> antes (trocarEmp acima).
   // Se vier ?apt=<id> junto, o App abre o editor daquele apontamento assim
   // que a prancha e os apontamentos estiverem carregados.
+  // ?cde_multi=id1,id2,id3 (seleção múltipla no CDE): abre TODAS juntas —
+  // a primeira como base, as demais empilhadas como sobreposição.
   const _cdeDoc=_qs.get('cde_doc'), _cdeRev=_qs.get('cde_rev'), _apt=_qs.get('apt');
-  if(_cdeDoc && EMP){
+  const _cdeMulti=_qs.get('cde_multi');
+  if(_cdeMulti && EMP){
+    const ids=_cdeMulti.split(',').map(s=>s.trim()).filter(Boolean);
+    abrirMultiDoCDE(ids).catch(e=>alert('Erro ao abrir pranchas do CDE: '+(e.message||e)));
+  }else if(_cdeDoc && EMP){
     abrirDoCDE(_cdeDoc, _cdeRev)
       .then(()=>{ if(_apt) focarApontamento(_apt); })
       .catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e)));
   }
+}
+
+// Abre várias pranchas do CDE JUNTAS, numa única análise: a primeira como
+// BASE (substitui), as demais empilhadas como SOBREPOSIÇÃO — sequencial e
+// aguardado, porque a base reseta LAYERS antes de qualquer overlay entrar.
+async function abrirMultiDoCDE(ids){
+  if(!ids.length) return;
+  const falhas=[];
+  for(let i=0;i<ids.length;i++){
+    try{
+      await abrirDoCDE(ids[i], null, i>0);
+      if(i===0 && !PRANCHA){ falhas.push(ids[i]); break; }   // base falhou (já alertou dentro de abrirDoCDE)
+    }catch(e){
+      falhas.push(ids[i]);
+      console.warn('cde_multi', ids[i], (e&&e.message)||e);
+      if(i===0) break;   // sem base, não adianta tentar empilhar o resto
+    }
+  }
+  if(falhas.length) console.warn('cde_multi: falharam', falhas);
 }
 
 // Espera APTS carregar e abre o apontamento pedido pelo ?apt=<id>.
