@@ -368,6 +368,33 @@
   </div>
 </div>
 
+<div class="ov" id="ovCmp" onclick="if(event.target===this)fecharComparar()">
+  <div class="modal" style="width:min(480px,100%)">
+    <div class="modal-h">
+      <div style="flex:1"><b>⇄ Comparar revisões</b><div class="cod" id="cmpCod"></div></div>
+      <button class="x" onclick="fecharComparar()">×</button>
+    </div>
+    <div class="modal-b">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div>
+          <div style="font-size:11px;font-weight:800;color:#E74C3C;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Revisão antiga (vermelho)</div>
+          <select id="cmpA" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px"></select>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:800;color:#2563EB;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Revisão nova (azul)</div>
+          <select id="cmpB" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px"></select>
+        </div>
+      </div>
+      <div class="nav-hint" style="margin-top:12px">O traço que existe só na revisão antiga aparece em <b style="color:#E74C3C">vermelho</b> (saiu); só na nova, em <b style="color:#2563EB">azul</b> (entrou); o que não mudou fica escuro.</div>
+    </div>
+    <div class="modal-f">
+      <span class="msg" style="flex:1"></span>
+      <button class="btn sec" onclick="fecharComparar()">Cancelar</button>
+      <button class="btn pri" onclick="confirmarComparar()">Comparar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 const sb = window.supabase.createClient(
@@ -587,6 +614,61 @@ async function confirmarVinculo(pranchaId){
   }
 }
 function fecharVincular(){ $('ovLink').classList.remove('on'); LK_DOC_ID=null; LK_CAND=[]; }
+
+// ── Comparar revisões (overlay por cor) ─────────────────────────────────────
+//  Renderiza as DUAS revisões na mesma escala e compõe por cor (multiply,
+//  mesma técnica de camadas do Auria App): rev antiga tingida de vermelho,
+//  rev nova de azul. Traço presente nas duas multiplica-se em tom escuro
+//  (inalterado); só na antiga = vermelho (saiu); só na nova = azul (entrou).
+let CMP_DOC=null;
+function abrirComparar(docId){
+  const d=DOCS.find(x=>x.id===docId); if(!d) return;
+  const revsPdf=(d.revs||[]).filter(r=>(r.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'));
+  if(revsPdf.length<2){ alert('Este documento precisa de pelo menos duas revisões com PDF para comparar.'); return; }
+  CMP_DOC=d;
+  const opts=revsPdf.map(r=>`<option value="${r.id}">${esc(r.revisao)} — ${esc((STMAP[r.status]||{}).rotulo||r.status)}</option>`).join('');
+  $('cmpA').innerHTML=opts; $('cmpB').innerHTML=opts;
+  // d.revs já vem ordenado da mais recente pra mais antiga
+  $('cmpB').value=revsPdf[0].id;   // nova  = mais recente
+  $('cmpA').value=revsPdf[1].id;   // antiga = anterior
+  $('cmpCod').textContent=d.codigo;
+  $('ovCmp').classList.add('on');
+}
+function fecharComparar(){ $('ovCmp').classList.remove('on'); CMP_DOC=null; }
+async function confirmarComparar(){
+  const d=CMP_DOC; if(!d) return;
+  const ra=(d.revs||[]).find(r=>r.id===$('cmpA').value);
+  const rb=(d.revs||[]).find(r=>r.id===$('cmpB').value);
+  if(!ra||!rb||ra.id===rb.id){ alert('Escolha duas revisões diferentes.'); return; }
+  $('ovCmp').classList.remove('on'); CMP_DOC=null;
+  await openCompareWindow(d, ra, rb);
+}
+async function openCompareWindow(doc, revOld, revNew){
+  const pdfDe=r=>{ const fs=(r.arqs||[]).filter(a=>(a.extensao||'').toLowerCase()==='pdf'); return fs.find(a=>a.eh_principal)||fs[0]; };
+  const w=new CdeWin();
+  w.isCmp=true;                                    // openDocInWindow não deve reusar esta janela
+  focar(w); atualizarVempty(); atualizarTaskbar();
+  w.DOC_SEL=doc; w.VIEW_FMT='cmp'; w.VIEW_FILES={};
+  w.titleEl.textContent='⇄ '+doc.codigo;
+  w.subEl.innerHTML='<span style="color:#E74C3C;font-weight:800">'+esc(revOld.revisao)+'</span> saiu · '
+    +'<span style="color:#2563EB;font-weight:800">'+esc(revNew.revisao)+'</span> entrou · escuro = inalterado';
+  w.statusEl.textContent='comparação'; w.statusEl.style.background='#7C3AED';
+  w.msg('Preparando comparação…');
+  try{
+    const aArq=pdfDe(revOld), bArq=pdfDe(revNew);
+    const [ua,ub]=await Promise.all([
+      cdeSignedUrl(aArq.storage_path, aArq.storage_provider),
+      cdeSignedUrl(bArq.storage_path, bArq.storage_provider)
+    ]);
+    const [da,db]=await Promise.all([pdfjsLib.getDocument({url:ua}).promise, pdfjsLib.getDocument({url:ub}).promise]);
+    const [pa,pb]=await Promise.all([da.getPage(1), db.getPage(1)]);
+    w._cmpDocA=da;                                 // guardado só p/ destruir no fechar
+    w.cmp=[ {page:pa, cor:'#E74C3C'}, {page:pb, cor:'#2563EB'} ];
+    w.V.doc=db; w.V.pageNum=1; w.V.page=pb;        // referência de tamanho: a revisão NOVA
+    w.hideMsg(); w.fitPage();
+    if(cdeAtiva()===w) atualizarToolbar();
+  }catch(e){ w.msg('Não foi possível comparar: '+((e&&e.message)||e)); }
+}
 
 // ── Coluna direita: trilho de disciplinas + pastas por etapa ────────────────
 function renderRail(){
@@ -823,6 +905,11 @@ function docMenuOpen(ev,id){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
   }
+  const revsComPdf=((d.revs)||[]).filter(r=>(r.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf')).length;
+  if(revsComPdf>=2){
+    rows.push('<div class="dm-sep"></div>');
+    rows.push(`<button onclick="docMenuAct('${id}','','cmp')"><span class="mi">⇄</span>Comparar revisões</button>`);
+  }
   if(!CDE_LINKED_DOCS.has(id)){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','link')"><span class="mi">🔗</span>Vincular apontamentos existentes</button>`);
@@ -843,6 +930,7 @@ async function docMenuAct(id,ext,mode){
   if(mode==='rev'){ await openDocInWindow(id); renderNav(); abrirDetalhes(); return; }
   if(mode==='app'){ await openDocInWindow(id); abrirNoApp(); return; }
   if(mode==='link'){ abrirVincular(id); return; }
+  if(mode==='cmp'){ abrirComparar(id); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
   if(mode==='view') openDocInWindow(id, ext);
   else baixar(a.storage_path, a.nome, a.storage_provider);
@@ -926,6 +1014,8 @@ class CdeWin {
     this.CDE_APTS = []; this.CDE_PRANCHA_ID = null; this.CDE_PIN_SEL = null;
     this.DXFV = null;
     this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
+    this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
+    this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
     this._build();
     this._bind();
     $('winSpace').appendChild(this.el);
@@ -1082,6 +1172,8 @@ class CdeWin {
   fechar(){
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
     if(this.V.doc){ try{ this.V.doc.destroy(); }catch(_){} this.V.doc=null; }
+    if(this._cmpDocA){ try{ this._cmpDocA.destroy(); }catch(_){} this._cmpDocA=null; }
+    this.cmp=null;
     this.el.remove();
     WIN_STATE.list = WIN_STATE.list.filter(w=>w!==this);
     if(WIN_STATE.act===this){
@@ -1206,12 +1298,37 @@ class CdeWin {
       const octx=off.getContext('2d');
       octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,off.width,off.height);
       const s = zoom*rScale, sx = -panX*rScale, sy = -panY*rScale;
-      const vp = this.V.page.getViewport({ scale:s });
-      octx.save(); octx.translate(sx,sy);
-      try{ await this.V.page.render({ canvasContext:octx, viewport:vp, background:'#FFFFFF' }).promise; }
-      catch(e){ if(!String(e).includes('cancelled')) console.warn('render:',e); }
-      octx.restore();
-      if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+      if(this.cmp){
+        // Comparação de revisões: cada página tingida (source-in) e composta
+        // por MULTIPLY sobre fundo branco — mesma técnica de "papel vegetal"
+        // das camadas do Auria App. Traço só numa revisão fica na COR dela;
+        // traço nas duas fica escuro (as duas tintas translúcidas se somam).
+        const lay=document.createElement('canvas'); lay.width=off.width; lay.height=off.height;
+        const lctx=lay.getContext('2d');
+        for(const camada of this.cmp){
+          lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,lay.width,lay.height);
+          const vp=camada.page.getViewport({ scale:s });
+          lctx.save(); lctx.translate(sx,sy);
+          try{ await camada.page.render({ canvasContext:lctx, viewport:vp, background:'rgba(0,0,0,0)' }).promise; }
+          catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp render:',e); }
+          lctx.restore();
+          lctx.setTransform(1,0,0,1,0,0);
+          lctx.globalCompositeOperation='source-in';
+          lctx.fillStyle=camada.cor; lctx.fillRect(0,0,lay.width,lay.height);
+          lctx.globalCompositeOperation='source-over';
+          octx.globalCompositeOperation='multiply';
+          octx.drawImage(lay,0,0);
+          octx.globalCompositeOperation='source-over';
+          if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+        }
+      }else{
+        const vp = this.V.page.getViewport({ scale:s });
+        octx.save(); octx.translate(sx,sy);
+        try{ await this.V.page.render({ canvasContext:octx, viewport:vp, background:'#FFFFFF' }).promise; }
+        catch(e){ if(!String(e).includes('cancelled')) console.warn('render:',e); }
+        octx.restore();
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+      }
       const cv=this.canvas, ctx=cv.getContext('2d');
       cv.width=off.width; cv.height=off.height;
       cv.style.width=cssW+'px'; cv.style.height=cssH+'px';
@@ -1388,7 +1505,7 @@ function restaurarWin(id){
 // Nova janela nasce maximizada, ocupando todo o workspace.
 async function openDocInWindow(docId, preferFmt){
   const doc = DOCS.find(d=>d.id===docId); if(!doc) return;
-  const existe = WIN_STATE.list.find(w=> w.DOC_SEL && w.DOC_SEL.id===docId);
+  const existe = WIN_STATE.list.find(w=> !w.isCmp && w.DOC_SEL && w.DOC_SEL.id===docId);
   if(existe){
     if(existe.state==='min') existe.restaurar();
     focar(existe);
@@ -1669,7 +1786,7 @@ function fmtBytes(n){ if(!n)return''; const u=['B','KB','MB','GB'];let i=0,v=n; 
 function fmtData(s){ if(!s)return''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return''; } }
 function abrirDetalhes(){ if(!DOC_SEL) return; $('dCod').textContent=DOC_SEL.codigo; $('dTit').textContent=DOC_SEL.titulo||DOC_SEL.codigo; $('dBody').innerHTML='<div style="padding:20px;color:var(--mut)">Carregando…</div>'; $('ovDoc').classList.add('on'); renderDetalhe(); }
 function fecharDoc(){ $('ovDoc').classList.remove('on'); }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); fecharVincular(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); fecharVincular(); fecharComparar(); } });
 
 async function renderDetalhe(){
   const d=DOC_SEL; if(!d) return;
