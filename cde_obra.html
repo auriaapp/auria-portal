@@ -79,6 +79,18 @@
   .cdeWin-dxf canvas{display:block}
   .cdeWin-load{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.7);padding:12px 20px;border-radius:10px;display:none}
   .cdeWin-load.on{display:block}
+  /* Comparador de revisões — modo slider (régua vertical arrastável) */
+  .cdeWin-cmpDiv{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:2px solid #fff;
+                 box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 14px rgba(0,0,0,.35);cursor:ew-resize;z-index:6;display:none}
+  .cdeWin-cmpDiv.on{display:block}
+  .cdeWin-cmpDiv .hnd{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;
+                 border-radius:50%;background:#fff;box-shadow:0 3px 10px rgba(0,0,0,.4);display:flex;
+                 align-items:center;justify-content:center;font-size:15px;color:#1A2F4A;pointer-events:none}
+  .cdeWin-cmpLbl{position:absolute;top:10px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:800;
+                 color:#fff;pointer-events:none;z-index:6;display:none}
+  .cdeWin-cmpLbl.on{display:block}
+  .cdeWin-cmpLbl.a{left:10px;background:#E74C3C}
+  .cdeWin-cmpLbl.b{right:10px;background:#2563EB}
   /* Alça de redimensionar (canto SE) — só quando restaurada */
   .cdeWin-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
                  background:linear-gradient(135deg,transparent 50%,var(--mut) 50%,var(--mut) 60%,transparent 60%,transparent 70%,var(--mut) 70%,var(--mut) 80%,transparent 80%);z-index:2}
@@ -294,6 +306,7 @@
       </span>
       <span id="dxfHint" class="tit" style="display:none">role/arraste para navegar</span>
       <span style="width:8px"></span>
+      <button class="tb" id="btnCmpMode" onclick="toggleCmpMode()" title="Alternar visualização da comparação" style="display:none">◧ Slider</button>
       <button class="tb" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
       <button class="tb" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
@@ -649,9 +662,9 @@ async function openCompareWindow(doc, revOld, revNew){
   w.isCmp=true;                                    // openDocInWindow não deve reusar esta janela
   focar(w); atualizarVempty(); atualizarTaskbar();
   w.DOC_SEL=doc; w.VIEW_FMT='cmp'; w.VIEW_FILES={};
+  w._cmpRevOld=revOld.revisao; w._cmpRevNew=revNew.revisao;
   w.titleEl.textContent='⇄ '+doc.codigo;
-  w.subEl.innerHTML='<span style="color:#E74C3C;font-weight:800">'+esc(revOld.revisao)+'</span> saiu · '
-    +'<span style="color:#2563EB;font-weight:800">'+esc(revNew.revisao)+'</span> entrou · escuro = inalterado';
+  atualizarCmpSub(w);
   w.statusEl.textContent='comparação'; w.statusEl.style.background='#7C3AED';
   w.msg('Preparando comparação…');
   try{
@@ -1021,6 +1034,10 @@ class CdeWin {
     this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
     this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
+    this.cmpMode = 'color';    // 'color' (overlay tingido) | 'slider' (régua arrastável)
+    this.cmpSliderPos = 0.5;   // fração 0..1 da LARGURA VISÍVEL do stage (não do canvas com overscan)
+    this._cmpLayA = null; this._cmpLayB = null;   // páginas renderizadas SEM tingir, cache p/ arrastar sem re-render de PDF
+    this._cmpRevOld = ''; this._cmpRevNew = '';
     this._build();
     this._bind();
     $('winSpace').appendChild(this.el);
@@ -1042,7 +1059,10 @@ class CdeWin {
       +   '</div>'
       + '</div>'
       + '<div class="cdeWin-body">'
-      +   '<div class="cdeWin-stage"><canvas></canvas><div class="cdeWin-pins"></div><div class="cdeWin-load on">Abrindo…</div></div>'
+      +   '<div class="cdeWin-stage"><canvas></canvas><div class="cdeWin-pins"></div>'
+      +     '<div class="cdeWin-cmpLbl a">ANTIGA</div><div class="cdeWin-cmpLbl b">NOVA</div>'
+      +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
+      +     '<div class="cdeWin-load on">Abrindo…</div></div>'
       +   '<div class="cdeWin-dxf"></div>'
       +   '<div class="cdeWin-resize"></div>'
       + '</div>';
@@ -1057,6 +1077,9 @@ class CdeWin {
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.loadEl   = w.querySelector('.cdeWin-load');
     this.resizeEl = w.querySelector('.cdeWin-resize');
+    this.cmpDivEl = w.querySelector('.cdeWin-cmpDiv');
+    this.cmpLblA  = w.querySelector('.cdeWin-cmpLbl.a');
+    this.cmpLblB  = w.querySelector('.cdeWin-cmpLbl.b');
   }
   _bind(){
     // Botões da barra de título
@@ -1093,6 +1116,20 @@ class CdeWin {
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
       e.preventDefault(); e.stopPropagation();
     });
+    // Régua do comparador (modo slider) — arraste horizontal, recompõe SEM
+    // re-renderizar o PDF (usa as camadas já rasterizadas em _cmpLayA/_cmpLayB).
+    this.cmpDivEl.addEventListener('mousedown', (e)=>{
+      if(!this.cmp || this.cmpMode!=='slider') return;
+      e.preventDefault(); e.stopPropagation(); focar(this);
+      const mv=(m)=>{
+        const r=this.stage.getBoundingClientRect();
+        const f=(m.clientX-r.left)/r.width;
+        this.cmpSliderPos=Math.max(0.03,Math.min(0.97,f));
+        this._cmpRecompose();
+      };
+      const up=()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
     // Handlers do stage (wheel, pointer* pan, click delegation dos pins)
     const s = this.stage;
     s.addEventListener('wheel',(e)=>{
@@ -1104,6 +1141,7 @@ class CdeWin {
       if(!this.V.page) return;
       if(e.button!==0 && e.button!==1) return;
       if(e.button===0 && e.target && e.target.closest && e.target.closest('.cdePin')) return;
+      if(e.button===0 && e.target && e.target.closest && e.target.closest('.cdeWin-cmpDiv')) return;
       if(e.button===1) e.preventDefault();
       try{ s.setPointerCapture(e.pointerId); }catch(_){}
       this._pan={ id:e.pointerId, x:e.clientX, y:e.clientY, px:this.V.panX, py:this.V.panY };
@@ -1272,6 +1310,34 @@ class CdeWin {
     this.canvas.style.transform='translate('+(this.F.panX*k-this.V.panX)+'px,'+(this.F.panY*k-this.V.panY)+'px) scale('+k+')';
     if(cdeAtiva()===this) atualizarPageLbl(this);
     this.renderPinsCDE();
+    this._cmpUpdateDom();
+  }
+  // ── Comparador de revisões · modo slider ────────────────────────────────
+  _cmpUpdateDom(){
+    if(!this.cmpDivEl) return;
+    const on = !!(this.cmp && this.cmpMode==='slider');
+    this.cmpDivEl.classList.toggle('on', on);
+    this.cmpLblA.classList.toggle('on', on);
+    this.cmpLblB.classList.toggle('on', on);
+    if(on) this.cmpDivEl.style.left=(this.cmpSliderPos*100)+'%';
+  }
+  _cmpComposite(ctx,w,h){
+    if(!this._cmpLayA || !this._cmpLayB) return;
+    ctx.clearRect(0,0,w,h);
+    ctx.drawImage(this._cmpLayA,0,0);
+    const mx=this._cmpMx||0, rScale=this._cmpRScale||1, cw=this._cmpCw||this.stage.clientWidth;
+    const splitPx = Math.max(0, Math.min(w, Math.round((mx + this.cmpSliderPos*cw) * rScale)));
+    ctx.save();
+    ctx.beginPath(); ctx.rect(splitPx,0,w-splitPx,h); ctx.clip();
+    ctx.drawImage(this._cmpLayB,0,0);
+    ctx.restore();
+  }
+  // Recomposição LEVE ao arrastar a régua — reusa as camadas já rasterizadas,
+  // não passa pelo pipeline de render() nem toca o PDF.js.
+  _cmpRecompose(){
+    if(!this.cmp || this.cmpMode!=='slider' || !this.F.valido) return;
+    this._cmpComposite(this.canvas.getContext('2d'), this.canvas.width, this.canvas.height);
+    this._cmpUpdateDom();
   }
   frameCobre(){
     if(!this.F.valido || this.F.zoom!==this.V.zoom) return false;
@@ -1305,7 +1371,7 @@ class CdeWin {
       const octx=off.getContext('2d');
       octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,off.width,off.height);
       const s = zoom*rScale, sx = -panX*rScale, sy = -panY*rScale;
-      if(this.cmp){
+      if(this.cmp && this.cmpMode==='color'){
         // Comparação de revisões: cada página tingida (source-in) e composta
         // por MULTIPLY sobre fundo branco — mesma técnica de "papel vegetal"
         // das camadas do Auria App. Traço só numa revisão fica na COR dela;
@@ -1328,6 +1394,29 @@ class CdeWin {
           octx.globalCompositeOperation='source-over';
           if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
         }
+      }else if(this.cmp && this.cmpMode==='slider'){
+        // Cada revisão renderizada LIMPA (sem tingir) na sua própria camada;
+        // a composição final é um recorte (clip) na posição da régua — as
+        // camadas ficam cacheadas em _cmpLay(A|B) pra recompor instantaneamente
+        // ao arrastar, sem re-renderizar o PDF a cada frame do arraste.
+        const layA=document.createElement('canvas'); layA.width=off.width; layA.height=off.height;
+        const layB=document.createElement('canvas'); layB.width=off.width; layB.height=off.height;
+        const renderLayer=async(page,cv)=>{
+          const cctx=cv.getContext('2d');
+          cctx.fillStyle='#FFFFFF'; cctx.fillRect(0,0,cv.width,cv.height);
+          const vp=page.getViewport({ scale:s });
+          cctx.save(); cctx.translate(sx,sy);
+          try{ await page.render({ canvasContext:cctx, viewport:vp, background:'#FFFFFF' }).promise; }
+          catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp slider render:',e); }
+          cctx.restore();
+        };
+        await renderLayer(this.cmp[0].page, layA);
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+        await renderLayer(this.cmp[1].page, layB);
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+        this._cmpLayA=layA; this._cmpLayB=layB;
+        this._cmpMx=mx; this._cmpRScale=rScale; this._cmpCw=cw;
+        this._cmpComposite(octx, off.width, off.height);
       }else{
         const vp = this.V.page.getViewport({ scale:s });
         octx.save(); octx.translate(sx,sy);
@@ -1451,6 +1540,7 @@ function atualizarToolbar(){
     $('vFmt').style.display='none';
     $('pdfCtrls').style.display='none'; $('dxfHint').style.display='none';
     $('btnAnalisar').style.display='none';
+    $('btnCmpMode').style.display='none';
     $('vPg').textContent='—'; $('vPrev').disabled=true; $('vNext').disabled=true;
     return;
   }
@@ -1467,9 +1557,40 @@ function atualizarToolbar(){
   else el.style.display='none';
   const isPdf = w.VIEW_FMT==='pdf';
   $('pdfCtrls').style.display = isPdf ? 'inline-flex' : 'none';
-  $('dxfHint').style.display = isPdf ? 'none' : 'inline';
+  $('dxfHint').style.display = (isPdf || w.isCmp) ? 'none' : 'inline';
   $('btnAnalisar').style.display = w.VIEW_FILES.pdf ? 'inline-flex' : 'none';
+  const cmpBtn=$('btnCmpMode');
+  if(w.isCmp){
+    cmpBtn.style.display='inline-flex';
+    cmpBtn.textContent = w.cmpMode==='color' ? '◧ Ver com slider' : '🎨 Ver por cor';
+  }else{
+    cmpBtn.style.display='none';
+  }
   atualizarPageLbl(w);
+}
+// Alterna o modo de visualização da janela de comparação ativa: overlay por
+// cor (padrão, bom pra ACHAR o que mudou) ↔ slider (bom pra CONFIRMAR uma
+// mudança olhando cada revisão limpa, sem tinta por cima).
+function toggleCmpMode(){
+  const w=cdeAtiva(); if(!w || !w.isCmp) return;
+  w.cmpMode = w.cmpMode==='color' ? 'slider' : 'color';
+  w.F.valido=false;               // força re-render completo no novo modo
+  atualizarCmpSub(w);
+  w.msg('Preparando…');
+  w.render().then(()=>{ if(w.V.page) w.hideMsg(); });
+  atualizarToolbar();
+}
+function atualizarCmpSub(w){
+  if(w.cmpMode==='slider'){
+    w.subEl.innerHTML='◧ Arraste a régua — esquerda: <span style="color:#E74C3C;font-weight:800">'
+      +esc(w._cmpRevOld)+'</span> (antiga) · direita: <span style="color:#2563EB;font-weight:800">'
+      +esc(w._cmpRevNew)+'</span> (nova)';
+  }else{
+    w.subEl.innerHTML='<span style="color:#E74C3C;font-weight:800">'+esc(w._cmpRevOld)+'</span> saiu · '
+      +'<span style="color:#2563EB;font-weight:800">'+esc(w._cmpRevNew)+'</span> entrou · escuro = inalterado';
+  }
+  if(w.cmpLblA) w.cmpLblA.textContent='ANTIGA · '+w._cmpRevOld;
+  if(w.cmpLblB) w.cmpLblB.textContent='NOVA · '+w._cmpRevNew;
 }
 function atualizarPageLbl(w){
   if(!w || !w.V.doc){ $('vPg').textContent='—'; $('vPrev').disabled=true; $('vNext').disabled=true; return; }
