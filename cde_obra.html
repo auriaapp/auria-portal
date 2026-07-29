@@ -946,7 +946,12 @@ async function docMenuAct(id,ext,mode){
 // ═════════════════════════════════════════════════════════════════════════════
 
 const WIN_STATE = { list: [], act: null, zTop: 100 };
-const MARGEM = 0.3;              // rasteriza 30% além da tela (por janela)
+// Margem rasterizada além da tela visível (permite pan instantâneo por CSS
+// até esse limite, sem re-render). Era 0.3 (60% de área extra: 1.6²≈2.6x a
+// tela). 0.15 ainda dá folga generosa pro pan e CORTA ~34% da área
+// rasterizada por frame (1.3²/1.6²) — sensível em pranchas grandes/complexas,
+// sem tocar no supersampling (que é o que garante a nitidez das linhas).
+const MARGEM = 0.15;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1222,24 +1227,26 @@ class CdeWin {
       this.V.doc = await pdfjsLib.getDocument({ url }).promise;
       this.V.pageNum=1; this.F.valido=false;
       this.V.page = await this.V.doc.getPage(this.V.pageNum);
-      this._bbox=null;
+      // Calcula o bbox do desenho ANTES do primeiro fit — o scan já é um
+      // render leve (baixa resolução, ~900px). Assim só existe UM render em
+      // ALTA qualidade por abertura (já no enquadramento certo), em vez do
+      // padrão antigo "abre a página inteira em alta → re-renderiza cortado
+      // um instante depois" (dois renders caros em sequência = abertura lenta).
+      await this._ajustarBBox();
       this.hideMsg();
-      this.fitPage();          // enquadra a página inteira já, sem esperar o scan
-      this._ajustarBBox();     // e assim que o scan terminar, aperta pro desenho
+      this.fitPage();
       if(cdeAtiva()===this) atualizarToolbar();
     }catch(e){ this.msg('Não foi possível abrir: '+((e&&e.message)||e)); }
   }
-  // Recalcula o bounding box do CONTEÚDO da página (ignora a margem branca) e,
-  // se ainda for a página atual, reaplica o fit mais justo. Assíncrono e não
-  // bloqueante — a prancha aparece na hora com a página inteira, e "aperta"
-  // pro desenho assim que o scan terminar (rápido: canvas de detecção pequeno).
+  // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca).
+  // Chamada ANTES do fitPage — não dispara render() sozinha (fitPage já faz
+  // isso logo depois, com o bbox já pronto).
   async _ajustarBBox(){
     const page=this.V.page;
     try{
       const bb = await computeContentBBoxPx(page);
       if(this.V.page!==page) return;   // trocou de página/prancha enquanto calculava
       this._bbox = bb;
-      if(bb) this.fitPage();
     }catch(e){ console.warn('bbox:', (e&&e.message)||e); }
   }
   async carregarDxf(path, provider){
@@ -1372,8 +1379,8 @@ class CdeWin {
     this.V.pageNum=n; this.F.valido=false;
     this.V.page = await this.V.doc.getPage(this.V.pageNum);
     this._bbox=null;
+    await this._ajustarBBox();   // um render só, já no enquadramento certo
     this.fitPage();
-    this._ajustarBBox();
     if(cdeAtiva()===this) atualizarToolbar();
   }
   // Elo C — pins do Auria App sobrepostos ao canvas

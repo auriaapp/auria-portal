@@ -532,21 +532,26 @@ function toggleEsqueci(on){
   btn.onclick = on ? enviarRecuperacaoProjetista : acao;
   document.getElementById('login-err').textContent='';
 }
+// Chama a edge function reset-password (gera o link com service role e manda
+// pelo Resend) — não usa sb.auth.resetPasswordForEmail direto, que depende
+// do envio nativo do Supabase (limite baixo no plano gratuito, travava).
 async function enviarRecuperacaoProjetista(){
   const email=document.getElementById('inp-email').value.trim();
   const err=document.getElementById('login-err');
   if(!email){ err.style.color='#E74C3C'; err.textContent='Informe seu e-mail.'; return; }
   const btn=document.getElementById('btn-acao'); btn.disabled=true; btn.textContent='Enviando…';
   try{
-    const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + '/ativar_conta.html'
+    const resp = await fetch(SUPA_URL+'/functions/v1/reset-password', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':SUPA_KEY, 'Authorization':'Bearer '+SUPA_KEY },
+      body: JSON.stringify({ email })
     });
-    if(error) throw error;
+    if(!resp.ok){ const t=await resp.text().catch(function(){return'';}); throw new Error('HTTP '+resp.status+' '+t.slice(0,160)); }
     err.style.color='#1E8449';
     err.textContent='Se este e-mail tiver conta no Auria, enviamos um link de redefinição. Verifique também o spam.';
   }catch(e){
     err.style.color='#E74C3C';
-    err.textContent = e.message || 'Falha ao enviar. Tente novamente.';
+    err.textContent = 'Falha ao enviar: '+((e&&e.message)||e);
   }
   btn.disabled=false; btn.textContent='Enviar link de redefinição';
 }
