@@ -80,9 +80,18 @@
   .cdeWin-load{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.7);padding:12px 20px;border-radius:10px;display:none}
   .cdeWin-load.on{display:block}
   /* Comparador de revisões — modo slider (régua vertical arrastável) */
-  .cdeWin-cmpDiv{position:absolute;top:0;bottom:0;left:50%;width:0;border-left:2px solid #fff;
-                 box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 14px rgba(0,0,0,.35);cursor:ew-resize;z-index:6;display:none}
+  /* Camada da revisão NOVA: fica DENTRO de um recorte preso à tela, então a
+     emenda não viaja junto com o desenho ao arrastar/dar zoom na prancha. */
+  .cdeWin-cmpClip{position:absolute;inset:0;overflow:hidden;display:none;z-index:2}
+  .cdeWin-cmpClip.on{display:block}
+  .cdeWin-cmpClip canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;background:#fff}
+  /* Faixa de arraste larga e invisível (a linha branca é o ::before), pra
+     pegar a régua em QUALQUER altura, não só no círculo. */
+  .cdeWin-cmpDiv{position:absolute;top:0;bottom:0;left:50%;width:26px;margin-left:-13px;
+                 cursor:ew-resize;z-index:6;display:none}
   .cdeWin-cmpDiv.on{display:block}
+  .cdeWin-cmpDiv::before{content:'';position:absolute;top:0;bottom:0;left:12px;width:2px;background:#fff;
+                 box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 14px rgba(0,0,0,.35)}
   .cdeWin-cmpDiv .hnd{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;
                  border-radius:50%;background:#fff;box-shadow:0 3px 10px rgba(0,0,0,.4);display:flex;
                  align-items:center;justify-content:center;font-size:15px;color:#1A2F4A;pointer-events:none}
@@ -1025,8 +1034,8 @@ class CdeWin {
     this.state = 'max';                              // 'max' | 'restored' | 'min'
     this.restoredBox = null;                          // {left,top,width,height} lembrado
     this.V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
-    this.F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false };
-    this._rendering=false; this._renderJob=0; this._renderTimer=null; this._pan=null;
+    this.F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false, fast:false };
+    this._rendering=false; this._renderJob=0; this._renderTimer=null; this._hqTimer=null; this._pan=null;
     this.DOC_SEL = null;
     this.VIEW_FILES = {}; this.VIEW_FMT = null;
     this.CDE_APTS = []; this.CDE_PRANCHA_ID = null; this.CDE_PIN_SEL = null;
@@ -1036,7 +1045,6 @@ class CdeWin {
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
     this.cmpMode = 'color';    // 'color' (overlay tingido) | 'slider' (régua arrastável)
     this.cmpSliderPos = 0.5;   // fração 0..1 da LARGURA VISÍVEL do stage (não do canvas com overscan)
-    this._cmpLayA = null; this._cmpLayB = null;   // páginas renderizadas SEM tingir, cache p/ arrastar sem re-render de PDF
     this._cmpRevOld = ''; this._cmpRevNew = '';
     this._build();
     this._bind();
@@ -1059,7 +1067,9 @@ class CdeWin {
       +   '</div>'
       + '</div>'
       + '<div class="cdeWin-body">'
-      +   '<div class="cdeWin-stage"><canvas></canvas><div class="cdeWin-pins"></div>'
+      +   '<div class="cdeWin-stage"><canvas></canvas>'
+      +     '<div class="cdeWin-cmpClip"><canvas></canvas></div>'
+      +     '<div class="cdeWin-pins"></div>'
       +     '<div class="cdeWin-cmpLbl a">ANTIGA</div><div class="cdeWin-cmpLbl b">NOVA</div>'
       +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
       +     '<div class="cdeWin-load on">Abrindo…</div></div>'
@@ -1072,7 +1082,9 @@ class CdeWin {
     this.subEl    = w.querySelector('.cdeWin-sub');
     this.statusEl = w.querySelector('.cdeWin-status');
     this.stage    = w.querySelector('.cdeWin-stage');
-    this.canvas   = w.querySelector('canvas');
+    this.canvas   = w.querySelector('.cdeWin-stage > canvas');
+    this.cmpClip  = w.querySelector('.cdeWin-cmpClip');
+    this.canvasB  = w.querySelector('.cdeWin-cmpClip > canvas');
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.loadEl   = w.querySelector('.cdeWin-load');
@@ -1116,16 +1128,16 @@ class CdeWin {
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
       e.preventDefault(); e.stopPropagation();
     });
-    // Régua do comparador (modo slider) — arraste horizontal, recompõe SEM
-    // re-renderizar o PDF (usa as camadas já rasterizadas em _cmpLayA/_cmpLayB).
+    // Régua do comparador (modo slider) — arraste horizontal em qualquer ponto
+    // da faixa; só move o recorte CSS, não toca em canvas nem no PDF.js.
     this.cmpDivEl.addEventListener('mousedown', (e)=>{
       if(!this.cmp || this.cmpMode!=='slider') return;
       e.preventDefault(); e.stopPropagation(); focar(this);
       const mv=(m)=>{
         const r=this.stage.getBoundingClientRect();
         const f=(m.clientX-r.left)/r.width;
-        this.cmpSliderPos=Math.max(0.03,Math.min(0.97,f));
-        this._cmpRecompose();
+        this.cmpSliderPos=Math.max(0.02,Math.min(0.98,f));
+        this._cmpUpdateDom();
       };
       const up=()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
@@ -1157,7 +1169,7 @@ class CdeWin {
       const d=this._pan; if(!d || (e && e.pointerId!==d.id)) return;
       try{ s.releasePointerCapture(d.id); }catch(_){}
       this._pan=null; s.classList.remove('grab');
-      if(!this.frameCobre()) this.scheduleRender(0);
+      if(!this.frameCobre()) this.scheduleRender(0, true);
     };
     s.addEventListener('pointerup', end);
     s.addEventListener('pointercancel', end);
@@ -1213,6 +1225,7 @@ class CdeWin {
     atualizarTaskbar();
   }
   fechar(){
+    clearTimeout(this._renderTimer); clearTimeout(this._hqTimer);
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
     if(this.V.doc){ try{ this.V.doc.destroy(); }catch(_){} this.V.doc=null; }
     if(this._cmpDocA){ try{ this._cmpDocA.destroy(); }catch(_){} this._cmpDocA=null; }
@@ -1306,38 +1319,34 @@ class CdeWin {
   updateCss(){
     if(!this.F.valido) return;
     const k=this.V.zoom/this.F.zoom;
+    const tr='translate('+(this.F.panX*k-this.V.panX)+'px,'+(this.F.panY*k-this.V.panY)+'px) scale('+k+')';
     this.canvas.style.transformOrigin='0 0';
-    this.canvas.style.transform='translate('+(this.F.panX*k-this.V.panX)+'px,'+(this.F.panY*k-this.V.panY)+'px) scale('+k+')';
+    this.canvas.style.transform=tr;
+    // A camada da revisão nova acompanha EXATAMENTE a mesma transformação —
+    // o que a separa é o recorte do container, que é preso à tela.
+    this.canvasB.style.transformOrigin='0 0';
+    this.canvasB.style.transform=tr;
     if(cdeAtiva()===this) atualizarPageLbl(this);
     this.renderPinsCDE();
     this._cmpUpdateDom();
   }
   // ── Comparador de revisões · modo slider ────────────────────────────────
+  //  A régua é só um recorte CSS sobre a camada de cima: arrastar não mexe em
+  //  canvas nenhum (instantâneo), e como o recorte vive em coordenadas da TELA
+  //  (não do desenho), arrastar/dar zoom na prancha faz o desenho passar por
+  //  baixo da emenda — que é o comportamento esperado de um comparador.
   _cmpUpdateDom(){
     if(!this.cmpDivEl) return;
     const on = !!(this.cmp && this.cmpMode==='slider');
     this.cmpDivEl.classList.toggle('on', on);
+    this.cmpClip.classList.toggle('on', on);
     this.cmpLblA.classList.toggle('on', on);
     this.cmpLblB.classList.toggle('on', on);
-    if(on) this.cmpDivEl.style.left=(this.cmpSliderPos*100)+'%';
-  }
-  _cmpComposite(ctx,w,h){
-    if(!this._cmpLayA || !this._cmpLayB) return;
-    ctx.clearRect(0,0,w,h);
-    ctx.drawImage(this._cmpLayA,0,0);
-    const mx=this._cmpMx||0, rScale=this._cmpRScale||1, cw=this._cmpCw||this.stage.clientWidth;
-    const splitPx = Math.max(0, Math.min(w, Math.round((mx + this.cmpSliderPos*cw) * rScale)));
-    ctx.save();
-    ctx.beginPath(); ctx.rect(splitPx,0,w-splitPx,h); ctx.clip();
-    ctx.drawImage(this._cmpLayB,0,0);
-    ctx.restore();
-  }
-  // Recomposição LEVE ao arrastar a régua — reusa as camadas já rasterizadas,
-  // não passa pelo pipeline de render() nem toca o PDF.js.
-  _cmpRecompose(){
-    if(!this.cmp || this.cmpMode!=='slider' || !this.F.valido) return;
-    this._cmpComposite(this.canvas.getContext('2d'), this.canvas.width, this.canvas.height);
-    this._cmpUpdateDom();
+    if(on){
+      const pct=(this.cmpSliderPos*100);
+      this.cmpDivEl.style.left=pct+'%';
+      this.cmpClip.style.clipPath='inset(0 0 0 '+pct+'%)';
+    }
   }
   frameCobre(){
     if(!this.F.valido || this.F.zoom!==this.V.zoom) return false;
@@ -1345,14 +1354,21 @@ class CdeWin {
         && this.V.panX+this.stage.clientWidth  <= this.F.panX+this.F.cssW
         && this.V.panY+this.stage.clientHeight <= this.F.panY+this.F.cssH;
   }
-  scheduleRender(delay){
+  scheduleRender(delay, fast){
     clearTimeout(this._renderTimer);
-    this._renderTimer=setTimeout(()=>this.render(), delay==null?120:delay);
+    clearTimeout(this._hqTimer);   // nova interação cancela o upgrade pendente
+    this._renderTimer=setTimeout(()=>this.render(fast), delay==null?120:delay);
   }
-  async render(){
+  // render(fast): a passada RÁPIDA rasteriza sem supersampling — sai em uma
+  // fração do tempo e serve só pra tapar o buraco (fundo cinza) no instante
+  // em que o zoom/pan sai da área já rasterizada. Logo em seguida o frame é
+  // substituído pela passada de QUALIDADE, que é a de sempre. A nitidez final
+  // é idêntica; muda só o que aparece durante a espera.
+  async render(fast){
     if(!this.V.page) return;
-    if(this._rendering){ this.scheduleRender(80); return; }
-    if(this.frameCobre()){ this.updateCss(); return; }
+    if(this._rendering){ this.scheduleRender(80, fast); return; }
+    // Um frame rápido já existente NÃO satisfaz um pedido de qualidade.
+    if(this.frameCobre() && !(this.F.fast && !fast)){ this.updateCss(); return; }
     this._rendering=true;
     const job=++this._renderJob;
     try{
@@ -1362,11 +1378,12 @@ class CdeWin {
       const mx=Math.round(cw*MARGEM), my=Math.round(ch*MARGEM);
       const zoom=this.V.zoom, panX=this.V.panX-mx, panY=this.V.panY-my;
       const cssW=cw+2*mx, cssH=ch+2*my;
-      let ss = zoom<0.5 ? 2.5 : zoom<1 ? 2 : zoom<2 ? 1.5 : 1;
+      let ss = fast ? 0.7 : (zoom<0.5 ? 2.5 : zoom<1 ? 2 : zoom<2 ? 1.5 : 1);
       let rScale = dpr*ss;
       const MAXPIX = 24e6;
       while(cssW*rScale*cssH*rScale > MAXPIX && rScale>dpr) rScale=Math.max(dpr, rScale-0.25);
       const off=document.createElement('canvas');
+      let offB=null;                       // camada da revisão nova (só no modo slider)
       off.width=Math.round(cssW*rScale); off.height=Math.round(cssH*rScale);
       const octx=off.getContext('2d');
       octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,off.width,off.height);
@@ -1392,48 +1409,58 @@ class CdeWin {
           octx.globalCompositeOperation='multiply';
           octx.drawImage(lay,0,0);
           octx.globalCompositeOperation='source-over';
-          if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+          if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
         }
       }else if(this.cmp && this.cmpMode==='slider'){
-        // Cada revisão renderizada LIMPA (sem tingir) na sua própria camada;
-        // a composição final é um recorte (clip) na posição da régua — as
-        // camadas ficam cacheadas em _cmpLay(A|B) pra recompor instantaneamente
-        // ao arrastar, sem re-renderizar o PDF a cada frame do arraste.
-        const layA=document.createElement('canvas'); layA.width=off.width; layA.height=off.height;
-        const layB=document.createElement('canvas'); layB.width=off.width; layB.height=off.height;
-        const renderLayer=async(page,cv)=>{
-          const cctx=cv.getContext('2d');
-          cctx.fillStyle='#FFFFFF'; cctx.fillRect(0,0,cv.width,cv.height);
-          const vp=page.getViewport({ scale:s });
-          cctx.save(); cctx.translate(sx,sy);
-          try{ await page.render({ canvasContext:cctx, viewport:vp, background:'#FFFFFF' }).promise; }
-          catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp slider render:',e); }
-          cctx.restore();
-        };
-        await renderLayer(this.cmp[0].page, layA);
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
-        await renderLayer(this.cmp[1].page, layB);
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
-        this._cmpLayA=layA; this._cmpLayB=layB;
-        this._cmpMx=mx; this._cmpRScale=rScale; this._cmpCw=cw;
-        this._cmpComposite(octx, off.width, off.height);
+        // Cada revisão vai LIMPA (sem tingir) pro seu próprio canvas: a antiga
+        // no canvas de base, a nova na camada recortada por cima. Quem separa
+        // as duas é o recorte CSS, não o pixel — por isso arrastar a régua
+        // não custa render nenhum.
+        const vpA=this.cmp[0].page.getViewport({ scale:s });
+        octx.save(); octx.translate(sx,sy);
+        try{ await this.cmp[0].page.render({ canvasContext:octx, viewport:vpA, background:'#FFFFFF' }).promise; }
+        catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp A:',e); }
+        octx.restore();
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
+        offB=document.createElement('canvas'); offB.width=off.width; offB.height=off.height;
+        const bctx=offB.getContext('2d');
+        bctx.fillStyle='#FFFFFF'; bctx.fillRect(0,0,offB.width,offB.height);
+        const vpB=this.cmp[1].page.getViewport({ scale:s });
+        bctx.save(); bctx.translate(sx,sy);
+        try{ await this.cmp[1].page.render({ canvasContext:bctx, viewport:vpB, background:'#FFFFFF' }).promise; }
+        catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp B:',e); }
+        bctx.restore();
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
       }else{
         const vp = this.V.page.getViewport({ scale:s });
         octx.save(); octx.translate(sx,sy);
         try{ await this.V.page.render({ canvasContext:octx, viewport:vp, background:'#FFFFFF' }).promise; }
         catch(e){ if(!String(e).includes('cancelled')) console.warn('render:',e); }
         octx.restore();
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0); return; }
+        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
       }
       const cv=this.canvas, ctx=cv.getContext('2d');
       cv.width=off.width; cv.height=off.height;
       cv.style.width=cssW+'px'; cv.style.height=cssH+'px';
       ctx.drawImage(off,0,0);
+      if(offB){
+        const cb=this.canvasB;
+        cb.width=offB.width; cb.height=offB.height;
+        cb.style.width=cssW+'px'; cb.style.height=cssH+'px';
+        cb.getContext('2d').drawImage(offB,0,0);
+      }
       this.F.zoom=zoom; this.F.panX=panX; this.F.panY=panY; this.F.cssW=cssW; this.F.cssH=cssH; this.F.valido=true;
+      this.F.fast=!!fast;
       this.updateCss();
     }catch(e){ if(!String(e).includes('cancelled')) console.error('render:',e); }
     this._rendering=false;
-    if(!this.frameCobre()) this.scheduleRender(60);
+    if(!this.frameCobre()) this.scheduleRender(60, fast);
+    else if(this.F.fast){
+      // Frame provisório no ar: sobe pra qualidade cheia assim que o usuário
+      // parar de mexer (qualquer novo zoom/pan reagenda e cancela este).
+      clearTimeout(this._hqTimer);
+      this._hqTimer=setTimeout(()=>this.render(false), 200);
+    }
   }
   fitPage(){
     if(!this.V.page) return;
@@ -1452,7 +1479,7 @@ class CdeWin {
     this.V.panX = left*this.V.zoom - (cw-contentW)/2;
     this.V.panY = top*this.V.zoom  - (ch-contentH)/2;
     this.F.valido=false;
-    this.updateCss(); this.render();
+    this.updateCss(); this.render(true);   // rápido primeiro, qualidade logo atrás
   }
   zoomAt(fator, cx, cy){
     const novo=Math.min(20, Math.max(0.05, this.V.zoom*fator));
@@ -1460,7 +1487,10 @@ class CdeWin {
     this.V.panX=(this.V.panX+cx)*k-cx;
     this.V.panY=(this.V.panY+cy)*k-cy;
     this.V.zoom=novo;
-    this.updateCss(); this.scheduleRender(140);
+    // Frame rápido quase imediato (tapa o fundo cinza que aparece ao afastar,
+    // já que o frame anterior encolhe junto e deixa de cobrir a tela); a
+    // qualidade cheia entra sozinha ~200ms depois de parar de girar a roda.
+    this.updateCss(); this.scheduleRender(50, true);
   }
   async pdfPage(delta){
     if(!this.V.doc) return;
@@ -1575,7 +1605,7 @@ function toggleCmpMode(){
   const w=cdeAtiva(); if(!w || !w.isCmp) return;
   w.cmpMode = w.cmpMode==='color' ? 'slider' : 'color';
   w.F.valido=false;               // força re-render completo no novo modo
-  atualizarCmpSub(w);
+  atualizarCmpSub(w); w._cmpUpdateDom();
   w.msg('Preparando…');
   w.render().then(()=>{ if(w.V.page) w.hideMsg(); });
   atualizarToolbar();
