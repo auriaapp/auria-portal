@@ -975,10 +975,11 @@ async function docMenuAct(id,ext,mode){
 
 const WIN_STATE = { list: [], act: null, zTop: 100 };
 // Quantas vezes o zoom de "ajustar à tela" o bitmap da página aguenta antes de
-// começar a suavizar. 3× cobre com folga o zoom de trabalho numa prancha; acima
-// disso o navegador interpola o bitmap (continua legível e, principalmente,
-// NUNCA pisca nem some, porque não há re-rasterização durante o zoom).
-const BASE_FOLGA = 3;
+// começar a suavizar. Acima disso o navegador interpola o bitmap (continua
+// legível e, principalmente, NUNCA pisca nem some, porque não há
+// re-rasterização durante o zoom). Subir isto = zoom mais nítido, ao custo de
+// memória e do tempo da ÚNICA rasterização feita ao abrir a prancha.
+const BASE_FOLGA = 6;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1384,9 +1385,11 @@ class CdeWin {
     const dpr=window.devicePixelRatio||1;
     const b=this._bbox;
     const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-    // No modo slider são DOIS bitmaps de página inteira vivos ao mesmo tempo.
-    const MAXPIX=(this.cmp && this.cmpMode==='slider') ? 11e6 : 20e6;
-    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 12000/pw, 12000/ph);
+    // Tetos de segurança: memória (4 bytes/px) e lado máximo de textura de GPU.
+    // No modo slider são DOIS bitmaps de página inteira vivos ao mesmo tempo,
+    // e no modo cor há ainda um canvas de tingimento — por isso o teto cai.
+    const MAXPIX=this.cmp ? 18e6 : 36e6;
+    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 16000/pw, 16000/ph);
     let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto);
     s=Math.max(s, Math.min(fitZoom*dpr, teto));   // nunca pior que a tela
     return { s, pw, ph };
@@ -1413,7 +1416,16 @@ class CdeWin {
         catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('base render:',e); }
         this._renderTask=null;
       };
-      const offA=novo(); let offB=null;
+      // Abrindo do zero o canvas está escondido atrás do "Abrindo prancha…",
+      // então dá pra rasterizar DIRETO nele: evita manter dois bitmaps de
+      // página inteira na memória ao mesmo tempo (o pico é o que quebra em
+      // máquina modesta). Ao SUBSTITUIR um bitmap já visível, aí sim vai pra
+      // um canvas à parte, pra troca ser instantânea e sem estado intermediário.
+      const direto = !this.cmp && !this.B.valido;
+      const prep=(cv)=>{ cv.width=W; cv.height=H; cv.style.width=W+'px'; cv.style.height=H+'px';
+        const x=cv.getContext('2d'); x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return cv; };
+      const offA = direto ? prep(this.canvas) : novo();
+      let offB=null;
       if(this.cmp && this.cmpMode==='color'){
         const lay=document.createElement('canvas'); lay.width=W; lay.height=H;
         const lctx=lay.getContext('2d'), actx=offA.getContext('2d');
@@ -1441,7 +1453,7 @@ class CdeWin {
       const aplicar=(cv,off)=>{ cv.width=W; cv.height=H;
         cv.style.width=W+'px'; cv.style.height=H+'px';
         cv.getContext('2d').drawImage(off,0,0); };
-      aplicar(this.canvas, offA);
+      if(!direto) aplicar(this.canvas, offA);
       if(offB) aplicar(this.canvasB, offB);
       else { this.canvasB.width=1; this.canvasB.height=1; }
       this.B.scale=s; this.B.pw=pw; this.B.ph=ph; this.B.valido=true;
