@@ -1367,7 +1367,13 @@ class CdeWin {
       console.warn('dxf', e);
     }
   }
-  pageSizePx(){ const [x1,y1,x2,y2]=this.V.page.view; return { w:(x2-x1)*this.V.zoom, h:(y2-y1)*this.V.zoom }; }
+  // Dimensões da página COMO ELA É DESENHADA. Tem que sair de getViewport(),
+  // não de page.view: page.view é a MediaBox crua, que ignora /Rotate. Prancha
+  // de CAD costuma ser exportada como retrato + /Rotate 90, e aí a MediaBox diz
+  // "retrato" enquanto o render sai paisagem — largura e altura trocadas. Era o
+  // que fazia o recorte/enquadramento sair errado em todas as pranchas.
+  _dims(){ const vp=this.V.page.getViewport({ scale:1 }); return { pw:vp.width, ph:vp.height }; }
+  pageSizePx(){ const d=this._dims(); return { w:d.pw*this.V.zoom, h:d.ph*this.V.zoom }; }
   // Zoom e pan são APENAS transformação CSS sobre o bitmap da página inteira
   // (composição na GPU, sem repaint). Nenhum page.render() acontece aqui — é
   // isso que elimina piscada, sumiço, troca de resolução e buraco no desenho.
@@ -1410,8 +1416,7 @@ class CdeWin {
   // de canvas do navegador. Adaptativo porque uma A1 e uma A4 não podem usar a
   // mesma escala fixa sem estourar memória ou sair borrada.
   _baseScaleAlvo(){
-    const [x1,y1,x2,y2]=this.V.page.view;
-    const pw=x2-x1, ph=y2-y1;
+    const { pw, ph } = this._dims();
     const cw=this.stage.clientWidth||1200, ch=this.stage.clientHeight||800;
     const dpr=window.devicePixelRatio||1;
     const b=this._bbox;
@@ -1588,10 +1593,10 @@ class CdeWin {
     // Enquadra o BOUNDING BOX DO CONTEÚDO (this._bbox, detectado por scan de
     // pixels) quando disponível — remove a margem branca do PDF. Enquanto o
     // scan não termina (ou a página é branca), cai de volta pra página inteira.
-    const [x1,y1,x2,y2]=this.V.page.view;
+    const d=this._dims();
     const b=this._bbox;
     const left = b ? b.left : 0, top = b ? b.top : 0;
-    const pw = b ? b.w : (x2-x1), ph = b ? b.h : (y2-y1);
+    const pw = b ? b.w : d.pw, ph = b ? b.h : d.ph;
     const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
     if(cw<=0||ch<=0) return;
     this._fitted=true;
@@ -1638,7 +1643,7 @@ class CdeWin {
   renderPinsCDE(){
     const wrap=this.pinsWrap; if(!wrap) return; wrap.innerHTML='';
     if(!this.CDE_APTS.length || !this.V.page || this.VIEW_FMT!=='pdf') return;
-    const [ , , pw, ph ] = this.V.page.view;
+    const { pw, ph } = this._dims();   // mesmas dimensões do canvas (com /Rotate aplicado)
     const pg = this.V.pageNum;
     this.CDE_APTS.forEach(a=>{
       (a.pontos_json||[]).forEach((pt,idx)=>{
