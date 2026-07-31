@@ -76,6 +76,11 @@
   /* will-change mantém o bitmap como camada própria na GPU: zoom/pan viram
      composição, não repaint — é o que torna o movimento contínuo. */
   .cdeWin-stage canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto;will-change:transform}
+  /* Camada de detalhe: fica POR CIMA da base, sem sombra e sem capturar mouse.
+     Só aparece quando o zoom passa da resolução da base. Como a base continua
+     desenhada por baixo, o detalhe pode demorar ou faltar sem deixar buraco. */
+  .cdeWin-stage .cdeWin-det,
+  .cdeWin-cmpClip .cdeWin-detB{box-shadow:none;background:transparent;pointer-events:none;display:none;z-index:2}
   .cdeWin-pins{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
   .cdeWin-dxf{position:absolute;inset:0;background:#20262f;overflow:hidden;display:none}
   .cdeWin-dxf canvas{display:block}
@@ -681,11 +686,14 @@ async function openCompareWindow(doc, revOld, revNew){
   w.msg('Preparando comparação…');
   try{
     const aArq=pdfDe(revOld), bArq=pdfDe(revNew);
-    const [ua,ub]=await Promise.all([
-      cdeSignedUrl(aArq.storage_path, aArq.storage_provider),
-      cdeSignedUrl(bArq.storage_path, bArq.storage_provider)
+    const [ra,rb]=await Promise.all([
+      cdePdfBytes(aArq.storage_path, aArq.storage_provider),
+      cdePdfBytes(bArq.storage_path, bArq.storage_provider)
     ]);
-    const [da,db]=await Promise.all([pdfjsLib.getDocument({url:ua}).promise, pdfjsLib.getDocument({url:ub}).promise]);
+    const [da,db]=await Promise.all([
+      pdfjsLib.getDocument({ data:ra.bytes }).promise,
+      pdfjsLib.getDocument({ data:rb.bytes }).promise
+    ]);
     const [pa,pb]=await Promise.all([da.getPage(1), db.getPage(1)]);
     w._cmpDocA=da;                                 // guardado só p/ destruir no fechar
     w.cmp=[ {page:pa, cor:'#E74C3C'}, {page:pb, cor:'#2563EB'} ];
@@ -1051,6 +1059,12 @@ class CdeWin {
     this.CDE_APTS = []; this.CDE_PRANCHA_ID = null; this.CDE_PIN_SEL = null;
     this.DXFV = null;
     this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
+    this._cachePath = null; this._cacheBbox = {};   // chave no cache local + bboxes já conhecidos
+    // Camada de DETALHE: recorte da região visível rasterizado na resolução do
+    // zoom atual, desenhado POR CIMA da base. A base nunca é apagada — por isso
+    // o detalhe pode chegar atrasado sem nunca produzir buraco ou piscada.
+    this.D = { rx:0, ry:0, rw:0, rh:0, scale:0, valido:false };
+    this._detTimer=null;
     this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
     this.cmpMode = 'color';    // 'color' (overlay tingido) | 'slider' (régua arrastável)
@@ -1078,7 +1092,8 @@ class CdeWin {
       + '</div>'
       + '<div class="cdeWin-body">'
       +   '<div class="cdeWin-stage"><canvas></canvas>'
-      +     '<div class="cdeWin-cmpClip"><canvas></canvas></div>'
+      +     '<canvas class="cdeWin-det"></canvas>'
+      +     '<div class="cdeWin-cmpClip"><canvas></canvas><canvas class="cdeWin-detB"></canvas></div>'
       +     '<div class="cdeWin-pins"></div>'
       +     '<div class="cdeWin-cmpLbl a">ANTIGA</div><div class="cdeWin-cmpLbl b">NOVA</div>'
       +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
@@ -1093,8 +1108,10 @@ class CdeWin {
     this.statusEl = w.querySelector('.cdeWin-status');
     this.stage    = w.querySelector('.cdeWin-stage');
     this.canvas   = w.querySelector('.cdeWin-stage > canvas');
+    this.detEl    = w.querySelector('.cdeWin-det');
     this.cmpClip  = w.querySelector('.cdeWin-cmpClip');
     this.canvasB  = w.querySelector('.cdeWin-cmpClip > canvas');
+    this.detBEl   = w.querySelector('.cdeWin-detB');
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.loadEl   = w.querySelector('.cdeWin-load');
@@ -1247,7 +1264,7 @@ class CdeWin {
     atualizarTaskbar();
   }
   fechar(){
-    clearTimeout(this._baseTimer);
+    clearTimeout(this._baseTimer); clearTimeout(this._detTimer);
     if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
     this._renderJob++; this._cancelarRender();
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
@@ -1298,13 +1315,17 @@ class CdeWin {
   async carregarPdf(path, provider){
     this.msg('Abrindo prancha…');
     try{
-      const url = await cdeSignedUrl(path, provider);
-      this.V.doc = await pdfjsLib.getDocument({ url }).promise;
+      // Uma leitura só do cache: ler duas vezes copiaria os bytes do PDF à toa.
+      const r = await cdePdfBytes(path, provider);
+      this._cachePath = path;
+      this._cacheBbox = r.bbox || {};
+      this.V.doc = await pdfjsLib.getDocument({ data:r.bytes }).promise;
       this.V.pageNum=1; this.B.valido=false;
       this.V.page = await this.V.doc.getPage(this.V.pageNum);
-      // bbox primeiro (scan leve, ~900px): define o enquadramento e, com ele,
-      // a resolução do bitmap. Depois UMA rasterização da página inteira — a
-      // única do ciclo de vida desta prancha.
+      // bbox primeiro (define o enquadramento e, com ele, a resolução do
+      // bitmap). Se já veio do cache, nem o scan é necessário. Depois UMA
+      // rasterização da página inteira.
+      this.msg('Preparando prancha…');
       await this._ajustarBBox();
       this.fitPage();
       await this._renderBase();
@@ -1314,13 +1335,21 @@ class CdeWin {
   }
   // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca).
   // Chamada ANTES do fitPage — não dispara render() sozinha (fitPage já faz
-  // isso logo depois, com o bbox já pronto).
+  // isso logo depois, com o bbox já pronto). Reaproveita o valor do cache
+  // quando existe: o scan é um render de página inteira, ainda que leve.
   async _ajustarBBox(){
-    const page=this.V.page;
+    const page=this.V.page, n=this.V.pageNum;
+    const salvo = this._cacheBbox && this._cacheBbox[n];
+    if(salvo){ this._bbox = salvo; return; }
     try{
       const bb = await computeContentBBoxPx(page);
       if(this.V.page!==page) return;   // trocou de página/prancha enquanto calculava
       this._bbox = bb;
+      if(this._cachePath){
+        this._cacheBbox = this._cacheBbox || {};
+        this._cacheBbox[n] = bb;
+        cacheGravarBbox(this._cachePath, n, bb);
+      }
     }catch(e){ console.warn('bbox:', (e&&e.message)||e); }
   }
   async carregarDxf(path, provider){
@@ -1355,6 +1384,8 @@ class CdeWin {
     if(cdeAtiva()===this) atualizarPageLbl(this);
     this.renderPinsCDE();
     this._cmpUpdateDom();
+    this._detPosicionar();   // barato: só reaplica a transformação
+    this._detAgendar();      // caro: só dispara quando o movimento para
   }
   // ── Comparador de revisões · modo slider ────────────────────────────────
   //  A régua é só um recorte CSS sobre a camada de cima: arrastar não mexe em
@@ -1394,6 +1425,52 @@ class CdeWin {
     s=Math.max(s, Math.min(fitZoom*dpr, teto));   // nunca pior que a tela
     return { s, pw, ph };
   }
+  // Rasteriza um RECORTE da página (rx,ry,rw em pontos) na escala pedida.
+  // Serve tanto à base (página inteira) quanto à camada de detalhe (só o que
+  // está na tela, em alta) — as duas precisam do mesmo tratamento de
+  // comparação por cor / slider, então a lógica vive num lugar só.
+  async _rasterizar(job, s, rx, ry, W, H, cvA, cvB){
+    const prep=(cv)=>{ cv.width=W; cv.height=H;
+      const x=cv.getContext('2d'); x.setTransform(1,0,0,1,0,0);
+      x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return x; };
+    // Um render por vez, sempre cancelável: dois page.render() concorrentes
+    // no mesmo canvas é uma das causas clássicas de travada no PDF.js.
+    const pintar=async(page,ctx,bg)=>{
+      ctx.save(); ctx.translate(-rx*s, -ry*s);
+      const task=page.render({ canvasContext:ctx, viewport:page.getViewport({ scale:s }), background:bg });
+      this._renderTask=task;
+      try{ await task.promise; }
+      catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
+      this._renderTask=null;
+      ctx.restore();
+    };
+    const actx=prep(cvA);
+    if(this.cmp && this.cmpMode==='color'){
+      const lay=document.createElement('canvas'); lay.width=W; lay.height=H;
+      const lctx=lay.getContext('2d');
+      for(const camada of this.cmp){
+        lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
+        await pintar(camada.page, lctx, 'rgba(0,0,0,0)');
+        if(job!==this._renderJob) return false;
+        lctx.setTransform(1,0,0,1,0,0);
+        lctx.globalCompositeOperation='source-in';
+        lctx.fillStyle=camada.cor; lctx.fillRect(0,0,W,H);
+        lctx.globalCompositeOperation='source-over';
+        actx.globalCompositeOperation='multiply';
+        actx.drawImage(lay,0,0);
+        actx.globalCompositeOperation='source-over';
+      }
+    }else if(this.cmp && this.cmpMode==='slider'){
+      await pintar(this.cmp[0].page, actx, '#FFFFFF');
+      if(job!==this._renderJob) return false;
+      await pintar(this.cmp[1].page, prep(cvB), '#FFFFFF');
+      if(job!==this._renderJob) return false;
+    }else{
+      await pintar(this.V.page, actx, '#FFFFFF');
+      if(job!==this._renderJob) return false;
+    }
+    return true;
+  }
   // Rasteriza a página INTEIRA uma única vez. Só é chamada quando muda o que
   // realmente exige nova rasterização: abrir, trocar de página, trocar o modo
   // de comparação, ou a janela crescer muito. NUNCA durante zoom/pan.
@@ -1401,65 +1478,90 @@ class CdeWin {
     if(!this.V.page) return;
     const job=++this._renderJob;
     this._cancelarRender();
-    this._rendering=true;
     try{
       const { s, pw, ph } = this._baseScaleAlvo();
       const W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
-      const novo=()=>{ const c=document.createElement('canvas'); c.width=W; c.height=H;
-        const x=c.getContext('2d'); x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return c; };
-      // Um render por vez, sempre cancelável: dois page.render() concorrentes
-      // no mesmo canvas é uma das causas clássicas de travada no PDF.js.
-      const pintar=async(page,ctx,bg)=>{
-        const task=page.render({ canvasContext:ctx, viewport:page.getViewport({ scale:s }), background:bg });
-        this._renderTask=task;
-        try{ await task.promise; }
-        catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('base render:',e); }
-        this._renderTask=null;
-      };
       // Abrindo do zero o canvas está escondido atrás do "Abrindo prancha…",
       // então dá pra rasterizar DIRETO nele: evita manter dois bitmaps de
       // página inteira na memória ao mesmo tempo (o pico é o que quebra em
       // máquina modesta). Ao SUBSTITUIR um bitmap já visível, aí sim vai pra
       // um canvas à parte, pra troca ser instantânea e sem estado intermediário.
       const direto = !this.cmp && !this.B.valido;
-      const prep=(cv)=>{ cv.width=W; cv.height=H; cv.style.width=W+'px'; cv.style.height=H+'px';
-        const x=cv.getContext('2d'); x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return cv; };
-      const offA = direto ? prep(this.canvas) : novo();
-      let offB=null;
-      if(this.cmp && this.cmpMode==='color'){
-        const lay=document.createElement('canvas'); lay.width=W; lay.height=H;
-        const lctx=lay.getContext('2d'), actx=offA.getContext('2d');
-        for(const camada of this.cmp){
-          lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
-          await pintar(camada.page, lctx, 'rgba(0,0,0,0)');
-          if(job!==this._renderJob) return;
-          lctx.globalCompositeOperation='source-in';
-          lctx.fillStyle=camada.cor; lctx.fillRect(0,0,W,H);
-          lctx.globalCompositeOperation='source-over';
-          actx.globalCompositeOperation='multiply';
-          actx.drawImage(lay,0,0);
-          actx.globalCompositeOperation='source-over';
-        }
-      }else if(this.cmp && this.cmpMode==='slider'){
-        await pintar(this.cmp[0].page, offA.getContext('2d'), '#FFFFFF');
-        if(job!==this._renderJob) return;
-        offB=novo();
-        await pintar(this.cmp[1].page, offB.getContext('2d'), '#FFFFFF');
-        if(job!==this._renderJob) return;
-      }else{
-        await pintar(this.V.page, offA.getContext('2d'), '#FFFFFF');
-        if(job!==this._renderJob) return;
-      }
-      const aplicar=(cv,off)=>{ cv.width=W; cv.height=H;
-        cv.style.width=W+'px'; cv.style.height=H+'px';
-        cv.getContext('2d').drawImage(off,0,0); };
-      if(!direto) aplicar(this.canvas, offA);
-      if(offB) aplicar(this.canvasB, offB);
+      const cvA = direto ? this.canvas : document.createElement('canvas');
+      const cvB = (this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
+      const ok = await this._rasterizar(job, s, 0, 0, W, H, cvA, cvB);
+      if(!ok || job!==this._renderJob) return;
+      const aplicar=(cv,off)=>{ cv.width=W; cv.height=H; cv.getContext('2d').drawImage(off,0,0); };
+      if(!direto) aplicar(this.canvas, cvA);
+      this.canvas.style.width=W+'px'; this.canvas.style.height=H+'px';
+      if(cvB){ aplicar(this.canvasB, cvB);
+               this.canvasB.style.width=W+'px'; this.canvasB.style.height=H+'px'; }
       else { this.canvasB.width=1; this.canvasB.height=1; }
       this.B.scale=s; this.B.pw=pw; this.B.ph=ph; this.B.valido=true;
+      this._detEsconder();          // detalhe antigo é de outra escala/página
       this.updateCss();
     }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
-    if(job===this._renderJob) this._rendering=false;
+  }
+  // ── Camada de detalhe (zoom além da resolução da base) ────────────────────
+  _detEsconder(){ this.D.valido=false; this.detEl.style.display='none'; this.detBEl.style.display='none'; }
+  _detPrecisa(){
+    if(!this.B.valido || !this.V.page) return false;
+    return this.V.zoom*(window.devicePixelRatio||1) > this.B.scale*1.05;
+  }
+  // Cola o detalhe no desenho usando a MESMA transformação da base, mais o
+  // deslocamento do recorte. Assim ele acompanha zoom/pan de graça e nunca
+  // "desliza" em relação ao que está por baixo.
+  _detPosicionar(){
+    if(!this.D.valido) return;
+    const k=this.V.zoom/this.B.scale;
+    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+') '
+           + 'translate('+(this.D.rx*this.B.scale)+'px,'+(this.D.ry*this.B.scale)+'px)';
+    this.detEl.style.transform=tr;
+    this.detBEl.style.transform=tr;
+  }
+  _detAgendar(){
+    clearTimeout(this._detTimer);
+    if(!this._detPrecisa()){ this._detEsconder(); return; }
+    // Só depois que o usuário para de mexer — durante o gesto o que vale é a
+    // fluidez, e a base (já nítida até BASE_FOLGA×) segura a vista.
+    this._detTimer=setTimeout(()=>this._renderDetalhe(), 220);
+  }
+  async _renderDetalhe(){
+    if(!this._detPrecisa()){ this._detEsconder(); return; }
+    const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
+    if(cw<=0||ch<=0) return;
+    const dpr=window.devicePixelRatio||1, z=this.V.zoom;
+    // Região visível em pontos da página, com uma folga em volta pra pequenos
+    // ajustes de pan não saírem imediatamente da área nítida.
+    const fx=cw*0.15, fy=ch*0.15;
+    let rx=(this.V.panX-fx)/z, ry=(this.V.panY-fy)/z;
+    let rw=(cw+2*fx)/z, rh=(ch+2*fy)/z;
+    if(rx<0){ rw+=rx; rx=0; }
+    if(ry<0){ rh+=ry; ry=0; }
+    if(rx+rw>this.B.pw) rw=this.B.pw-rx;
+    if(ry+rh>this.B.ph) rh=this.B.ph-ry;
+    if(rw<=0||rh<=0){ this._detEsconder(); return; }
+    let s=z*dpr;
+    const MAXPIX=this.cmp ? 12e6 : 24e6;
+    const f=Math.sqrt(MAXPIX/(rw*rh*s*s));
+    if(f<1) s*=f;
+    if(s<=this.B.scale*1.05){ this._detEsconder(); return; }   // não compensa
+    const W=Math.max(1,Math.round(rw*s)), H=Math.max(1,Math.round(rh*s));
+    const job=++this._renderJob;
+    this._cancelarRender();
+    try{
+      const cvA=document.createElement('canvas');
+      const cvB=(this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
+      const ok=await this._rasterizar(job, s, rx, ry, W, H, cvA, cvB);
+      if(!ok || job!==this._renderJob) return;
+      const por=(el,off)=>{ el.width=W; el.height=H;
+        el.style.width=(rw*this.B.scale)+'px'; el.style.height=(rh*this.B.scale)+'px';
+        el.getContext('2d').drawImage(off,0,0); el.style.display='block'; };
+      por(this.detEl, cvA);
+      if(cvB) por(this.detBEl, cvB); else this.detBEl.style.display='none';
+      this.D={ rx, ry, rw, rh, scale:s, valido:true };
+      this._detPosicionar();
+    }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('detalhe:',e); }
   }
   _cancelarRender(){
     if(this._renderTask){ try{ this._renderTask.cancel(); }catch(_){} this._renderTask=null; }
@@ -1795,6 +1897,89 @@ async function cdeSignedUrl(path, provider, opts){
   if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
   if(!data||!data.url) throw new Error('R2 não devolveu URL');
   return data.url;
+}
+
+// ── Cache local de pranchas (IndexedDB) ─────────────────────────────────────
+//  O caminho no storage é IMUTÁVEL por revisão (<emp>/<codigo>/<revisao>/<arq>),
+//  então o conteúdo daquele caminho nunca muda: dá pra guardar pra sempre sem
+//  risco de servir versão velha. Uma revisão nova é outro caminho, outra chave.
+//  Guardamos os BYTES do PDF (evita o round-trip de URL assinada + download) e
+//  o bbox do desenho já calculado (evita o scan de página na reabertura).
+//  Tudo é best-effort: qualquer falha (modo privado, cota cheia, IDB bloqueado)
+//  cai silenciosamente no caminho normal de download.
+const CACHE_DB='auria_cde', CACHE_ST='pranchas';
+const CACHE_MAX_BYTES=250*1024*1024, CACHE_MAX_ITENS=60;
+let _cacheDbP=null;
+function cacheDb(){
+  if(_cacheDbP) return _cacheDbP;
+  _cacheDbP=new Promise((res,rej)=>{
+    if(!window.indexedDB) return rej(new Error('sem IndexedDB'));
+    const r=indexedDB.open(CACHE_DB,1);
+    r.onupgradeneeded=()=>{ const db=r.result;
+      if(!db.objectStoreNames.contains(CACHE_ST)){
+        const st=db.createObjectStore(CACHE_ST,{keyPath:'path'});
+        st.createIndex('ts','ts');
+      } };
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>rej(r.error);
+  }).catch(()=>null);
+  return _cacheDbP;
+}
+function _idbReq(req){ return new Promise((res,rej)=>{ req.onsuccess=()=>res(req.result); req.onerror=()=>rej(req.error); }); }
+async function cacheLer(path){
+  try{
+    const db=await cacheDb(); if(!db) return null;
+    const rec=await _idbReq(db.transaction(CACHE_ST,'readonly').objectStore(CACHE_ST).get(path));
+    if(!rec) return null;
+    // marca como usado agora (LRU), sem segurar a leitura
+    try{ const st=db.transaction(CACHE_ST,'readwrite').objectStore(CACHE_ST);
+         rec.ts=Date.now(); st.put(rec); }catch(_){}
+    return rec;
+  }catch(_){ return null; }
+}
+async function cacheGravar(path, bytes, bbox){
+  try{
+    const db=await cacheDb(); if(!db) return;
+    const st=db.transaction(CACHE_ST,'readwrite').objectStore(CACHE_ST);
+    st.put({ path, bytes, bbox:bbox||{}, size:(bytes?bytes.byteLength:0), ts:Date.now() });
+    cachePodar().catch(()=>{});
+  }catch(_){}
+}
+// Guarda o bbox já calculado sem reescrever os bytes (registro pode nem existir).
+async function cacheGravarBbox(path, pageNum, bbox){
+  try{
+    const db=await cacheDb(); if(!db) return;
+    const st=db.transaction(CACHE_ST,'readwrite').objectStore(CACHE_ST);
+    const rec=await _idbReq(st.get(path)); if(!rec) return;
+    rec.bbox=rec.bbox||{}; rec.bbox[pageNum]=bbox; rec.ts=Date.now();
+    st.put(rec);
+  }catch(_){}
+}
+// Poda por LRU: remove o menos usado até caber no teto de tamanho e de itens.
+async function cachePodar(){
+  try{
+    const db=await cacheDb(); if(!db) return;
+    const st=db.transaction(CACHE_ST,'readwrite').objectStore(CACHE_ST);
+    const todos=await _idbReq(st.index('ts').getAll());
+    let total=todos.reduce((s,r)=>s+(r.size||0),0);
+    let n=todos.length, i=0;
+    while((total>CACHE_MAX_BYTES || n>CACHE_MAX_ITENS) && i<todos.length){
+      const r=todos[i++]; st.delete(r.path); total-=(r.size||0); n--;
+    }
+  }catch(_){}
+}
+// Bytes do PDF: cache primeiro, download depois. Devolve SEMPRE um buffer
+// próprio — o PDF.js assume posse do que recebe em `data` (pode transferir pro
+// worker e detachar), então nunca entregamos o mesmo buffer que foi pro cache.
+async function cdePdfBytes(path, provider){
+  const rec=await cacheLer(path);
+  if(rec && rec.bytes) return { bytes: rec.bytes.slice(0), bbox: rec.bbox||{}, doCache:true };
+  const url=await cdeSignedUrl(path, provider);
+  const resp=await fetch(url);
+  if(!resp.ok) throw new Error('download HTTP '+resp.status);
+  const buf=await resp.arrayBuffer();
+  cacheGravar(path, buf.slice(0), {});   // cópia pro cache; o original vai pro PDF.js
+  return { bytes: buf, bbox:{}, doCache:false };
 }
 
 // ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
