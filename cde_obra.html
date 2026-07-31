@@ -987,7 +987,7 @@ const WIN_STATE = { list: [], act: null, zTop: 100 };
 // legível e, principalmente, NUNCA pisca nem some, porque não há
 // re-rasterização durante o zoom). Subir isto = zoom mais nítido, ao custo de
 // memória e do tempo da ÚNICA rasterização feita ao abrir a prancha.
-const BASE_FOLGA = 6;
+const BASE_FOLGA = 7;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1419,7 +1419,7 @@ class CdeWin {
     // Tetos de segurança: memória (4 bytes/px) e lado máximo de textura de GPU.
     // No modo slider são DOIS bitmaps de página inteira vivos ao mesmo tempo,
     // e no modo cor há ainda um canvas de tingimento — por isso o teto cai.
-    const MAXPIX=this.cmp ? 18e6 : 36e6;
+    const MAXPIX=this.cmp ? 21e6 : 42e6;
     const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 16000/pw, 16000/ph);
     let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto);
     s=Math.max(s, Math.min(fitZoom*dpr, teto));   // nunca pior que a tela
@@ -1513,6 +1513,15 @@ class CdeWin {
   // "desliza" em relação ao que está por baixo.
   _detPosicionar(){
     if(!this.D.valido) return;
+    // Rede de segurança: um detalhe de outra vista NUNCA pode ficar pendurado
+    // na tela. Se ele já não é mais nítido que a base, ou se o recorte saiu
+    // inteiramente da área visível, some com ele — a base cobre tudo sozinha.
+    const cw=this.stage.clientWidth, ch=this.stage.clientHeight, z=this.V.zoom;
+    const vx0=this.V.panX/z, vx1=(this.V.panX+cw)/z;
+    const vy0=this.V.panY/z, vy1=(this.V.panY+ch)/z;
+    const fora = this.D.rx>vx1 || this.D.rx+this.D.rw<vx0
+              || this.D.ry>vy1 || this.D.ry+this.D.rh<vy0;
+    if(fora || this.D.scale<=this.B.scale){ this._detEsconder(); return; }
     const k=this.V.zoom/this.B.scale;
     const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+') '
            + 'translate('+(this.D.rx*this.B.scale)+'px,'+(this.D.ry*this.B.scale)+'px)';
