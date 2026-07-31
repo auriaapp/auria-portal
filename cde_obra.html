@@ -73,7 +73,9 @@
   body.dark .cdeWin-body{background:#0d1420}
   .cdeWin-stage{position:absolute;inset:0;overflow:hidden;cursor:grab}
   .cdeWin-stage.grab{cursor:grabbing}
-  .cdeWin-stage canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto}
+  /* will-change mantém o bitmap como camada própria na GPU: zoom/pan viram
+     composição, não repaint — é o que torna o movimento contínuo. */
+  .cdeWin-stage canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto;will-change:transform}
   .cdeWin-pins{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
   .cdeWin-dxf{position:absolute;inset:0;background:#20262f;overflow:hidden;display:none}
   .cdeWin-dxf canvas{display:block}
@@ -479,8 +481,9 @@ function toggleNav(){
   btn.classList.toggle('collapsed', colapsada);
   btn.textContent = colapsada ? '‹' : '›';
   try{ localStorage.setItem('cde_nav_colapsada', colapsada?'1':'0'); }catch(_){}
-  // Janelas abertas precisam re-renderizar no novo tamanho do canvas.
-  setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V.page){ w.F.valido=false; w.scheduleRender(0); } }); }, 180);
+  // A vista é preservada (o bitmap é da página inteira); só revisamos se a
+  // janela cresceu o bastante pra pedir mais resolução.
+  setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V.page) w._revisarBase(); }); }, 180);
 }
 function restaurarNavColapsada(){
   let colapsada=false;
@@ -687,7 +690,10 @@ async function openCompareWindow(doc, revOld, revNew){
     w._cmpDocA=da;                                 // guardado só p/ destruir no fechar
     w.cmp=[ {page:pa, cor:'#E74C3C'}, {page:pb, cor:'#2563EB'} ];
     w.V.doc=db; w.V.pageNum=1; w.V.page=pb;        // referência de tamanho: a revisão NOVA
-    w.hideMsg(); w.fitPage();
+    w.B.valido=false;
+    w.fitPage();
+    await w._renderBase();
+    w.hideMsg();
     if(cdeAtiva()===w) atualizarToolbar();
   }catch(e){ w.msg('Não foi possível comparar: '+((e&&e.message)||e)); }
 }
@@ -968,12 +974,11 @@ async function docMenuAct(id,ext,mode){
 // ═════════════════════════════════════════════════════════════════════════════
 
 const WIN_STATE = { list: [], act: null, zTop: 100 };
-// Margem rasterizada além da tela visível (permite pan instantâneo por CSS
-// até esse limite, sem re-render). Era 0.3 (60% de área extra: 1.6²≈2.6x a
-// tela). 0.15 ainda dá folga generosa pro pan e CORTA ~34% da área
-// rasterizada por frame (1.3²/1.6²) — sensível em pranchas grandes/complexas,
-// sem tocar no supersampling (que é o que garante a nitidez das linhas).
-const MARGEM = 0.15;
+// Quantas vezes o zoom de "ajustar à tela" o bitmap da página aguenta antes de
+// começar a suavizar. 3× cobre com folga o zoom de trabalho numa prancha; acima
+// disso o navegador interpola o bitmap (continua legível e, principalmente,
+// NUNCA pisca nem some, porque não há re-rasterização durante o zoom).
+const BASE_FOLGA = 3;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1034,8 +1039,12 @@ class CdeWin {
     this.state = 'max';                              // 'max' | 'restored' | 'min'
     this.restoredBox = null;                          // {left,top,width,height} lembrado
     this.V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
-    this.F = { zoom:0, panX:0, panY:0, cssW:0, cssH:0, valido:false, fast:false };
-    this._rendering=false; this._renderJob=0; this._renderTimer=null; this._hqTimer=null; this._pan=null;
+    // B = bitmap da página INTEIRA, rasterizado UMA vez. scale = px de bitmap
+    // por ponto do PDF. Zoom/pan depois disso são só CSS transform sobre ele.
+    this.B = { scale:0, pw:0, ph:0, valido:false };
+    this._rendering=false; this._renderJob=0; this._baseTimer=null; this._pan=null;
+    this._renderTask=null;   // task do PDF.js em curso (cancelável)
+    this._rafId=null;        // pan limitado a 1 atualização por frame
     this.DOC_SEL = null;
     this.VIEW_FILES = {}; this.VIEW_FMT = null;
     this.CDE_APTS = []; this.CDE_PRANCHA_ID = null; this.CDE_PIN_SEL = null;
@@ -1159,17 +1168,28 @@ class CdeWin {
       this._pan={ id:e.pointerId, x:e.clientX, y:e.clientY, px:this.V.panX, py:this.V.panY };
       s.classList.add('grab');
     });
+    // Pan limitado a UMA atualização por frame: sem isso o arraste enfileira
+    // centenas de recálculos de layout por segundo e engasga mesmo sem render.
     s.addEventListener('pointermove',(e)=>{
       const d=this._pan; if(!d || e.pointerId!==d.id) return;
-      this.V.panX = d.px - (e.clientX - d.x);
-      this.V.panY = d.py - (e.clientY - d.y);
-      this.updateCss();
+      this._panPend={ x:d.px-(e.clientX-d.x), y:d.py-(e.clientY-d.y) };
+      if(this._rafId) return;
+      this._rafId=requestAnimationFrame(()=>{
+        this._rafId=null;
+        if(!this._panPend) return;
+        this.V.panX=this._panPend.x; this.V.panY=this._panPend.y;
+        this.updateCss();
+      });
     });
     const end = (e)=>{
       const d=this._pan; if(!d || (e && e.pointerId!==d.id)) return;
       try{ s.releasePointerCapture(d.id); }catch(_){}
       this._pan=null; s.classList.remove('grab');
-      if(!this.frameCobre()) this.scheduleRender(0, true);
+      if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
+      if(this._panPend){
+        this.V.panX=this._panPend.x; this.V.panY=this._panPend.y;
+        this._panPend=null; this.updateCss();
+      }
     };
     s.addEventListener('pointerup', end);
     s.addEventListener('pointercancel', end);
@@ -1181,14 +1201,15 @@ class CdeWin {
       if(apt) mostrarCdePinCard(apt, e.clientX, e.clientY, this);
     });
     // Observa o próprio stage — mudança de tamanho (restore, max, resize, browser).
-    // PRESERVA a vista (zoom/pan/página): só re-rasteriza no tamanho novo. O fit
-    // automático acontece uma única vez, no primeiro carregamento do PDF.
+    // PRESERVA a vista (zoom/pan/página). Como o bitmap é da página inteira,
+    // redimensionar não exige render nenhum: só reavaliamos a resolução.
     if(window.ResizeObserver){
       const ro = new ResizeObserver(()=>{
         if(!this.V.page) return;
         if(this.stage.clientWidth<=0 || this.stage.clientHeight<=0) return;  // minimizada
         if(!this._fitted){ this.fitPage(); return; }
-        this.F.valido=false; this.scheduleRender(80);
+        clearTimeout(this._baseTimer);
+        this._baseTimer=setTimeout(()=>this._revisarBase(), 250);
       });
       ro.observe(this.stage);
     }
@@ -1225,7 +1246,9 @@ class CdeWin {
     atualizarTaskbar();
   }
   fechar(){
-    clearTimeout(this._renderTimer); clearTimeout(this._hqTimer);
+    clearTimeout(this._baseTimer);
+    if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
+    this._renderJob++; this._cancelarRender();
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
     if(this.V.doc){ try{ this.V.doc.destroy(); }catch(_){} this.V.doc=null; }
     if(this._cmpDocA){ try{ this._cmpDocA.destroy(); }catch(_){} this._cmpDocA=null; }
@@ -1276,16 +1299,15 @@ class CdeWin {
     try{
       const url = await cdeSignedUrl(path, provider);
       this.V.doc = await pdfjsLib.getDocument({ url }).promise;
-      this.V.pageNum=1; this.F.valido=false;
+      this.V.pageNum=1; this.B.valido=false;
       this.V.page = await this.V.doc.getPage(this.V.pageNum);
-      // Calcula o bbox do desenho ANTES do primeiro fit — o scan já é um
-      // render leve (baixa resolução, ~900px). Assim só existe UM render em
-      // ALTA qualidade por abertura (já no enquadramento certo), em vez do
-      // padrão antigo "abre a página inteira em alta → re-renderiza cortado
-      // um instante depois" (dois renders caros em sequência = abertura lenta).
+      // bbox primeiro (scan leve, ~900px): define o enquadramento e, com ele,
+      // a resolução do bitmap. Depois UMA rasterização da página inteira — a
+      // única do ciclo de vida desta prancha.
       await this._ajustarBBox();
-      this.hideMsg();
       this.fitPage();
+      await this._renderBase();
+      this.hideMsg();
       if(cdeAtiva()===this) atualizarToolbar();
     }catch(e){ this.msg('Não foi possível abrir: '+((e&&e.message)||e)); }
   }
@@ -1316,10 +1338,13 @@ class CdeWin {
     }
   }
   pageSizePx(){ const [x1,y1,x2,y2]=this.V.page.view; return { w:(x2-x1)*this.V.zoom, h:(y2-y1)*this.V.zoom }; }
+  // Zoom e pan são APENAS transformação CSS sobre o bitmap da página inteira
+  // (composição na GPU, sem repaint). Nenhum page.render() acontece aqui — é
+  // isso que elimina piscada, sumiço, troca de resolução e buraco no desenho.
   updateCss(){
-    if(!this.F.valido) return;
-    const k=this.V.zoom/this.F.zoom;
-    const tr='translate('+(this.F.panX*k-this.V.panX)+'px,'+(this.F.panY*k-this.V.panY)+'px) scale('+k+')';
+    if(!this.B.valido) return;
+    const k=this.V.zoom/this.B.scale;
+    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+')';
     this.canvas.style.transformOrigin='0 0';
     this.canvas.style.transform=tr;
     // A camada da revisão nova acompanha EXATAMENTE a mesma transformação —
@@ -1348,119 +1373,92 @@ class CdeWin {
       this.cmpClip.style.clipPath='inset(0 0 0 '+pct+'%)';
     }
   }
-  frameCobre(){
-    if(!this.F.valido || this.F.zoom!==this.V.zoom) return false;
-    return this.V.panX>=this.F.panX && this.V.panY>=this.F.panY
-        && this.V.panX+this.stage.clientWidth  <= this.F.panX+this.F.cssW
-        && this.V.panY+this.stage.clientHeight <= this.F.panY+this.F.cssH;
+  // Escala do bitmap da página: nítido com folga em todo o zoom de trabalho
+  // (BASE_FOLGA× o "ajustar à tela"), limitado pela memória e pelo lado máximo
+  // de canvas do navegador. Adaptativo porque uma A1 e uma A4 não podem usar a
+  // mesma escala fixa sem estourar memória ou sair borrada.
+  _baseScaleAlvo(){
+    const [x1,y1,x2,y2]=this.V.page.view;
+    const pw=x2-x1, ph=y2-y1;
+    const cw=this.stage.clientWidth||1200, ch=this.stage.clientHeight||800;
+    const dpr=window.devicePixelRatio||1;
+    const b=this._bbox;
+    const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
+    // No modo slider são DOIS bitmaps de página inteira vivos ao mesmo tempo.
+    const MAXPIX=(this.cmp && this.cmpMode==='slider') ? 11e6 : 20e6;
+    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 12000/pw, 12000/ph);
+    let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto);
+    s=Math.max(s, Math.min(fitZoom*dpr, teto));   // nunca pior que a tela
+    return { s, pw, ph };
   }
-  scheduleRender(delay, fast){
-    clearTimeout(this._renderTimer);
-    clearTimeout(this._hqTimer);   // nova interação cancela o upgrade pendente
-    this._renderTimer=setTimeout(()=>this.render(fast), delay==null?120:delay);
-  }
-  // render(fast): a passada RÁPIDA rasteriza sem supersampling — sai em uma
-  // fração do tempo e serve só pra tapar o buraco (fundo cinza) no instante
-  // em que o zoom/pan sai da área já rasterizada. Logo em seguida o frame é
-  // substituído pela passada de QUALIDADE, que é a de sempre. A nitidez final
-  // é idêntica; muda só o que aparece durante a espera.
-  async render(fast){
+  // Rasteriza a página INTEIRA uma única vez. Só é chamada quando muda o que
+  // realmente exige nova rasterização: abrir, trocar de página, trocar o modo
+  // de comparação, ou a janela crescer muito. NUNCA durante zoom/pan.
+  async _renderBase(){
     if(!this.V.page) return;
-    if(this._rendering){ this.scheduleRender(80, fast); return; }
-    // Um frame rápido já existente NÃO satisfaz um pedido de qualidade.
-    if(this.frameCobre() && !(this.F.fast && !fast)){ this.updateCss(); return; }
-    this._rendering=true;
     const job=++this._renderJob;
+    this._cancelarRender();
+    this._rendering=true;
     try{
-      const dpr=window.devicePixelRatio||1;
-      const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
-      if(cw<=0 || ch<=0){ this._rendering=false; return; }
-      const mx=Math.round(cw*MARGEM), my=Math.round(ch*MARGEM);
-      const zoom=this.V.zoom, panX=this.V.panX-mx, panY=this.V.panY-my;
-      const cssW=cw+2*mx, cssH=ch+2*my;
-      let ss = fast ? 0.7 : (zoom<0.5 ? 2.5 : zoom<1 ? 2 : zoom<2 ? 1.5 : 1);
-      let rScale = dpr*ss;
-      const MAXPIX = 24e6;
-      while(cssW*rScale*cssH*rScale > MAXPIX && rScale>dpr) rScale=Math.max(dpr, rScale-0.25);
-      const off=document.createElement('canvas');
-      let offB=null;                       // camada da revisão nova (só no modo slider)
-      off.width=Math.round(cssW*rScale); off.height=Math.round(cssH*rScale);
-      const octx=off.getContext('2d');
-      octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,off.width,off.height);
-      const s = zoom*rScale, sx = -panX*rScale, sy = -panY*rScale;
+      const { s, pw, ph } = this._baseScaleAlvo();
+      const W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
+      const novo=()=>{ const c=document.createElement('canvas'); c.width=W; c.height=H;
+        const x=c.getContext('2d'); x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return c; };
+      // Um render por vez, sempre cancelável: dois page.render() concorrentes
+      // no mesmo canvas é uma das causas clássicas de travada no PDF.js.
+      const pintar=async(page,ctx,bg)=>{
+        const task=page.render({ canvasContext:ctx, viewport:page.getViewport({ scale:s }), background:bg });
+        this._renderTask=task;
+        try{ await task.promise; }
+        catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('base render:',e); }
+        this._renderTask=null;
+      };
+      const offA=novo(); let offB=null;
       if(this.cmp && this.cmpMode==='color'){
-        // Comparação de revisões: cada página tingida (source-in) e composta
-        // por MULTIPLY sobre fundo branco — mesma técnica de "papel vegetal"
-        // das camadas do Auria App. Traço só numa revisão fica na COR dela;
-        // traço nas duas fica escuro (as duas tintas translúcidas se somam).
-        const lay=document.createElement('canvas'); lay.width=off.width; lay.height=off.height;
-        const lctx=lay.getContext('2d');
+        const lay=document.createElement('canvas'); lay.width=W; lay.height=H;
+        const lctx=lay.getContext('2d'), actx=offA.getContext('2d');
         for(const camada of this.cmp){
-          lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,lay.width,lay.height);
-          const vp=camada.page.getViewport({ scale:s });
-          lctx.save(); lctx.translate(sx,sy);
-          try{ await camada.page.render({ canvasContext:lctx, viewport:vp, background:'rgba(0,0,0,0)' }).promise; }
-          catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp render:',e); }
-          lctx.restore();
-          lctx.setTransform(1,0,0,1,0,0);
+          lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
+          await pintar(camada.page, lctx, 'rgba(0,0,0,0)');
+          if(job!==this._renderJob) return;
           lctx.globalCompositeOperation='source-in';
-          lctx.fillStyle=camada.cor; lctx.fillRect(0,0,lay.width,lay.height);
+          lctx.fillStyle=camada.cor; lctx.fillRect(0,0,W,H);
           lctx.globalCompositeOperation='source-over';
-          octx.globalCompositeOperation='multiply';
-          octx.drawImage(lay,0,0);
-          octx.globalCompositeOperation='source-over';
-          if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
+          actx.globalCompositeOperation='multiply';
+          actx.drawImage(lay,0,0);
+          actx.globalCompositeOperation='source-over';
         }
       }else if(this.cmp && this.cmpMode==='slider'){
-        // Cada revisão vai LIMPA (sem tingir) pro seu próprio canvas: a antiga
-        // no canvas de base, a nova na camada recortada por cima. Quem separa
-        // as duas é o recorte CSS, não o pixel — por isso arrastar a régua
-        // não custa render nenhum.
-        const vpA=this.cmp[0].page.getViewport({ scale:s });
-        octx.save(); octx.translate(sx,sy);
-        try{ await this.cmp[0].page.render({ canvasContext:octx, viewport:vpA, background:'#FFFFFF' }).promise; }
-        catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp A:',e); }
-        octx.restore();
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
-        offB=document.createElement('canvas'); offB.width=off.width; offB.height=off.height;
-        const bctx=offB.getContext('2d');
-        bctx.fillStyle='#FFFFFF'; bctx.fillRect(0,0,offB.width,offB.height);
-        const vpB=this.cmp[1].page.getViewport({ scale:s });
-        bctx.save(); bctx.translate(sx,sy);
-        try{ await this.cmp[1].page.render({ canvasContext:bctx, viewport:vpB, background:'#FFFFFF' }).promise; }
-        catch(e){ if(!String(e).includes('cancelled')) console.warn('cmp B:',e); }
-        bctx.restore();
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
+        await pintar(this.cmp[0].page, offA.getContext('2d'), '#FFFFFF');
+        if(job!==this._renderJob) return;
+        offB=novo();
+        await pintar(this.cmp[1].page, offB.getContext('2d'), '#FFFFFF');
+        if(job!==this._renderJob) return;
       }else{
-        const vp = this.V.page.getViewport({ scale:s });
-        octx.save(); octx.translate(sx,sy);
-        try{ await this.V.page.render({ canvasContext:octx, viewport:vp, background:'#FFFFFF' }).promise; }
-        catch(e){ if(!String(e).includes('cancelled')) console.warn('render:',e); }
-        octx.restore();
-        if(job!==this._renderJob){ this._rendering=false; this.scheduleRender(0, fast); return; }
+        await pintar(this.V.page, offA.getContext('2d'), '#FFFFFF');
+        if(job!==this._renderJob) return;
       }
-      const cv=this.canvas, ctx=cv.getContext('2d');
-      cv.width=off.width; cv.height=off.height;
-      cv.style.width=cssW+'px'; cv.style.height=cssH+'px';
-      ctx.drawImage(off,0,0);
-      if(offB){
-        const cb=this.canvasB;
-        cb.width=offB.width; cb.height=offB.height;
-        cb.style.width=cssW+'px'; cb.style.height=cssH+'px';
-        cb.getContext('2d').drawImage(offB,0,0);
-      }
-      this.F.zoom=zoom; this.F.panX=panX; this.F.panY=panY; this.F.cssW=cssW; this.F.cssH=cssH; this.F.valido=true;
-      this.F.fast=!!fast;
+      const aplicar=(cv,off)=>{ cv.width=W; cv.height=H;
+        cv.style.width=W+'px'; cv.style.height=H+'px';
+        cv.getContext('2d').drawImage(off,0,0); };
+      aplicar(this.canvas, offA);
+      if(offB) aplicar(this.canvasB, offB);
+      else { this.canvasB.width=1; this.canvasB.height=1; }
+      this.B.scale=s; this.B.pw=pw; this.B.ph=ph; this.B.valido=true;
       this.updateCss();
-    }catch(e){ if(!String(e).includes('cancelled')) console.error('render:',e); }
-    this._rendering=false;
-    if(!this.frameCobre()) this.scheduleRender(60, fast);
-    else if(this.F.fast){
-      // Frame provisório no ar: sobe pra qualidade cheia assim que o usuário
-      // parar de mexer (qualquer novo zoom/pan reagenda e cancela este).
-      clearTimeout(this._hqTimer);
-      this._hqTimer=setTimeout(()=>this.render(false), 200);
-    }
+    }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
+    if(job===this._renderJob) this._rendering=false;
+  }
+  _cancelarRender(){
+    if(this._renderTask){ try{ this._renderTask.cancel(); }catch(_){} this._renderTask=null; }
+  }
+  // Re-rasteriza a base só se a janela cresceu a ponto de a resolução atual
+  // ficar abaixo do necessário — redimensionar não pode custar render à toa.
+  _revisarBase(){
+    if(!this.V.page || !this.B.valido) return;
+    if(this.stage.clientWidth<=0 || this.stage.clientHeight<=0) return;
+    const { s } = this._baseScaleAlvo();
+    if(s > this.B.scale*1.25) this._renderBase();
   }
   fitPage(){
     if(!this.V.page) return;
@@ -1478,8 +1476,7 @@ class CdeWin {
     const contentW=pw*this.V.zoom, contentH=ph*this.V.zoom;
     this.V.panX = left*this.V.zoom - (cw-contentW)/2;
     this.V.panY = top*this.V.zoom  - (ch-contentH)/2;
-    this.F.valido=false;
-    this.updateCss(); this.render(true);   // rápido primeiro, qualidade logo atrás
+    this.updateCss();   // o bitmap é da página inteira: enquadrar é só transform
   }
   zoomAt(fator, cx, cy){
     const novo=Math.min(20, Math.max(0.05, this.V.zoom*fator));
@@ -1487,19 +1484,19 @@ class CdeWin {
     this.V.panX=(this.V.panX+cx)*k-cx;
     this.V.panY=(this.V.panY+cy)*k-cy;
     this.V.zoom=novo;
-    // Frame rápido quase imediato (tapa o fundo cinza que aparece ao afastar,
-    // já que o frame anterior encolhe junto e deixa de cobrir a tela); a
-    // qualidade cheia entra sozinha ~200ms depois de parar de girar a roda.
-    this.updateCss(); this.scheduleRender(50, true);
+    this.updateCss();   // sem render: o zoom é composição na GPU
   }
   async pdfPage(delta){
     if(!this.V.doc) return;
     const n=this.V.pageNum+delta; if(n<1||n>this.V.doc.numPages) return;
-    this.V.pageNum=n; this.F.valido=false;
+    this.V.pageNum=n; this.B.valido=false;
     this.V.page = await this.V.doc.getPage(this.V.pageNum);
     this._bbox=null;
-    await this._ajustarBBox();   // um render só, já no enquadramento certo
+    this.msg('Abrindo página…');
+    await this._ajustarBBox();
     this.fitPage();
+    await this._renderBase();
+    this.hideMsg();
     if(cdeAtiva()===this) atualizarToolbar();
   }
   // Elo C — pins do Auria App sobrepostos ao canvas
@@ -1604,10 +1601,10 @@ function atualizarToolbar(){
 function toggleCmpMode(){
   const w=cdeAtiva(); if(!w || !w.isCmp) return;
   w.cmpMode = w.cmpMode==='color' ? 'slider' : 'color';
-  w.F.valido=false;               // força re-render completo no novo modo
+  w.B.valido=false;               // muda o que é rasterizado: precisa de base nova
   atualizarCmpSub(w); w._cmpUpdateDom();
   w.msg('Preparando…');
-  w.render().then(()=>{ if(w.V.page) w.hideMsg(); });
+  w._renderBase().then(()=>{ if(w.V.page) w.hideMsg(); });
   atualizarToolbar();
 }
 function atualizarCmpSub(w){
