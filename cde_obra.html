@@ -988,6 +988,10 @@ const WIN_STATE = { list: [], act: null, zTop: 100 };
 // re-rasterização durante o zoom). Subir isto = zoom mais nítido, ao custo de
 // memória e do tempo da ÚNICA rasterização feita ao abrir a prancha.
 const BASE_FOLGA = 7;
+// Supersampling da camada de detalhe. Ela é do tamanho da janela, então 1.5×
+// custa pouco (~2 MP) e dá antisserrilhado nas linhas finas na resolução exata
+// da vista atual — tanto aproximada quanto afastada.
+const DET_SS = 1.5;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1507,11 +1511,20 @@ class CdeWin {
       this.updateCss();
     }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
   }
-  // ── Camada de detalhe (zoom além da resolução da base) ────────────────────
+  // ── Camada de detalhe (ajusta a vista à resolução certa, nos DOIS sentidos) ─
+  //  Não serve só pra zoom aproximado. Afastado, a base (que é grande) precisa
+  //  ser REDUZIDA pelo navegador, e redução forte de bitmap come linha fina de
+  //  desenho técnico — é por isso que ao afastar a vista parecia "voltar a
+  //  piorar". O detalhe rasteriza a região visível na resolução certa pra
+  //  ESTA vista, aproximada ou afastada.
   _detEsconder(){ this.D.valido=false; this.detEl.style.display='none'; this.detBEl.style.display='none'; }
+  // Um pouco acima da resolução de tela (supersampling leve): dá antisserrilhado
+  // nas linhas sem custar quase nada, porque o recorte é do tamanho da janela.
+  _detEscalaAlvo(){ return this.V.zoom*(window.devicePixelRatio||1)*DET_SS; }
   _detPrecisa(){
     if(!this.B.valido || !this.V.page) return false;
-    return this.V.zoom*(window.devicePixelRatio||1) > this.B.scale*1.05;
+    const r=this._detEscalaAlvo()/this.B.scale;
+    return r>1.05 || r<0.65;   // base baixa demais (perto) ou alta demais (longe)
   }
   // Cola o detalhe no desenho usando a MESMA transformação da base, mais o
   // deslocamento do recorte. Assim ele acompanha zoom/pan de graça e nunca
@@ -1526,7 +1539,7 @@ class CdeWin {
     const vy0=this.V.panY/z, vy1=(this.V.panY+ch)/z;
     const fora = this.D.rx>vx1 || this.D.rx+this.D.rw<vx0
               || this.D.ry>vy1 || this.D.ry+this.D.rh<vy0;
-    if(fora || this.D.scale<=this.B.scale){ this._detEsconder(); return; }
+    if(fora){ this._detEsconder(); return; }
     const k=this.V.zoom/this.B.scale;
     const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+') '
            + 'translate('+(this.D.rx*this.B.scale)+'px,'+(this.D.ry*this.B.scale)+'px)';
@@ -1535,9 +1548,16 @@ class CdeWin {
   }
   _detAgendar(){
     clearTimeout(this._detTimer);
+    // Detalhe feito para OUTRA escala fica pior que a base: some com ele na
+    // hora e deixa a base assumir até o novo ficar pronto. Em pan puro a escala
+    // não muda, então ele continua válido e não pisca ao arrastar.
+    if(this.D.valido){
+      const r=this._detEscalaAlvo()/this.D.scale;
+      if(r>1.25 || r<0.8) this._detEsconder();
+    }
     if(!this._detPrecisa()){ this._detEsconder(); return; }
     // Só depois que o usuário para de mexer — durante o gesto o que vale é a
-    // fluidez, e a base (já nítida até BASE_FOLGA×) segura a vista.
+    // fluidez, e a base segura a vista.
     this._detTimer=setTimeout(()=>this._renderDetalhe(), 220);
   }
   async _renderDetalhe(){
@@ -1555,11 +1575,13 @@ class CdeWin {
     if(rx+rw>this.B.pw) rw=this.B.pw-rx;
     if(ry+rh>this.B.ph) rh=this.B.ph-ry;
     if(rw<=0||rh<=0){ this._detEsconder(); return; }
-    let s=z*dpr;
+    let s=this._detEscalaAlvo();
     const MAXPIX=this.cmp ? 12e6 : 24e6;
     const f=Math.sqrt(MAXPIX/(rw*rh*s*s));
     if(f<1) s*=f;
-    if(s<=this.B.scale*1.05){ this._detEsconder(); return; }   // não compensa
+    // Se o teto de memória derrubou o alvo até a resolução que a base já tem,
+    // não há ganho nenhum em desenhar por cima.
+    if(Math.abs(s-this.B.scale)/this.B.scale < 0.05){ this._detEsconder(); return; }
     const W=Math.max(1,Math.round(rw*s)), H=Math.max(1,Math.round(rh*s));
     const job=++this._renderJob;
     this._cancelarRender();
