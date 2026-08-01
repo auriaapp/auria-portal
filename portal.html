@@ -158,6 +158,10 @@
   .cde-ac-c input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:#1D4ED8}
   .cde-ac-lock{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#DCFCE7;color:#166534;font-weight:800;font-size:13px;cursor:default}
   .cde-ac-orig{display:inline-block;background:#DCFCE7;color:#166534;border-radius:6px;padding:3px 9px;font-family:var(--mono);font-weight:700;font-size:11.5px}
+  /* Chip de disciplina/“todas” na matriz de Acessos */
+  .acc-chip{display:inline-flex;align-items:center;gap:3px;background:var(--panel2);border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:2px 7px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--mono)}
+  .acc-chip.on{background:#EAF1F9;border-color:#1D4ED8;color:#1D4ED8}
+  .acc-chip input{margin:0;width:12px;height:12px;cursor:pointer;accent-color:#1D4ED8}
   .fn-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;margin-bottom:14px}
 </style>
 </head>
@@ -208,7 +212,6 @@
         <div class="tabs" id="peTabs">
           <div class="tab active" id="pt-ctr" onclick="peTab('ctr')">💼 Contratos &amp; Faturas</div>
           <div class="tab" id="pt-fin" onclick="peTab('fin')">💰 Financeiro</div>
-          <div class="tab" id="pt-cde" onclick="peTab('cde')">🗂 CDE — Acessos</div>
         </div>
         <div id="peView"><div class="load">Carregando…</div></div>
       </div>
@@ -578,7 +581,8 @@ function abrirEmp(id){
     t('🗂','#0E7490','CDE','Arquivos, revisões e aprovações',          'cde_obra.html?emp='+q) +
     t('🗓','#117A65','Cronograma','Físico da obra',                    'cronograma.html?emp='+q) +
     t('📊','#7D6608','Apontamentos','Indicadores desta obra',          'bi.html?emp='+qn) +
-    tBtn('💼','#B7791F','Contratos e Faturas','Parcelas, NF e aditivos', "abrirEmpContratos('"+e.id+"')");
+    tBtn('💼','#B7791F','Contratos e Faturas','Parcelas, NF e aditivos', "abrirEmpContratos('"+e.id+"')") +
+    tBtn('🔑','#5B4B8A','Acessos','Quem vê o CDE e o que pode fazer',    "abrirEmpAcessos('"+e.id+"')");
 
   $('peTabsWrap').style.display='none';
   $('ov').classList.add('on');
@@ -619,18 +623,26 @@ var FORNECEDORES=[], PROJETISTAS=[], CT_PARCS_BUF=[], FN_PROJS_BUF=[], FATURA_PA
 var CTR_EMP_ID=null, CTR_LIST=[], CTR_DET=null, CRON_TASKS=[], A_NFS_PARC={};
 var CDE_AC_LIST=[], CDE_AC_DISCS=[], CDE_AC_CONV=null, CDE_AC_EMPID=null, CDE_SETOR_LIST=[];
 
-// ── Abas por empreendimento (Contratos/Financeiro/CDE-Acessos) ─────────────
+// ── Abas por empreendimento (Contratos/Financeiro) ─────────────────────────
 function abrirEmpContratos(id){
   CTR_EMP_ID=id;
   $('peTabsWrap').style.display='block';
-  ['ctr','fin','cde'].forEach(x=>{ const el=$('pt-'+x); if(el) el.classList.toggle('active', x==='ctr'); });
+  $('peTabs').style.display='';                 // Acessos esconde as abas; aqui volta
+  ['ctr','fin'].forEach(x=>{ const el=$('pt-'+x); if(el) el.classList.toggle('active', x==='ctr'); });
   loadContratos(id);
 }
 function peTab(t){
-  ['ctr','fin','cde'].forEach(x=>{ const el=$('pt-'+x); if(el) el.classList.toggle('active', t===x); });
+  ['ctr','fin'].forEach(x=>{ const el=$('pt-'+x); if(el) el.classList.toggle('active', t===x); });
   if(t==='ctr') loadContratos(CTR_EMP_ID);
   else if(t==='fin') loadFinanceiro(CTR_EMP_ID);
-  else if(t==='cde') loadCdeAcessos(CTR_EMP_ID);
+}
+// Acessos é ferramenta própria (não fica sob Contratos): usa o mesmo painel,
+// mas sem as abas de contrato — só a matriz de permissões.
+function abrirEmpAcessos(id){
+  CDE_AC_EMPID=id;
+  $('peTabsWrap').style.display='block';
+  $('peTabs').style.display='none';
+  loadAcessos(id);
 }
 
 // ── Contratos & Faturas ──────────────────────────────────────────────────
@@ -1258,161 +1270,157 @@ function renderFinanceiro(contratos, parcelas, aditivos, eventos){
   v.innerHTML=html;
 }
 
-// ── CDE: Acessos por disciplina ────────────────────────────────────────
-function cdeAcDiscLabel(cod){
-  if(!CDE_AC_CONV) return cod;
-  const c=(CDE_AC_CONV.campos||[]).find(x=>x.mapeia==='disciplina');
+// ── CDE — Acessos (matriz unificada de permissões) ─────────────────────────
+//  Clientes internos (por usuário) e Fornecedores (por empresa). Cada linha é
+//  uma matriz editável. Leitura/download já valem via RLS na hora; as demais
+//  colunas ficam gravadas para as fases seguintes.
+var ACC_LIST=[], ACC_DISCS=[], ACC_CONV=null;
+function accDiscLabel(cod){
+  if(!ACC_CONV) return cod;
+  const c=(ACC_CONV.campos||[]).find(x=>x.mapeia==='disciplina');
   if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===cod);
     if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
   return cod;
 }
-function cdeAcMatch(a, cod){
-  const rot=(cdeAcDiscLabel(cod)||'').toLowerCase();
-  return String(a||'').toUpperCase()===String(cod).toUpperCase()
-      || (rot && String(a||'').toLowerCase()===rot);
+function accDiscOn(row, cod){
+  const arr=row.disciplinas||[]; const rot=(accDiscLabel(cod)||'').toLowerCase();
+  return arr.some(a=>String(a).toUpperCase()===String(cod).toUpperCase() || (rot && String(a).toLowerCase()===rot));
 }
-async function loadCdeAcessos(empId){
+async function loadAcessos(empId){
   CDE_AC_EMPID=empId;
-  const v=$('peView'); v.innerHTML='<div class="load">Carregando acessos do CDE…</div>';
+  const v=$('peView'); v.innerHTML='<div class="load">Carregando acessos…</div>';
   try{
-    try{ const c=await sb.rpc('cde_convencao',{p_emp:empId}); CDE_AC_CONV=(c.data&&c.data[0])||null; }
-    catch(_){ CDE_AC_CONV=null; }
+    try{ const c=await sb.rpc('cde_convencao',{p_emp:empId}); ACC_CONV=(c.data&&c.data[0])||null; }catch(_){ ACC_CONV=null; }
     const df=await sb.from('disciplina_fornecedor_auria').select('disciplina').eq('empreendimento_id',empId);
-    CDE_AC_DISCS=[...new Set((df.data||[]).map(x=>x.disciplina).filter(Boolean))].sort();
-    const r=await sb.rpc('cde_projetistas_do_emp',{p_emp:empId});
+    ACC_DISCS=[...new Set((df.data||[]).map(x=>x.disciplina).filter(Boolean))].sort();
+    const r=await sb.rpc('cde_acessos_do_emp',{p_emp:empId});
     if(r.error) throw r.error;
-    CDE_AC_LIST=r.data||[];
-    // Usuários de setor (funcionários internos, só leitura do vigente publicado)
-    try{ const rs=await sb.rpc('cde_setor_do_emp',{p_emp:empId}); CDE_SETOR_LIST=rs.error?[]:(rs.data||[]); }
-    catch(_){ CDE_SETOR_LIST=[]; }
+    ACC_LIST=r.data||[];
   }catch(e){
-    v.innerHTML='<div class="empty2"><div class="emoji">🗂</div><h3>Não foi possível carregar</h3><p>'+esc(e.message||e)+'</p></div>';
+    v.innerHTML='<div class="empty2"><div class="emoji">🔑</div><h3>Não foi possível carregar</h3><p>'+esc(e.message||e)+'</p><p style="font-size:12px;color:var(--mut)">Se o SQL da matriz ainda não foi aplicado, esta tela fica indisponível.</p></div>';
     return;
   }
-  renderCdeAcessos();
+  renderAcessos();
 }
-// Seção "Usuários de setor": funcionários internos (orçamento, planejamento,
-// suprimentos) que só VÊEM e BAIXAM o vigente publicado desta obra. Aparece
-// sempre, independente de haver projetistas/disciplinas.
-function renderSetorSecao(){
-  const lista = (CDE_SETOR_LIST||[]);
-  const linhas = lista.length ? lista.map(u=>`
-    <tr>
-      <td><div style="font-weight:600;color:var(--txt)">${esc(u.nome||'—')}</div>
-          <div style="font-size:11px;color:var(--mut)">${esc(u.email||'')}${u.ativo===false?' · <span style="color:#B23B2E">inativo</span>':''}</div></td>
-      <td style="text-align:right"><button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" onclick="removerSetor('${u.usuario_id}')">Remover acesso</button></td>
-    </tr>`).join('')
-    : '<tr><td colspan="2" style="color:var(--mut);padding:12px">Nenhum usuário de setor com acesso a esta obra ainda.</td></tr>';
-  return `
-    <div class="tbl-card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
-        <b style="font-size:14px">🏢 Usuários de setor</b>
-        <span style="color:var(--mut);font-size:12px;flex:1">Consulta interna — só veem e baixam o que está liberado para obra</span>
-        <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="convidarSetor()">＋ Dar acesso a alguém</button>
-      </div>
-      <table class="parc-tbl" style="margin:0"><tbody>${linhas}</tbody></table>
-    </div>`;
+var ACC_COLS=[
+  ['ver_nao_publicado','Ñ-pub','Ver também revisões não publicadas (em análise)'],
+  ['download','Baixar','Baixar arquivos'],
+  ['upload','Enviar','Enviar arquivos (na disciplina contratada)'],
+  ['excluir_s0','Excl.','Remover o próprio envio antes de virar revisão (ISO 19650)'],
+  ['ler_apont','Ler ap.','Ler apontamentos da própria disciplina'],
+  ['abrir_apont','Abrir ap.','Abrir apontamentos'],
+  ['editar_apont_proprio','Edit.','Editar só os apontamentos que ele mesmo abriu'],
+  ['bim_ver','BIM','Ver modelos BIM (ativa quando o IFC existir)'],
+  ['bim_ler_apont','BIM ler','Ler apontamentos no BIM'],
+  ['bim_abrir_apont','BIM abrir','Abrir apontamentos no BIM']
+];
+function accChips(row){
+  if(!ACC_DISCS.length) return '<span style="color:var(--mut);font-size:11px">—</span>';
+  const contr=(row.disc_contratadas||[]);
+  const isContr=cod=>contr.some(a=>String(a).toUpperCase()===String(cod).toUpperCase());
+  return ACC_DISCS.map(d=>{
+    if(isContr(d)) return `<span class="cde-ac-orig" title="Disciplina contratada — sempre liberada">${esc(d)}</span>`;
+    const on=row.todas_disciplinas||accDiscOn(row,d);
+    const dis=row.todas_disciplinas?'opacity:.4;pointer-events:none':'';
+    return `<label class="acc-chip ${on?'on':''}" style="${dis}" title="${esc(accDiscLabel(d))}"><input type="checkbox" ${on?'checked':''} onchange="accToggleDisc('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',this.checked)">${esc(d)}</label>`;
+  }).join(' ');
 }
-async function convidarSetor(){
-  const email=(prompt('E-mail do funcionário (orçamento, planejamento, suprimentos…):','')||'').trim();
+function accRow(row){
+  const cols=ACC_COLS.map(([k,lbl,ttl])=>`<td class="cde-ac-c" title="${esc(ttl)}"><input type="checkbox" ${row[k]?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${k}',this.checked,this)"></td>`).join('');
+  return `<tr>
+    <td><div style="font-weight:600;color:var(--txt)">${esc(row.nome||'—')}</div>
+        <div style="font-size:11px;color:var(--mut)">${esc(row.email||'')}</div></td>
+    <td style="min-width:190px"><label class="acc-chip ${row.todas_disciplinas?'on':''}" title="Todas as disciplinas"><input type="checkbox" ${row.todas_disciplinas?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','todas_disciplinas',this.checked,this)">todas</label>
+        <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px">${accChips(row)}</div></td>
+    ${cols}
+    <td style="text-align:right">${row.tipo==='interno'?`<button class="ctr-btn sec" style="font-size:11px;padding:4px 9px" onclick="accRemoverInterno('${row.sujeito_id}')">Remover</button>`:''}</td>
+  </tr>`;
+}
+function renderAcessos(){
+  const v=$('peView');
+  const head='<tr><th style="min-width:200px">Nome</th><th>Disciplinas</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')+'<th></th></tr>';
+  const internos=ACC_LIST.filter(r=>r.tipo==='interno');
+  const forn=ACC_LIST.filter(r=>r.tipo==='fornecedor');
+  const tabela=(rows)=> rows.length
+    ? `<div class="tbl-card" style="overflow-x:auto"><table class="cde-ac"><thead>${head}</thead><tbody>${rows.map(accRow).join('')}</tbody></table></div>` : '';
+  v.innerHTML=`
+    <div style="background:#F5F3FA;border:1px solid #DAD3EC;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#4A3F73;font-size:13px;line-height:1.5">
+      <b>Acessos ao CDE.</b> Marque, por sujeito, as disciplinas e o que cada um pode fazer. Leitura e download já valem na hora; as demais colunas ficam registradas. <span style="color:var(--mut)">Disciplina em verde = contratada (sempre liberada).</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px">
+      <b style="font-size:14px">👤 Clientes internos</b>
+      <span style="color:var(--mut);font-size:12px;flex:1">Funcionários da construtora (orçamento, suprimentos, planejamento)</span>
+      <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="accConvidarInterno()">＋ Dar acesso a alguém</button>
+    </div>
+    ${internos.length?tabela(internos):'<div class="empty2" style="padding:20px;margin-bottom:16px">Ninguém ainda. Use “＋ Dar acesso a alguém”.</div>'}
+    <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
+      <b style="font-size:14px">🏢 Fornecedores</b>
+      <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas cadastrados na empresa</span>
+    </div>
+    ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra. Atribua em <b>Fornecedores</b>.</div>'}`;
+}
+// Garante uma linha na matriz para o sujeito (fornecedor pode ainda não ter).
+async function accGaranteLinha(acessoId, tipo, sujeitoId){
+  if(acessoId) return acessoId;
+  const obj = tipo==='interno'
+    ? { empreendimento_id:CDE_AC_EMPID, usuario_id:sujeitoId, criado_por:USER.id }
+    : { empreendimento_id:CDE_AC_EMPID, fornecedor_id:sujeitoId, criado_por:USER.id };
+  const r=await sb.from('cde_acesso_auria').insert(obj).select('id').single();
+  if(r.error) throw r.error;
+  const row=ACC_LIST.find(x=>x.tipo===tipo && String(x.sujeito_id)===String(sujeitoId));
+  if(row) row.acesso_id=r.data.id;
+  return r.data.id;
+}
+async function accSet(acessoId, tipo, sujeitoId, campo, valor, el){
+  if(el) el.disabled=true;
+  try{
+    const id=await accGaranteLinha(acessoId, tipo, sujeitoId);
+    const patch={}; patch[campo]=valor; patch.atualizado_em=new Date().toISOString();
+    const r=await sb.from('cde_acesso_auria').update(patch).eq('id',id);
+    if(r.error) throw r.error;
+    const row=ACC_LIST.find(x=>String(x.acesso_id)===String(id) || (x.tipo===tipo&&String(x.sujeito_id)===String(sujeitoId)));
+    if(row){ row[campo]=valor; if(campo==='todas_disciplinas') renderAcessos(); }
+  }catch(e){ if(el) el.checked=!valor; alert('Não foi possível salvar: '+((e&&e.message)||e)); }
+  if(el) el.disabled=false;
+}
+async function accToggleDisc(acessoId, tipo, sujeitoId, disc, on){
+  try{
+    const id=await accGaranteLinha(acessoId, tipo, sujeitoId);
+    const row=ACC_LIST.find(x=>String(x.acesso_id)===String(id) || (x.tipo===tipo&&String(x.sujeito_id)===String(sujeitoId)));
+    let arr=(row&&row.disciplinas)?row.disciplinas.slice():[];
+    arr=arr.filter(a=>!accDiscOn({disciplinas:[a]},disc));
+    if(on) arr.push(disc);
+    const r=await sb.from('cde_acesso_auria').update({disciplinas:arr, atualizado_em:new Date().toISOString()}).eq('id',id);
+    if(r.error) throw r.error;
+    if(row) row.disciplinas=arr;
+  }catch(e){ alert('Não foi possível salvar: '+((e&&e.message)||e)); loadAcessos(CDE_AC_EMPID); }
+}
+async function accConvidarInterno(){
+  const email=(prompt('E-mail do funcionário (orçamento, suprimentos, planejamento…):','')||'').trim();
   if(!email) return;
   const nome=(prompt('Nome (opcional):','')||'').trim();
   const empId=CDE_AC_EMPID;
   try{
-    // 1) cria/garante a conta (role setor). Reaproveita conta existente.
     const r=await sb.functions.invoke('invite-setor',{ body:{ email, nome, empresa_nome:'' } });
     if(r.error) throw r.error;
-    const uid = r.data && r.data.user_id;
-    if(!uid){ alert('Convite enviado, mas não retornou o id do usuário. Recarregue e tente atribuir de novo.'); return; }
-    // 2) atribui ao empreendimento atual (idempotente)
-    const ins=await sb.from('setor_empreendimento_auria')
-      .upsert({ empreendimento_id:empId, usuario_id:uid, criado_por:USER.id }, { onConflict:'empreendimento_id,usuario_id' });
+    const uid=r.data && r.data.user_id;
+    if(!uid){ alert('Convite enviado, mas sem id do usuário. Recarregue e tente de novo.'); return; }
+    const ins=await sb.from('cde_acesso_auria').upsert(
+      { empreendimento_id:empId, usuario_id:uid, todas_disciplinas:true, download:true, criado_por:USER.id },
+      { onConflict:'empreendimento_id,usuario_id' });
     if(ins.error) throw ins.error;
-    alert(r.data.ja_existia ? 'Acesso concedido (a pessoa já tinha conta no Auria).' : 'Convite enviado e acesso concedido.');
-    await loadCdeAcessos(empId);
+    alert(r.data.ja_existia?'Acesso concedido (já tinha conta).':'Convite enviado e acesso concedido.');
+    await loadAcessos(empId);
   }catch(e){ alert('Não foi possível dar acesso: '+((e&&e.message)||e)+'\n(A function invite-setor precisa estar deployada.)'); }
 }
-async function removerSetor(uid){
+async function accRemoverInterno(uid){
   if(!confirm('Remover o acesso desta pessoa a este empreendimento?')) return;
   try{
-    const r=await sb.from('setor_empreendimento_auria').delete()
-      .eq('empreendimento_id',CDE_AC_EMPID).eq('usuario_id',uid);
+    const r=await sb.from('cde_acesso_auria').delete().eq('empreendimento_id',CDE_AC_EMPID).eq('usuario_id',uid);
     if(r.error) throw r.error;
-    await loadCdeAcessos(CDE_AC_EMPID);
+    await loadAcessos(CDE_AC_EMPID);
   }catch(e){ alert('Não foi possível remover: '+((e&&e.message)||e)); }
 }
-function renderCdeAcessos(){
-  const v=$('peView');
-  const setorHtml = renderSetorSecao();
-  if(!CDE_AC_DISCS.length){
-    v.innerHTML=setorHtml+'<div class="empty2"><div class="emoji">🗂</div><h3>Sem disciplinas atribuídas</h3>'
-      +'<p>Atribua fornecedores por disciplina em <b>Fornecedores</b> para configurar acessos de projetistas.</p></div>';
-    return;
-  }
-  if(!CDE_AC_LIST.length){
-    v.innerHTML=setorHtml+'<div class="empty2"><div class="emoji">👥</div><h3>Sem projetistas cadastrados</h3>'
-      +'<p>Cadastre projetistas nos fornecedores atribuídos a este empreendimento.</p></div>';
-    return;
-  }
-  const porForn={}, ordem=[];
-  CDE_AC_LIST.forEach(p=>{ if(!porForn[p.fornecedor_id]){ porForn[p.fornecedor_id]={nome:p.fornecedor_nome,lista:[]}; ordem.push(p.fornecedor_id); } porForn[p.fornecedor_id].lista.push(p); });
-  const headDiscs = CDE_AC_DISCS.map(d=>`<th class="cde-ac-dth" title="${esc(cdeAcDiscLabel(d))}"><div class="cde-ac-dv">${esc(d)}</div><div class="cde-ac-dr">${esc(cdeAcDiscLabel(d))}</div></th>`).join('');
-  let html = `
-    <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#1E3A8A;font-size:13px;line-height:1.5">
-      <b>Acessos ao CDE por disciplina.</b> A disciplina do fornecedor do projetista (verde) fica sempre liberada — ele entrega e lê nela. Marque as demais para conceder <b>leitura</b> extra (compatibilização).
-    </div>
-    <div class="tbl-card" style="overflow-x:auto">
-      <table class="cde-ac">
-        <thead>
-          <tr><th style="min-width:220px">Projetista</th><th style="min-width:160px">Disciplina do fornecedor</th>${headDiscs}</tr>
-        </thead>
-        <tbody>`;
-  ordem.forEach(fid=>{
-    const g=porForn[fid];
-    html += `<tr class="cde-ac-forn"><td colspan="${2+CDE_AC_DISCS.length}">${esc(g.nome||'—')}</td></tr>`;
-    g.lista.forEach(p=>{
-      const cells = CDE_AC_DISCS.map(d=>{
-        const eDoFornec = cdeAcMatch(p.disciplina_origem, d);
-        const concedido = (p.acessos||[]).some(a=>cdeAcMatch(a,d));
-        if(eDoFornec) return `<td class="cde-ac-c"><span class="cde-ac-lock" title="Disciplina do fornecedor — sempre liberada">✓</span></td>`;
-        return `<td class="cde-ac-c"><input type="checkbox" ${concedido?'checked':''} onchange="toggleCdeAcesso('${p.projetista_id}','${esc(d)}',this)"></td>`;
-      }).join('');
-      html += `<tr>
-        <td><div style="font-weight:600;color:var(--txt)">${esc(p.projetista_nome||'—')}</div>
-            <div style="font-size:11px;color:var(--mut)">${esc(p.projetista_email||'')}${p.ativo===false?' · <span style="color:#B23B2E">inativo</span>':''}</div></td>
-        <td><span class="cde-ac-orig" title="${esc(cdeAcDiscLabel(p.disciplina_origem))}">${esc(p.disciplina_origem||'—')}</span></td>
-        ${cells}
-      </tr>`;
-    });
-  });
-  html += `</tbody></table></div>`;
-  v.innerHTML = html;
-}
-async function toggleCdeAcesso(projetistaId, disciplina, cb){
-  cb.disabled=true;
-  try{
-    if(cb.checked){
-      const r=await sb.from('cde_projetista_acesso_auria').upsert({
-        empreendimento_id: CDE_AC_EMPID, projetista_id: projetistaId, disciplina: disciplina
-      }, { onConflict:'empreendimento_id,projetista_id,disciplina' });
-      if(r.error) throw r.error;
-    }else{
-      const r=await sb.from('cde_projetista_acesso_auria').delete()
-        .eq('empreendimento_id', CDE_AC_EMPID).eq('projetista_id', projetistaId).eq('disciplina', disciplina);
-      if(r.error) throw r.error;
-    }
-    const p=CDE_AC_LIST.find(x=>String(x.projetista_id)===String(projetistaId));
-    if(p){
-      p.acessos = (p.acessos||[]).filter(a=>!cdeAcMatch(a,disciplina));
-      if(cb.checked) p.acessos.push(disciplina);
-    }
-  }catch(e){
-    cb.checked=!cb.checked;
-    alert('Não foi possível atualizar: '+(e.message||e));
-  }
-  cb.disabled=false;
-}
-
 boot();
 </script>
 </body>
