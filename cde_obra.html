@@ -76,11 +76,15 @@
   /* will-change mantém o bitmap como camada própria na GPU: zoom/pan viram
      composição, não repaint — é o que torna o movimento contínuo. */
   .cdeWin-stage canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;box-shadow:0 6px 30px rgba(0,0,0,.35);background:#fff;image-rendering:auto;will-change:transform}
-  /* Camada de detalhe: fica POR CIMA da base, sem sombra e sem capturar mouse.
-     Só aparece quando o zoom passa da resolução da base. Como a base continua
-     desenhada por baixo, o detalhe pode demorar ou faltar sem deixar buraco. */
-  .cdeWin-stage .cdeWin-det,
-  .cdeWin-cmpClip .cdeWin-detB{box-shadow:none;background:transparent;pointer-events:none;display:none;z-index:2}
+  /* Ladrilhos de detalhe: ficam POR CIMA da base, sem sombra e sem capturar
+     mouse. Como a base continua desenhada por baixo, ladrilho faltando nunca
+     deixa buraco — só significa "ainda não refinado". O container recebe a
+     MESMA transformação da base, então arrastar move todos de uma vez, sem
+     custo e sem perder o que já foi rasterizado. */
+  .cdeWin-tiles,.cdeWin-cmpClip .cdeWin-tilesB{position:absolute;top:0;left:0;width:0;height:0;
+     transform-origin:0 0;pointer-events:none;z-index:2}
+  .cdeWin-tiles canvas,.cdeWin-tilesB canvas{position:absolute;box-shadow:none;background:transparent;
+     will-change:auto;image-rendering:auto}
   .cdeWin-pins{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
   .cdeWin-dxf{position:absolute;inset:0;background:#20262f;overflow:hidden;display:none}
   .cdeWin-dxf canvas{display:block}
@@ -992,6 +996,13 @@ const BASE_FOLGA = 7;
 // custa pouco (~2 MP) e dá antisserrilhado nas linhas finas na resolução exata
 // da vista atual — tanto aproximada quanto afastada.
 const DET_SS = 1.5;
+// Lado do ladrilho em pixels rasterizados. 512 é granular o bastante pra que
+// arrastar só peça os poucos ladrilhos que entraram na tela, e pequeno o
+// bastante (1 MB cada) pra caber bastante coisa no cache.
+const TILE_PX = 512;
+// Teto de ladrilhos guardados por janela (~1 MB cada; no comparador cada
+// ladrilho tem duas camadas, então o teto cai pela metade).
+const TILE_MAX = 90, TILE_MAX_CMP = 45;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
@@ -1064,10 +1075,12 @@ class CdeWin {
     this.DXFV = null;
     this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
     this._cachePath = null; this._cacheBbox = {};   // chave no cache local + bboxes já conhecidos
-    // Camada de DETALHE: recorte da região visível rasterizado na resolução do
-    // zoom atual, desenhado POR CIMA da base. A base nunca é apagada — por isso
-    // o detalhe pode chegar atrasado sem nunca produzir buraco ou piscada.
-    this.D = { rx:0, ry:0, rw:0, rh:0, scale:0, valido:false };
+    // Camada de DETALHE em LADRILHOS, desenhada POR CIMA da base. Cada ladrilho
+    // é rasterizado uma vez e FICA GUARDADO: voltar a uma região já visitada
+    // (ou a um nível de zoom já visitado) reaproveita o que existe, em vez de
+    // rasterizar de novo. A base nunca é apagada, então ladrilho faltando nunca
+    // vira buraco — só significa "ainda não refinado".
+    this.T = { nivel:null, escala:0, tam:0, mapa:new Map() };
     this._detTimer=null;
     this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
@@ -1096,8 +1109,8 @@ class CdeWin {
       + '</div>'
       + '<div class="cdeWin-body">'
       +   '<div class="cdeWin-stage"><canvas></canvas>'
-      +     '<canvas class="cdeWin-det"></canvas>'
-      +     '<div class="cdeWin-cmpClip"><canvas></canvas><canvas class="cdeWin-detB"></canvas></div>'
+      +     '<div class="cdeWin-tiles"></div>'
+      +     '<div class="cdeWin-cmpClip"><canvas></canvas><div class="cdeWin-tilesB"></div></div>'
       +     '<div class="cdeWin-pins"></div>'
       +     '<div class="cdeWin-cmpLbl a">ANTIGA</div><div class="cdeWin-cmpLbl b">NOVA</div>'
       +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
@@ -1112,10 +1125,10 @@ class CdeWin {
     this.statusEl = w.querySelector('.cdeWin-status');
     this.stage    = w.querySelector('.cdeWin-stage');
     this.canvas   = w.querySelector('.cdeWin-stage > canvas');
-    this.detEl    = w.querySelector('.cdeWin-det');
+    this.tilesA   = w.querySelector('.cdeWin-tiles');
     this.cmpClip  = w.querySelector('.cdeWin-cmpClip');
     this.canvasB  = w.querySelector('.cdeWin-cmpClip > canvas');
-    this.detBEl   = w.querySelector('.cdeWin-detB');
+    this.tilesB   = w.querySelector('.cdeWin-tilesB');
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.loadEl   = w.querySelector('.cdeWin-load');
@@ -1394,8 +1407,8 @@ class CdeWin {
     if(cdeAtiva()===this) atualizarPageLbl(this);
     this.renderPinsCDE();
     this._cmpUpdateDom();
-    this._detPosicionar();   // barato: só reaplica a transformação
-    this._detAgendar();      // caro: só dispara quando o movimento para
+    this._tilesPosicionar();  // barato: uma propriedade CSS move todos os ladrilhos
+    this._detAgendar();       // caro: só dispara quando o movimento para
   }
   // ── Comparador de revisões · modo slider ────────────────────────────────
   //  A régua é só um recorte CSS sobre a camada de cima: arrastar não mexe em
@@ -1507,97 +1520,118 @@ class CdeWin {
                this.canvasB.style.width=W+'px'; this.canvasB.style.height=H+'px'; }
       else { this.canvasB.width=1; this.canvasB.height=1; }
       this.B.scale=s; this.B.pw=pw; this.B.ph=ph; this.B.valido=true;
-      this._detEsconder();          // detalhe antigo é de outra escala/página
+      this._tilesLimpar();          // ladrilhos antigos são de outra escala/página
       this.updateCss();
     }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
   }
-  // ── Camada de detalhe (ajusta a vista à resolução certa, nos DOIS sentidos) ─
-  //  Não serve só pra zoom aproximado. Afastado, a base (que é grande) precisa
-  //  ser REDUZIDA pelo navegador, e redução forte de bitmap come linha fina de
-  //  desenho técnico — é por isso que ao afastar a vista parecia "voltar a
-  //  piorar". O detalhe rasteriza a região visível na resolução certa pra
-  //  ESTA vista, aproximada ou afastada.
-  _detEsconder(){ this.D.valido=false; this.detEl.style.display='none'; this.detBEl.style.display='none'; }
-  // Um pouco acima da resolução de tela (supersampling leve): dá antisserrilhado
-  // nas linhas sem custar quase nada, porque o recorte é do tamanho da janela.
+  // ── Detalhe em LADRILHOS (o refinamento fica guardado) ────────────────────
+  //  Cada ladrilho é um pedaço fixo da página, rasterizado uma vez e mantido
+  //  no DOM. Arrastar não rasteriza nada: o container inteiro recebe a mesma
+  //  transformação da base, então tudo que já foi refinado continua refinado.
+  //  Voltar a uma região — ou a um nível de zoom — já visitada é instantâneo.
+  //
+  //  A escala é quantizada em degraus de raiz de 2. Sem isso cada mexidinha na
+  //  roda geraria uma escala nova e invalidaria o cache inteiro; com degraus, o
+  //  zoom passeia dentro do mesmo nível e reaproveita tudo.
   _detEscalaAlvo(){ return this.V.zoom*(window.devicePixelRatio||1)*DET_SS; }
+  _detNivel(){
+    const alvo=this._detEscalaAlvo();
+    if(!(alvo>0)) return null;
+    // ceil: o ladrilho nunca fica MENOS nítido que o necessário (no máximo
+    // um degrau mais nítido, o que só custa memória).
+    return Math.ceil(Math.log2(alvo)*2)/2;
+  }
   _detPrecisa(){
     if(!this.B.valido || !this.V.page) return false;
     const r=this._detEscalaAlvo()/this.B.scale;
     return r>1.05 || r<0.65;   // base baixa demais (perto) ou alta demais (longe)
   }
-  // Cola o detalhe no desenho usando a MESMA transformação da base, mais o
-  // deslocamento do recorte. Assim ele acompanha zoom/pan de graça e nunca
-  // "desliza" em relação ao que está por baixo.
-  _detPosicionar(){
-    if(!this.D.valido) return;
-    // Rede de segurança: um detalhe de outra vista NUNCA pode ficar pendurado
-    // na tela. Se ele já não é mais nítido que a base, ou se o recorte saiu
-    // inteiramente da área visível, some com ele — a base cobre tudo sozinha.
-    const cw=this.stage.clientWidth, ch=this.stage.clientHeight, z=this.V.zoom;
-    const vx0=this.V.panX/z, vx1=(this.V.panX+cw)/z;
-    const vy0=this.V.panY/z, vy1=(this.V.panY+ch)/z;
-    const fora = this.D.rx>vx1 || this.D.rx+this.D.rw<vx0
-              || this.D.ry>vy1 || this.D.ry+this.D.rh<vy0;
-    if(fora){ this._detEsconder(); return; }
+  _tilesLimpar(){
+    this.T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove();
+                             if(t.elB&&t.elB.parentNode) t.elB.remove(); });
+    this.T.mapa.clear(); this.T.nivel=null;
+  }
+  // Move TODOS os ladrilhos de uma vez, junto com a base. É só uma propriedade
+  // CSS no container — arrastar não custa nada e nada é redesenhado.
+  _tilesPosicionar(){
+    if(!this.B.valido) return;
     const k=this.V.zoom/this.B.scale;
-    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+') '
-           + 'translate('+(this.D.rx*this.B.scale)+'px,'+(this.D.ry*this.B.scale)+'px)';
-    this.detEl.style.transform=tr;
-    this.detBEl.style.transform=tr;
+    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+')';
+    this.tilesA.style.transform=tr;
+    this.tilesB.style.transform=tr;
+  }
+  // Ladrilhos de outros níveis continuam GUARDADOS (só escondidos): se o
+  // usuário voltar àquele zoom, reaparecem prontos.
+  _tilesVisibilidade(nivel){
+    this.T.mapa.forEach(t=>{
+      const on = (t.nivel===nivel);
+      t.el.style.display = on?'block':'none';
+      if(t.elB) t.elB.style.display = on?'block':'none';
+    });
   }
   _detAgendar(){
     clearTimeout(this._detTimer);
-    // Detalhe feito para OUTRA escala fica pior que a base: some com ele na
-    // hora e deixa a base assumir até o novo ficar pronto. Em pan puro a escala
-    // não muda, então ele continua válido e não pisca ao arrastar.
-    if(this.D.valido){
-      const r=this._detEscalaAlvo()/this.D.scale;
-      if(r>1.25 || r<0.8) this._detEsconder();
-    }
-    if(!this._detPrecisa()){ this._detEsconder(); return; }
-    // Só depois que o usuário para de mexer — durante o gesto o que vale é a
-    // fluidez, e a base segura a vista.
-    this._detTimer=setTimeout(()=>this._renderDetalhe(), 220);
+    if(!this._detPrecisa()){ this._tilesVisibilidade(null); return; }
+    const nivel=this._detNivel();
+    if(nivel!==this.T.nivel) this._tilesVisibilidade(nivel);
+    this._detTimer=setTimeout(()=>this._tilesGarantir(), 200);
   }
-  async _renderDetalhe(){
-    if(!this._detPrecisa()){ this._detEsconder(); return; }
+  async _tilesGarantir(){
+    if(!this._detPrecisa() || !this.B.valido) return;
     const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
     if(cw<=0||ch<=0) return;
-    const dpr=window.devicePixelRatio||1, z=this.V.zoom;
-    // Região visível em pontos da página, com uma folga em volta pra pequenos
-    // ajustes de pan não saírem imediatamente da área nítida.
-    const fx=cw*0.15, fy=ch*0.15;
-    let rx=(this.V.panX-fx)/z, ry=(this.V.panY-fy)/z;
-    let rw=(cw+2*fx)/z, rh=(ch+2*fy)/z;
-    if(rx<0){ rw+=rx; rx=0; }
-    if(ry<0){ rh+=ry; ry=0; }
-    if(rx+rw>this.B.pw) rw=this.B.pw-rx;
-    if(ry+rh>this.B.ph) rh=this.B.ph-ry;
-    if(rw<=0||rh<=0){ this._detEsconder(); return; }
-    let s=this._detEscalaAlvo();
-    const MAXPIX=this.cmp ? 12e6 : 24e6;
-    const f=Math.sqrt(MAXPIX/(rw*rh*s*s));
-    if(f<1) s*=f;
-    // Se o teto de memória derrubou o alvo até a resolução que a base já tem,
-    // não há ganho nenhum em desenhar por cima.
-    if(Math.abs(s-this.B.scale)/this.B.scale < 0.05){ this._detEsconder(); return; }
-    const W=Math.max(1,Math.round(rw*s)), H=Math.max(1,Math.round(rh*s));
+    const nivel=this._detNivel(); if(nivel==null) return;
+    const s=Math.pow(2,nivel);
+    const tam=TILE_PX/s;                     // lado do ladrilho, em pontos
+    this.T.nivel=nivel; this.T.escala=s; this.T.tam=tam;
+    this._tilesVisibilidade(nivel);
+    // Ladrilhos que cobrem a vista, com uma folga de meio ladrilho em volta
+    // (assim um arrastinho não expõe área ainda não refinada).
+    const z=this.V.zoom;
+    const x0=(this.V.panX)/z - tam/2, y0=(this.V.panY)/z - tam/2;
+    const x1=(this.V.panX+cw)/z + tam/2, y1=(this.V.panY+ch)/z + tam/2;
+    const i0=Math.max(0,Math.floor(x0/tam)), i1=Math.floor(Math.min(this.B.pw,x1)/tam);
+    const j0=Math.max(0,Math.floor(y0/tam)), j1=Math.floor(Math.min(this.B.ph,y1)/tam);
     const job=++this._renderJob;
     this._cancelarRender();
-    try{
-      const cvA=document.createElement('canvas');
-      const cvB=(this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
-      const ok=await this._rasterizar(job, s, rx, ry, W, H, cvA, cvB);
-      if(!ok || job!==this._renderJob) return;
-      const por=(el,off)=>{ el.width=W; el.height=H;
-        el.style.width=(rw*this.B.scale)+'px'; el.style.height=(rh*this.B.scale)+'px';
-        el.getContext('2d').drawImage(off,0,0); el.style.display='block'; };
-      por(this.detEl, cvA);
-      if(cvB) por(this.detBEl, cvB); else this.detBEl.style.display='none';
-      this.D={ rx, ry, rw, rh, scale:s, valido:true };
-      this._detPosicionar();
-    }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('detalhe:',e); }
+    for(let j=j0;j<=j1;j++){
+      for(let i=i0;i<=i1;i++){
+        if(job!==this._renderJob) return;          // nova vista pediu outra coisa
+        const chave=this.V.pageNum+'|'+nivel+'|'+i+'|'+j;
+        const achado=this.T.mapa.get(chave);
+        if(achado){                                 // já rasterizado: só reusar
+          this.T.mapa.delete(chave); this.T.mapa.set(chave,achado);   // LRU: renova
+          continue;
+        }
+        const px=i*tam, py=j*tam;
+        const w=Math.min(tam, this.B.pw-px), h=Math.min(tam, this.B.ph-py);
+        if(w<=0||h<=0) continue;
+        const W=Math.max(1,Math.round(w*s)), H=Math.max(1,Math.round(h*s));
+        const cvA=document.createElement('canvas');
+        const cvB=(this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
+        const ok=await this._rasterizar(job, s, px, py, W, H, cvA, cvB);
+        if(!ok || job!==this._renderJob) return;
+        const montar=(cv,cont)=>{
+          cv.style.left=(px*this.B.scale)+'px'; cv.style.top=(py*this.B.scale)+'px';
+          cv.style.width=(w*this.B.scale)+'px'; cv.style.height=(h*this.B.scale)+'px';
+          cont.appendChild(cv); return cv;
+        };
+        const t={ nivel, el:montar(cvA,this.tilesA), elB:cvB?montar(cvB,this.tilesB):null };
+        this.T.mapa.set(chave,t);
+        this._tilesPodar();
+      }
+    }
+  }
+  // Teto de memória: descarta o ladrilho menos usado (o Map do JS preserva a
+  // ordem de inserção, e reusar reinsere no fim — então o primeiro é o mais frio).
+  _tilesPodar(){
+    const max=this.cmp?TILE_MAX_CMP:TILE_MAX;
+    while(this.T.mapa.size>max){
+      const chave=this.T.mapa.keys().next().value;
+      const t=this.T.mapa.get(chave);
+      if(t){ if(t.el) t.el.remove(); if(t.elB) t.elB.remove(); }
+      this.T.mapa.delete(chave);
+    }
   }
   _cancelarRender(){
     if(this._renderTask){ try{ this._renderTask.cancel(); }catch(_){} this._renderTask=null; }
