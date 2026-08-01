@@ -617,7 +617,7 @@ function discFullName(v){ if(!v) return v; return DISC_FULLNAME[v] || v; }
 
 var FORNECEDORES=[], PROJETISTAS=[], CT_PARCS_BUF=[], FN_PROJS_BUF=[], FATURA_PARC=null;
 var CTR_EMP_ID=null, CTR_LIST=[], CTR_DET=null, CRON_TASKS=[], A_NFS_PARC={};
-var CDE_AC_LIST=[], CDE_AC_DISCS=[], CDE_AC_CONV=null, CDE_AC_EMPID=null;
+var CDE_AC_LIST=[], CDE_AC_DISCS=[], CDE_AC_CONV=null, CDE_AC_EMPID=null, CDE_SETOR_LIST=[];
 
 // ── Abas por empreendimento (Contratos/Financeiro/CDE-Acessos) ─────────────
 function abrirEmpContratos(id){
@@ -1282,21 +1282,75 @@ async function loadCdeAcessos(empId){
     const r=await sb.rpc('cde_projetistas_do_emp',{p_emp:empId});
     if(r.error) throw r.error;
     CDE_AC_LIST=r.data||[];
+    // Usuários de setor (funcionários internos, só leitura do vigente publicado)
+    try{ const rs=await sb.rpc('cde_setor_do_emp',{p_emp:empId}); CDE_SETOR_LIST=rs.error?[]:(rs.data||[]); }
+    catch(_){ CDE_SETOR_LIST=[]; }
   }catch(e){
     v.innerHTML='<div class="empty2"><div class="emoji">🗂</div><h3>Não foi possível carregar</h3><p>'+esc(e.message||e)+'</p></div>';
     return;
   }
   renderCdeAcessos();
 }
+// Seção "Usuários de setor": funcionários internos (orçamento, planejamento,
+// suprimentos) que só VÊEM e BAIXAM o vigente publicado desta obra. Aparece
+// sempre, independente de haver projetistas/disciplinas.
+function renderSetorSecao(){
+  const lista = (CDE_SETOR_LIST||[]);
+  const linhas = lista.length ? lista.map(u=>`
+    <tr>
+      <td><div style="font-weight:600;color:var(--txt)">${esc(u.nome||'—')}</div>
+          <div style="font-size:11px;color:var(--mut)">${esc(u.email||'')}${u.ativo===false?' · <span style="color:#B23B2E">inativo</span>':''}</div></td>
+      <td style="text-align:right"><button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" onclick="removerSetor('${u.usuario_id}')">Remover acesso</button></td>
+    </tr>`).join('')
+    : '<tr><td colspan="2" style="color:var(--mut);padding:12px">Nenhum usuário de setor com acesso a esta obra ainda.</td></tr>';
+  return `
+    <div class="tbl-card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
+        <b style="font-size:14px">🏢 Usuários de setor</b>
+        <span style="color:var(--mut);font-size:12px;flex:1">Consulta interna — só veem e baixam o que está liberado para obra</span>
+        <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="convidarSetor()">＋ Dar acesso a alguém</button>
+      </div>
+      <table class="parc-tbl" style="margin:0"><tbody>${linhas}</tbody></table>
+    </div>`;
+}
+async function convidarSetor(){
+  const email=(prompt('E-mail do funcionário (orçamento, planejamento, suprimentos…):','')||'').trim();
+  if(!email) return;
+  const nome=(prompt('Nome (opcional):','')||'').trim();
+  const empId=CDE_AC_EMPID;
+  try{
+    // 1) cria/garante a conta (role setor). Reaproveita conta existente.
+    const r=await sb.functions.invoke('invite-setor',{ body:{ email, nome, empresa_nome:'' } });
+    if(r.error) throw r.error;
+    const uid = r.data && r.data.user_id;
+    if(!uid){ alert('Convite enviado, mas não retornou o id do usuário. Recarregue e tente atribuir de novo.'); return; }
+    // 2) atribui ao empreendimento atual (idempotente)
+    const ins=await sb.from('setor_empreendimento_auria')
+      .upsert({ empreendimento_id:empId, usuario_id:uid, criado_por:USER.id }, { onConflict:'empreendimento_id,usuario_id' });
+    if(ins.error) throw ins.error;
+    alert(r.data.ja_existia ? 'Acesso concedido (a pessoa já tinha conta no Auria).' : 'Convite enviado e acesso concedido.');
+    await loadCdeAcessos(empId);
+  }catch(e){ alert('Não foi possível dar acesso: '+((e&&e.message)||e)+'\n(A function invite-setor precisa estar deployada.)'); }
+}
+async function removerSetor(uid){
+  if(!confirm('Remover o acesso desta pessoa a este empreendimento?')) return;
+  try{
+    const r=await sb.from('setor_empreendimento_auria').delete()
+      .eq('empreendimento_id',CDE_AC_EMPID).eq('usuario_id',uid);
+    if(r.error) throw r.error;
+    await loadCdeAcessos(CDE_AC_EMPID);
+  }catch(e){ alert('Não foi possível remover: '+((e&&e.message)||e)); }
+}
 function renderCdeAcessos(){
   const v=$('peView');
+  const setorHtml = renderSetorSecao();
   if(!CDE_AC_DISCS.length){
-    v.innerHTML='<div class="empty2"><div class="emoji">🗂</div><h3>Sem disciplinas atribuídas</h3>'
-      +'<p>Atribua fornecedores por disciplina em <b>Fornecedores</b> antes de configurar acessos.</p></div>';
+    v.innerHTML=setorHtml+'<div class="empty2"><div class="emoji">🗂</div><h3>Sem disciplinas atribuídas</h3>'
+      +'<p>Atribua fornecedores por disciplina em <b>Fornecedores</b> para configurar acessos de projetistas.</p></div>';
     return;
   }
   if(!CDE_AC_LIST.length){
-    v.innerHTML='<div class="empty2"><div class="emoji">👥</div><h3>Sem projetistas cadastrados</h3>'
+    v.innerHTML=setorHtml+'<div class="empty2"><div class="emoji">👥</div><h3>Sem projetistas cadastrados</h3>'
       +'<p>Cadastre projetistas nos fornecedores atribuídos a este empreendimento.</p></div>';
     return;
   }

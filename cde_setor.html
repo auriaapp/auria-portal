@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — Consulta ao CDE</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#EEF2F7; --panel:#FFFFFF; --line:#E2E8F0;
+    --txt:#0F172A; --txt2:#334155; --mut:#64748B; --accent:#E8960A;
+  }
+  body.dark{ --bg:#0B1220; --panel:#141C2B; --line:#26324A; --txt:#E8EEF6; --txt2:#C2CFDF; --mut:#8496AC; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:11px 20px;
+         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:30}
+  header img{height:30px}
+  header h1{font-size:15px;font-weight:800;margin:0}
+  header .who{margin-left:auto;text-align:right;font-size:11.5px;color:#9DB3CA;line-height:1.35}
+  header .who b{color:#fff;font-size:12.5px;display:block}
+  .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
+        padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .hbtn:hover{background:#243452}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px 18px 70px}
+  h2.sec{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);
+         font-weight:800;margin:4px 0 4px}
+  .hint{color:var(--mut);font-size:13px;margin:0 0 16px}
+  .emps{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:13px}
+  .emp{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;
+       cursor:pointer;text-align:left;font-family:inherit;color:var(--txt);display:flex;flex-direction:column}
+  .emp:hover{border-color:var(--accent)}
+  .emp-h{padding:16px}
+  .emp-h b{display:block;font-size:15px;line-height:1.3;margin-bottom:3px}
+  .emp-h span{font-size:12px;color:var(--mut)}
+  .emp-go{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;font-weight:700;color:#0E7490}
+  .vazio{background:var(--panel);border:1px dashed var(--line);border-radius:12px;
+         padding:40px 20px;text-align:center;color:var(--mut);font-size:13.5px;line-height:1.6}
+  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo_symbol.png" alt="Auria">
+  <h1>Auria — Consulta ao CDE</h1>
+  <div class="who"><b id="uNome"></b><span id="uMail"></span></div>
+  <button class="hbtn" onclick="tema()">Tema</button>
+  <button class="hbtn" onclick="sair()">Sair</button>
+</header>
+
+<div class="wrap">
+  <div id="load" class="load">Carregando…</div>
+  <div id="app" style="display:none">
+    <h2 class="sec">Empreendimentos</h2>
+    <p class="hint">Você visualiza e baixa os arquivos <b>liberados para obra</b> de cada empreendimento abaixo.</p>
+    <div id="emps"></div>
+  </div>
+</div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function tema(){ const d=document.body.classList.toggle('dark');
+  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){} }
+try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
+async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
+
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./'); return; }
+  const user = session.user;
+  const { data:p } = await sb.from('usuarios_auria').select('nome,email,role').eq('id', user.id).maybeSingle();
+  // Guarda: esta tela é só do papel 'setor'. Qualquer outro volta ao roteador.
+  if(!p || p.role!=='setor'){ location.replace('./'); return; }
+  $('uNome').textContent = p.nome || user.email;
+  $('uMail').textContent = user.email;
+
+  let emps=[];
+  try{ const r=await sb.rpc('cde_setor_meus_empreendimentos'); emps = r.error?[]:(r.data||[]); }
+  catch(e){ emps=[]; }
+
+  $('load').style.display='none';
+  $('app').style.display='block';
+  if(!emps.length){
+    $('emps').innerHTML='<div class="vazio">Você ainda não tem acesso a nenhum empreendimento.<br>'
+      +'Peça à coordenação para liberar o seu acesso.</div>';
+    return;
+  }
+  $('emps').innerHTML='<div class="emps">'+emps.map(e=>{
+    const local=[e.cidade,e.estado].filter(Boolean).join(' · ');
+    return `<button class="emp" onclick="location.href='cde_obra.html?emp=${encodeURIComponent(e.empreendimento_id)}'">
+      <div class="emp-h"><b>${esc(e.empreendimento_nome)}</b><span>${esc(local||'—')}</span></div>
+      <div class="emp-go">🗂 Abrir arquivos liberados ›</div>
+    </button>`;
+  }).join('')+'</div>';
+}
+boot();
+</script>
+</body>
+</html>

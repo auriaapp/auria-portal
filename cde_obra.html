@@ -46,6 +46,9 @@
   .vtool .cod{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--navy)}
   .vtool .tit{font-size:13px;color:var(--txt2)}
   .vtool .sp{flex:1}
+  /* Modo consulta (usuário de setor): esconde os controles de escrita. O
+     !important vence o display inline que a toolbar aplica em alguns botões. */
+  body.cde-ro .cde-wr{display:none!important}
   .tb{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
       padding:5px 10px;font-size:12.5px;cursor:pointer;font-family:inherit;font-weight:600}
   .tb:hover{border-color:var(--accent)}
@@ -337,8 +340,8 @@
       <span id="dxfHint" class="tit" style="display:none">role/arraste para navegar</span>
       <span style="width:8px"></span>
       <button class="tb" id="btnCmpMode" onclick="toggleCmpMode()" title="Alternar visualização da comparação" style="display:none">◧ Slider</button>
-      <button class="tb" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
-      <button class="tb" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
+      <button class="tb cde-wr" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
+      <button class="tb cde-wr" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
     <div id="winSpace"></div>
@@ -461,10 +464,23 @@ let AUTOGRP_MODE=null, AUTOGRP_SEL=null;   // grupos automáticos dentro da aba 
 let MULTI_MODE=false, MULTI_SEL=new Set();   // seleção múltipla → abrir juntas no App (uma análise só)
 
 // ── Boot ────────────────────────────────────────────────────────────────────
+// Modo consulta: usuário de setor (orçamento/suprimentos/planejamento) só VÊ e
+// BAIXA o que está liberado — nunca recebe, muda status, agrupa ou analisa no
+// App. A RLS já barra a escrita; isto apenas esconde os controles que falhariam.
+let READONLY = false;
 async function boot(){
   const { data:{ session } } = await sb.auth.getSession();
   if(!session){ location.replace('./'); return; }
   USER = session.user;
+  try{
+    const { data: prof } = await sb.from('usuarios_auria').select('role').eq('id',USER.id).maybeSingle();
+    READONLY = !!(prof && prof.role==='setor');
+  }catch(e){}
+  if(READONLY){
+    document.body.classList.add('cde-ro');
+    const lp=$('lnkPadrao'); if(lp) lp.style.display='none';
+    const volta=document.querySelector('header a[href="portal.html"]'); if(volta) volta.setAttribute('href','cde_setor.html');
+  }
   if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no portal.'; return; }
   carregarPastasAbertas();
 
@@ -482,7 +498,7 @@ async function boot(){
       + '<a href="cde.html" style="color:var(--accent)">Defina o padrão do grupo/empresa</a> antes de receber arquivos.';
     return;
   }
-  $('btnReceber').style.display='';
+  if(!READONLY) $('btnReceber').style.display='';
   await carregarDocs();
   await carregarGrupos();
   $('load').style.display='none';
@@ -951,7 +967,7 @@ function docMenuOpen(ev,id){
     rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
   });
   if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
-  if(byExt.pdf){
+  if(byExt.pdf && !READONLY){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
   }
@@ -960,7 +976,7 @@ function docMenuOpen(ev,id){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','cmp')"><span class="mi">⇄</span>Comparar revisões</button>`);
   }
-  if(!CDE_LINKED_DOCS.has(id)){
+  if(!CDE_LINKED_DOCS.has(id) && !READONLY){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','link')"><span class="mi">🔗</span>Vincular apontamentos existentes</button>`);
   }
@@ -2235,8 +2251,8 @@ async function renderDetalhe(){
   const porRev={}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
   const revs=(d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
 
-  // Ação de recepção (avisa o projetista da disciplina)
-  const topo = `<div class="det-recep">
+  // Ação de recepção (avisa o projetista da disciplina). Escondida em consulta.
+  const topo = READONLY ? '' : `<div class="det-recep">
       <button class="btn sm" onclick="confirmarRecepcao()">✓ Confirmar recebimento ao projetista</button>
       <span style="font-size:11.5px;color:var(--mut)">avisa o projetista da disciplina que os arquivos chegaram</span>
     </div>`;
@@ -2245,7 +2261,7 @@ async function renderDetalhe(){
     const s=STMAP[r.status]||{rotulo:r.status,cor:'#64748B'};
     const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
     const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
-    const trans=TRANSICOES[r.status]||[]; const podeAgir=idx===0&&r.status!=='SUBSTITUIDO';
+    const trans=TRANSICOES[r.status]||[]; const podeAgir=!READONLY&&idx===0&&r.status!=='SUBSTITUIDO';
     const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
     return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
