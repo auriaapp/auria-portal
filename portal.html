@@ -1286,13 +1286,27 @@ function accDiscOn(row, cod){
   const arr=row.disciplinas||[]; const rot=(accDiscLabel(cod)||'').toLowerCase();
   return arr.some(a=>String(a).toUpperCase()===String(cod).toUpperCase() || (rot && String(a).toLowerCase()===rot));
 }
+// Disciplinas que o analista pode CONCEDER = domínio da convenção ∪ as que já
+// têm documento no CDE ∪ as atribuídas a fornecedores. (Antes vinha só de
+// disciplina_fornecedor, então disciplina sem fornecedor não aparecia p/ marcar.)
+function accDiscsDaConv(){
+  if(!ACC_CONV) return [];
+  const c=(ACC_CONV.campos||[]).find(x=>x.mapeia==='disciplina');
+  if(!c||!c.dominio) return [];
+  return c.dominio.map(d=>(typeof d==='object')?d.v:d).filter(Boolean);
+}
 async function loadAcessos(empId){
   CDE_AC_EMPID=empId;
   const v=$('peView'); v.innerHTML='<div class="load">Carregando acessos…</div>';
   try{
     try{ const c=await sb.rpc('cde_convencao',{p_emp:empId}); ACC_CONV=(c.data&&c.data[0])||null; }catch(_){ ACC_CONV=null; }
-    const df=await sb.from('disciplina_fornecedor_auria').select('disciplina').eq('empreendimento_id',empId);
-    ACC_DISCS=[...new Set((df.data||[]).map(x=>x.disciplina).filter(Boolean))].sort();
+    const set=new Set();
+    accDiscsDaConv().forEach(d=>set.add(d));
+    try{ const dd=await sb.from('cde_documento_auria').select('disciplina').eq('empreendimento_id',empId);
+      (dd.data||[]).forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
+    try{ const df=await sb.from('disciplina_fornecedor_auria').select('disciplina').eq('empreendimento_id',empId);
+      (df.data||[]).forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
+    ACC_DISCS=[...set].sort();
     const r=await sb.rpc('cde_acessos_do_emp',{p_emp:empId});
     if(r.error) throw r.error;
     ACC_LIST=r.data||[];
@@ -1357,8 +1371,8 @@ function renderAcessos(){
   const tabela=(rows)=> rows.length
     ? `<div class="tbl-card" style="overflow-x:auto"><table class="cde-ac"><thead>${head}</thead><tbody>${rows.map(accRow).join('')}</tbody></table></div>` : '';
   v.innerHTML=`
-    <div style="background:#F5F3FA;border:1px solid #DAD3EC;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#4A3F73;font-size:13px;line-height:1.5">
-      <b>Acessos ao CDE.</b> Marque, por sujeito, as disciplinas e o que cada um pode fazer. Leitura e download já valem na hora; as demais colunas ficam registradas. <span style="color:var(--mut)">Disciplina em verde = contratada (sempre liberada).</span>
+    <div style="background:#F5F3FA;border:1px solid #DAD3EC;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#4A3F73;font-size:13px;line-height:1.6">
+      <b>Acessos ao CDE.</b> Marque <b>“todas”</b> para liberar o sujeito em todas as disciplinas, ou desmarque e escolha uma a uma nos chips. Leitura e download já valem na hora; as demais colunas ficam registradas.
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px">
       <b style="font-size:14px">👤 Clientes internos</b>
@@ -1368,7 +1382,7 @@ function renderAcessos(){
     ${internos.length?tabela(internos):'<div class="empty2" style="padding:20px;margin-bottom:16px">Ninguém ainda. Use “＋ Dar acesso a alguém”.</div>'}
     <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
       <b style="font-size:14px">🏢 Fornecedores</b>
-      <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas cadastrados na empresa</span>
+      <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas da empresa. <b style="color:#166534">Verde</b> = disciplina contratada (vê, baixa e <b>envia</b>); demais marcadas = só vê e baixa. O <b>upload é sempre limitado à disciplina contratada</b> — um projetista não posta em outra disciplina.</span>
     </div>
     ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra. Atribua em <b>Fornecedores</b>.</div>'}`;
 }
