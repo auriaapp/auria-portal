@@ -241,6 +241,10 @@
        min-height:52px;display:flex;align-items:center;justify-content:center;transition:.12s}
   .tag:hover{border-color:var(--accent);color:var(--txt)}
   .tag.sel{background:var(--navy);color:#fff;border-color:var(--navy)}
+  /* Aba BIM: cor própria (teal), destacada das disciplinas normais */
+  .tag.bim{background:#0E7490;color:#fff;border-color:#0E7490;margin-bottom:6px}
+  .tag.bim:hover{background:#0B5E75;color:#fff}
+  .tag.bim.sel{background:#083F4E;border-color:#083F4E}
   .rail .none{writing-mode:vertical-rl;font-size:10px;color:var(--mut);margin-top:8px}
 
   /* ── Modais (recebimento + detalhe) ─────────────────────── */
@@ -737,12 +741,21 @@ async function openCompareWindow(doc, revOld, revNew){
 }
 
 // ── Coluna direita: trilho de disciplinas + pastas por etapa ────────────────
+// Modelos BIM: qualquer documento que tenha um arquivo 3D (IFC, RVT…) em
+// alguma revisão. Ficam agrupados numa aba própria "BIM" no topo do trilho.
+const BIM_EXTS = new Set(['ifc','rvt','rfa','nwd','nwc','skp']);
+function docEhBim(d){
+  return (d.revs||[]).some(r=>(r.arqs||[]).some(a=>BIM_EXTS.has((a.extensao||'').toLowerCase())));
+}
 function renderRail(){
   const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
-  $('rail').innerHTML = discs.length
+  const temBim = DOCS.some(docEhBim);
+  const bimTag = temBim
+    ? `<div class="tag bim ${SEL_DISC==='__BIM__'?'sel':''}" title="Modelos BIM (IFC, RVT…)" onclick="selDisc('__BIM__')">BIM</div>` : '';
+  $('rail').innerHTML = bimTag + (discs.length
     ? discs.map(d=>`<div class="tag ${SEL_DISC===d?'sel':''}" title="${esc(discLabel(d))}" onclick="selDisc('${esc(d)}')">${esc(d)}</div>`).join('')
-    : '<div class="none">sem arquivos</div>';
-  if(SEL_DISC && !discs.includes(SEL_DISC)) SEL_DISC=null;
+    : (temBim ? '' : '<div class="none">sem arquivos</div>'));
+  if(SEL_DISC && SEL_DISC!=='__BIM__' && !discs.includes(SEL_DISC)) SEL_DISC=null;
   renderNav();
 }
 function selDisc(d){ SEL_DISC = (SEL_DISC===d?null:d); NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
@@ -782,7 +795,23 @@ function toggleEtapa(et){
   renderNav();
 }
 
+// Aba BIM: lista TODOS os modelos 3D (IFC, RVT…) da obra, agrupados por
+// disciplina. Ponto único onde os modelos ficam "registrados", como pedido.
+function navBim(){
+  const bims=DOCS.filter(docEhBim);
+  if(!bims.length) return '<div class="nav-hint">Nenhum modelo BIM (IFC, RVT…) recebido ainda.</div>';
+  const porDisc={}; bims.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
+  let out='<h3>🧱 Modelos BIM</h3><div class="nav-hint" style="margin:-4px 0 8px">Modelos 3D recebidos. Abra para ver as revisões e baixar o arquivo.</div>';
+  Object.keys(porDisc).sort().forEach(k=>{
+    const ds=porDisc[k].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    out+=`<div class="folder open"><div class="folder-h" style="cursor:default">
+      <span class="fic">📦</span><span class="fnm">${esc(discLabel(k))}</span><span class="fct">${ds.length}</span>
+    </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
+  });
+  return out;
+}
 function navDisciplina(){
+  if(SEL_DISC==='__BIM__') return navBim();
   if(!SEL_DISC) return '<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>';
   const doDisc = DOCS.filter(d=>d.disciplina===SEL_DISC);
   const ordemFase = (faseCampo()||{}).dominio || [];
