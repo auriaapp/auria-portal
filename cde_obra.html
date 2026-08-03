@@ -126,6 +126,34 @@
     color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.75);padding:12px 20px;border-radius:10px;
     text-align:center;max-width:80%;display:none}
   .cdeWin-bim .bimLoad.on{display:block}
+  /* Painel lateral do 3D: camadas (modelos) em cima, propriedades do elemento
+     clicado embaixo. Recolhível porque em janela pequena ele come metade da
+     cena. */
+  .cdeWin-bim .bimPainel{position:absolute;top:0;right:0;bottom:0;width:250px;z-index:4;
+    background:rgba(15,23,42,.88);border-left:1px solid rgba(255,255,255,.12);
+    display:flex;flex-direction:column;color:#e2e8f0;font-size:12px}
+  .cdeWin-bim.semPainel .bimPainel{display:none}
+  .cdeWin-bim .bpAba{position:absolute;top:8px;right:250px;z-index:5;background:rgba(15,23,42,.85);
+    color:#e2e8f0;border:1px solid rgba(255,255,255,.15);border-right:none;border-radius:6px 0 0 6px;
+    padding:6px 8px;cursor:pointer;font-size:13px;line-height:1}
+  .cdeWin-bim.semPainel .bpAba{right:0}
+  .cdeWin-bim .bpSec{border-bottom:1px solid rgba(255,255,255,.1);display:flex;flex-direction:column;min-height:0}
+  .cdeWin-bim .bpSec h4{margin:0;padding:8px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    color:#94a3b8;font-weight:700;background:rgba(255,255,255,.04)}
+  .cdeWin-bim .bpLista{padding:4px 0;overflow:auto;max-height:38%}
+  .cdeWin-bim .bpItem{display:flex;align-items:center;gap:7px;padding:5px 10px;cursor:pointer}
+  .cdeWin-bim .bpItem:hover{background:rgba(255,255,255,.06)}
+  .cdeWin-bim .bpItem input{cursor:pointer;margin:0;flex:none}
+  .cdeWin-bim .bpItem span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cdeWin-bim .bpItem.off span{opacity:.45;text-decoration:line-through}
+  .cdeWin-bim .bpProps{flex:1;min-height:0}
+  .cdeWin-bim .bpConteudo{padding:8px 10px;overflow:auto;flex:1;min-height:0;line-height:1.5}
+  .cdeWin-bim .bpVazio{color:#94a3b8;font-style:italic}
+  .cdeWin-bim .bpGrupo{margin:0 0 10px}
+  .cdeWin-bim .bpGrupo b{display:block;color:#facc15;font-size:11px;margin-bottom:2px}
+  .cdeWin-bim .bpLinha{display:flex;gap:6px;padding:1px 0;border-bottom:1px dotted rgba(255,255,255,.08)}
+  .cdeWin-bim .bpLinha i{flex:0 0 44%;color:#94a3b8;font-style:normal;overflow:hidden;text-overflow:ellipsis}
+  .cdeWin-bim .bpLinha em{flex:1;font-style:normal;word-break:break-word}
   .cdeWin-load{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.7);padding:12px 20px;border-radius:10px;display:none}
   .cdeWin-load.on{display:block}
   /* Comparador de revisões — modo slider (régua vertical arrastável) */
@@ -918,6 +946,47 @@ async function abrirBimFederado(){
   await w.setModelosFederados(modelos);
 }
 
+// Monta o painel de propriedades a partir do ItemData do Fragments, que é um
+// objeto genérico: cada chave é um atributo ({value}) OU uma lista de blocos
+// aninhados (conjuntos de propriedades vindos das relações do IFC). Percorrer
+// genericamente evita depender dos nomes exatos de relação, que variam com o
+// exportador — o que não for reconhecido simplesmente não aparece, em vez de
+// quebrar o painel.
+function bimPropsHtml(data, hit){
+  const val = (v)=>{
+    if(v===null || v===undefined || v==='') return '—';
+    if(typeof v==='number') return String(Math.round(v*1e6)/1e6);
+    if(typeof v==='object') { try{ return JSON.stringify(v); }catch(_){ return String(v); } }
+    return String(v);
+  };
+  const diretos=[], grupos=[];
+  for(const [k,v] of Object.entries(data||{})){
+    if(Array.isArray(v)){
+      v.forEach(sub=>{
+        if(!sub || typeof sub!=='object') return;
+        const nome = (sub.Name && sub.Name.value) || k;
+        const ls=[];
+        for(const [k2,v2] of Object.entries(sub)){
+          if(k2==='Name' || Array.isArray(v2)) continue;
+          if(v2 && typeof v2==='object' && 'value' in v2) ls.push([k2, val(v2.value)]);
+        }
+        if(ls.length) grupos.push({ nome, ls });
+      });
+    }else if(v && typeof v==='object' && 'value' in v){
+      diretos.push([k, val(v.value)]);
+    }
+  }
+  if(!diretos.length && !grupos.length) return '<div class="bpVazio">Este elemento não trouxe propriedades.</div>';
+  const linhas=(ls)=> ls.map(([k,v])=>`<div class="bpLinha"><i title="${esc(k)}">${esc(k)}</i><em>${esc(v)}</em></div>`).join('');
+  let out='';
+  // Saber de QUAL disciplina veio o elemento importa no federado — sem isso o
+  // painel some com a informação mais útil da cena combinada.
+  if(hit && hit.__nomeModelo) out+=`<div class="bpGrupo"><b>Modelo</b>${linhas([['disciplina',hit.__nomeModelo]])}</div>`;
+  if(diretos.length) out+=`<div class="bpGrupo"><b>Identificação</b>${linhas(diretos)}</div>`;
+  grupos.forEach(g=>{ out+=`<div class="bpGrupo"><b>${esc(g.nome)}</b>${linhas(g.ls)}</div>`; });
+  return out;
+}
+
 // three + Fragments só são baixados quando alguém abre um modelo — são pesados
 // e a esmagadora maioria das sessões do CDE nunca toca no 3D. A promessa fica
 // guardada, então abrir o segundo modelo não baixa nada de novo; se falhar,
@@ -1321,6 +1390,13 @@ class CdeWin {
       +     '<div class="cdeWin-load on">Abrindo…</div></div>'
       +   '<div class="cdeWin-dxf"></div>'
       +   '<div class="cdeWin-bim"><div class="bimLoad on">Abrindo modelo 3D…</div>'
+      +     '<button class="bpAba" title="Mostrar/ocultar painel">▸</button>'
+      +     '<div class="bimPainel">'
+      +       '<div class="bpSec"><h4>Modelos</h4><div class="bpLista"></div></div>'
+      +       '<div class="bpSec bpProps"><h4>Propriedades</h4>'
+      +         '<div class="bpConteudo"><div class="bpVazio">Clique num elemento do modelo.</div></div>'
+      +       '</div>'
+      +     '</div>'
       +     '<div class="bimDica">Arraste para girar · roda para zoom · clique da roda para deslocar</div></div>'
       +   '<div class="cdeWin-resize"></div>'
       + '</div>';
@@ -1339,6 +1415,14 @@ class CdeWin {
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.bimWrap  = w.querySelector('.cdeWin-bim');
     this.bimLoadEl= w.querySelector('.cdeWin-bim .bimLoad');
+    this.bpLista  = w.querySelector('.cdeWin-bim .bpLista');
+    this.bpConteudo = w.querySelector('.cdeWin-bim .bpConteudo');
+    w.querySelector('.cdeWin-bim .bpAba').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const off = this.bimWrap.classList.toggle('semPainel');
+      e.currentTarget.textContent = off ? '◂' : '▸';
+      this.bimResize();
+    });
     this.B3 = null;      // estado do visualizador 3D (só existe se este doc for BIM)
     this._bimJob = 0;    // contador de abertura do 3D — invalida cargas em curso
     this.loadEl   = w.querySelector('.cdeWin-load');
@@ -1643,8 +1727,23 @@ class CdeWin {
       const ro = new ResizeObserver(()=> this.bimResize());
       ro.observe(this.bimWrap); this.B3.ro = ro;
 
+      // Clique seleciona; arrasto orbita. Sem esse teste, toda órbita
+      // terminaria disparando um raycast e trocando a seleção sem querer.
+      let dn=null;
+      renderer.domElement.addEventListener('pointerdown', (e)=>{
+        dn = (e.button===0) ? { x:e.clientX, y:e.clientY, t:Date.now() } : null;
+      });
+      renderer.domElement.addEventListener('pointerup', (e)=>{
+        if(!dn) return;
+        const perto = Math.abs(e.clientX-dn.x)<4 && Math.abs(e.clientY-dn.y)<4;
+        const rapido = (Date.now()-dn.t) < 500;
+        dn=null;
+        if(perto && rapido) this.bimSelecionarEm(e).catch(err=>console.warn('seleção 3D:', err));
+      });
+
       this.bimResize();
       this.bimEnquadrar();
+      this.bimRenderCamadas();
       await fragments.update(true);
 
       const loop = ()=>{
@@ -1691,8 +1790,83 @@ class CdeWin {
     B.controls.update();
     B.fragments.update(true).catch(()=>{});
   }
+  // ── Camadas: cada modelo do federado acende/apaga como uma layer ─────────
+  bimRenderCamadas(){
+    const B=this.B3; if(!this.bpLista) return;
+    this.bpLista.innerHTML='';
+    if(!B || !B.modelos.length){
+      this.bpLista.innerHTML='<div class="bpItem"><span class="bpVazio">nenhum modelo</span></div>';
+      return;
+    }
+    B.modelos.forEach((x,i)=>{
+      const lab=document.createElement('label');
+      lab.className='bpItem'+(x.visivel===false?' off':'');
+      const chk=document.createElement('input');
+      chk.type='checkbox'; chk.checked = x.visivel!==false;
+      chk.addEventListener('change', ()=> this.bimToggleModelo(i, chk.checked));
+      const sp=document.createElement('span');
+      sp.textContent = x.nome || ('Modelo '+(i+1));
+      sp.title = sp.textContent;
+      lab.appendChild(chk); lab.appendChild(sp);
+      this.bpLista.appendChild(lab);
+    });
+  }
+  async bimToggleModelo(i, visivel){
+    const B=this.B3; if(!B) return;
+    const x=B.modelos[i]; if(!x) return;
+    x.visivel = visivel;
+    // object.visible tira do render na hora; setVisible avisa o Fragments, que
+    // é quem decide o que continua sendo transmitido do worker.
+    try{ x.model.object.visible = visivel; }catch(_){}
+    try{ await x.model.setVisible(undefined, visivel); }catch(_){}
+    try{ await B.fragments.update(true); }catch(_){}
+    this.bimRenderCamadas();
+  }
+  // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
+  async bimSelecionarEm(ev){
+    const B=this.B3; if(!B) return;
+    const mouse = new B.THREE.Vector2(ev.clientX, ev.clientY);
+    let melhor=null;
+    for(const x of B.modelos){
+      if(x.visivel===false) continue;
+      try{
+        const r = await x.model.raycast({ camera:B.camera, mouse, dom:B.renderer.domElement });
+        if(r && (!melhor || r.distance < melhor.distance)){ r.__nomeModelo = x.nome; melhor = r; }
+      }catch(_){ /* modelo ainda carregando: ignora */ }
+    }
+    // Limpa o destaque anterior em TODOS os modelos: no federado o elemento
+    // anterior pode estar em outra disciplina que não a do clique atual.
+    for(const x of B.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+    if(!melhor){
+      this.bpConteudo.innerHTML='<div class="bpVazio">Clique num elemento do modelo.</div>';
+      try{ await B.fragments.update(true); }catch(_){}
+      return;
+    }
+    try{
+      await melhor.fragments.highlight([melhor.localId], {
+        color:new B.THREE.Color(0xE8960A), renderedFaces:1, opacity:1, transparent:false
+      });
+      await B.fragments.update(true);
+    }catch(_){}
+    this.bpConteudo.innerHTML='<div class="bpVazio">Lendo propriedades…</div>';
+    try{
+      const dados = await melhor.fragments.getItemsData([melhor.localId], {
+        attributesDefault:true,
+        // Só as relações que carregam propriedade útil. Puxar todas traria a
+        // árvore espacial inteira junto, cara e sem valor aqui.
+        relations:{ IsDefinedBy:{attributes:true,relations:false},
+                    IsTypedBy:{attributes:true,relations:false} },
+        relationsDefault:{attributes:false,relations:false}
+      });
+      this.bpConteudo.innerHTML = bimPropsHtml(dados && dados[0], melhor);
+    }catch(e){
+      this.bpConteudo.innerHTML='<div class="bpVazio">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
+    }
+  }
   bimDispose(){
     this._bimJob = (this._bimJob||0)+1;   // invalida qualquer carga em curso
+    if(this.bpLista) this.bpLista.innerHTML='';
+    if(this.bpConteudo) this.bpConteudo.innerHTML='<div class="bpVazio">Clique num elemento do modelo.</div>';
     const B=this.B3; if(!B) return;
     this.B3=null; B.vivo=false;
     if(B.raf) cancelAnimationFrame(B.raf);
