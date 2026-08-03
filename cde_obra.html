@@ -164,6 +164,9 @@
   .cdeWin-bim .bimCorte{display:none;align-items:center;gap:5px;padding-left:5px;margin-left:2px;
     border-left:1px solid rgba(255,255,255,.15)}
   .cdeWin-bim .bimCorte.on{display:flex}
+  .cdeWin-bim .bimMedeOpc{display:none;align-items:center;gap:2px;padding-left:5px;margin-left:2px;
+    border-left:1px solid rgba(255,255,255,.15)}
+  .cdeWin-bim .bimMedeOpc.on{display:flex}
   .cdeWin-bim .bimCorte select{background:#1e293b;color:#e2e8f0;border:1px solid rgba(255,255,255,.18);
     border-radius:5px;font-size:12px;padding:3px 4px}
   .cdeWin-bim .bimCorte input[type=range]{width:110px;accent-color:var(--accent)}
@@ -1421,11 +1424,14 @@ class CdeWin {
       +     '<div class="bimTools">'
       +       '<button data-t="fit" title="Enquadrar tudo">⤢</button>'
       +       '<button data-t="medir" title="Medir distância entre dois pontos">📏</button>'
+      +       '<div class="bimMedeOpc">'
+      +         '<button data-t="mLivre" class="on" title="Cota livre: distância direta entre os dois pontos, mesmo inclinada">↗</button>'
+      +         '<button data-t="mEixo" title="Cota ortogonal: mede só ao longo de X, Y ou Z">⟂</button>'
+      +       '</div>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<div class="bimCorte">'
-      +         '<select data-t="eixo"><option value="x">X</option><option value="y">Y</option><option value="z" selected>Z</option></select>'
-      +         '<input type="range" data-t="pos" min="0" max="1000" value="500">'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
+      +         '<button data-t="limpaCorte" title="Remover o corte">🗑</button>'
       +       '</div>'
       +     '</div>'
       +     '<button class="bpAba" title="Mostrar/ocultar painel">▸</button>'
@@ -1460,9 +1466,10 @@ class CdeWin {
     tools.querySelector('[data-t=fit]')  .addEventListener('click', ()=> this.bimEnquadrar());
     tools.querySelector('[data-t=medir]').addEventListener('click', (e)=> this.bimModoMedir(!e.currentTarget.classList.contains('on')));
     tools.querySelector('[data-t=corte]').addEventListener('click', (e)=> this.bimModoCorte(!e.currentTarget.classList.contains('on')));
-    tools.querySelector('[data-t=eixo]') .addEventListener('change', (e)=>{ if(this.B3){ this.B3.corte.eixo=e.target.value; this.bimCorteAplicar(); } });
-    tools.querySelector('[data-t=pos]')  .addEventListener('input',  (e)=>{ if(this.B3){ this.B3.corte.t=(+e.target.value)/1000; this.bimCorteAplicar(); } });
-    tools.querySelector('[data-t=inv]')  .addEventListener('click',  ()=>{ if(this.B3){ this.B3.corte.inv=!this.B3.corte.inv; this.bimCorteAplicar(); } });
+    tools.querySelector('[data-t=mLivre]').addEventListener('click', ()=> this.bimMedirModo('livre'));
+    tools.querySelector('[data-t=mEixo]') .addEventListener('click', ()=> this.bimMedirModo('eixo'));
+    tools.querySelector('[data-t=inv]')  .addEventListener('click',  ()=> this.bimCorteInverter());
+    tools.querySelector('[data-t=limpaCorte]').addEventListener('click', ()=> this.bimCorteRemover());
     w.querySelector('.cdeWin-bim .bpAba').addEventListener('click', (e)=>{
       e.stopPropagation();
       const off = this.bimWrap.classList.toggle('semPainel');
@@ -1766,9 +1773,9 @@ class CdeWin {
                       renderer.domElement.remove(); return; }
 
       this.B3 = { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, raf:null, ro:null, vivo:true,
-        corte:  { ativo:false, eixo:'z', t:0.5, inv:false, min:0, max:1, plano:null },
-        medida: { ativo:false, pts:[], objs:[], cotas:[] },
-        unidade: 1 };   // raio/150 — tamanho dos marcadores na escala do modelo
+        corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null },
+        medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
+        unidade: 1 };   // raio/150 — escala do modelo, usada no contorno do corte
 
       // O Fragments transmite a geometria sob demanda, guiado pela câmera:
       // cada movimento pede um update para ele decidir o que carregar/soltar.
@@ -1780,16 +1787,40 @@ class CdeWin {
       // terminaria disparando um raycast e trocando a seleção sem querer.
       let dn=null;
       renderer.domElement.addEventListener('pointerdown', (e)=>{
-        dn = (e.button===0) ? { x:e.clientX, y:e.clientY, t:Date.now() } : null;
+        if(e.button!==0){ dn=null; return; }
+        dn = { x:e.clientX, y:e.clientY, ux:e.clientX, uy:e.clientY, t:Date.now(), arrastou:false };
+      });
+      renderer.domElement.addEventListener('pointermove', (e)=>{
+        const B=this.B3; if(!dn || !B) return;
+        // Com o corte já posto, o botão esquerdo empurra o plano na direção
+        // perpendicular a ele (o OrbitControls está sem o esquerdo nesse modo).
+        if(!(B.corte.ativo && B.corte.ancora)) return;
+        const dx=e.clientX-dn.ux, dy=e.clientY-dn.uy;
+        if(!dn.arrastou && Math.abs(e.clientX-dn.x)<3 && Math.abs(e.clientY-dn.y)<3) return;
+        dn.arrastou=true; dn.ux=e.clientX; dn.uy=e.clientY;
+        this.bimCorteArrastar(dx, dy);
       });
       renderer.domElement.addEventListener('pointerup', (e)=>{
         if(!dn) return;
         const perto = Math.abs(e.clientX-dn.x)<4 && Math.abs(e.clientY-dn.y)<4;
         const rapido = (Date.now()-dn.t) < 500;
+        const arrastou = dn.arrastou;
         dn=null;
-        if(!perto || !rapido) return;
-        const fn = (this.B3 && this.B3.medida.ativo) ? this.bimMedirPonto : this.bimSelecionarEm;
-        fn.call(this, e).catch(err=>console.warn('3D:', err));
+        const B=this.B3; if(!B || arrastou || !perto || !rapido) return;
+        if(B.medida.ativo){ this.bimMedirPonto(e).catch(err=>console.warn('3D:', err)); return; }
+        if(B.corte.ativo){
+          // Só cria a seção se ainda não existe: com uma posta, o clique não
+          // reposiciona (senão qualquer toque perderia o ajuste) — para mudar
+          // de lugar usa-se o 🗑.
+          if(B.corte.ancora) return;
+          this.bimRaycast(e).then(hit=>{
+            if(!this.B3 || !this.B3.vivo) return;
+            if(!hit || !hit.point){ this.bimMsgDica('Clique sobre uma superfície do modelo para criar a seção.'); return; }
+            this.bimCortePor(hit.point, hit.normal);
+          }).catch(err=>console.warn('3D corte:', err));
+          return;
+        }
+        this.bimSelecionarEm(e).catch(err=>console.warn('3D:', err));
       });
 
       this.bimResize();
@@ -1801,6 +1832,7 @@ class CdeWin {
         const B=this.B3; if(!B||!B.vivo) return;
         B.raf = requestAnimationFrame(loop);
         B.controls.update();
+        this.bimEscalarMarcas();          // antes do render: escala vale já neste quadro
         B.renderer.render(B.scene, B.camera);
         this.bimAtualizarCotas();
       };
@@ -1838,7 +1870,6 @@ class CdeWin {
     // precisam acompanhar o tamanho real, senão viram pontos invisíveis num
     // prédio ou bolas gigantes numa peça isolada.
     B.caixa = cx; B.unidade = raio/150;
-    this.bimCorteFaixa();
     B.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
     B.camera.near = Math.max(dist/5000, 0.01);
     B.camera.far  = dist*50;
@@ -1848,108 +1879,205 @@ class CdeWin {
     B.fragments.update(true).catch(()=>{});
   }
   // ── Plano de corte (seção) ───────────────────────────────────────────────
-  bimCorteFaixa(){
-    const B=this.B3; if(!B||!B.caixa) return;
-    const e=B.corte.eixo;
-    B.corte.min = B.caixa.min[e]; B.corte.max = B.caixa.max[e];
-  }
+  //  Mesmo gesto do Auria BIM: clicar numa superfície cria a seção ali, com a
+  //  orientação da própria superfície; depois arrasta-se o plano ao longo da
+  //  sua perpendicular. Regras de orientação copiadas do floor.js do BIM
+  //  (viewer xeokit) para a sensação de uso ser idêntica.
   bimModoCorte(lig){
     const B=this.B3; if(!B) return;
-    B.corte.ativo=lig;
+    const C=B.corte;
+    C.ativo=lig;
     const t=this.bimToolsEl;
     t.querySelector('[data-t=corte]').classList.toggle('on', lig);
     t.querySelector('.bimCorte').classList.toggle('on', lig);
-    this.bimCorteFaixa();
+    B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
+    // Enquanto se corta, o botão esquerdo passa a ARRASTAR O PLANO — girar vai
+    // pro direito. Sem isso não há como arrastar o corte sem orbitar junto.
+    C.ativo ? this.bimBotoesCorte(true) : this.bimBotoesCorte(false);
+    if(!lig) this.bimCorteRemover();
+    else this.bimMsgDica('Clique numa superfície para criar a seção · depois arraste com o botão esquerdo · girar com o direito');
+  }
+  bimBotoesCorte(lig){
+    const B=this.B3; if(!B) return;
+    const T=B.THREE;
+    B.controls.mouseButtons = lig
+      ? { LEFT:null,            MIDDLE:T.MOUSE.PAN, RIGHT:T.MOUSE.ROTATE }
+      : { LEFT:T.MOUSE.ROTATE,  MIDDLE:T.MOUSE.PAN, RIGHT:null };
+  }
+  // Cria a seção no ponto clicado, orientada pela superfície.
+  bimCortePor(ponto, normal){
+    const B=this.B3, T=B.THREE, C=B.corte;
+    const paraCam = B.camera.position.clone().sub(ponto);
+    let dir;   // aponta para o lado que SAI (convenção do Auria BIM)
+    const N = (normal && normal.lengthSq()>0) ? normal.clone().normalize() : paraCam.clone().normalize().negate();
+    if(Math.abs(N.y) > 0.7){
+      // Superfície horizontal (laje/teto): corte horizontal puro, removendo
+      // de cima para baixo quando a câmera está acima.
+      dir = new T.Vector3(0, paraCam.y>=0 ? -1 : 1, 0);
+    }else{
+      // Superfície vertical: usa a normal real com Y zerado, garantindo um
+      // corte perfeitamente vertical, virado para longe da câmera.
+      const nx=N.x, nz=N.z;
+      const len=Math.hypot(nx,nz)||1;
+      const sinal = (nx*paraCam.x + nz*paraCam.z) >= 0 ? -1 : 1;
+      dir = new T.Vector3(sinal*nx/len, 0, sinal*nz/len);
+    }
+    C.ancora = ponto.clone();
+    // No three, a normal do plano aponta para o lado que FICA — o inverso da
+    // convenção do xeokit, onde dir aponta para o lado removido.
+    C.normal = dir.negate().normalize();
+    C.inv = false;
     this.bimCorteAplicar();
+    this.bimMsgDica('Arraste com o botão esquerdo para mover a seção · ⇄ inverte o lado · 🗑 remove');
   }
   bimCorteAplicar(){
     const B=this.B3; if(!B) return;
-    const C=B.corte;
-    if(!C.ativo){
-      C.plano=null;
+    const C=B.corte, T=B.THREE;
+    if(!C.ancora || !C.normal){
       B.renderer.clippingPlanes=[];
       B.modelos.forEach(x=>{ try{ x.model.getClippingPlanesEvent=()=>[]; }catch(_){} });
+      if(C.ajuda){ B.scene.remove(C.ajuda); C.ajuda=null; }
       B.fragments.update(true).catch(()=>{});
       return;
     }
-    this.bimCorteFaixa();
-    const v={x:0,y:0,z:0}; v[C.eixo]=1;
-    const n=new B.THREE.Vector3(v.x,v.y,v.z);
-    if(C.inv) n.negate();
-    const pos = C.min + (C.max-C.min)*C.t;
-    const p = new B.THREE.Vector3(); p[C.eixo]=pos;
-    // Plano por p com normal n: constante = -n·p. Mantém tudo do lado
-    // apontado pela normal e descarta o resto.
-    const plano = new B.THREE.Plane(n, -n.dot(p));
+    const n = C.normal.clone(); if(C.inv) n.negate();
+    const plano = new T.Plane(n, -n.dot(C.ancora));
     C.plano = plano;
     B.renderer.localClippingEnabled = true;
     B.renderer.clippingPlanes = [plano];
-    // O Fragments precisa saber do plano no worker também — é lá que ele
-    // decide o que transmitir; sem isso ele seguiria mandando geometria
-    // inteiramente cortada.
+    // O Fragments precisa do plano no worker também — é lá que ele decide o
+    // que transmitir; sem isso seguiria mandando geometria já cortada.
     B.modelos.forEach(x=>{ try{ x.model.getClippingPlanesEvent=()=>[plano]; }catch(_){} });
+    // Contorno do plano: sem ele o usuário arrasta às cegas quando o corte
+    // sai da região visível.
+    const tamanho = (B.unidade||1)*260;
+    if(C.ajuda){ B.scene.remove(C.ajuda); C.ajuda=null; }
+    C.ajuda = new T.PlaneHelper(plano, tamanho, 0xE8960A);
+    C.ajuda.renderOrder = 998;
+    B.scene.add(C.ajuda);
     B.fragments.update(true).catch(()=>{});
+  }
+  bimCorteInverter(){
+    const B=this.B3; if(!B||!B.corte.ancora) return;
+    B.corte.inv = !B.corte.inv;
+    this.bimCorteAplicar();
+  }
+  bimCorteRemover(){
+    const B=this.B3; if(!B) return;
+    const C=B.corte;
+    C.ancora=null; C.normal=null; C.plano=null; C.inv=false;
+    this.bimCorteAplicar();
+    if(C.ativo) this.bimMsgDica('Clique numa superfície para criar a seção · depois arraste com o botão esquerdo · girar com o direito');
+  }
+  // Arrasta o plano ao longo da PRÓPRIA perpendicular. Converte o movimento do
+  // mouse em deslocamento no mundo projetando a normal na tela: assim o plano
+  // acompanha o cursor na mesma proporção, seja qual for o ângulo da câmera.
+  bimCorteArrastar(dxPix, dyPix){
+    const B=this.B3; if(!B) return;
+    const C=B.corte; if(!C.ancora||!C.normal) return;
+    const w=this.bimWrap.clientWidth||1, h=this.bimWrap.clientHeight||1;
+    const u=(B.unidade||1)*10;
+    const a=C.ancora.clone().project(B.camera);
+    const b=C.ancora.clone().addScaledVector(C.normal, u).project(B.camera);
+    const ex=(b.x-a.x)*0.5*w, ey=-(b.y-a.y)*0.5*h;    // pixels para u no mundo
+    const len2=ex*ex+ey*ey;
+    if(len2 < 1e-6) return;   // normal quase de frente pra câmera: sem direção útil na tela
+    const t=((dxPix*ex + dyPix*ey)/len2)*u;
+    C.ancora.addScaledVector(C.normal, t);
+    this.bimCorteAplicar();
   }
   // ── Medição (cotas) ──────────────────────────────────────────────────────
   bimModoMedir(lig){
     const B=this.B3; if(!B) return;
+    // Medir e cortar disputam o mesmo clique esquerdo — ligar um desliga o
+    // outro, em vez de deixar os dois responderem ao mesmo gesto.
+    if(lig && B.corte.ativo) this.bimModoCorte(false);
     B.medida.ativo=lig;
-    this.bimToolsEl.querySelector('[data-t=medir]').classList.toggle('on', lig);
+    const t=this.bimToolsEl;
+    t.querySelector('[data-t=medir]').classList.toggle('on', lig);
+    t.querySelector('.bimMedeOpc').classList.toggle('on', lig);
     B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
     if(!lig) this.bimLimparMedidas();
-    else this.bimMsgDica('Clique em dois pontos para medir. Clique em 📏 de novo para sair e limpar.');
+    else this.bimMsgDica('Clique em dois pontos para medir · ↗ cota livre · ⟂ cota ortogonal · 📏 sai e limpa');
+  }
+  bimMedirModo(modo){
+    const B=this.B3; if(!B) return;
+    B.medida.modo=modo;
+    const t=this.bimToolsEl;
+    t.querySelector('[data-t=mLivre]').classList.toggle('on', modo==='livre');
+    t.querySelector('[data-t=mEixo]') .classList.toggle('on', modo==='eixo');
+    this.bimMsgDica(modo==='eixo'
+      ? 'Cota ortogonal: mede só ao longo do eixo dominante entre os dois pontos.'
+      : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
   }
   bimMsgDica(t){
     const d=this.bimWrap.querySelector('.bimDica'); if(d) d.textContent=t;
   }
   async bimMedirPonto(ev){
     const B=this.B3; if(!B) return;
-    const mouse=new B.THREE.Vector2(ev.clientX, ev.clientY);
-    let melhor=null;
-    for(const x of B.modelos){
-      if(x.visivel===false) continue;
-      try{
-        const r=await x.model.raycast({ camera:B.camera, mouse, dom:B.renderer.domElement });
-        if(r && (!melhor || r.distance<melhor.distance)) melhor=r;
-      }catch(_){}
-    }
+    const melhor = await this.bimRaycast(ev);
+    if(!B.vivo) return;
     if(!melhor || !melhor.point){ this.bimMsgDica('Clique sobre o modelo — não peguei nenhum ponto ali.'); return; }
-    const M=B.medida;
+    const M=B.medida, T=B.THREE;
     const pt=melhor.point.clone();
     M.pts.push(pt);
-    // Marcador do ponto. depthTest desligado para continuar visível quando o
-    // ponto fica atrás de outra peça.
-    const esf=new B.THREE.Mesh(
-      new B.THREE.SphereGeometry(B.unidade*1.6, 12, 12),
-      new B.THREE.MeshBasicMaterial({ color:0xE8960A, depthTest:false })
+    // Marcador com RAIO 1: o tamanho real é dado por escala, recalculada a
+    // cada quadro em bimEscalarMarcas para ficar constante na TELA. Fixar o
+    // raio pelo tamanho do modelo (como estava) faz bolas enormes ao medir um
+    // detalhe de 2 m dentro de um prédio de 100 m.
+    const esf=new T.Mesh(
+      new T.SphereGeometry(1, 12, 12),
+      new T.MeshBasicMaterial({ color:0xE8960A, depthTest:false })
     );
     esf.position.copy(pt); esf.renderOrder=999;
-    B.scene.add(esf); M.objs.push(esf);
+    B.scene.add(esf); M.objs.push(esf); M.marcas.push(esf);
 
-    if(M.pts.length%2===0){
-      const a=M.pts[M.pts.length-2], b=pt;
-      const linha=new B.THREE.Line(
-        new B.THREE.BufferGeometry().setFromPoints([a,b]),
-        new B.THREE.LineBasicMaterial({ color:0xE8960A, depthTest:false })
-      );
-      linha.renderOrder=999;
-      B.scene.add(linha); M.objs.push(linha);
-      const el=document.createElement('div');
-      el.className='bimCota';
-      el.textContent=fmtDist(a.distanceTo(b));
-      this.bimWrap.appendChild(el);
-      M.cotas.push({ el, meio:a.clone().add(b).multiplyScalar(0.5) });
-      this.bimMsgDica('Cota adicionada. Clique em mais dois pontos para outra medida.');
-    }else{
-      this.bimMsgDica('Agora clique no segundo ponto.');
+    if(M.pts.length%2!==0){ this.bimMsgDica('Agora clique no segundo ponto.'); return; }
+
+    const a=M.pts[M.pts.length-2];
+    let b=pt, rot='';
+    if(M.modo==='eixo'){
+      // Trava a cota no eixo de maior diferença: é a medida "reta" que se
+      // espera de pé-direito, vão e afastamento, em vez da diagonal.
+      const d=new T.Vector3().subVectors(pt,a);
+      const eixo = (Math.abs(d.x)>=Math.abs(d.y) && Math.abs(d.x)>=Math.abs(d.z)) ? 'x'
+                 : (Math.abs(d.y)>=Math.abs(d.z) ? 'y' : 'z');
+      b=a.clone(); b[eixo]=pt[eixo];
+      rot=eixo.toUpperCase()+' ';
+      // Reposiciona o 2º marcador no ponto realmente medido, senão a bola
+      // ficaria solta longe da ponta da cota.
+      esf.position.copy(b);
+      M.pts[M.pts.length-1]=b;
     }
+    const linha=new T.Line(
+      new T.BufferGeometry().setFromPoints([a,b]),
+      new T.LineBasicMaterial({ color:0xE8960A, depthTest:false })
+    );
+    linha.renderOrder=999;
+    B.scene.add(linha); M.objs.push(linha);
+    const el=document.createElement('div');
+    el.className='bimCota';
+    el.textContent=rot+fmtDist(a.distanceTo(b));
+    this.bimWrap.appendChild(el);
+    M.cotas.push({ el, meio:a.clone().add(b).multiplyScalar(0.5) });
+    this.bimMsgDica('Cota adicionada. Clique em mais dois pontos para outra medida.');
+  }
+  // Mantém os marcadores com o MESMO tamanho aparente em qualquer zoom: o raio
+  // no mundo cresce com a distância à câmera, então na tela fica constante.
+  bimEscalarMarcas(){
+    const B=this.B3; if(!B||!B.medida.marcas.length) return;
+    const h=this.bimWrap.clientHeight||1;
+    const k=2*Math.tan((B.camera.fov*Math.PI/180)/2)/h*5;   // ~5 px de raio
+    B.medida.marcas.forEach(m=>{
+      m.scale.setScalar(Math.max(1e-6, B.camera.position.distanceTo(m.position)*k));
+    });
   }
   bimLimparMedidas(){
     const B=this.B3; if(!B) return;
     const M=B.medida;
     M.objs.forEach(o=>{ try{ B.scene.remove(o); o.geometry&&o.geometry.dispose(); o.material&&o.material.dispose(); }catch(_){} });
     M.cotas.forEach(c=>{ try{ c.el.remove(); }catch(_){} });
-    M.objs=[]; M.cotas=[]; M.pts=[];
+    M.objs=[]; M.cotas=[]; M.pts=[]; M.marcas=[];
     this.bimMsgDica('Arraste para girar · roda para zoom · clique da roda para deslocar');
   }
   // Reposiciona as etiquetas de cota projetando o ponto médio de cada medida
@@ -1997,9 +2125,10 @@ class CdeWin {
     try{ await B.fragments.update(true); }catch(_){}
     this.bimRenderCamadas();
   }
-  // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
-  async bimSelecionarEm(ev){
-    const B=this.B3; if(!B) return;
+  // Acha o elemento sob o cursor entre TODOS os modelos visíveis e devolve o
+  // mais próximo da câmera. Usado pela seleção, pela medição e pelo corte.
+  async bimRaycast(ev){
+    const B=this.B3; if(!B) return null;
     const mouse = new B.THREE.Vector2(ev.clientX, ev.clientY);
     let melhor=null;
     for(const x of B.modelos){
@@ -2009,6 +2138,13 @@ class CdeWin {
         if(r && (!melhor || r.distance < melhor.distance)){ r.__nomeModelo = x.nome; melhor = r; }
       }catch(_){ /* modelo ainda carregando: ignora */ }
     }
+    return melhor;
+  }
+  // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
+  async bimSelecionarEm(ev){
+    const B=this.B3; if(!B) return;
+    const melhor = await this.bimRaycast(ev);
+    if(!B.vivo) return;
     // Limpa o destaque anterior em TODOS os modelos: no federado o elemento
     // anterior pode estar em outra disciplina que não a do clique atual.
     for(const x of B.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
