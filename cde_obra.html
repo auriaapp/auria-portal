@@ -579,7 +579,7 @@ async function carregarDocs(){
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       const { data:a } = await sb.from('cde_arquivo_auria')
-        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error').in('revisao_id',revIds);
+        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress').in('revisao_id',revIds);
       arqs=a||[];
     }
   }
@@ -830,7 +830,8 @@ function cardFdocBim(d){
   if(st==='pronto'){
     selo = `<button class="btn sec sm" onclick="event.stopPropagation();abrirBim3D('${d.id}')" title="Abrir o visualizador 3D">👁 Ver em 3D</button>`;
   }else if(st==='pendente' || st==='processando'){
-    selo = `<span class="pill" style="background:#B7791F;color:#fff" title="A conversão roda em segundo plano e pode levar alguns minutos em modelos grandes">⏳ Processando…</span>`;
+    const pct = (typeof ifc.frag_progress==='number') ? ` ${ifc.frag_progress}%` : '';
+    selo = `<span class="pill" style="background:#B7791F;color:#fff" title="A conversão roda em segundo plano e pode levar alguns minutos em modelos grandes">⏳ Processando…${pct}</span>`;
   }else if(st==='erro'){
     selo = `<button class="btn sec sm" style="border-color:#A32D2D;color:#A32D2D" onclick="event.stopPropagation();iniciarConversaoBim('${ifc.id}','${d.id}')" title="${esc(ifc.frag_error||'Falhou — tentar de novo')}">⚠ Falhou — tentar de novo</button>`;
   }else{
@@ -847,7 +848,7 @@ function cardFdocBim(d){
 }
 async function iniciarConversaoBim(arquivoId, docId){
   const d=DOCS.find(x=>x.id===docId); const ifc=d&&arquivoIfcDe(d);
-  if(ifc){ ifc.frag_status='pendente'; ifc.frag_error=null; renderNav(); }   // feedback na hora
+  if(ifc){ ifc.frag_status='pendente'; ifc.frag_error=null; ifc.frag_progress=null; renderNav(); }   // feedback na hora
   try{
     const r=await sb.functions.invoke('cde-bim-convert',{ body:{ arquivoId } });
     if(r.error) throw r.error;
@@ -875,7 +876,7 @@ function bimAtualizarPoll(){
     if(SEL_DISC!=='__BIM__'){ bimPararPoll(); return; }
     const ids=pendentes.map(a=>a.id);
     try{
-      const { data } = await sb.from('cde_arquivo_auria').select('id,frag_status,frag_path,frag_error').in('id',ids);
+      const { data } = await sb.from('cde_arquivo_auria').select('id,frag_status,frag_path,frag_error,frag_progress').in('id',ids);
       (data||[]).forEach(row=>{
         for(const d of DOCS){ const a=arquivoIfcDe(d); if(a && a.id===row.id){ Object.assign(a,row); break; } }
       });
