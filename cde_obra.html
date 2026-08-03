@@ -7,6 +7,19 @@
 <link rel="icon" href="logo_symbol.png" type="image/png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<!-- Visualizador 3D (aba BIM). O importmap existe para o Fragments e o nosso
+     código usarem A MESMA cópia do three: duas instâncias carregadas em
+     paralelo quebram todo `instanceof THREE.*` em silêncio (objeto some da
+     cena sem erro nenhum). Por isso o Fragments vem com ?external=three —
+     ele deixa o import bare `three`, que o mapa abaixo resolve. Nada disso
+     baixa nada até alguém abrir um modelo: o import é dinâmico. -->
+<script type="importmap">
+{"imports":{
+  "three":"https://esm.sh/three@0.185.1",
+  "three/":"https://esm.sh/three@0.185.1/",
+  "@thatopen/fragments":"https://esm.sh/@thatopen/fragments@3.4.6?external=three"
+}}
+</script>
 <style>
   :root{
     --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0;
@@ -101,6 +114,18 @@
   .cdeWin-pins{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
   .cdeWin-dxf{position:absolute;inset:0;background:#20262f;overflow:hidden;display:none}
   .cdeWin-dxf canvas{display:block}
+  /* Visualizador 3D (modelos BIM). Mesmo papel do .cdeWin-dxf: alvo de
+     renderização alternativo ao canvas 2D, ocupando a janela inteira. */
+  .cdeWin-bim{position:absolute;inset:0;background:#243040;overflow:hidden;display:none}
+  .cdeWin-bim canvas{display:block;width:100%;height:100%}
+  .cdeWin-bim .bimDica{position:absolute;left:10px;bottom:10px;z-index:2;font-size:11px;
+    color:#cbd5e1;background:rgba(15,23,42,.6);padding:5px 9px;border-radius:6px;pointer-events:none}
+  /* Mensagem própria do 3D: a do .cdeWin-load vive dentro do stage, que fica
+     escondido quando o 3D está em cena — ali ela nunca apareceria. */
+  .cdeWin-bim .bimLoad{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;
+    color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.75);padding:12px 20px;border-radius:10px;
+    text-align:center;max-width:80%;display:none}
+  .cdeWin-bim .bimLoad.on{display:block}
   .cdeWin-load{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:14px;background:rgba(15,23,42,.7);padding:12px 20px;border-radius:10px;display:none}
   .cdeWin-load.on{display:block}
   /* Comparador de revisões — modo slider (régua vertical arrastável) */
@@ -865,9 +890,22 @@ async function iniciarConversaoBim(arquivoId, docId){
     alert('Não foi possível iniciar a conversão: '+((e&&e.message)||e));
   }
 }
-function abrirBim3D(docId){
-  // Visualizador embutido no CDE ainda em construção (etapas seguintes).
-  alert('O visualizador 3D embutido no CDE está em construção. O modelo já está convertido e pronto — assim que o visualizador entrar no ar, ele abre direto por aqui.');
+function abrirBim3D(docId){ openDocInWindow(docId, 'bim'); }
+
+// three + Fragments só são baixados quando alguém abre um modelo — são pesados
+// e a esmagadora maioria das sessões do CDE nunca toca no 3D. A promessa fica
+// guardada, então abrir o segundo modelo não baixa nada de novo; se falhar,
+// zera para a próxima tentativa poder tentar de verdade.
+let _bim3dLibs=null;
+function bim3dLibs(){
+  if(_bim3dLibs) return _bim3dLibs;
+  _bim3dLibs = Promise.all([
+    import('three'),
+    import('@thatopen/fragments'),
+    import('three/examples/jsm/controls/OrbitControls.js')
+  ]).then(([THREE, FRAGS, oc])=>({ THREE, FRAGS, OrbitControls: oc.OrbitControls }))
+    .catch(e=>{ _bim3dLibs=null; throw e; });
+  return _bim3dLibs;
 }
 // Enquanto houver conversão pendente/processando NA ABA BIM, reconsulta o
 // status a cada poucos segundos (a conversão roda em outro serviço, minutos
@@ -1254,6 +1292,8 @@ class CdeWin {
       +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
       +     '<div class="cdeWin-load on">Abrindo…</div></div>'
       +   '<div class="cdeWin-dxf"></div>'
+      +   '<div class="cdeWin-bim"><div class="bimLoad on">Abrindo modelo 3D…</div>'
+      +     '<div class="bimDica">Arraste para girar · roda para zoom · botão direito para deslocar</div></div>'
       +   '<div class="cdeWin-resize"></div>'
       + '</div>';
     this.el       = w;
@@ -1269,6 +1309,10 @@ class CdeWin {
     this.tilesB   = w.querySelector('.cdeWin-tilesB');
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
+    this.bimWrap  = w.querySelector('.cdeWin-bim');
+    this.bimLoadEl= w.querySelector('.cdeWin-bim .bimLoad');
+    this.B3 = null;      // estado do visualizador 3D (só existe se este doc for BIM)
+    this._bimJob = 0;    // contador de abertura do 3D — invalida cargas em curso
     this.loadEl   = w.querySelector('.cdeWin-load');
     this.resizeEl = w.querySelector('.cdeWin-resize');
     this.cmpDivEl = w.querySelector('.cdeWin-cmpDiv');
@@ -1423,6 +1467,7 @@ class CdeWin {
     if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
     this._renderJob++; this._cancelarRender();
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
+    this.bimDispose();
     if(this.V.doc){ try{ this.V.doc.destroy(); }catch(_){} this.V.doc=null; }
     if(this._cmpDocA){ try{ this._cmpDocA.destroy(); }catch(_){} this._cmpDocA=null; }
     this.cmp=null;
@@ -1446,26 +1491,150 @@ class CdeWin {
     this.statusEl.style.background = s ? s.cor : '#94A3B8';
     atualizarTaskbar();                     // aba ganha o código da prancha
     // arquivos visualizáveis da revisão vigente
-    this.VIEW_FILES = {};
+    this.VIEW_FILES = {}; this.VIEW_FRAG = null;
     const rev = doc.atual;
     ((rev&&rev.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
-      if((e==='pdf'||e==='dxf') && !this.VIEW_FILES[e]) this.VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' }; });
+      if((e==='pdf'||e==='dxf') && !this.VIEW_FILES[e]) this.VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' };
+      // O 3D não abre o IFC: abre o .frag gerado a partir dele. Sem conversão
+      // pronta não há o que mostrar, e o card da aba BIM é quem oferece converter.
+      if(e==='ifc' && a.frag_status==='pronto' && a.frag_path && !this.VIEW_FRAG)
+        this.VIEW_FRAG = { path:a.frag_path, nome:a.nome, provider:'r2' };
+    });
     // Pins do App (Elo C) — resetar e carregar em segundo plano
     this.CDE_APTS=[]; this.CDE_PRANCHA_ID=null; this.renderPinsCDE();
     this.carregarPinsCDE(doc.id).catch(e=>console.warn('pins CDE:', e.message||e));
-    // Decide formato — sempre prioriza PDF
-    const fmt = (preferFmt && this.VIEW_FILES[preferFmt]) ? preferFmt
-              : (this.VIEW_FILES.pdf ? 'pdf' : (this.VIEW_FILES.dxf ? 'dxf' : null));
+    // Decide formato — sempre prioriza PDF; 3D é o fallback dos modelos BIM,
+    // que normalmente não têm PDF nem DXF na revisão.
+    const temFmt = (f)=> f==='bim' ? !!this.VIEW_FRAG : !!this.VIEW_FILES[f];
+    const fmt = (preferFmt && temFmt(preferFmt)) ? preferFmt
+              : (this.VIEW_FILES.pdf ? 'pdf' : (this.VIEW_FILES.dxf ? 'dxf' : (this.VIEW_FRAG ? 'bim' : null)));
     if(!fmt){ this.msg(rev ? 'Sem visualização disponível para este arquivo. Baixe em "Detalhes / status".' : 'Este documento ainda não tem revisão com arquivo.'); if(cdeAtiva()===this) atualizarToolbar(); return; }
     await this.abrirFormato(fmt);
   }
   async abrirFormato(fmt){
     this.VIEW_FMT = fmt;
+    // Sair do 3D libera o contexto WebGL na hora: o browser só permite um
+    // punhado deles por aba, e janela aberta sem uso seguraria um à toa.
+    if(fmt!=='bim') this.bimDispose();
     this.stage.style.display = fmt==='pdf' ? 'block' : 'none';
     this.dxfWrap.style.display = fmt==='dxf' ? 'block' : 'none';
-    if(fmt==='pdf') await this.carregarPdf(this.VIEW_FILES.pdf.path, this.VIEW_FILES.pdf.provider);
-    else            await this.carregarDxf(this.VIEW_FILES.dxf.path, this.VIEW_FILES.dxf.provider);
+    this.bimWrap.style.display = fmt==='bim' ? 'block' : 'none';
+    if(fmt==='pdf')      await this.carregarPdf(this.VIEW_FILES.pdf.path, this.VIEW_FILES.pdf.provider);
+    else if(fmt==='dxf') await this.carregarDxf(this.VIEW_FILES.dxf.path, this.VIEW_FILES.dxf.provider);
+    else if(this.VIEW_FRAG) await this.carregarBim3D(this.VIEW_FRAG.path, this.VIEW_FRAG.provider);
+    else                 this.bimMsg('Este documento não tem modelo 3D convertido.');
     if(cdeAtiva()===this) atualizarToolbar();
+  }
+  // ── Visualizador 3D (modelos BIM) ─────────────────────────────────────────
+  bimMsg(t){ if(this.bimLoadEl){ this.bimLoadEl.textContent=t; this.bimLoadEl.classList.add('on'); } }
+  bimHideMsg(){ if(this.bimLoadEl) this.bimLoadEl.classList.remove('on'); }
+  async carregarBim3D(fragPath, provider){
+    this.bimDispose();
+    this.bimMsg('Carregando visualizador…');
+    // Marca esta abertura: se o usuário fechar a janela ou trocar de documento
+    // no meio do caminho (download de modelo grande demora), os await abaixo
+    // ainda vão retornar — e sem isso montariam uma cena órfã, invisível e
+    // segurando um contexto WebGL para sempre.
+    const meuJob = ++this._bimJob;
+    const abortado = ()=> this._bimJob!==meuJob;
+    try{
+      const { THREE, FRAGS, OrbitControls } = await bim3dLibs();
+      if(abortado()) return;
+
+      this.bimMsg('Baixando modelo…');
+      const url  = await cdeSignedUrl(fragPath, provider||'r2');
+      const resp = await fetch(url);
+      if(!resp.ok) throw new Error('não consegui baixar o modelo (HTTP '+resp.status+')');
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      if(abortado()) return;
+
+      this.bimMsg('Montando a cena…');
+      const renderer = new THREE.WebGLRenderer({ antialias:true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+      this.bimWrap.appendChild(renderer.domElement);
+
+      const scene  = new THREE.Scene();
+      scene.background = new THREE.Color(0x243040);
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      // Luz ambiente forte + uma direcional: modelo de projeto não tem material
+      // nem iluminação definidos, então o objetivo é legibilidade das formas,
+      // não realismo.
+      scene.add(new THREE.AmbientLight(0xffffff, 2.2));
+      const sol = new THREE.DirectionalLight(0xffffff, 1.8);
+      sol.position.set(1, 2, 1.5);
+      scene.add(sol);
+
+      const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
+      const model = await fragments.load(bytes, { modelId:this.id+':'+fragPath, camera });
+      if(abortado()){ try{ fragments.dispose(); }catch(_){}
+                      try{ renderer.dispose(); renderer.forceContextLoss(); }catch(_){}
+                      renderer.domElement.remove(); return; }
+      scene.add(model.object);
+
+      this.B3 = { THREE, renderer, scene, camera, controls, fragments, model, raf:null, ro:null, vivo:true };
+
+      // O Fragments transmite a geometria sob demanda, guiado pela câmera:
+      // cada movimento pede um update para ele decidir o que carregar/soltar.
+      controls.addEventListener('change', ()=>{ if(this.B3) this.B3.fragments.update().catch(()=>{}); });
+      const ro = new ResizeObserver(()=> this.bimResize());
+      ro.observe(this.bimWrap); this.B3.ro = ro;
+
+      this.bimResize();
+      this.bimEnquadrar();
+      await fragments.update(true);
+
+      const loop = ()=>{
+        const B=this.B3; if(!B||!B.vivo) return;
+        B.raf = requestAnimationFrame(loop);
+        B.controls.update();
+        B.renderer.render(B.scene, B.camera);
+      };
+      loop();
+      this.bimHideMsg();
+    }catch(e){
+      if(abortado()) return;
+      console.warn('3D:', e);
+      this.bimDispose();
+      this.bimMsg('Não foi possível abrir o modelo 3D: '+((e&&e.message)||e));
+    }
+  }
+  bimResize(){
+    const B=this.B3; if(!B) return;
+    const w=this.bimWrap.clientWidth||1, h=this.bimWrap.clientHeight||1;
+    B.renderer.setSize(w, h, false);
+    B.camera.aspect = w/h;
+    B.camera.updateProjectionMatrix();
+  }
+  // Coloca a câmera a uma distância que caiba o modelo inteiro, e ajusta
+  // near/far à escala real dele — um prédio em milímetros e outro em metros
+  // pedem planos de corte muito diferentes.
+  bimEnquadrar(){
+    const B=this.B3; if(!B) return;
+    const cx=B.model.box; if(!cx || cx.isEmpty()) return;
+    const centro = cx.getCenter(new B.THREE.Vector3());
+    const tam    = cx.getSize(new B.THREE.Vector3());
+    const raio   = Math.max(tam.x, tam.y, tam.z)*0.5 || 1;
+    const dist   = (raio/Math.sin((B.camera.fov*Math.PI/180)/2))*1.35;
+    B.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
+    B.camera.near = Math.max(dist/5000, 0.01);
+    B.camera.far  = dist*50;
+    B.camera.updateProjectionMatrix();
+    B.controls.target.copy(centro);
+    B.controls.update();
+    B.fragments.update(true).catch(()=>{});
+  }
+  bimDispose(){
+    this._bimJob = (this._bimJob||0)+1;   // invalida qualquer carga em curso
+    const B=this.B3; if(!B) return;
+    this.B3=null; B.vivo=false;
+    if(B.raf) cancelAnimationFrame(B.raf);
+    if(B.ro)  { try{ B.ro.disconnect(); }catch(_){} }
+    try{ B.controls.dispose(); }catch(_){}
+    try{ B.fragments.dispose(); }catch(_){}
+    try{ B.renderer.dispose(); B.renderer.forceContextLoss(); }catch(_){}
+    try{ B.renderer.domElement.remove(); }catch(_){}
   }
   async carregarPdf(path, provider){
     this.msg('Abrindo prancha…');
