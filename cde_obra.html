@@ -579,7 +579,7 @@ async function carregarDocs(){
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       const { data:a } = await sb.from('cde_arquivo_auria')
-        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal').in('revisao_id',revIds);
+        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error').in('revisao_id',revIds);
       arqs=a||[];
     }
   }
@@ -758,7 +758,7 @@ function renderRail(){
   if(SEL_DISC && SEL_DISC!=='__BIM__' && !discs.includes(SEL_DISC)) SEL_DISC=null;
   renderNav();
 }
-function selDisc(d){ SEL_DISC = (SEL_DISC===d?null:d); NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
+function selDisc(d){ const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
 
 function renderNav(){
   const p=$('navPanel');
@@ -797,6 +797,11 @@ function toggleEtapa(et){
 
 // Aba BIM: lista TODOS os modelos 3D (IFC, RVT…) da obra, agrupados por
 // disciplina. Ponto único onde os modelos ficam "registrados", como pedido.
+// Cada IFC mostra o status da conversão para o visualizador (frag_status,
+// gravado pelo serviço externo de conversão) e um botão pra iniciar/repetir.
+function arquivoIfcDe(d){
+  return ((d.atual&&d.atual.arqs)||[]).find(a=>(a.extensao||'').toLowerCase()==='ifc');
+}
 function navBim(){
   const bims=DOCS.filter(docEhBim);
   if(!bims.length) return '<div class="nav-hint">Nenhum modelo BIM (IFC, RVT…) recebido ainda.</div>';
@@ -806,9 +811,77 @@ function navBim(){
     const ds=porDisc[k].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     out+=`<div class="folder open"><div class="folder-h" style="cursor:default">
       <span class="fic">📦</span><span class="fnm">${esc(discLabel(k))}</span><span class="fct">${ds.length}</span>
-    </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
+    </div><div class="folder-b">${ds.map(cardFdocBim).join('')}</div></div>`;
   });
+  bimAtualizarPoll();
   return out;
+}
+function cardFdocBim(d){
+  const ifc = arquivoIfcDe(d);
+  if(!ifc) return cardFdoc(d);   // BIM sem IFC (só RVT etc.) — sem conversão disponível ainda
+
+  const s=d.atual?STMAP[d.atual.status]:null;
+  const cor=s?s.cor:'#94A3B8';
+  const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
+  const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
+
+  const st = ifc.frag_status || null;
+  let selo;
+  if(st==='pronto'){
+    selo = `<button class="btn sec sm" onclick="event.stopPropagation();abrirBim3D('${d.id}')" title="Abrir o visualizador 3D">👁 Ver em 3D</button>`;
+  }else if(st==='pendente' || st==='processando'){
+    selo = `<span class="pill" style="background:#B7791F;color:#fff" title="A conversão roda em segundo plano e pode levar alguns minutos em modelos grandes">⏳ Processando…</span>`;
+  }else if(st==='erro'){
+    selo = `<button class="btn sec sm" style="border-color:#A32D2D;color:#A32D2D" onclick="event.stopPropagation();iniciarConversaoBim('${ifc.id}','${d.id}')" title="${esc(ifc.frag_error||'Falhou — tentar de novo')}">⚠ Falhou — tentar de novo</button>`;
+  }else{
+    selo = `<button class="btn sec sm" onclick="event.stopPropagation();iniciarConversaoBim('${ifc.id}','${d.id}')" title="Gera o modelo leve usado pelo visualizador 3D">🧊 Converter para 3D</button>`;
+  }
+
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" style="flex-wrap:wrap">
+    ${chk}
+    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(d.titulo||'')} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
+    <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">${selo}</div>
+  </div>`;
+}
+async function iniciarConversaoBim(arquivoId, docId){
+  const d=DOCS.find(x=>x.id===docId); const ifc=d&&arquivoIfcDe(d);
+  if(ifc){ ifc.frag_status='pendente'; ifc.frag_error=null; renderNav(); }   // feedback na hora
+  try{
+    const r=await sb.functions.invoke('cde-bim-convert',{ body:{ arquivoId } });
+    if(r.error) throw r.error;
+    if(r.data && r.data.error) throw new Error(r.data.error);
+  }catch(e){
+    if(ifc){ ifc.frag_status='erro'; ifc.frag_error=(e&&e.message)||String(e); renderNav(); }
+    alert('Não foi possível iniciar a conversão: '+((e&&e.message)||e));
+  }
+}
+function abrirBim3D(docId){
+  // Visualizador embutido no CDE ainda em construção (etapas seguintes).
+  alert('O visualizador 3D embutido no CDE está em construção. O modelo já está convertido e pronto — assim que o visualizador entrar no ar, ele abre direto por aqui.');
+}
+// Enquanto houver conversão pendente/processando NA ABA BIM, reconsulta o
+// status a cada poucos segundos (a conversão roda em outro serviço, minutos
+// de duração em modelo grande — não dá pra saber "terminou" sem perguntar).
+// Para sozinho quando não há mais nada pendente ou o usuário sai da aba BIM.
+let BIM_POLL_TIMER=null;
+function bimPararPoll(){ if(BIM_POLL_TIMER){ clearInterval(BIM_POLL_TIMER); BIM_POLL_TIMER=null; } }
+function bimAtualizarPoll(){
+  const pendentes = DOCS.filter(docEhBim).map(arquivoIfcDe).filter(a=>a && (a.frag_status==='pendente'||a.frag_status==='processando'));
+  if(!pendentes.length){ bimPararPoll(); return; }
+  if(BIM_POLL_TIMER) return;
+  BIM_POLL_TIMER=setInterval(async()=>{
+    if(SEL_DISC!=='__BIM__'){ bimPararPoll(); return; }
+    const ids=pendentes.map(a=>a.id);
+    try{
+      const { data } = await sb.from('cde_arquivo_auria').select('id,frag_status,frag_path,frag_error').in('id',ids);
+      (data||[]).forEach(row=>{
+        for(const d of DOCS){ const a=arquivoIfcDe(d); if(a && a.id===row.id){ Object.assign(a,row); break; } }
+      });
+    }catch(e){ /* tenta de novo no próximo tick */ }
+    if(SEL_DISC==='__BIM__') renderNav();
+  }, 8000);
 }
 function navDisciplina(){
   if(SEL_DISC==='__BIM__') return navBim();
