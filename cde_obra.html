@@ -892,6 +892,32 @@ async function iniciarConversaoBim(arquivoId, docId){
 }
 function abrirBim3D(docId){ openDocInWindow(docId, 'bim'); }
 
+// Federar = abrir várias disciplinas na MESMA cena. Só entram os que já têm
+// conversão pronta; os demais são nomeados antes de abrir, para ninguém achar
+// que "sumiu" um modelo da seleção.
+async function abrirBimFederado(){
+  const modelos=[], semModelo=[];
+  [...MULTI_SEL].forEach(id=>{
+    const d=DOCS.find(x=>x.id===id); if(!d) return;
+    const a=arquivoIfcDe(d);
+    if(a && a.frag_status==='pronto' && a.frag_path)
+      modelos.push({ path:a.frag_path, nome:d.codigo||a.nome, provider:'r2' });
+    else semModelo.push(d.codigo||'(sem código)');
+  });
+  if(!modelos.length){
+    alert('Nenhum dos modelos selecionados tem a conversão 3D pronta.\n\nConverta primeiro pelo botão no card de cada modelo.');
+    return;
+  }
+  if(semModelo.length){
+    const ok = confirm('Estes ficam de fora por ainda não terem 3D convertido:\n\n  '+semModelo.join('\n  ')
+                     + '\n\nAbrir os '+modelos.length+' que estão prontos?');
+    if(!ok) return;
+  }
+  const w = new CdeWin();
+  focar(w); atualizarVempty(); atualizarTaskbar();
+  await w.setModelosFederados(modelos);
+}
+
 // three + Fragments só são baixados quando alguém abre um modelo — são pesados
 // e a esmagadora maioria das sessões do CDE nunca toca no 3D. A promessa fica
 // guardada, então abrir o segundo modelo não baixa nada de novo; se falhar,
@@ -1258,6 +1284,8 @@ class CdeWin {
     this._detTimer=null;
     this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
+    this.isFed = false;  // true = cena federada (vários modelos, sem documento único)
+    this.fedLabel = '';  // rótulo da aba na taskbar quando federada
     // Padrão é a RÉGUA: mostra cada revisão limpa, do jeito que foi desenhada.
     // O overlay tingido continua a um clique, para caçar o que mudou.
     this.cmpMode = 'slider';   // 'slider' (régua arrastável) | 'color' (overlay tingido)
@@ -1293,7 +1321,7 @@ class CdeWin {
       +     '<div class="cdeWin-load on">Abrindo…</div></div>'
       +   '<div class="cdeWin-dxf"></div>'
       +   '<div class="cdeWin-bim"><div class="bimLoad on">Abrindo modelo 3D…</div>'
-      +     '<div class="bimDica">Arraste para girar · roda para zoom · botão direito para deslocar</div></div>'
+      +     '<div class="bimDica">Arraste para girar · roda para zoom · clique da roda para deslocar</div></div>'
       +   '<div class="cdeWin-resize"></div>'
       + '</div>';
     this.el       = w;
@@ -1497,19 +1525,36 @@ class CdeWin {
       if((e==='pdf'||e==='dxf') && !this.VIEW_FILES[e]) this.VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' };
       // O 3D não abre o IFC: abre o .frag gerado a partir dele. Sem conversão
       // pronta não há o que mostrar, e o card da aba BIM é quem oferece converter.
+      // Lista (e não um só) porque a mesma cena também serve o modo federado.
       if(e==='ifc' && a.frag_status==='pronto' && a.frag_path && !this.VIEW_FRAG)
-        this.VIEW_FRAG = { path:a.frag_path, nome:a.nome, provider:'r2' };
+        this.VIEW_FRAG = [{ path:a.frag_path, nome:a.nome, provider:'r2' }];
     });
     // Pins do App (Elo C) — resetar e carregar em segundo plano
     this.CDE_APTS=[]; this.CDE_PRANCHA_ID=null; this.renderPinsCDE();
     this.carregarPinsCDE(doc.id).catch(e=>console.warn('pins CDE:', e.message||e));
     // Decide formato — sempre prioriza PDF; 3D é o fallback dos modelos BIM,
     // que normalmente não têm PDF nem DXF na revisão.
-    const temFmt = (f)=> f==='bim' ? !!this.VIEW_FRAG : !!this.VIEW_FILES[f];
+    const temFmt = (f)=> f==='bim' ? !!(this.VIEW_FRAG && this.VIEW_FRAG.length) : !!this.VIEW_FILES[f];
     const fmt = (preferFmt && temFmt(preferFmt)) ? preferFmt
               : (this.VIEW_FILES.pdf ? 'pdf' : (this.VIEW_FILES.dxf ? 'dxf' : (this.VIEW_FRAG ? 'bim' : null)));
     if(!fmt){ this.msg(rev ? 'Sem visualização disponível para este arquivo. Baixe em "Detalhes / status".' : 'Este documento ainda não tem revisão com arquivo.'); if(cdeAtiva()===this) atualizarToolbar(); return; }
     await this.abrirFormato(fmt);
+  }
+  // Janela federada: várias disciplinas numa cena só. Não pertence a um
+  // documento (DOC_SEL fica null), então nada que dependa de "a prancha desta
+  // janela" se aplica aqui — inclusive o reaproveitamento em openDocInWindow.
+  async setModelosFederados(modelos){
+    this.DOC_SEL = null;
+    this.isFed = true;
+    this.fedLabel = 'Federado (' + modelos.length + ')';
+    this.titleEl.textContent = 'Modelo federado';
+    this.subEl.textContent   = modelos.map(m=>m.nome).join('  +  ');
+    this.statusEl.textContent = modelos.length + ' modelos';
+    this.statusEl.style.background = '#0E7C86';
+    atualizarTaskbar();
+    this.VIEW_FILES = {};
+    this.VIEW_FRAG  = modelos;
+    await this.abrirFormato('bim');
   }
   async abrirFormato(fmt){
     this.VIEW_FMT = fmt;
@@ -1521,14 +1566,17 @@ class CdeWin {
     this.bimWrap.style.display = fmt==='bim' ? 'block' : 'none';
     if(fmt==='pdf')      await this.carregarPdf(this.VIEW_FILES.pdf.path, this.VIEW_FILES.pdf.provider);
     else if(fmt==='dxf') await this.carregarDxf(this.VIEW_FILES.dxf.path, this.VIEW_FILES.dxf.provider);
-    else if(this.VIEW_FRAG) await this.carregarBim3D(this.VIEW_FRAG.path, this.VIEW_FRAG.provider);
+    else if(this.VIEW_FRAG && this.VIEW_FRAG.length) await this.carregarBim3D(this.VIEW_FRAG);
     else                 this.bimMsg('Este documento não tem modelo 3D convertido.');
     if(cdeAtiva()===this) atualizarToolbar();
   }
   // ── Visualizador 3D (modelos BIM) ─────────────────────────────────────────
   bimMsg(t){ if(this.bimLoadEl){ this.bimLoadEl.textContent=t; this.bimLoadEl.classList.add('on'); } }
   bimHideMsg(){ if(this.bimLoadEl) this.bimLoadEl.classList.remove('on'); }
-  async carregarBim3D(fragPath, provider){
+  // modelos = [{path, nome, provider}] — um só (documento BIM) ou vários
+  // (federado). Todos entram na MESMA cena e no mesmo FragmentsModels, que
+  // coordena as origens entre si (autoCoordinate).
+  async carregarBim3D(modelos){
     this.bimDispose();
     this.bimMsg('Carregando visualizador…');
     // Marca esta abertura: se o usuário fechar a janela ou trocar de documento
@@ -1541,11 +1589,15 @@ class CdeWin {
       const { THREE, FRAGS, OrbitControls } = await bim3dLibs();
       if(abortado()) return;
 
-      this.bimMsg('Baixando modelo…');
-      const url  = await cdeSignedUrl(fragPath, provider||'r2');
-      const resp = await fetch(url);
-      if(!resp.ok) throw new Error('não consegui baixar o modelo (HTTP '+resp.status+')');
-      const bytes = new Uint8Array(await resp.arrayBuffer());
+      // Baixa todos em paralelo: são independentes, e em federado esperar um
+      // por vez multiplicaria a espera pelo número de disciplinas.
+      this.bimMsg(modelos.length>1 ? `Baixando ${modelos.length} modelos…` : 'Baixando modelo…');
+      const baixados = await Promise.all(modelos.map(async m=>{
+        const url  = await cdeSignedUrl(m.path, m.provider||'r2');
+        const resp = await fetch(url);
+        if(!resp.ok) throw new Error(`não consegui baixar "${m.nome||m.path}" (HTTP ${resp.status})`);
+        return { m, bytes:new Uint8Array(await resp.arrayBuffer()) };
+      }));
       if(abortado()) return;
 
       this.bimMsg('Montando a cena…');
@@ -1558,6 +1610,10 @@ class CdeWin {
       const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
+      // Botão do meio (clique da roda) desloca — é o gesto que quem usa
+      // Navisworks/Revit já tem no dedo. O direito fica livre de propósito,
+      // reservado para o menu de contexto do elemento mais adiante.
+      controls.mouseButtons = { LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.PAN, RIGHT:null };
       // Luz ambiente forte + uma direcional: modelo de projeto não tem material
       // nem iluminação definidos, então o objetivo é legibilidade das formas,
       // não realismo.
@@ -1567,13 +1623,19 @@ class CdeWin {
       scene.add(sol);
 
       const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
-      const model = await fragments.load(bytes, { modelId:this.id+':'+fragPath, camera });
+      const carregados = [];
+      for(const {m, bytes} of baixados){
+        this.bimMsg(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
+        const model = await fragments.load(bytes, { modelId:this.id+':'+m.path, camera });
+        carregados.push({ nome:m.nome, model });
+        scene.add(model.object);
+        if(abortado()) break;
+      }
       if(abortado()){ try{ fragments.dispose(); }catch(_){}
                       try{ renderer.dispose(); renderer.forceContextLoss(); }catch(_){}
                       renderer.domElement.remove(); return; }
-      scene.add(model.object);
 
-      this.B3 = { THREE, renderer, scene, camera, controls, fragments, model, raf:null, ro:null, vivo:true };
+      this.B3 = { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, raf:null, ro:null, vivo:true };
 
       // O Fragments transmite a geometria sob demanda, guiado pela câmera:
       // cada movimento pede um update para ele decidir o que carregar/soltar.
@@ -1612,7 +1674,11 @@ class CdeWin {
   // pedem planos de corte muito diferentes.
   bimEnquadrar(){
     const B=this.B3; if(!B) return;
-    const cx=B.model.box; if(!cx || cx.isEmpty()) return;
+    // União das caixas: no federado a câmera tem que caber o conjunto, não o
+    // primeiro modelo que entrou.
+    const cx = new B.THREE.Box3();
+    B.modelos.forEach(x=>{ const b=x.model.box; if(b && !b.isEmpty()) cx.union(b); });
+    if(cx.isEmpty()) return;
     const centro = cx.getCenter(new B.THREE.Vector3());
     const tam    = cx.getSize(new B.THREE.Vector3());
     const raio   = Math.max(tam.x, tam.y, tam.z)*0.5 || 1;
@@ -2124,9 +2190,10 @@ function atualizarTaskbar(){
   if(!WIN_STATE.list.length){ bar.style.display='none'; bar.innerHTML=''; return; }
   bar.style.display='flex';
   bar.innerHTML = WIN_STATE.list.map(w=>{
-    const cod = w.DOC_SEL ? w.DOC_SEL.codigo : '(sem prancha)';
+    const cod = w.DOC_SEL ? w.DOC_SEL.codigo : (w.fedLabel || '(sem prancha)');
+    const ic  = w.isFed ? '🧊' : '📄';
     const cls = 'cdeTask' + (WIN_STATE.act===w && w.state!=='min' ? ' act' : '') + (w.state==='min' ? ' min' : '');
-    return `<button class="${cls}" onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'}">📄 ${esc(cod)}</button>`;
+    return `<button class="${cls}" onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'}">${ic} ${esc(cod)}</button>`;
   }).join('');
 }
 function cdeTaskClick(id){
@@ -2151,7 +2218,7 @@ function restaurarWin(id){
 // Nova janela nasce maximizada, ocupando todo o workspace.
 async function openDocInWindow(docId, preferFmt){
   const doc = DOCS.find(d=>d.id===docId); if(!doc) return;
-  const existe = WIN_STATE.list.find(w=> !w.isCmp && w.DOC_SEL && w.DOC_SEL.id===docId);
+  const existe = WIN_STATE.list.find(w=> !w.isCmp && !w.isFed && w.DOC_SEL && w.DOC_SEL.id===docId);
   if(existe){
     if(existe.state==='min') existe.restaurar();
     focar(existe);
@@ -2206,8 +2273,15 @@ function renderMultiBar(){
   const bar=$('multiBar');
   if(!MULTI_MODE || !MULTI_SEL.size){ bar.style.display='none'; bar.innerHTML=''; return; }
   bar.style.display='flex';
-  bar.innerHTML = `<span>${MULTI_SEL.size} prancha(s) selecionada(s)</span>
-    <button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>
+  // Na aba BIM a ação natural é federar (juntar as disciplinas numa cena só),
+  // não abrir pranchas 2D no App — que é o que a seleção múltipla faz nas
+  // outras abas.
+  const ehBim = SEL_DISC==='__BIM__';
+  const acao = ehBim
+    ? `<button onclick="abrirBimFederado()">🧊 Ver federado</button>`
+    : `<button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>`;
+  bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
+    ${acao}
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
 }
 function abrirMultiNoApp(){
