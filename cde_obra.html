@@ -1814,6 +1814,20 @@ class CdeWin {
         dn.arrastou=true; dn.ux=e.clientX; dn.uy=e.clientY;
         this.bimCorteArrastar(dx, dy);
       });
+      // Reancora o alvo antes/depois dos gestos que dependem da distância.
+      // Com folga (200ms) porque cada chamada é um raycast no worker; o
+      // pan pede na hora (forçar), senão o primeiro arrasto ainda sairia com
+      // a distância velha.
+      let pivoT=0, pivoOcup=false;
+      const pedirPivo=(forcar)=>{
+        const agora=Date.now();
+        if(!forcar && (pivoOcup || agora-pivoT<200)) return;
+        pivoT=agora; pivoOcup=true;
+        this.bimPivotarCentro().catch(()=>{}).then(()=>{ pivoOcup=false; });
+      };
+      renderer.domElement.addEventListener('wheel', ()=> pedirPivo(false), { passive:true });
+      renderer.domElement.addEventListener('pointerdown', (e)=>{ if(e.button===1) pedirPivo(true); });
+
       // Duplo clique recentra a órbita no ponto clicado. Sem isso, girar de
       // perto orbita em torno de um alvo que ficou lá atrás e o modelo some
       // da tela.
@@ -2155,6 +2169,27 @@ class CdeWin {
     try{ await x.model.setVisible(undefined, visivel); }catch(_){}
     try{ await B.fragments.update(true); }catch(_){}
     this.bimRenderCamadas();
+  }
+  // Reancora o alvo da órbita SOBRE a superfície que está sendo olhada.
+  //
+  //  Por que isto existe: no OrbitControls o pan e o zoom escalam pela
+  //  distância câmera↔alvo, e com zoomToCursor o three reancora o alvo A
+  //  POUCOS CENTÍMETROS da câmera (OrbitControls.js:855). O alvo colado no
+  //  nariz faz o passo de pan/zoom virar quase zero — a navegação "congela".
+  //  A órbita não sofre porque é angular, o que explica ela seguir fluida
+  //  enquanto as outras travam.
+  //
+  //  O raio sai do CENTRO da tela de propósito: update() termina com
+  //  lookAt(alvo) (linha 788), então um alvo fora do eixo de visão giraria a
+  //  câmera sozinha. No eixo, só a DISTÂNCIA muda — que é o que precisamos.
+  async bimPivotarCentro(){
+    const B=this.B3; if(!B||!B.vivo) return;
+    const r=B.renderer.domElement.getBoundingClientRect();
+    const hit=await this.bimRaycast({ clientX:r.left+r.width/2, clientY:r.top+r.height/2 });
+    const C=this.B3;
+    if(!C||!C.vivo||!hit||!(hit.distance>0)) return;   // olhando o vazio: mantém o alvo
+    const dir=new C.THREE.Vector3(); C.camera.getWorldDirection(dir);
+    C.controls.target.copy(C.camera.position).addScaledVector(dir, hit.distance);
   }
   // Acha o elemento sob o cursor entre TODOS os modelos visíveis e devolve o
   // mais próximo da câmera. Usado pela seleção, pela medição e pelo corte.
