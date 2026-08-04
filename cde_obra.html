@@ -184,6 +184,15 @@
   .cdeWin-bim .bimAndar .nv{font-size:12px;min-width:118px;text-align:center}
   .cdeWin-bim .bimAndar .nv b{display:block;font-size:13px}
   .cdeWin-bim .bimAndar .sair{background:var(--accent);border-color:var(--accent);color:#231703;font-weight:700}
+  /* Mira central: com o ponteiro travado o cursor some, então ela é a única
+     referência de para onde o clique vai. */
+  .cdeWin-bim .bimMira{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    z-index:4;display:none;pointer-events:none;width:18px;height:18px}
+  .cdeWin-bim .bimMira.on{display:block}
+  .cdeWin-bim .bimMira::before,.cdeWin-bim .bimMira::after{content:'';position:absolute;background:#fff;
+    box-shadow:0 0 2px rgba(0,0,0,.9)}
+  .cdeWin-bim .bimMira::before{left:50%;top:0;width:2px;height:18px;margin-left:-1px}
+  .cdeWin-bim .bimMira::after{top:50%;left:0;height:2px;width:18px;margin-top:-1px}
   .cdeWin-bim .bimCota{position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:none;
     background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;
     padding:2px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)}
@@ -1460,6 +1469,7 @@ class CdeWin {
       +         '<div class="bpConteudo"><div class="bpVazio">Clique num elemento do modelo.</div></div>'
       +       '</div>'
       +     '</div>'
+      +     '<div class="bimMira"></div>'
       +     '<div class="bimAndar">'
       +       '<button data-t="desce" title="Descer um pavimento">▼</button>'
       +       '<span class="nv"><b>—</b><span class="dica">W A S D para andar</span></span>'
@@ -1772,10 +1782,15 @@ class CdeWin {
       this.bimMsg('Montando a cena…');
       const renderer = new THREE.WebGLRenderer({ antialias:true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+      // Sem mapeamento de tons, luz forte satura e o modelo "lava": tudo vira
+      // branco chapado e as formas somem. ACES comprime as altas luzes e
+      // devolve o relevo das peças.
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.15;
       this.bimWrap.appendChild(renderer.domElement);
 
       const scene  = new THREE.Scene();
-      scene.background = new THREE.Color(0x243040);
+      scene.background = new THREE.Color(0x2b3646);
       const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
@@ -1791,15 +1806,25 @@ class CdeWin {
       // Navisworks/Revit já tem no dedo. O direito fica livre de propósito,
       // reservado para o menu de contexto do elemento mais adiante.
       controls.mouseButtons = { LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.PAN, RIGHT:null };
-      // Luz ambiente forte + uma direcional: modelo de projeto não tem material
-      // nem iluminação definidos, então o objetivo é legibilidade das formas,
-      // não realismo.
-      scene.add(new THREE.AmbientLight(0xffffff, 2.2));
-      const sol = new THREE.DirectionalLight(0xffffff, 1.8);
-      sol.position.set(1, 2, 1.5);
-      scene.add(sol);
+      // Iluminação: o objetivo é LEGIBILIDADE das formas, não realismo. Uma
+      // ambiente forte (como estava) ilumina todas as faces por igual e achata
+      // o modelo — some a diferença entre laje, viga e pilar. Aqui:
+      //  - hemisférica dá gradiente céu→chão, que já separa horizontal de
+      //    vertical sozinha;
+      //  - uma principal define o relevo e cria o lado escuro;
+      //  - uma de preenchimento, oposta e fraca, evita que esse lado escuro
+      //    vire um borrão preto sem informação.
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25));
+      scene.add(new THREE.AmbientLight(0xffffff, 0.30));
+      const principal = new THREE.DirectionalLight(0xffffff, 1.55);
+      principal.position.set(1, 2.2, 1.4);
+      scene.add(principal);
+      const preench = new THREE.DirectionalLight(0xcfe0ff, 0.55);
+      preench.position.set(-1.4, 0.7, -1.1);
+      scene.add(preench);
 
       const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
+      try{ fragments.settings.graphicsQuality = 1; }catch(_){}   // 0 = baixa, 1 = alta
       const carregados = [];
       for(const {m, bytes} of baixados){
         this.bimMsg(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
@@ -1846,24 +1871,44 @@ class CdeWin {
         if(!apertando) return;
         if(k==='pageup')   { this.bimIrNivel(B.andar.nivel+1); e.preventDefault(); }
         if(k==='pagedown') { this.bimIrNivel(B.andar.nivel-1); e.preventDefault(); }
-        if(k==='escape')   { this.bimModoAndar(false); }
+        // O primeiro Esc é do browser, que solta o ponteiro; só o segundo (já
+        // com o cursor solto) encerra o modo caminhar. Sem essa distinção,
+        // soltar o cursor derrubaria o modo junto.
+        if(k==='escape' && !this.bimPonteiroTravado()) this.bimModoAndar(false);
       };
       this._bimKeyDown = (e)=> meuTeclado(e, true);
       this._bimKeyUp   = (e)=> meuTeclado(e, false);
       document.addEventListener('keydown', this._bimKeyDown);
       document.addEventListener('keyup',   this._bimKeyUp);
 
+      // Olhar em volta no modo caminhar: com o ponteiro TRAVADO basta mover o
+      // mouse, sem segurar botão nenhum — é o que mantém o clique livre para
+      // selecionar e cotar. Usa movementX/Y, que com o ponteiro travado não
+      // tem fim de tela.
+      renderer.domElement.addEventListener('mousemove', (e)=>{
+        const B=this.B3;
+        if(!B || !B.andar.ativo || !this.bimPonteiroTravado()) return;
+        const W=B.andar;
+        W.yaw   -= (e.movementX||0)*0.0022;
+        W.pitch  = Math.max(-1.35, Math.min(1.35, W.pitch - (e.movementY||0)*0.0022));
+        this.bimAndarAplicar();
+      });
+      // Se o ponteiro for solto (Esc do browser, troca de janela), o modo
+      // caminhar continua — só volta o cursor e o aviso de como retomar.
+      this._bimLockChg = ()=>{
+        const B=this.B3; if(!B || !B.andar.ativo) return;
+        if(this.bimPonteiroTravado()){
+          this.bimMsgDica('W A S D ou setas para andar · mova o mouse para olhar · clique para selecionar · Esc solta o cursor');
+        }else{
+          B.andar.teclas.clear();
+          this.bimMsgDica('Cursor solto. Clique na cena para voltar a olhar com o mouse · ▲▼ troca de pavimento · Sair encerra.');
+        }
+      };
+      document.addEventListener('pointerlockchange', this._bimLockChg);
+
       renderer.domElement.addEventListener('pointermove', (e)=>{
         const B=this.B3; if(!dn || !B) return;
-        // Caminhando: arrastar olha em volta (o OrbitControls está desligado).
-        if(B.andar.ativo){
-          const W=B.andar;
-          W.yaw   -= (e.clientX-dn.ux)*0.005;
-          W.pitch  = Math.max(-1.35, Math.min(1.35, W.pitch - (e.clientY-dn.uy)*0.005));
-          dn.ux=e.clientX; dn.uy=e.clientY; dn.arrastou=true;
-          this.bimAndarAplicar();
-          return;
-        }
+        if(B.andar.ativo) return;   // caminhando, quem olha é o mousemove acima
         // Com o corte já posto, o botão esquerdo empurra o plano na direção
         // perpendicular a ele (o OrbitControls está sem o esquerdo nesse modo).
         if(!(B.corte.ativo && B.corte.ancora)) return;
@@ -1906,6 +1951,13 @@ class CdeWin {
         const arrastou = dn.arrastou;
         dn=null;
         const B=this.B3; if(!B || arrastou || !perto || !rapido) return;
+        if(B.andar.ativo){
+          // Cursor solto: o clique serve para retomar o olhar com o mouse.
+          if(!this.bimPonteiroTravado()){ this.bimTravarPonteiro(); return; }
+          // Travado: o cursor não existe, então quem mira é a cruz do centro.
+          const r=B.renderer.domElement.getBoundingClientRect();
+          e = { clientX:r.left+r.width/2, clientY:r.top+r.height/2 };
+        }
         if(B.medida.ativo){ this.bimMedirPonto(e).catch(err=>console.warn('3D:', err)); return; }
         if(B.corte.ativo){
           // Só cria a seção se ainda não existe: com uma posta, o clique não
@@ -2025,6 +2077,9 @@ class CdeWin {
     this.bimWrap.querySelector('.bimAndar').classList.toggle('on', lig);
     if(!lig){
       W.ativo=false;
+      W.teclas.clear();
+      if(document.pointerLockElement===B.renderer.domElement){ try{ document.exitPointerLock(); }catch(_){} }
+      this.bimWrap.querySelector('.bimMira').classList.remove('on');
       B.controls.enabled=true;
       if(W.camPos){ B.camera.position.copy(W.camPos); B.camera.quaternion.copy(W.camRot); }
       if(W.alvo) B.controls.target.copy(W.alvo);
@@ -2034,10 +2089,8 @@ class CdeWin {
       B.fragments.update(true).catch(()=>{});
       return;
     }
-    // Outras ferramentas disputam o mesmo clique — desliga antes de entrar.
-    if(B.medida.ativo) this.bimModoMedir(false);
-    if(B.corte.ativo)  this.bimModoCorte(false);
-
+    // Medir e cortar CONTINUAM valendo enquanto se caminha — é justamente
+    // andar até o ponto e cotar dali. O clique é roteado pela mira central.
     this.bimMsgDica('Procurando os pavimentos…');
     const niveis = await this.bimNiveis();
     const C=this.B3; if(!C||!C.vivo) return;
@@ -2061,7 +2114,11 @@ class CdeWin {
     W.ativo=true; W.nivel=idx;
     W.teclas = new Set();
     D.controls.enabled=false;
-    D.renderer.domElement.style.cursor='crosshair';
+    this.bimWrap.querySelector('.bimMira').classList.add('on');
+    // Travar o ponteiro é o que permite olhar SÓ movendo o mouse, sem segurar
+    // botão: o cursor some e o movimento deixa de ter fim de tela. Com isso o
+    // clique fica livre para selecionar/cotar, mirando pela cruz central.
+    this.bimTravarPonteiro();
 
     // Mantém a direção de visão atual, mas na horizontal — entrar olhando
     // para o chão ou para o teto seria desorientador.
@@ -2070,7 +2127,21 @@ class CdeWin {
     W.pitch = 0;
     W.pos = new D.THREE.Vector3(alvoXZ.x, 0, alvoXZ.z);
     this.bimIrNivel(idx);
-    this.bimMsgDica('W A S D ou setas para andar · arraste para olhar · Shift corre · ▲▼ troca de pavimento');
+    // Mensagem pessimista de propósito: entre o clique no botão e aqui houve
+    // dois await (achar pavimentos e o raycast), e o browser pode recusar o
+    // travamento do ponteiro por não haver mais gesto recente. Se ele for
+    // aceito, o pointerlockchange troca esta mensagem pela de caminhada.
+    this.bimMsgDica('Clique na cena para olhar com o mouse · W A S D ou setas para andar · ▲▼ troca de pavimento');
+  }
+  bimTravarPonteiro(){
+    const B=this.B3; if(!B) return;
+    const el=B.renderer.domElement;
+    if(document.pointerLockElement===el) return;
+    try{ el.requestPointerLock(); }catch(_){}
+  }
+  bimPonteiroTravado(){
+    const B=this.B3;
+    return !!(B && document.pointerLockElement===B.renderer.domElement);
   }
   bimIrNivel(i){
     const B=this.B3; if(!B||!B.andar.ativo) return;
@@ -2141,7 +2212,6 @@ class CdeWin {
     B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
     // Enquanto se corta, o botão esquerdo passa a ARRASTAR O PLANO — girar vai
     // pro direito. Sem isso não há como arrastar o corte sem orbitar junto.
-    if(lig && B.andar.ativo) this.bimModoAndar(false);
     this.bimBotoesCorte(lig);
     if(!lig){
       // Sair da ferramenta NÃO desfaz o corte: o uso normal é cortar e depois
@@ -2282,7 +2352,6 @@ class CdeWin {
     // Medir e cortar disputam o mesmo clique esquerdo — ligar um desliga o
     // outro, em vez de deixar os dois responderem ao mesmo gesto.
     if(lig && B.corte.ativo) this.bimModoCorte(false);
-    if(lig && B.andar.ativo) this.bimModoAndar(false);
     B.medida.ativo=lig;
     const t=this.bimToolsEl;
     t.querySelector('[data-t=medir]').classList.toggle('on', lig);
@@ -2497,6 +2566,8 @@ class CdeWin {
     // fechada continuaria capturando W/A/S/D da sessão inteira.
     if(this._bimKeyDown){ document.removeEventListener('keydown', this._bimKeyDown); this._bimKeyDown=null; }
     if(this._bimKeyUp){   document.removeEventListener('keyup',   this._bimKeyUp);   this._bimKeyUp=null; }
+    if(this._bimLockChg){ document.removeEventListener('pointerlockchange', this._bimLockChg); this._bimLockChg=null; }
+    if(this.B3 && document.pointerLockElement===this.B3.renderer.domElement){ try{ document.exitPointerLock(); }catch(_){} }
     const pa=this.bimWrap && this.bimWrap.querySelector('.bimAndar');
     if(pa) pa.classList.remove('on');
     if(this.bimToolsEl){
