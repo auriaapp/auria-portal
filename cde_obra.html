@@ -1787,7 +1787,7 @@ class CdeWin {
                       renderer.domElement.remove(); return; }
 
       this.B3 = { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, raf:null, ro:null, vivo:true,
-        corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null },
+        corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
         unidade: 1 };   // raio/150 — escala do modelo, usada no contorno do corte
 
@@ -1938,9 +1938,23 @@ class CdeWin {
     B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
     // Enquanto se corta, o botão esquerdo passa a ARRASTAR O PLANO — girar vai
     // pro direito. Sem isso não há como arrastar o corte sem orbitar junto.
-    C.ativo ? this.bimBotoesCorte(true) : this.bimBotoesCorte(false);
-    if(!lig) this.bimCorteRemover();
-    else this.bimMsgDica('Clique numa superfície para criar a seção · depois arraste com o botão esquerdo · girar com o direito');
+    this.bimBotoesCorte(lig);
+    if(!lig){
+      // Sair da ferramenta NÃO desfaz o corte: o uso normal é cortar e depois
+      // cotar a seção. Só some o retângulo de manuseio; para remover mesmo,
+      // existe o 🗑 dentro da própria ferramenta.
+      C.mostrarAjuda=false;
+      this.bimSumirCorteAjuda();
+      this.bimMsgDica(C.ancora
+        ? 'Corte mantido. Use 📏 para cotar a seção, ou ✂ → 🗑 para remover.'
+        : 'Arraste para girar · roda para zoom · clique da roda para deslocar');
+    }else{
+      C.mostrarAjuda=true;
+      if(C.ancora) this.bimCorteAplicar();   // volta o retângulo de manuseio
+      this.bimMsgDica(C.ancora
+        ? 'Arraste com o botão esquerdo para mover a seção · ⇄ inverte · 🗑 remove'
+        : 'Clique numa superfície para criar a seção · depois arraste com o botão esquerdo · girar com o direito');
+    }
   }
   bimBotoesCorte(lig){
     const B=this.B3; if(!B) return;
@@ -1968,12 +1982,24 @@ class CdeWin {
       dir = new T.Vector3(sinal*nx/len, 0, sinal*nz/len);
     }
     C.ancora = ponto.clone();
-    // No three, a normal do plano aponta para o lado que FICA — o inverso da
-    // convenção do xeokit, onde dir aponta para o lado removido.
-    C.normal = dir.negate().normalize();
+    // Para ENXERGAR o corte, o que sai é o lado de CÁ (entre você e o plano) —
+    // é assim que se olha uma planta baixa: câmera em cima, tira-se o que está
+    // acima do plano e vê-se a seção. No three a normal aponta para o lado que
+    // FICA, então ela aponta para LONGE da câmera, no mesmo sentido de dir.
+    C.normal = dir.normalize();
     C.inv = false;
     this.bimCorteAplicar();
     this.bimMsgDica('Arraste com o botão esquerdo para mover a seção · ⇄ inverte o lado · 🗑 remove');
+  }
+  // Some com o retângulo de manuseio sem tocar no corte em si.
+  bimSumirCorteAjuda(){
+    const B=this.B3; if(!B||!B.corte.ajuda) return;
+    const a=B.corte.ajuda;
+    try{
+      B.scene.remove(a);
+      a.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    }catch(_){}
+    B.corte.ajuda=null;
   }
   bimCorteAplicar(){
     const B=this.B3; if(!B) return;
@@ -1981,7 +2007,7 @@ class CdeWin {
     if(!C.ancora || !C.normal){
       B.renderer.clippingPlanes=[];
       B.modelos.forEach(x=>{ try{ x.model.getClippingPlanesEvent=()=>[]; }catch(_){} });
-      if(C.ajuda){ B.scene.remove(C.ajuda); C.ajuda=null; }
+      this.bimSumirCorteAjuda();
       B.fragments.update(true).catch(()=>{});
       return;
     }
@@ -1993,13 +2019,28 @@ class CdeWin {
     // O Fragments precisa do plano no worker também — é lá que ele decide o
     // que transmitir; sem isso seguiria mandando geometria já cortada.
     B.modelos.forEach(x=>{ try{ x.model.getClippingPlanesEvent=()=>[plano]; }catch(_){} });
-    // Contorno do plano: sem ele o usuário arrasta às cegas quando o corte
-    // sai da região visível.
-    const tamanho = (B.unidade||1)*260;
-    if(C.ajuda){ B.scene.remove(C.ajuda); C.ajuda=null; }
-    C.ajuda = new T.PlaneHelper(plano, tamanho, 0xE8960A);
-    C.ajuda.renderOrder = 998;
-    B.scene.add(C.ajuda);
+    // Visual do plano, ANCORADO NO PONTO CLICADO. Não dá pra usar o
+    // THREE.PlaneHelper aqui: ele se posiciona na projeção da origem do mundo
+    // sobre o plano, o que jogava o retângulo lá na base do modelo em vez de
+    // onde a pessoa clicou.
+    if(C.ajuda){ this.bimSumirCorteAjuda(); }
+    if(C.mostrarAjuda!==false){
+      const lado = (B.unidade||1)*120;
+      const geo = new T.PlaneGeometry(lado, lado);
+      const malha = new T.Mesh(geo, new T.MeshBasicMaterial({
+        color:0xE8960A, transparent:true, opacity:0.10,
+        side:T.DoubleSide, depthWrite:false
+      }));
+      malha.position.copy(C.ancora);
+      // PlaneGeometry nasce no plano XY, com normal +Z: gira de +Z para a
+      // normal do corte.
+      malha.quaternion.setFromUnitVectors(new T.Vector3(0,0,1), n);
+      malha.add(new T.LineSegments(new T.EdgesGeometry(geo),
+        new T.LineBasicMaterial({ color:0xE8960A })));
+      malha.renderOrder = 998;
+      B.scene.add(malha);
+      C.ajuda = malha;
+    }
     B.fragments.update(true).catch(()=>{});
   }
   bimCorteInverter(){
