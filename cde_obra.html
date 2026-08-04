@@ -172,6 +172,18 @@
   .cdeWin-bim .bimCorte input[type=range]{width:110px;accent-color:var(--accent)}
   /* Cotas: etiqueta flutuante presa ao ponto médio da medida, reposicionada a
      cada quadro. pointer-events:none para não roubar o clique da cena. */
+  /* Painel do modo caminhar: pavimento atual + subir/descer */
+  .cdeWin-bim .bimAndar{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:5;
+    display:none;align-items:center;gap:8px;background:rgba(15,23,42,.9);
+    border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:6px 10px;color:#e2e8f0}
+  .cdeWin-bim .bimAndar.on{display:flex}
+  .cdeWin-bim .bimAndar button{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+    border-radius:6px;color:#e2e8f0;font-size:14px;line-height:1;padding:4px 9px;cursor:pointer}
+  .cdeWin-bim .bimAndar button:hover{background:rgba(255,255,255,.2)}
+  .cdeWin-bim .bimAndar button:disabled{opacity:.35;cursor:default}
+  .cdeWin-bim .bimAndar .nv{font-size:12px;min-width:118px;text-align:center}
+  .cdeWin-bim .bimAndar .nv b{display:block;font-size:13px}
+  .cdeWin-bim .bimAndar .sair{background:var(--accent);border-color:var(--accent);color:#231703;font-weight:700}
   .cdeWin-bim .bimCota{position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:none;
     background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;
     padding:2px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)}
@@ -1435,6 +1447,7 @@ class CdeWin {
       +         '<button data-t="mEixo" title="Cota ortogonal: mede só ao longo de X, Y ou Z">⟂</button>'
       +       '</div>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
+      +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
       +       '<div class="bimCorte">'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
       +         '<button data-t="limpaCorte" title="Remover o corte">🗑</button>'
@@ -1446,6 +1459,12 @@ class CdeWin {
       +       '<div class="bpSec bpProps"><h4>Propriedades</h4>'
       +         '<div class="bpConteudo"><div class="bpVazio">Clique num elemento do modelo.</div></div>'
       +       '</div>'
+      +     '</div>'
+      +     '<div class="bimAndar">'
+      +       '<button data-t="desce" title="Descer um pavimento">▼</button>'
+      +       '<span class="nv"><b>—</b><span class="dica">W A S D para andar</span></span>'
+      +       '<button data-t="sobe" title="Subir um pavimento">▲</button>'
+      +       '<button data-t="saiAndar" class="sair" title="Sair do modo caminhar">Sair</button>'
       +     '</div>'
       +     '<div class="bimDica">Arraste para girar · roda para zoom · clique da roda para deslocar</div></div>'
       +   '<div class="cdeWin-resize"></div>'
@@ -1472,6 +1491,13 @@ class CdeWin {
     tools.querySelector('[data-t=fit]')  .addEventListener('click', ()=> this.bimEnquadrar());
     tools.querySelector('[data-t=medir]').addEventListener('click', (e)=> this.bimModoMedir(!e.currentTarget.classList.contains('on')));
     tools.querySelector('[data-t=corte]').addEventListener('click', (e)=> this.bimModoCorte(!e.currentTarget.classList.contains('on')));
+    tools.querySelector('[data-t=andar]').addEventListener('click', (e)=>{
+      this.bimModoAndar(!e.currentTarget.classList.contains('on')).catch(err=>console.warn('caminhar:', err));
+    });
+    const andarEl = w.querySelector('.cdeWin-bim .bimAndar');
+    andarEl.querySelector('[data-t=sobe]') .addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel+1); });
+    andarEl.querySelector('[data-t=desce]').addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel-1); });
+    andarEl.querySelector('[data-t=saiAndar]').addEventListener('click', ()=> this.bimModoAndar(false));
     tools.querySelector('[data-t=mLivre]').addEventListener('click', ()=> this.bimMedirModo('livre'));
     tools.querySelector('[data-t=mEixo]') .addEventListener('click', ()=> this.bimMedirModo('eixo'));
     tools.querySelector('[data-t=inv]')  .addEventListener('click',  ()=> this.bimCorteInverter());
@@ -1789,6 +1815,9 @@ class CdeWin {
       this.B3 = { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, raf:null, ro:null, vivo:true,
         corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
+        andar:  { ativo:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
+                  camPos:null, camRot:null, alvo:null },
+        niveis: null,   // alturas de piso, achadas sob demanda ao entrar no modo caminhar
         unidade: 1 };   // raio/150 — escala do modelo, usada no contorno do corte
 
       // O Fragments transmite a geometria sob demanda, guiado pela câmera:
@@ -1804,8 +1833,37 @@ class CdeWin {
         if(e.button!==0){ dn=null; return; }
         dn = { x:e.clientX, y:e.clientY, ux:e.clientX, uy:e.clientY, t:Date.now(), arrastou:false };
       });
+      // Teclado do modo caminhar. Fica no documento porque o canvas não recebe
+      // foco de teclado sozinho; por isso só age com o modo ligado E esta
+      // janela ativa — senão roubaria as teclas de outra janela do CDE.
+      const meuTeclado = (e, apertando)=>{
+        const B=this.B3;
+        if(!B || !B.andar.ativo || cdeAtiva()!==this) return;
+        const k=e.key.toLowerCase();
+        const mapa={ w:'w', a:'a', s:'s', d:'d', arrowup:'w', arrowdown:'s', arrowleft:'a', arrowright:'d', shift:'shift' };
+        const m=mapa[k];
+        if(m){ apertando ? B.andar.teclas.add(m) : B.andar.teclas.delete(m); e.preventDefault(); return; }
+        if(!apertando) return;
+        if(k==='pageup')   { this.bimIrNivel(B.andar.nivel+1); e.preventDefault(); }
+        if(k==='pagedown') { this.bimIrNivel(B.andar.nivel-1); e.preventDefault(); }
+        if(k==='escape')   { this.bimModoAndar(false); }
+      };
+      this._bimKeyDown = (e)=> meuTeclado(e, true);
+      this._bimKeyUp   = (e)=> meuTeclado(e, false);
+      document.addEventListener('keydown', this._bimKeyDown);
+      document.addEventListener('keyup',   this._bimKeyUp);
+
       renderer.domElement.addEventListener('pointermove', (e)=>{
         const B=this.B3; if(!dn || !B) return;
+        // Caminhando: arrastar olha em volta (o OrbitControls está desligado).
+        if(B.andar.ativo){
+          const W=B.andar;
+          W.yaw   -= (e.clientX-dn.ux)*0.005;
+          W.pitch  = Math.max(-1.35, Math.min(1.35, W.pitch - (e.clientY-dn.uy)*0.005));
+          dn.ux=e.clientX; dn.uy=e.clientY; dn.arrastou=true;
+          this.bimAndarAplicar();
+          return;
+        }
         // Com o corte já posto, o botão esquerdo empurra o plano na direção
         // perpendicular a ele (o OrbitControls está sem o esquerdo nesse modo).
         if(!(B.corte.ativo && B.corte.ancora)) return;
@@ -1869,10 +1927,16 @@ class CdeWin {
       this.bimRenderCamadas();
       await fragments.update(true);
 
+      let tAnt = performance.now();
       const loop = ()=>{
         const B=this.B3; if(!B||!B.vivo) return;
         B.raf = requestAnimationFrame(loop);
-        B.controls.update();
+        const agora=performance.now();
+        // Limita o passo a 100ms: voltar de uma aba em segundo plano daria um
+        // dt enorme e teleportaria quem está caminhando.
+        const dt=Math.min((agora-tAnt)/1000, 0.1); tAnt=agora;
+        if(B.andar.ativo) this.bimAndarQuadro(dt);
+        else B.controls.update();
         this.bimEscalarMarcas();          // antes do render: escala vale já neste quadro
         B.renderer.render(B.scene, B.camera);
         this.bimAtualizarCotas();
@@ -1923,6 +1987,145 @@ class CdeWin {
     B.controls.update();
     B.fragments.update(true).catch(()=>{});
   }
+  // ── Caminhar pelo modelo (primeira pessoa) ───────────────────────────────
+  //  Os níveis vêm do TOPO DAS LAJES, não do agrupamento por IfcBuildingStorey.
+  //  Em modelo do TQS o pavimento agrupa a laje do nível MAIS os pilares que
+  //  sobem do pavimento de baixo — usar a caixa dos filhos erra um pavimento
+  //  inteiro. O topo da laje é a superfície em que se pisa, direto.
+  async bimNiveis(){
+    const B=this.B3; if(!B) return [];
+    if(B.niveis) return B.niveis;
+    const tops=[];
+    for(const x of B.modelos){
+      try{
+        const cats = await x.model.getItemsOfCategories([/^IFCSLAB$/]);
+        const ids = Object.values(cats||{}).flat();
+        if(!ids.length) continue;
+        const caixas = await x.model.getBoxes(ids);
+        (caixas||[]).forEach(c=>{ if(c && isFinite(c.max.y)) tops.push(c.max.y); });
+      }catch(_){ /* modelo sem laje ou sem dados: ignora */ }
+    }
+    // Agrupa alturas próximas: uma laje só gera dezenas de caixas no mesmo
+    // nível, e degraus/rebaixos não devem virar pavimento.
+    tops.sort((a,b)=>a-b);
+    const niveis=[]; const tol=0.6;
+    tops.forEach(y=>{
+      const ult=niveis[niveis.length-1];
+      if(ult && Math.abs(y-ult.soma/ult.n) <= tol){ ult.soma+=y; ult.n++; }
+      else niveis.push({ soma:y, n:1 });
+    });
+    B.niveis = niveis.filter(g=>g.n>=2).map(g=>g.soma/g.n);   // nível com 1 caixa só costuma ser peça solta
+    if(!B.niveis.length && niveis.length) B.niveis = niveis.map(g=>g.soma/g.n);
+    return B.niveis;
+  }
+  async bimModoAndar(lig){
+    const B=this.B3; if(!B) return;
+    const W=B.andar;
+    this.bimToolsEl.querySelector('[data-t=andar]').classList.toggle('on', lig);
+    this.bimWrap.querySelector('.bimAndar').classList.toggle('on', lig);
+    if(!lig){
+      W.ativo=false;
+      B.controls.enabled=true;
+      if(W.camPos){ B.camera.position.copy(W.camPos); B.camera.quaternion.copy(W.camRot); }
+      if(W.alvo) B.controls.target.copy(W.alvo);
+      B.controls.update();
+      B.renderer.domElement.style.cursor='';
+      this.bimMsgDica('Arraste para girar · roda para zoom · clique da roda para deslocar');
+      B.fragments.update(true).catch(()=>{});
+      return;
+    }
+    // Outras ferramentas disputam o mesmo clique — desliga antes de entrar.
+    if(B.medida.ativo) this.bimModoMedir(false);
+    if(B.corte.ativo)  this.bimModoCorte(false);
+
+    this.bimMsgDica('Procurando os pavimentos…');
+    const niveis = await this.bimNiveis();
+    const C=this.B3; if(!C||!C.vivo) return;
+
+    // Onde entrar: o ponto que está no centro da tela.
+    const r=C.renderer.domElement.getBoundingClientRect();
+    const hit=await this.bimRaycast({ clientX:r.left+r.width/2, clientY:r.top+r.height/2 });
+    const D=this.B3; if(!D||!D.vivo) return;
+    const alvoXZ = (hit&&hit.point) ? hit.point.clone() : (D.caixa? D.caixa.getCenter(new D.THREE.Vector3()) : new D.THREE.Vector3());
+
+    W.camPos = D.camera.position.clone();
+    W.camRot = D.camera.quaternion.clone();
+    W.alvo   = D.controls.target.clone();
+    // Pavimento inicial: o mais próximo ABAIXO do ponto olhado (é sobre ele
+    // que se está pisando), com o mais baixo como reserva.
+    let idx = 0;
+    if(niveis.length){
+      const abaixo = niveis.map((y,i)=>({y,i})).filter(o=>o.y <= alvoXZ.y+0.2);
+      idx = abaixo.length ? abaixo[abaixo.length-1].i : 0;
+    }
+    W.ativo=true; W.nivel=idx;
+    W.teclas = new Set();
+    D.controls.enabled=false;
+    D.renderer.domElement.style.cursor='crosshair';
+
+    // Mantém a direção de visão atual, mas na horizontal — entrar olhando
+    // para o chão ou para o teto seria desorientador.
+    const dir=new D.THREE.Vector3(); D.camera.getWorldDirection(dir);
+    W.yaw = Math.atan2(-dir.x, -dir.z);
+    W.pitch = 0;
+    W.pos = new D.THREE.Vector3(alvoXZ.x, 0, alvoXZ.z);
+    this.bimIrNivel(idx);
+    this.bimMsgDica('W A S D ou setas para andar · arraste para olhar · Shift corre · ▲▼ troca de pavimento');
+  }
+  bimIrNivel(i){
+    const B=this.B3; if(!B||!B.andar.ativo) return;
+    const W=B.andar;
+    const ns=B.niveis||[];
+    if(ns.length){ W.nivel=Math.max(0, Math.min(ns.length-1, i)); W.pos.y = ns[W.nivel] + 1.65; }
+    else { W.pos.y = (B.caixa? B.caixa.min.y : 0) + 1.65; }
+    this.bimAndarAplicar();
+    this.bimAndarPainel();
+  }
+  bimAndarPainel(){
+    const B=this.B3; if(!B) return;
+    const el=this.bimWrap.querySelector('.bimAndar'); if(!el) return;
+    const ns=B.niveis||[], W=B.andar;
+    const nv=el.querySelector('.nv b');
+    // Elevação, não distância: pode ser negativa (subsolo), e fmtDist trataria
+    // -5 m como "menos de 1 m" e mostraria em centímetros.
+    const y=ns.length? ns[W.nivel] : 0;
+    const cota=(y>=0?'+':'−')+Math.abs(y).toFixed(2).replace('.',',')+' m';
+    nv.textContent = ns.length ? ('Nível '+(W.nivel+1)+'/'+ns.length+'  ·  '+cota) : 'Nível único';
+    el.querySelector('[data-t=sobe]').disabled  = !ns.length || W.nivel>=ns.length-1;
+    el.querySelector('[data-t=desce]').disabled = !ns.length || W.nivel<=0;
+  }
+  // Reposiciona a câmera a partir de posição + yaw/pitch.
+  bimAndarAplicar(){
+    const B=this.B3; if(!B||!B.andar.ativo) return;
+    const W=B.andar, T=B.THREE;
+    B.camera.position.copy(W.pos);
+    const olhar=new T.Vector3(
+      W.pos.x - Math.sin(W.yaw)*Math.cos(W.pitch),
+      W.pos.y + Math.sin(W.pitch),
+      W.pos.z - Math.cos(W.yaw)*Math.cos(W.pitch)
+    );
+    B.camera.up.set(0,1,0);
+    B.camera.lookAt(olhar);
+    B.fragments.update().catch(()=>{});
+  }
+  // Passo do quadro: anda enquanto a tecla estiver pressionada.
+  bimAndarQuadro(dt){
+    const B=this.B3; if(!B||!B.andar.ativo) return;
+    const W=B.andar; if(!W.teclas.size) return;
+    const T=B.THREE;
+    const frente=new T.Vector3(-Math.sin(W.yaw), 0, -Math.cos(W.yaw));
+    const lado  =new T.Vector3(Math.cos(W.yaw), 0, -Math.sin(W.yaw));
+    const mov=new T.Vector3();
+    if(W.teclas.has('w')) mov.add(frente);
+    if(W.teclas.has('s')) mov.sub(frente);
+    if(W.teclas.has('d')) mov.add(lado);
+    if(W.teclas.has('a')) mov.sub(lado);
+    if(!mov.lengthSq()) return;
+    // Modelo em metros: 1,5 m/s é passo de caminhada; Shift triplica.
+    const v = 1.5 * (W.teclas.has('shift')?3:1);
+    W.pos.addScaledVector(mov.normalize(), v*dt);
+    this.bimAndarAplicar();
+  }
   // ── Plano de corte (seção) ───────────────────────────────────────────────
   //  Mesmo gesto do Auria BIM: clicar numa superfície cria a seção ali, com a
   //  orientação da própria superfície; depois arrasta-se o plano ao longo da
@@ -1938,6 +2141,7 @@ class CdeWin {
     B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
     // Enquanto se corta, o botão esquerdo passa a ARRASTAR O PLANO — girar vai
     // pro direito. Sem isso não há como arrastar o corte sem orbitar junto.
+    if(lig && B.andar.ativo) this.bimModoAndar(false);
     this.bimBotoesCorte(lig);
     if(!lig){
       // Sair da ferramenta NÃO desfaz o corte: o uso normal é cortar e depois
@@ -2078,6 +2282,7 @@ class CdeWin {
     // Medir e cortar disputam o mesmo clique esquerdo — ligar um desliga o
     // outro, em vez de deixar os dois responderem ao mesmo gesto.
     if(lig && B.corte.ativo) this.bimModoCorte(false);
+    if(lig && B.andar.ativo) this.bimModoAndar(false);
     B.medida.ativo=lig;
     const t=this.bimToolsEl;
     t.querySelector('[data-t=medir]').classList.toggle('on', lig);
@@ -2288,6 +2493,12 @@ class CdeWin {
     // As etiquetas de cota são DOM solto dentro do wrapper: sem isso ficariam
     // penduradas na tela depois de trocar de modelo.
     if(this.bimWrap) this.bimWrap.querySelectorAll('.bimCota').forEach(el=>el.remove());
+    // Ouvintes de teclado vivem no DOCUMENTO: sem tirar aqui, uma janela
+    // fechada continuaria capturando W/A/S/D da sessão inteira.
+    if(this._bimKeyDown){ document.removeEventListener('keydown', this._bimKeyDown); this._bimKeyDown=null; }
+    if(this._bimKeyUp){   document.removeEventListener('keyup',   this._bimKeyUp);   this._bimKeyUp=null; }
+    const pa=this.bimWrap && this.bimWrap.querySelector('.bimAndar');
+    if(pa) pa.classList.remove('on');
     if(this.bimToolsEl){
       this.bimToolsEl.querySelectorAll('button.on').forEach(b=>b.classList.remove('on'));
       const c=this.bimToolsEl.querySelector('.bimCorte'); if(c) c.classList.remove('on');
