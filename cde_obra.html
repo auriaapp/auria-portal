@@ -167,6 +167,22 @@
   .cdeWin-bim .bimMedeOpc{display:none;align-items:center;gap:2px;padding-left:5px;margin-left:2px;
     border-left:1px solid rgba(255,255,255,.15)}
   .cdeWin-bim .bimMedeOpc.on{display:flex}
+  /* Painel de configuração de visualização */
+  .cdeWin-bim .bimCfg{position:absolute;top:46px;left:8px;z-index:6;width:238px;display:none;
+    background:rgba(15,23,42,.95);border:1px solid rgba(255,255,255,.16);border-radius:9px;
+    padding:10px 11px;color:#e2e8f0;font-size:12px}
+  .cdeWin-bim .bimCfg.on{display:block}
+  .cdeWin-bim .bimCfg h5{margin:0 0 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8}
+  .cdeWin-bim .bimCfg .lin{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 7px}
+  .cdeWin-bim .bimCfg .lin span{flex:1}
+  .cdeWin-bim .bimCfg .lin input[type=range]{flex:0 0 106px;accent-color:var(--accent)}
+  .cdeWin-bim .bimCfg .lin input[type=checkbox]{accent-color:var(--accent)}
+  .cdeWin-bim .bimCfg .sub{padding-left:10px;border-left:2px solid rgba(255,255,255,.12);margin-left:2px}
+  .cdeWin-bim .bimCfg .sub.off{opacity:.4;pointer-events:none}
+  .cdeWin-bim .bimCfg .nota{color:#94a3b8;font-size:11px;line-height:1.35;margin:8px 0 0}
+  .cdeWin-bim .bimCfg .val{flex:0 0 34px;text-align:right;color:#94a3b8;font-variant-numeric:tabular-nums}
+  .cdeWin-bim .bimCfg .restaurar{width:100%;margin-top:9px;background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#e2e8f0;padding:5px;cursor:pointer;font-size:12px}
   .cdeWin-bim .bimCorte select{background:#1e293b;color:#e2e8f0;border:1px solid rgba(255,255,255,.18);
     border-radius:5px;font-size:12px;padding:3px 4px}
   .cdeWin-bim .bimCorte input[type=range]{width:110px;accent-color:var(--accent)}
@@ -1046,18 +1062,29 @@ function bim3dLibs(){
   _bim3dLibs = Promise.all([
     import('three'),
     import('@thatopen/fragments'),
-    import('three/examples/jsm/controls/OrbitControls.js'),
+    import('three/examples/jsm/controls/OrbitControls.js')
+  ]).then(([THREE, FRAGS, oc])=>({ THREE, FRAGS, OrbitControls: oc.OrbitControls }))
+    .catch(e=>{ _bim3dLibs=null; throw e; });
+  return _bim3dLibs;
+}
+
+// Pós-processamento fica FORA da carga inicial: são quatro módulos a mais e
+// a sombra de contato vem desligada por padrão, então a esmagadora maioria
+// das aberturas não precisa deles. Só baixa quando alguém liga o efeito.
+let _bimPosLibs=null;
+function bimPosLibs(){
+  if(_bimPosLibs) return _bimPosLibs;
+  _bimPosLibs = Promise.all([
     import('three/examples/jsm/postprocessing/EffectComposer.js'),
     import('three/examples/jsm/postprocessing/RenderPass.js'),
     import('three/examples/jsm/postprocessing/SAOPass.js'),
     import('three/examples/jsm/postprocessing/OutputPass.js')
-  ]).then(([THREE, FRAGS, oc, ec, rp, sao, op])=>({
-      THREE, FRAGS, OrbitControls: oc.OrbitControls,
+  ]).then(([ec, rp, sao, op])=>({
       EffectComposer: ec.EffectComposer, RenderPass: rp.RenderPass,
       SAOPass: sao.SAOPass, OutputPass: op.OutputPass
     }))
-    .catch(e=>{ _bim3dLibs=null; throw e; });
-  return _bim3dLibs;
+    .catch(e=>{ _bimPosLibs=null; throw e; });
+  return _bimPosLibs;
 }
 // Enquanto houver conversão pendente/processando NA ABA BIM, reconsulta o
 // status a cada poucos segundos (a conversão roda em outro serviço, minutos
@@ -1456,11 +1483,27 @@ class CdeWin {
       +       '</div>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
-      +       '<button data-t="ao" class="on" title="Sombra de contato nas quinas (desligue se ficar lento)">◐</button>'
+      +       '<button data-t="cfg" title="Configurações de visualização">⚙</button>'
       +       '<div class="bimCorte">'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
       +         '<button data-t="limpaCorte" title="Remover o corte">🗑</button>'
       +       '</div>'
+      +     '</div>'
+      +     '<div class="bimCfg">'
+      +       '<h5>Visualização</h5>'
+      +       '<div class="lin"><span>Exposição</span><input type="range" data-c="expo" min="50" max="220" value="115"><i class="val">1,15</i></div>'
+      +       '<div class="lin"><span>Luz ambiente</span><input type="range" data-c="amb" min="0" max="200" value="125"><i class="val">1,25</i></div>'
+      +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
+      +       '<h5 style="margin-top:10px">Efeitos pesados</h5>'
+      +       '<div class="lin"><span>Modelo em alta</span><input type="checkbox" data-c="gq"></div>'
+      +       '<div class="lin"><span>Sombra de contato</span><input type="checkbox" data-c="ao"></div>'
+      +       '<div class="sub off" data-c="aoSub">'
+      +         '<div class="lin"><span>Intensidade</span><input type="range" data-c="aoInt" min="1" max="40" value="6"><i class="val">6</i></div>'
+      +         '<div class="lin"><span>Alcance</span><input type="range" data-c="aoRaio" min="10" max="140" value="50"><i class="val">50</i></div>'
+      +         '<div class="lin"><span>Amostras</span><input type="range" data-c="aoAm" min="4" max="32" step="4" value="16"><i class="val">16</i></div>'
+      +       '</div>'
+      +       '<p class="nota">Os itens em “efeitos pesados” só são baixados quando ligados — desligados, a abertura fica leve.</p>'
+      +       '<button class="restaurar" data-c="reset">Restaurar padrão</button>'
       +     '</div>'
       +     '<button class="bpAba" title="Mostrar/ocultar painel">▸</button>'
       +     '<div class="bimPainel">'
@@ -1500,11 +1543,58 @@ class CdeWin {
     tools.querySelector('[data-t=fit]')  .addEventListener('click', ()=> this.bimEnquadrar());
     tools.querySelector('[data-t=medir]').addEventListener('click', (e)=> this.bimModoMedir(!e.currentTarget.classList.contains('on')));
     tools.querySelector('[data-t=corte]').addEventListener('click', (e)=> this.bimModoCorte(!e.currentTarget.classList.contains('on')));
-    tools.querySelector('[data-t=ao]').addEventListener('click', (e)=>{
+    const cfgEl = w.querySelector('.cdeWin-bim .bimCfg');
+    this.bimCfgEl = cfgEl;
+    tools.querySelector('[data-t=cfg]').addEventListener('click', (e)=>{
+      const abriu = cfgEl.classList.toggle('on');
+      e.currentTarget.classList.toggle('on', abriu);
+    });
+    const cfg = (n)=> cfgEl.querySelector('[data-c='+n+']');
+    const mostrar = (n, txt)=>{ const l=cfg(n).closest('.lin').querySelector('.val'); if(l) l.textContent=txt; };
+    cfg('expo').addEventListener('input', (e)=>{
+      const v=(+e.target.value)/100; mostrar('expo', v.toFixed(2).replace('.',','));
+      const B=this.B3; if(B) B.renderer.toneMappingExposure=v;
+    });
+    cfg('amb').addEventListener('input', (e)=>{
+      const v=(+e.target.value)/100; mostrar('amb', v.toFixed(2).replace('.',','));
+      const B=this.B3; if(B) B.luzes.hemi.intensity=v;
+    });
+    cfg('sol').addEventListener('input', (e)=>{
+      const v=(+e.target.value)/100; mostrar('sol', v.toFixed(2).replace('.',','));
+      const B=this.B3; if(B){ B.luzes.sol.intensity=v; B.luzes.fill.intensity=v*0.35; }
+    });
+    cfg('gq').addEventListener('change', (e)=>{
       const B=this.B3; if(!B) return;
-      B.ao=!B.ao;
-      e.currentTarget.classList.toggle('on', B.ao);
-      this.bimMsgDica(B.ao ? 'Sombra de contato ligada.' : 'Sombra de contato desligada.');
+      try{ B.fragments.settings.graphicsQuality = e.target.checked ? 1 : 0; }catch(_){}
+      B.fragments.update(true).catch(()=>{});
+      this.bimMsgDica(e.target.checked ? 'Modelo em alta qualidade.' : 'Modelo em qualidade normal.');
+    });
+    cfg('ao').addEventListener('change', (e)=>{
+      cfgEl.querySelector('[data-c=aoSub]').classList.toggle('off', !e.target.checked);
+      this.bimAO(e.target.checked).catch(err=>{
+        console.warn('oclusão:', err); e.target.checked=false;
+        cfgEl.querySelector('[data-c=aoSub]').classList.add('off');
+        this.bimMsgDica('Não consegui carregar a sombra de contato.');
+      });
+    });
+    const aoAplica = ()=>{
+      const B=this.B3; if(!B||!B.sao) return;
+      B.sao.params.saoIntensity = (+cfg('aoInt').value)/100;
+      B.sao.params.saoKernelRadius = +cfg('aoRaio').value;
+    };
+    cfg('aoInt') .addEventListener('input', (e)=>{ mostrar('aoInt', e.target.value); aoAplica(); });
+    cfg('aoRaio').addEventListener('input', (e)=>{ mostrar('aoRaio', e.target.value); aoAplica(); });
+    cfg('aoAm')  .addEventListener('input', (e)=>{
+      mostrar('aoAm', e.target.value);
+      const B=this.B3; if(!B||!B.sao) return;
+      // Nº de amostras é um #define do shader: mudar exige recompilar.
+      try{ B.sao.saoMaterial.defines.NUM_SAMPLES = +e.target.value; B.sao.saoMaterial.needsUpdate = true; }catch(_){}
+    });
+    cfg('reset').addEventListener('click', ()=>{
+      const p={ expo:115, amb:125, sol:155, aoInt:6, aoRaio:50, aoAm:16 };
+      Object.entries(p).forEach(([k,v])=>{ const el=cfg(k); el.value=v; el.dispatchEvent(new Event('input')); });
+      const g=cfg('gq'); if(g.checked){ g.checked=false; g.dispatchEvent(new Event('change')); }
+      const a=cfg('ao'); if(a.checked){ a.checked=false; a.dispatchEvent(new Event('change')); }
     });
     tools.querySelector('[data-t=andar]').addEventListener('click', (e)=>{
       this.bimModoAndar(!e.currentTarget.classList.contains('on')).catch(err=>console.warn('caminhar:', err));
@@ -1770,7 +1860,7 @@ class CdeWin {
     const meuJob = ++this._bimJob;
     const abortado = ()=> this._bimJob!==meuJob;
     try{
-      const { THREE, FRAGS, OrbitControls, EffectComposer, RenderPass, SAOPass, OutputPass } = await bim3dLibs();
+      const { THREE, FRAGS, OrbitControls } = await bim3dLibs();
       if(abortado()) return;
 
       // Baixa todos em paralelo: são independentes, e em federado esperar um
@@ -1819,8 +1909,10 @@ class CdeWin {
       //  - uma principal define o relevo e cria o lado escuro;
       //  - uma de preenchimento, oposta e fraca, evita que esse lado escuro
       //    vire um borrão preto sem informação.
-      scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25));
-      scene.add(new THREE.AmbientLight(0xffffff, 0.30));
+      const hemis = new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25);
+      scene.add(hemis);
+      const ambiente = new THREE.AmbientLight(0xffffff, 0.30);
+      scene.add(ambiente);
       const principal = new THREE.DirectionalLight(0xffffff, 1.55);
       principal.position.set(1, 2.2, 1.4);
       scene.add(principal);
@@ -1829,7 +1921,6 @@ class CdeWin {
       scene.add(preench);
 
       const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
-      try{ fragments.settings.graphicsQuality = 1; }catch(_){}   // 0 = baixa, 1 = alta
       const carregados = [];
       for(const {m, bytes} of baixados){
         this.bimMsg(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
@@ -1842,28 +1933,10 @@ class CdeWin {
                       try{ renderer.dispose(); renderer.forceContextLoss(); }catch(_){}
                       renderer.domElement.remove(); return; }
 
-      // Oclusão de ambiente: escurece quinas e encontros de peças. É o que
-      // permite distinguir parede branca de teto branco — só luz direcional
-      // não resolve, porque em ambiente interno as duas faces recebem quase a
-      // mesma quantidade de luz e a aresta entre elas some.
-      const composer = new EffectComposer(renderer);
-      composer.addPass(new RenderPass(scene, camera));
-      const sao = new SAOPass(scene, camera);
-      sao.params.saoIntensity   = 0.06;
-      // saoKernelRadius é em PIXELS de tela (no shader: kernelRadius/size), não
-      // em metros — então vale igual para qualquer modelo.
-      sao.params.saoKernelRadius= 50;
-      sao.params.saoBlur        = true;
-      sao.params.saoBlurRadius  = 6;
-      // saoScale NÃO é absoluto: o shader usa scale/cameraFar. Como o far sai
-      // do tamanho do modelo, a escala tem de acompanhá-lo, senão o mesmo
-      // número dá efeito nenhum num prédio e quase preto numa peça. A razão
-      // 0,024 veio de medir o escurecimento numa cena de teste.
-      sao.__razao = 0.024;
-      composer.addPass(sao);
-      composer.addPass(new OutputPass());
-
-      this.B3 = { THREE, renderer, composer, sao, scene, camera, controls, fragments, modelos:carregados, raf:null, ro:null, vivo:true, ao:true,
+      this.B3 = { THREE, renderer, composer:null, sao:null, scene, camera, controls, fragments,
+        modelos:carregados, raf:null, ro:null, vivo:true,
+        ao:false,                                        // desligada por padrão: é o visual leve
+        luzes:{ amb:ambiente, hemi:hemis, sol:principal, fill:preench },
         corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
         andar:  { ativo:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
@@ -2006,8 +2079,8 @@ class CdeWin {
         if(B.andar.ativo) this.bimAndarQuadro(dt);
         else B.controls.update();
         this.bimEscalarMarcas();          // antes do render: escala vale já neste quadro
-        if(B.ao) B.composer.render();
-        else     B.renderer.render(B.scene, B.camera);
+        if(B.ao && B.composer) B.composer.render();
+        else                   B.renderer.render(B.scene, B.camera);
         this.bimAtualizarCotas();
       };
       loop();
@@ -2018,6 +2091,37 @@ class CdeWin {
       this.bimDispose();
       this.bimMsg('Não foi possível abrir o modelo 3D: '+((e&&e.message)||e));
     }
+  }
+  // Monta a cadeia de pós-processamento só na primeira vez que a sombra de
+  // contato é ligada. Antes disso o visualizador nem baixa esses módulos.
+  async bimAO(lig){
+    const B=this.B3; if(!B) return;
+    if(!lig){ B.ao=false; this.bimMsgDica('Sombra de contato desligada.'); return; }
+    if(!B.composer){
+      this.bimMsgDica('Carregando sombra de contato…');
+      const { EffectComposer, RenderPass, SAOPass, OutputPass } = await bimPosLibs();
+      const C=this.B3; if(!C||!C.vivo) return;
+      const comp = new EffectComposer(C.renderer);
+      comp.addPass(new RenderPass(C.scene, C.camera));
+      const sao = new SAOPass(C.scene, C.camera);
+      sao.params.saoBlur = true;
+      sao.params.saoBlurRadius = 6;
+      // saoKernelRadius é em PIXELS de tela (kernelRadius/size no shader), então
+      // vale igual em qualquer modelo.
+      sao.params.saoKernelRadius = +this.bimCfgEl.querySelector('[data-c=aoRaio]').value;
+      sao.params.saoIntensity = (+this.bimCfgEl.querySelector('[data-c=aoInt]').value)/100;
+      // saoScale NÃO é absoluto: o shader usa scale/cameraFar, e o far sai do
+      // tamanho do modelo. Um número fixo dá efeito nenhum num prédio e quase
+      // preto numa peça — por isso acompanha o far (razão medida em teste).
+      sao.__razao = 0.024;
+      sao.params.saoScale = C.camera.far * sao.__razao;
+      comp.addPass(sao);
+      comp.addPass(new OutputPass());
+      comp.setSize(this.bimWrap.clientWidth||1, this.bimWrap.clientHeight||1);
+      C.composer = comp; C.sao = sao;
+    }
+    B.ao = true;
+    this.bimMsgDica('Sombra de contato ligada.');
   }
   bimResize(){
     const B=this.B3; if(!B) return;
