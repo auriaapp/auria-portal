@@ -2230,8 +2230,18 @@ class CdeWin {
     B.controls.minDistance = Math.max(raio/500, 0.05);
     B.controls.maxDistance = raio*20;
     B.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
-    B.camera.near = Math.max(dist/5000, 0.01);
-    B.camera.far  = dist*50;
+    // Faixa de profundidade APERTADA de propósito. A precisão do buffer de
+    // profundidade depende da razão far/near: com near=dist/5000 e far=dist*50
+    // a razão era ~250.000:1, e nessa amplitude faces quase coincidentes
+    // (alvenaria contra estrutura, poucos milímetros entre si) alternam qual
+    // fica na frente a cada quadro — o "piscar". Aqui a razão cai para
+    // ~8.000:1, cerca de 30× mais precisão, sem custo nenhum de desempenho.
+    // near de 5cm ainda permite caminhar colado numa parede; far de 8 raios
+    // cobre o modelo inteiro com folga.
+    // (Peça EXATAMENTE duplicada continua piscando — ali não há profundidade
+    //  a desempatar. Isso é defeito do modelo, e vira regra de verificação.)
+    B.camera.near = Math.max(raio/1000, 0.05);
+    B.camera.far  = Math.max(raio*8, dist*2.5);
     B.camera.updateProjectionMatrix();
     // A oclusão depende de scale/cameraFar — o far acabou de mudar, então a
     // escala tem de ser recalculada junto.
@@ -2498,7 +2508,16 @@ class CdeWin {
     }
     const E=this.B3;
     if(!E||!E.vivo||!E.corte.plano){ return; }
-    if(grupo.children.length){ E.scene.add(grupo); E.corte.arestas = grupo; }
+    if(grupo.children.length){
+      // Desloca a aresta alguns milímetros para DENTRO do lado que fica.
+      // Ela nasce exatamente sobre o plano, e o recorte vale para todos os
+      // materiais — inclusive o dela. Na fronteira, variação numérica joga
+      // trechos para o lado descartado e a linha pisca. O deslocamento é
+      // proporcional ao modelo (imperceptível) e a tira do limite.
+      const eps = Math.max((E.unidade||1)*0.05, 1e-4);
+      grupo.position.copy(E.corte.plano.normal).multiplyScalar(eps);
+      E.scene.add(grupo); E.corte.arestas = grupo;
+    }
   }
   bimSumirArestas(){
     const B=this.B3; if(!B||!B.corte.arestas) return;
