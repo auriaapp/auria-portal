@@ -183,6 +183,29 @@
   .cdeWin-bim .bimCfg .val{flex:0 0 34px;text-align:right;color:#94a3b8;font-variant-numeric:tabular-nums}
   .cdeWin-bim .bimCfg .restaurar{width:100%;margin-top:9px;background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#e2e8f0;padding:5px;cursor:pointer;font-size:12px}
+  /* Painel de regras — mesma linguagem do de configuração, porém mais largo
+     porque lista achados. */
+  .cdeWin-bim .bimReg{position:absolute;top:46px;left:8px;z-index:6;width:322px;max-height:calc(100% - 62px);
+    display:none;flex-direction:column;background:rgba(15,23,42,.96);border:1px solid rgba(255,255,255,.16);
+    border-radius:9px;color:#e2e8f0;font-size:12px;overflow:hidden}
+  .cdeWin-bim .bimReg.on{display:flex}
+  .cdeWin-bim .bimReg h5{margin:0;padding:9px 11px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    color:#94a3b8;background:rgba(255,255,255,.05);display:flex;align-items:center;justify-content:space-between}
+  .cdeWin-bim .bimReg .corpo{padding:9px 11px;overflow:auto}
+  .cdeWin-bim .bimReg .rg{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+  .cdeWin-bim .bimReg .rg input{margin-top:2px;accent-color:var(--accent);flex:none}
+  .cdeWin-bim .bimReg .rg b{display:block;font-weight:600}
+  .cdeWin-bim .bimReg .rg i{font-style:normal;color:#94a3b8;font-size:11px;line-height:1.35}
+  .cdeWin-bim .bimReg .rodar{width:100%;margin-top:10px;background:var(--accent);border:none;border-radius:7px;
+    color:#231703;font-weight:700;padding:7px;cursor:pointer;font-size:12px}
+  .cdeWin-bim .bimReg .rodar:disabled{opacity:.5;cursor:default}
+  .cdeWin-bim .bimReg .ach{display:flex;gap:7px;align-items:center;padding:6px 7px;border-radius:6px;cursor:pointer}
+  .cdeWin-bim .bimReg .ach:hover{background:rgba(255,255,255,.09)}
+  .cdeWin-bim .bimReg .ach .sev{width:8px;height:8px;border-radius:50%;flex:none}
+  .cdeWin-bim .bimReg .ach span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cdeWin-bim .bimReg .ach small{color:#94a3b8}
+  .cdeWin-bim .bimReg .vazio{color:#94a3b8;font-style:italic;padding:6px 0}
+  .cdeWin-bim .bimReg .grupoTit{margin:10px 0 3px;font-size:11px;color:#facc15;font-weight:700}
   .cdeWin-bim .bimCorte select{background:#1e293b;color:#e2e8f0;border:1px solid rgba(255,255,255,.18);
     border-radius:5px;font-size:12px;padding:3px 4px}
   .cdeWin-bim .bimCorte input[type=range]{width:110px;accent-color:var(--accent)}
@@ -1503,6 +1526,7 @@ class CdeWin {
       +       '</div>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
+      +       '<button data-t="regras" title="Regras de verificação do modelo">📣</button>'
       +       '<button data-t="cfg" title="Configurações de visualização">⚙</button>'
       +       '<div class="bimCorte">'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
@@ -1525,6 +1549,17 @@ class CdeWin {
       +       '</div>'
       +       '<p class="nota">Os itens em “efeitos pesados” só são baixados quando ligados — desligados, a abertura fica leve.</p>'
       +       '<button class="restaurar" data-c="reset">Restaurar padrão</button>'
+      +     '</div>'
+      +     '<div class="bimReg">'
+      +       '<h5><span>Regras de verificação</span><span class="cont"></span></h5>'
+      +       '<div class="corpo">'
+      +         '<div class="rg"><input type="checkbox" data-r="dup" checked>'
+      +           '<span><b>Elementos duplicados</b><i>Peças da mesma categoria ocupando exatamente a mesma posição e tamanho. Duplicam quantitativo e são a causa do modelo “piscar”.</i></span></div>'
+      +         '<div class="rg"><input type="checkbox" data-r="proxy" checked>'
+      +           '<span><b>Entidade genérica</b><i>Peças exportadas como IfcBuildingElementProxy em vez da classe própria (viga, pilar, parede). Quebram quantitativo e regras por categoria.</i></span></div>'
+      +         '<button class="rodar" data-r="rodar">Verificar modelo</button>'
+      +         '<div class="res"></div>'
+      +       '</div>'
       +     '</div>'
       +     '<button class="bpAba" title="Mostrar/ocultar painel">▸</button>'
       +     '<div class="bimPainel">'
@@ -1564,11 +1599,23 @@ class CdeWin {
     tools.querySelector('[data-t=fit]')  .addEventListener('click', ()=> this.bimEnquadrar());
     tools.querySelector('[data-t=medir]').addEventListener('click', (e)=> this.bimModoMedir(!e.currentTarget.classList.contains('on')));
     tools.querySelector('[data-t=corte]').addEventListener('click', (e)=> this.bimModoCorte(!e.currentTarget.classList.contains('on')));
+    const regEl = w.querySelector('.cdeWin-bim .bimReg');
+    this.bimRegEl = regEl;
+    tools.querySelector('[data-t=regras]').addEventListener('click', (e)=>{
+      const abriu = regEl.classList.toggle('on');
+      e.currentTarget.classList.toggle('on', abriu);
+      // Um painel de cada vez: os dois nascem no mesmo canto.
+      if(abriu){ cfgEl.classList.remove('on'); tools.querySelector('[data-t=cfg]').classList.remove('on'); }
+    });
+    regEl.querySelector('[data-r=rodar]').addEventListener('click', ()=>
+      this.bimRegrasRodar().catch(err=>console.warn('regras:', err)));
+
     const cfgEl = w.querySelector('.cdeWin-bim .bimCfg');
     this.bimCfgEl = cfgEl;
     tools.querySelector('[data-t=cfg]').addEventListener('click', (e)=>{
       const abriu = cfgEl.classList.toggle('on');
       e.currentTarget.classList.toggle('on', abriu);
+      if(abriu){ regEl.classList.remove('on'); tools.querySelector('[data-t=regras]').classList.remove('on'); }
     });
     const cfg = (n)=> cfgEl.querySelector('[data-c='+n+']');
     const mostrar = (n, txt)=>{ const l=cfg(n).closest('.lin').querySelector('.val'); if(l) l.textContent=txt; };
@@ -1966,6 +2013,7 @@ class CdeWin {
         modelos:carregados, raf:null, ro:null, vivo:true,
         ao:false,                                        // desligada por padrão: é o visual leve
         facesDuplas:true, ultFaces:0,                    // tubo-casca não some pela metade
+        achados:[],                                      // resultado da última verificação
         luzes:{ amb:ambiente, hemi:hemis, sol:principal, fill:preench },
         corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
@@ -2134,6 +2182,134 @@ class CdeWin {
       this.bimDispose();
       this.bimMsg('Não foi possível abrir o modelo 3D: '+((e&&e.message)||e));
     }
+  }
+  // ── Regras de verificação ────────────────────────────────────────────────
+  //  Só regras que dependem de DADO e CAIXA, não de geometria fina. É de
+  //  propósito: atributos e caixas são baratos (a conversão gasta 97% do tempo
+  //  na geometria, e nada disso toca nela), e são justamente as verificações
+  //  que mais pegam problema real de coordenação.
+  async bimRegrasRodar(){
+    const B=this.B3; if(!B) return;
+    const el=this.bimRegEl;
+    const btn=el.querySelector('[data-r=rodar]');
+    const res=el.querySelector('.res');
+    const quer=(n)=> el.querySelector('[data-r='+n+']').checked;
+    btn.disabled=true; btn.textContent='Verificando…';
+    res.innerHTML='<div class="vazio">Lendo o modelo…</div>';
+    try{
+      const achados=[];
+      if(quer('dup'))   achados.push(...await this.bimRegraDuplicados());
+      if(quer('proxy')) achados.push(...await this.bimRegraProxy());
+      const C=this.B3; if(!C||!C.vivo) return;
+      C.achados = achados;
+      this.bimRegrasRender();
+    }catch(e){
+      console.warn('regras:', e);
+      res.innerHTML='<div class="vazio">Falhou: '+esc((e&&e.message)||String(e))+'</div>';
+    }finally{
+      btn.disabled=false; btn.textContent='Verificar modelo';
+    }
+  }
+  // Duplicados: mesma categoria + mesma caixa. Peça repetida em OUTRA posição
+  // é reuso legítimo (instanciação); duplicata é a que ocupa o MESMO lugar.
+  async bimRegraDuplicados(){
+    const B=this.B3; const achados=[];
+    for(const x of B.modelos){
+      let cats;
+      try{ cats = await x.model.getItemsOfCategories([/./]); }catch(_){ continue; }
+      for(const [cat, ids] of Object.entries(cats||{})){
+        if(!ids || ids.length<2) continue;
+        let caixas;
+        try{ caixas = await x.model.getBoxes(ids); }catch(_){ continue; }
+        const mapa=new Map();
+        (caixas||[]).forEach((c,i)=>{
+          if(!c || c.isEmpty()) return;
+          // Arredonda a 5mm: absorve ruído de ponto flutuante sem juntar peças
+          // que de fato estão em lugares diferentes.
+          const k=[c.min.x,c.min.y,c.min.z,c.max.x,c.max.y,c.max.z]
+            .map(v=>Math.round(v*200)).join('|');
+          (mapa.get(k) || mapa.set(k,[]).get(k)).push(ids[i]);
+        });
+        for(const [,grupo] of mapa){
+          if(grupo.length<2) continue;
+          achados.push({
+            regra:'dup', sev:'#E8960A',
+            titulo:`${grupo.length}× ${cat.replace(/^IFC/,'')} no mesmo lugar`,
+            detalhe:`${x.nome||'modelo'} · ${grupo.length} peças sobrepostas`,
+            modelo:x, ids:grupo
+          });
+        }
+      }
+    }
+    return achados;
+  }
+  // Entidade genérica: o exportador não soube dizer o que a peça é.
+  async bimRegraProxy(){
+    const B=this.B3; const achados=[];
+    for(const x of B.modelos){
+      try{
+        const cats = await x.model.getItemsOfCategories([/^IFCBUILDINGELEMENTPROXY$/]);
+        const ids = Object.values(cats||{}).flat();
+        if(ids.length) achados.push({
+          regra:'proxy', sev:'#A32D2D',
+          titulo:`${ids.length} peça(s) sem classe própria`,
+          detalhe:`${x.nome||'modelo'} · exportadas como IfcBuildingElementProxy`,
+          modelo:x, ids
+        });
+      }catch(_){}
+    }
+    return achados;
+  }
+  bimRegrasRender(){
+    const B=this.B3; if(!B) return;
+    const el=this.bimRegEl;
+    const res=el.querySelector('.res');
+    const cont=el.querySelector('.cont');
+    const achados=B.achados||[];
+    const total=achados.reduce((s,a)=>s+a.ids.length,0);
+    cont.textContent = achados.length ? (total+' peça(s)') : '';
+    if(!achados.length){ res.innerHTML='<div class="vazio">Nenhum problema encontrado nas regras marcadas.</div>'; return; }
+    const rotulos={ dup:'Elementos duplicados', proxy:'Entidade genérica' };
+    let html='';
+    ['dup','proxy'].forEach(r=>{
+      const doGrupo=achados.filter(a=>a.regra===r);
+      if(!doGrupo.length) return;
+      html+=`<div class="grupoTit">${rotulos[r]} (${doGrupo.length})</div>`;
+      doGrupo.forEach((a,i)=>{
+        const idx=achados.indexOf(a);
+        html+=`<div class="ach" data-i="${idx}"><span class="sev" style="background:${a.sev}"></span>`
+            + `<span title="${esc(a.detalhe)}">${esc(a.titulo)}<br><small>${esc(a.detalhe)}</small></span></div>`;
+      });
+    });
+    res.innerHTML=html;
+    res.querySelectorAll('.ach').forEach(d=>{
+      d.addEventListener('click', ()=> this.bimIrAoAchado(+d.dataset.i));
+    });
+  }
+  // Leva a câmera até o achado e o destaca — sem isso a lista é só um número.
+  async bimIrAoAchado(i){
+    const B=this.B3; if(!B) return;
+    const a=(B.achados||[])[i]; if(!a) return;
+    try{
+      for(const x of B.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+      await a.modelo.model.highlight(a.ids, {
+        color:new B.THREE.Color(0xE8960A), renderedFaces:1, opacity:1, transparent:false
+      });
+      const caixas = await a.modelo.model.getBoxes(a.ids);
+      const cx=new B.THREE.Box3();
+      (caixas||[]).forEach(c=>{ if(c && !c.isEmpty()) cx.union(c); });
+      if(!cx.isEmpty()){
+        const centro=cx.getCenter(new B.THREE.Vector3());
+        const tam=cx.getSize(new B.THREE.Vector3());
+        const raio=Math.max(tam.x,tam.y,tam.z)*0.5 || 1;
+        const dist=(raio/Math.sin((B.camera.fov*Math.PI/180)/2))*2.2;
+        if(B.andar.ativo) this.bimModoAndar(false);
+        B.camera.position.set(centro.x+dist*0.6, centro.y+dist*0.5, centro.z+dist*0.6);
+        B.controls.target.copy(centro);
+        B.controls.update();
+      }
+      await B.fragments.update(true);
+    }catch(e){ console.warn('ir ao achado:', e); }
   }
   // Tubo e duto vindos de alguns exportadores são CASCA (superfície de
   // espessura zero), não sólido. Com descarte de face traseira, olhando do
