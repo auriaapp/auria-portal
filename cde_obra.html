@@ -1073,6 +1073,21 @@ function bim3dLibs(){
   return _bim3dLibs;
 }
 
+// Linhas grossas exigem Line2/LineMaterial: o `linewidth` do LineBasicMaterial
+// é ignorado pela maioria das placas (fica sempre 1px). Carregado sob demanda,
+// só quando alguém usa o corte.
+let _bimLinhaLibs=null;
+function bimLinhaLibs(){
+  if(_bimLinhaLibs) return _bimLinhaLibs;
+  _bimLinhaLibs = Promise.all([
+    import('three/examples/jsm/lines/LineSegments2.js'),
+    import('three/examples/jsm/lines/LineSegmentsGeometry.js'),
+    import('three/examples/jsm/lines/LineMaterial.js')
+  ]).then(([a,b,c])=>({ LineSegments2:a.LineSegments2, LineSegmentsGeometry:b.LineSegmentsGeometry, LineMaterial:c.LineMaterial }))
+    .catch(e=>{ _bimLinhaLibs=null; throw e; });
+  return _bimLinhaLibs;
+}
+
 // Pós-processamento fica FORA da carga inicial: são quatro módulos a mais e
 // a sombra de contato vem desligada por padrão, então a esmagadora maioria
 // das aberturas não precisa deles. Só baixa quando alguém liga o efeito.
@@ -1499,6 +1514,7 @@ class CdeWin {
       +       '<div class="lin"><span>Exposição</span><input type="range" data-c="expo" min="50" max="220" value="115"><i class="val">1,15</i></div>'
       +       '<div class="lin"><span>Luz ambiente</span><input type="range" data-c="amb" min="0" max="200" value="125"><i class="val">1,25</i></div>'
       +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
+      +       '<div class="lin"><span>Faces internas (tubos)</span><input type="checkbox" data-c="faces" checked></div>'
       +       '<h5 style="margin-top:10px">Efeitos pesados</h5>'
       +       '<div class="lin"><span>Modelo em alta</span><input type="checkbox" data-c="gq"></div>'
       +       '<div class="lin"><span>Sombra de contato</span><input type="checkbox" data-c="ao"></div>'
@@ -1567,6 +1583,14 @@ class CdeWin {
     cfg('sol').addEventListener('input', (e)=>{
       const v=(+e.target.value)/100; mostrar('sol', v.toFixed(2).replace('.',','));
       const B=this.B3; if(B){ B.luzes.sol.intensity=v; B.luzes.fill.intensity=v*0.35; }
+    });
+    cfg('faces').addEventListener('change', (e)=>{
+      const B=this.B3; if(!B) return;
+      B.facesDuplas = e.target.checked;
+      this.bimAplicarFaces(true);
+      this.bimMsgDica(e.target.checked
+        ? 'Faces internas visíveis — tubo modelado como casca deixa de sumir pela metade.'
+        : 'Só faces externas.');
     });
     cfg('gq').addEventListener('change', (e)=>{
       const B=this.B3; if(!B) return;
@@ -1941,8 +1965,9 @@ class CdeWin {
       this.B3 = { THREE, renderer, composer:null, sao:null, scene, camera, controls, fragments,
         modelos:carregados, raf:null, ro:null, vivo:true,
         ao:false,                                        // desligada por padrão: é o visual leve
+        facesDuplas:true, ultFaces:0,                    // tubo-casca não some pela metade
         luzes:{ amb:ambiente, hemi:hemis, sol:principal, fill:preench },
-        corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, mostrarAjuda:true },
+        corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
         andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
                   camPos:null, camRot:null, alvo:null, ultUpd:0 },
@@ -2051,6 +2076,9 @@ class CdeWin {
         const rapido = (Date.now()-dn.t) < 500;
         const arrastou = dn.arrastou;
         dn=null;
+        // Terminou de arrastar o plano: refaz a aresta na posição final.
+        if(arrastou && this.B3 && this.B3.corte.ativo && this.B3.corte.ancora)
+          this.bimCorteArestas().catch(()=>{});
         const B=this.B3; if(!B || arrastou || !perto || !rapido) return;
         // Modo caminhar ARMADO: este clique escolhe onde pisar.
         if(B.andar.armado){
@@ -2093,6 +2121,7 @@ class CdeWin {
         if(B.andar.ativo) this.bimAndarQuadro(dt);
         else B.controls.update();
         this.bimEscalarMarcas();          // antes do render: escala vale já neste quadro
+        this.bimAplicarFaces();           // tiles novos chegam com o lado padrão
         if(B.ao && B.composer) B.composer.render();
         else                   B.renderer.render(B.scene, B.camera);
         this.bimAtualizarCotas();
@@ -2105,6 +2134,34 @@ class CdeWin {
       this.bimDispose();
       this.bimMsg('Não foi possível abrir o modelo 3D: '+((e&&e.message)||e));
     }
+  }
+  // Tubo e duto vindos de alguns exportadores são CASCA (superfície de
+  // espessura zero), não sólido. Com descarte de face traseira, olhando do
+  // lado de dentro a face some e a peça aparece pela metade. Dupla face
+  // resolve sem reconverter nada.
+  //
+  // Roda periodicamente porque os tiles entram e saem por streaming: material
+  // novo chega com o lado padrão. É barato — o Fragments COMPARTILHA materiais
+  // entre tiles, então são poucos objetos distintos, não um por peça.
+  bimAplicarFaces(forcar){
+    const B=this.B3; if(!B) return;
+    const agora=performance.now();
+    if(!forcar && agora-(B.ultFaces||0) < 600) return;
+    B.ultFaces=agora;
+    const lado = (B.facesDuplas!==false) ? B.THREE.DoubleSide : B.THREE.FrontSide;
+    const vistos=new Set();
+    B.modelos.forEach(x=>{
+      try{
+        x.model.object.traverse(o=>{
+          const m=o.material; if(!m) return;
+          (Array.isArray(m)?m:[m]).forEach(mm=>{
+            if(!mm || vistos.has(mm.uuid)) return;
+            vistos.add(mm.uuid);
+            if(mm.side!==lado){ mm.side=lado; mm.needsUpdate=true; }
+          });
+        });
+      }catch(_){}
+    });
   }
   // Monta a cadeia de pós-processamento só na primeira vez que a sombra de
   // contato é ligada. Antes disso o visualizador nem baixa esses módulos.
@@ -2142,6 +2199,11 @@ class CdeWin {
     const w=this.bimWrap.clientWidth||1, h=this.bimWrap.clientHeight||1;
     B.renderer.setSize(w, h, false);
     if(B.composer) B.composer.setSize(w, h);   // senão a oclusão fica na resolução antiga
+    // A espessura da LineMaterial é calculada em cima da resolução informada:
+    // sem atualizar aqui, a aresta do corte engorda ou afina ao redimensionar.
+    if(B.corte && B.corte.arestas){
+      B.corte.arestas.traverse(o=>{ if(o.material && o.material.resolution) o.material.resolution.set(w,h); });
+    }
     B.camera.aspect = w/h;
     B.camera.updateProjectionMatrix();
   }
@@ -2403,7 +2465,49 @@ class CdeWin {
     C.normal = dir.normalize();
     C.inv = false;
     this.bimCorteAplicar();
+    this.bimCorteArestas().catch(()=>{});
     this.bimMsgDica('Arraste com o botão esquerdo para mover a seção · ⇄ inverte o lado · 🗑 remove');
+  }
+  // Desenha a ARESTA da seção — o contorno laranja grosso onde o plano corta
+  // as peças, que é o que dá leitura de corte de projeto. Vem do getSection()
+  // do próprio Fragments, então acompanha a geometria real, não é aproximação.
+  // Recalculado ao SOLTAR o arraste, não a cada quadro: é um cálculo por
+  // modelo e travaria o movimento do plano.
+  async bimCorteArestas(){
+    const B=this.B3; if(!B) return;
+    const C=B.corte;
+    this.bimSumirArestas();
+    if(!C.plano) return;
+    let L;
+    try{ L = await bimLinhaLibs(); }catch(_){ return; }
+    const D=this.B3; if(!D||!D.vivo||!D.corte.plano) return;
+    const grupo = new D.THREE.Group();
+    for(const x of D.modelos){
+      if(x.visivel===false) continue;
+      try{
+        const s = await x.model.getSection(D.corte.plano);
+        if(!s || !s.buffer || !s.buffer.length) continue;
+        const geo = new L.LineSegmentsGeometry();
+        geo.setPositions(s.buffer);
+        const mat = new L.LineMaterial({ color:0xE8960A, linewidth:2.6, depthTest:false });
+        mat.resolution.set(this.bimWrap.clientWidth||1, this.bimWrap.clientHeight||1);
+        const linha = new L.LineSegments2(geo, mat);
+        linha.renderOrder = 997;
+        grupo.add(linha);
+      }catch(_){ /* modelo sem seção nesse plano */ }
+    }
+    const E=this.B3;
+    if(!E||!E.vivo||!E.corte.plano){ return; }
+    if(grupo.children.length){ E.scene.add(grupo); E.corte.arestas = grupo; }
+  }
+  bimSumirArestas(){
+    const B=this.B3; if(!B||!B.corte.arestas) return;
+    const g=B.corte.arestas;
+    try{
+      B.scene.remove(g);
+      g.traverse(o=>{ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    }catch(_){}
+    B.corte.arestas=null;
   }
   // Some com o retângulo de manuseio sem tocar no corte em si.
   bimSumirCorteAjuda(){
@@ -2422,6 +2526,7 @@ class CdeWin {
       B.renderer.clippingPlanes=[];
       B.modelos.forEach(x=>{ try{ x.model.getClippingPlanesEvent=()=>[]; }catch(_){} });
       this.bimSumirCorteAjuda();
+      this.bimSumirArestas();
       B.fragments.update(true).catch(()=>{});
       return;
     }
@@ -2461,11 +2566,13 @@ class CdeWin {
     const B=this.B3; if(!B||!B.corte.ancora) return;
     B.corte.inv = !B.corte.inv;
     this.bimCorteAplicar();
+    this.bimCorteArestas().catch(()=>{});
   }
   bimCorteRemover(){
     const B=this.B3; if(!B) return;
     const C=B.corte;
     C.ancora=null; C.normal=null; C.plano=null; C.inv=false;
+    this.bimSumirArestas();
     this.bimCorteAplicar();
     if(C.ativo) this.bimMsgDica('Clique numa superfície para criar a seção · depois arraste com o botão esquerdo · girar com o direito');
   }
