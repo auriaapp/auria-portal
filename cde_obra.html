@@ -275,12 +275,17 @@
   .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line);
        transition:width .16s ease;overflow:hidden}
   .nav.collapsed{width:0;border-left:none}
-  .navToggleBtn{position:absolute;top:50%;right:322px;transform:translate(50%,-50%);z-index:30;
-                width:22px;height:44px;border-radius:8px;background:var(--panel);border:1px solid var(--line);
-                color:var(--txt2);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;
-                box-shadow:0 2px 8px rgba(8,14,26,.15);transition:right .16s ease}
-  .navToggleBtn:hover{border-color:var(--accent);color:var(--txt)}
-  .navToggleBtn.collapsed{right:0}
+  /* z-index alto de propósito: as janelas de prancha vivem a partir de 101 e
+     sobem a cada foco, então com um valor baixo elas cobriam este botão e não
+     havia como reabrir a coluna. Fica abaixo dos modais (9000+). */
+  .navToggleBtn{position:absolute;top:50%;right:322px;transform:translate(50%,-50%);z-index:8500;
+                width:26px;height:58px;border-radius:14px;background:var(--panel);border:1px solid var(--line);
+                color:var(--mut);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;
+                box-shadow:0 3px 14px rgba(8,14,26,.28);transition:right .16s ease, background .12s, color .12s, border-color .12s}
+  .navToggleBtn:hover{border-color:var(--accent);background:var(--accent);color:#231703;
+                box-shadow:0 4px 18px rgba(232,150,10,.4)}
+  .navToggleBtn:active{transform:translate(50%,-50%) scale(.94)}
+  .navToggleBtn.collapsed{right:0;border-radius:14px 0 0 14px}
   .navpanel{flex:1;min-width:0;overflow-y:auto;padding:12px}
   .navpanel h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);
                margin:2px 0 10px;font-weight:800}
@@ -1939,8 +1944,8 @@ class CdeWin {
         luzes:{ amb:ambiente, hemi:hemis, sol:principal, fill:preench },
         corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, mostrarAjuda:true },
         medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
-        andar:  { ativo:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
-                  camPos:null, camRot:null, alvo:null },
+        andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
+                  camPos:null, camRot:null, alvo:null, ultUpd:0 },
         niveis: null,   // alturas de piso, achadas sob demanda ao entrar no modo caminhar
         unidade: 1 };   // raio/150 — escala do modelo, usada no contorno do corte
 
@@ -2047,6 +2052,15 @@ class CdeWin {
         const arrastou = dn.arrastou;
         dn=null;
         const B=this.B3; if(!B || arrastou || !perto || !rapido) return;
+        // Modo caminhar ARMADO: este clique escolhe onde pisar.
+        if(B.andar.armado){
+          this.bimRaycast(e).then(hit=>{
+            const C=this.B3; if(!C||!C.vivo||!C.andar.armado) return;
+            if(!hit||!hit.point){ this.bimMsgDica('Clique sobre o piso do modelo.'); return; }
+            this.bimEntrarAndar(hit.point);
+          }).catch(err=>console.warn('caminhar:', err));
+          return;
+        }
         if(B.medida.ativo){ this.bimMedirPonto(e).catch(err=>console.warn('3D:', err)); return; }
         if(B.corte.ativo){
           // Só cria a seção se ainda não existe: com uma posta, o clique não
@@ -2182,17 +2196,30 @@ class CdeWin {
         (caixas||[]).forEach(c=>{ if(c && isFinite(c.max.y)) tops.push(c.max.y); });
       }catch(_){ /* modelo sem laje ou sem dados: ignora */ }
     }
-    // Agrupa alturas próximas: uma laje só gera dezenas de caixas no mesmo
-    // nível, e degraus/rebaixos não devem virar pavimento.
+    // 1ª passada: junta alturas quase iguais (uma laje gera dezenas de caixas
+    // no mesmo nível).
     tops.sort((a,b)=>a-b);
-    const niveis=[]; const tol=0.6;
+    let g=[]; const tol=0.6;
     tops.forEach(y=>{
-      const ult=niveis[niveis.length-1];
-      if(ult && Math.abs(y-ult.soma/ult.n) <= tol){ ult.soma+=y; ult.n++; }
-      else niveis.push({ soma:y, n:1 });
+      const u=g[g.length-1];
+      if(u && Math.abs(y-u.soma/u.n) <= tol){ u.soma+=y; u.n++; }
+      else g.push({ soma:y, n:1 });
     });
-    B.niveis = niveis.filter(g=>g.n>=2).map(g=>g.soma/g.n);   // nível com 1 caixa só costuma ser peça solta
-    if(!B.niveis.length && niveis.length) B.niveis = niveis.map(g=>g.soma/g.n);
+    g = g.filter(x=>x.n>=2);                 // grupo de uma caixa só costuma ser peça solta
+    if(!g.length) g = [{soma:(B.caixa?B.caixa.min.y:0), n:1}];
+
+    // 2ª passada — a que resolve o "dois níveis por pavimento": pé-direito de
+    // prédio não é menor que ~2,2m, então dois grupos mais próximos que isso
+    // são o MESMO pavimento (laje principal + rebaixo de box, soleira, calçada
+    // técnica). Fica o grupo com mais caixas, que é a laje de piso de verdade.
+    const PE_DIREITO_MIN = 2.2;
+    const fund=[];
+    g.map(x=>({ y:x.soma/x.n, n:x.n })).sort((a,b)=>a.y-b.y).forEach(nv=>{
+      const u=fund[fund.length-1];
+      if(u && (nv.y - u.y) < PE_DIREITO_MIN){ if(nv.n > u.n){ u.y=nv.y; u.n=nv.n; } }
+      else fund.push(nv);
+    });
+    B.niveis = fund.map(x=>x.y);
     return B.niveis;
   }
   async bimModoAndar(lig){
@@ -2201,7 +2228,7 @@ class CdeWin {
     this.bimToolsEl.querySelector('[data-t=andar]').classList.toggle('on', lig);
     this.bimWrap.querySelector('.bimAndar').classList.toggle('on', lig);
     if(!lig){
-      W.ativo=false;
+      W.ativo=false; W.armado=false;
       W.teclas.clear();
       B.controls.enabled=true;
       if(W.camPos){ B.camera.position.copy(W.camPos); B.camera.quaternion.copy(W.camRot); }
@@ -2212,38 +2239,40 @@ class CdeWin {
       B.fragments.update(true).catch(()=>{});
       return;
     }
-    // Medir e cortar CONTINUAM valendo enquanto se caminha — é justamente
-    // andar até o ponto e cotar dali. O clique é roteado pela mira central.
+    // NÃO entra direto: fica ARMADO esperando o clique. Quem escolhe onde
+    // pisar é o usuário — entrar sozinho no ponto do centro da tela largava a
+    // pessoa em lugar arbitrário, às vezes em outro pavimento.
     this.bimMsgDica('Procurando os pavimentos…');
-    const niveis = await this.bimNiveis();
+    await this.bimNiveis();
     const C=this.B3; if(!C||!C.vivo) return;
-
-    // Onde entrar: o ponto que está no centro da tela.
-    const r=C.renderer.domElement.getBoundingClientRect();
-    const hit=await this.bimRaycast({ clientX:r.left+r.width/2, clientY:r.top+r.height/2 });
-    const D=this.B3; if(!D||!D.vivo) return;
-    const alvoXZ = (hit&&hit.point) ? hit.point.clone() : (D.caixa? D.caixa.getCenter(new D.THREE.Vector3()) : new D.THREE.Vector3());
-
-    W.camPos = D.camera.position.clone();
-    W.camRot = D.camera.quaternion.clone();
-    W.alvo   = D.controls.target.clone();
-    // Pavimento inicial: o mais próximo ABAIXO do ponto olhado (é sobre ele
-    // que se está pisando), com o mais baixo como reserva.
-    let idx = 0;
-    if(niveis.length){
-      const abaixo = niveis.map((y,i)=>({y,i})).filter(o=>o.y <= alvoXZ.y+0.2);
-      idx = abaixo.length ? abaixo[abaixo.length-1].i : 0;
-    }
+    C.andar.armado = true;
+    C.renderer.domElement.style.cursor='crosshair';
+    this.bimMsgDica('Clique no piso do pavimento onde quer caminhar.');
+  }
+  // Entra de fato, no ponto clicado.
+  bimEntrarAndar(ponto){
+    const B=this.B3; if(!B) return;
+    const W=B.andar, T=B.THREE;
+    const niveis=B.niveis||[];
+    W.armado=false;
+    W.camPos = B.camera.position.clone();
+    W.camRot = B.camera.quaternion.clone();
+    W.alvo   = B.controls.target.clone();
+    // Pavimento = o nível mais próximo do ponto clicado. Como a pessoa clica
+    // NO PISO, o mais próximo é o certo; usar "o primeiro abaixo" erraria por
+    // poucos centímetros de imprecisão do clique.
+    let idx=0, melhor=Infinity;
+    niveis.forEach((y,i)=>{ const d=Math.abs(y-ponto.y); if(d<melhor){ melhor=d; idx=i; } });
     W.ativo=true; W.nivel=idx;
     W.teclas = new Set();
-    D.controls.enabled=false;
-
+    B.controls.enabled=false;
+    B.renderer.domElement.style.cursor='';
     // Mantém a direção de visão atual, mas na horizontal — entrar olhando
     // para o chão ou para o teto seria desorientador.
-    const dir=new D.THREE.Vector3(); D.camera.getWorldDirection(dir);
+    const dir=new T.Vector3(); B.camera.getWorldDirection(dir);
     W.yaw = Math.atan2(-dir.x, -dir.z);
     W.pitch = 0;
-    W.pos = new D.THREE.Vector3(alvoXZ.x, 0, alvoXZ.z);
+    W.pos = new T.Vector3(ponto.x, 0, ponto.z);
     this.bimIrNivel(idx);
     this.bimMsgDica('W A S D ou setas para andar · segure a RODA e arraste para olhar · clique livre p/ selecionar e cotar · Esc sai');
   }
@@ -2251,8 +2280,8 @@ class CdeWin {
     const B=this.B3; if(!B||!B.andar.ativo) return;
     const W=B.andar;
     const ns=B.niveis||[];
-    if(ns.length){ W.nivel=Math.max(0, Math.min(ns.length-1, i)); W.pos.y = ns[W.nivel] + 1.65; }
-    else { W.pos.y = (B.caixa? B.caixa.min.y : 0) + 1.65; }
+    if(ns.length){ W.nivel=Math.max(0, Math.min(ns.length-1, i)); W.pos.y = ns[W.nivel] + 1.70; }
+    else { W.pos.y = (B.caixa? B.caixa.min.y : 0) + 1.70; }
     this.bimAndarAplicar();
     this.bimAndarPainel();
   }
@@ -2281,7 +2310,12 @@ class CdeWin {
     );
     B.camera.up.set(0,1,0);
     B.camera.lookAt(olhar);
-    B.fragments.update().catch(()=>{});
+    // fragments.update() é uma ida ao worker. Chamar a cada quadro (60×/s)
+    // enquanto se anda engasgava o movimento — o quadro ficava esperando o
+    // worker. A ~8×/s a geometria continua entrando a tempo e a câmera fica
+    // livre para rodar liso.
+    const agora=performance.now();
+    if(agora - (W.ultUpd||0) > 120){ W.ultUpd=agora; B.fragments.update().catch(()=>{}); }
   }
   // Passo do quadro: anda enquanto a tecla estiver pressionada.
   bimAndarQuadro(dt){
@@ -2296,8 +2330,10 @@ class CdeWin {
     if(W.teclas.has('d')) mov.add(lado);
     if(W.teclas.has('a')) mov.sub(lado);
     if(!mov.lengthSq()) return;
-    // Modelo em metros: 1,5 m/s é passo de caminhada; Shift triplica.
-    const v = 1.5 * (W.teclas.has('shift')?3:1);
+    // 1,5 m/s é a caminhada real, mas atravessar um pavimento assim leva um
+    // minuto e parece travado. 4,5 m/s dá a sensação certa de vistoria; Shift
+    // triplica para vencer distância.
+    const v = 4.5 * (W.teclas.has('shift')?3:1);
     W.pos.addScaledVector(mov.normalize(), v*dt);
     this.bimAndarAplicar();
   }
