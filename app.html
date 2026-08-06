@@ -7,6 +7,19 @@
 <link rel="icon" type="image/png" href="logo_symbol.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<!-- Visualizador 3D dos modelos do CDE. O importmap existe para o Fragments e
+     o nosso código usarem A MESMA cópia do three: duas instâncias carregadas
+     em paralelo quebram todo `instanceof THREE.*` em silêncio (o objeto some
+     da cena sem erro nenhum). Por isso o Fragments vem com ?external=three —
+     ele deixa o import bare `three`, que o mapa abaixo resolve. Nada disso
+     baixa nada até alguém abrir um modelo: o import é dinâmico. -->
+<script type="importmap">
+{"imports":{
+  "three":"https://esm.sh/three@0.185.1",
+  "three/":"https://esm.sh/three@0.185.1/",
+  "@thatopen/fragments":"https://esm.sh/@thatopen/fragments@3.4.6?external=three"
+}}
+</script>
 <style>
   :root{
     --bg:#0E1726; --bg2:#152036; --panel:#1B2740; --panel2:#212F4D;
@@ -71,6 +84,18 @@
   .sep{width:1px;height:20px;background:var(--line)}
   #stage{flex:1;position:relative;overflow:hidden;background:#FFFFFF;cursor:grab;min-width:0}
   #stageRow{flex:1;display:flex;overflow:hidden;min-height:0}
+  /* Modo só-BIM: o 2D sai de cena e o 3D toma a largura toda. Feito por classe
+     no body para não duplicar estado — quem manda é uma variável só. */
+  body.soBim #stage{display:none}
+  body.soBim #bimPane{display:flex;border-left:none}
+  body.soBim .toolbar .tb:not(#btnSoBim):not(#btnVerPins):not(#btnBim){opacity:.35;pointer-events:none}
+  #modList .mitem{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--line);
+    border-radius:8px;margin-bottom:5px;cursor:pointer;background:var(--panel)}
+  #modList .mitem:hover{border-color:var(--accent)}
+  #modList .mitem input{accent-color:var(--accent);flex:none}
+  #modList .mitem .mn{flex:1;min-width:0}
+  #modList .mitem .mn b{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #modList .mitem .mn small{color:var(--mut);font-size:10.5px}
   #bimPane{flex:1;min-width:0;display:none;flex-direction:column;background:#0f1117;border-left:2px solid var(--line)}
   #bimPane.on{display:flex}
   #bimPane iframe{flex:1;border:none;width:100%;background:#0f1117}
@@ -90,6 +115,21 @@
   .bim-props.on{display:flex}
   .bp-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #2a2d3a;flex-shrink:0}
   .bp-body{flex:1;overflow-y:auto;padding:8px 11px}
+  /* Painel de regras — reusa a moldura do de propriedades, mas nasce à
+     ESQUERDA para os dois poderem ficar abertos ao mesmo tempo (conferir a
+     propriedade da peça acusada é parte de julgar o achado). */
+  #regBox .rlin{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #2a2d3a;cursor:pointer}
+  #regBox .rlin input{margin-top:2px;accent-color:var(--accent);flex:none}
+  #regBox .rlin b{display:block;font-size:12px;color:#e2e8f0;font-weight:600}
+  #regBox .rlin i{font-style:normal;color:#94a3b8;font-size:11px;line-height:1.35}
+  #regBox .rvazio{color:#94a3b8;font-style:italic;font-size:11.5px;padding:6px 0}
+  #regBox .rgrupo{margin:10px 0 3px;font-size:11px;color:#facc15;font-weight:700}
+  #regBox .rach{display:flex;gap:6px;align-items:center;padding:5px 6px;border-radius:6px}
+  #regBox .rach:hover{background:rgba(255,255,255,.07)}
+  #regBox .rsev{width:8px;height:8px;border-radius:50%;flex:none}
+  #regBox .rtxt{flex:1;min-width:0;font-size:11.5px;color:#e2e8f0;cursor:pointer;line-height:1.3}
+  #regBox .rtxt small{color:#94a3b8}
+  #regBox .rapt{flex:none;padding:2px 7px;font-size:12px;border-radius:8px}
   .bp-empty{color:#64748b;font-size:12px;padding:22px 14px;text-align:center;line-height:1.5}
   .bp-grp{margin-bottom:11px}
   .bp-t{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#7FB3D3;font-weight:800;margin:2px 0 5px}
@@ -221,11 +261,19 @@
       <input type="file" id="pdfInputMulti" accept="application/pdf" multiple style="display:none" onchange="onMultiFiles(this.files)">
 
       <!-- Disciplinas e Pranchas -->
-      <div>
+      <div id="secPranchas">
         <label>Disciplinas e Pranchas</label>
         <div id="camList" style="margin:6px 0"></div>
         <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="abrirEscolhaOrigem(event)" disabled>＋ Adicionar Prancha</button>
         <div class="hint" style="margin-top:8px">Do computador: o PDF fica local, o Auria guarda identidade/pins/calibração. Do CDE: baixa a revisão vigente e amarra a prancha ao documento.</div>
+      </div>
+
+      <!-- Modelos BIM (modo só-BIM) — ocupa o lugar das pranchas -->
+      <div id="secModelosBim" style="display:none">
+        <label>Modelos BIM</label>
+        <div class="hint" style="margin:4px 0 6px">Vindos do CDE, revisão vigente. Marque para federar.</div>
+        <div id="modList" style="margin:6px 0"><div class="hint">Carregando…</div></div>
+        <button class="btn" id="btnAbrirModelos" style="width:100%;font-size:13px" onclick="f3dAbrirSelecionados()">🧊 Abrir no 3D</button>
       </div>
 
       <!-- Análises salvas -->
@@ -283,6 +331,7 @@
         <button class="tb" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span class="sep"></span>
         <button class="tb" id="btnBim" onclick="bimToggle()" title="Dividir a tela com o modelo 3D (Auria BIM) do pavimento e disciplina">🧊 BIM</button>
+        <button class="tb" id="btnSoBim" onclick="f3dModo(!F3D_MODO)" title="Análise só do modelo: o 3D ocupa a tela toda e a coluna passa a listar os modelos do CDE">🏗 Só BIM</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stageRow">
@@ -329,6 +378,12 @@
             <div id="bimFloorsPop" class="bim-pop"></div>
           </div>
           <button id="btnBimProps" class="bim-tb" onclick="bimPropsToggle()" title="Propriedades IFC — clique com o botão esquerdo num elemento do modelo">🔍 Propriedades</button>
+          <button id="btnRegras" class="bim-tb" onclick="f3dRegrasToggle()" title="Regras de verificação do modelo" style="display:inline-flex;align-items:center;gap:5px">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.5 10.5h6.6a5.6 5.6 0 1 1 0 6.4H2.5z"/>
+              <path d="M8.4 8.6h3.4v1.9H8.4z"/>
+              <path d="M19.6 9.1a2 2 0 1 1 1.7-2"/>
+            </svg>Regras</button>
           <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM: clique com o botão direito no modelo (ou ative aqui p/ o botão esquerdo). Pan = botão do meio (scroll)">➕ Apontar 3D</button>
           <button class="bim-x" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
           <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
@@ -337,6 +392,19 @@
           <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
           <canvas id="bimCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+          <div id="regBox" class="bim-props" style="left:12px;right:auto;width:330px">
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">Regras de verificação</b>
+              <span id="regCont" style="font-size:11px;color:#94a3b8;margin-right:6px"></span>
+              <button class="bim-x" onclick="f3dRegrasToggle()" title="Fechar">✕</button></div>
+            <div class="bp-body">
+              <label class="rlin"><input type="checkbox" id="regDup" checked>
+                <span><b>Elementos duplicados</b><i>Peças da mesma categoria no mesmo lugar. Duplicam quantitativo e fazem o modelo “piscar”.</i></span></label>
+              <label class="rlin"><input type="checkbox" id="regProxy" checked>
+                <span><b>Entidade genérica</b><i>Exportadas como IfcBuildingElementProxy em vez da classe própria.</i></span></label>
+              <button class="btn" id="regRodar" onclick="f3dRegrasRodar()" style="width:100%;font-size:12px;margin:9px 0 4px">Verificar modelo</button>
+              <div id="regRes"></div>
+            </div>
+          </div>
           <div id="bimProps" class="bim-props">
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🔍 Propriedades IFC</b><button class="bim-x" onclick="bimPropsToggle()" title="Fechar">✕</button></div>
             <div id="bimPropsBody" class="bp-body"><div class="bp-empty">Clique com o botão esquerdo num elemento do modelo para ver suas propriedades.</div></div>
@@ -396,6 +464,10 @@
     <button class="wbtn" title="Fechar" onclick="fecharApt()">✕</button>
   </div>
   <div class="win-body">
+    <!-- Frentes do mesmo problema (2D e BIM). Cada uma é um apontamento com
+         prazo, responsável e resolução próprios: o modelador pode fechar a
+         dele e o projetista 2D ainda não. -->
+    <div id="apFrentes" style="display:none;margin-bottom:10px"></div>
     <div class="g2">
       <div class="fg"><label>ID</label><input id="apId" readonly style="background:#F8FAFC"></div>
       <div class="fg"><label>Disciplina</label><select id="apDisc"></select></div>
@@ -2530,6 +2602,586 @@ function renderSideRight(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// 3D vindo do CDE (Fragments) — substitui o caminho xeokit/Auria BIM
+// --------------------------------------------------------------------------
+//  O modelo passa a vir do MESMO lugar que a prancha: o CDE. O IFC recebido lá
+//  é convertido em .frag (serviço no Cloud Run) e este módulo lê o .frag do R2.
+//
+//  Pavimento vira FILTRO, não arquivo: as alturas saem do topo das lajes
+//  (IfcSlab) e a visibilidade é ligada/desligada por elemento. Uma conversão
+//  em vez de N, pavimentos no mesmo sistema de coordenadas, e trocar de
+//  pavimento é instantâneo em vez de carregar outro arquivo.
+//
+//  Construído AO LADO do xeokit de propósito: enquanto a migração não fecha,
+//  o caminho antigo continua servindo o App em produção.
+// ══════════════════════════════════════════════════════════════════════════
+let _f3dLibs=null;
+function f3dLibs(){
+  if(_f3dLibs) return _f3dLibs;
+  _f3dLibs = Promise.all([
+    import('three'),
+    import('@thatopen/fragments'),
+    import('three/examples/jsm/controls/OrbitControls.js')
+  ]).then(([THREE, FRAGS, oc])=>({ THREE, FRAGS, OrbitControls: oc.OrbitControls }))
+    .catch(e=>{ _f3dLibs=null; throw e; });
+  return _f3dLibs;
+}
+
+// Modelos 3D disponíveis no CDE deste empreendimento: IFC da revisão vigente
+// com conversão pronta. Mesma trilha documento → revisão → arquivo do CDE.
+async function f3dModelosDoCde(){
+  if(!EMP) return [];
+  const { data:docs } = await sb.from('cde_documento_auria')
+    .select('id,codigo,titulo,disciplina').eq('empreendimento_id',EMP.id).eq('arquivado',false);
+  if(!docs || !docs.length) return [];
+  const { data:revs } = await sb.from('cde_revisao_auria')
+    .select('id,documento_id,revisao,recebido_em').in('documento_id', docs.map(d=>d.id));
+  if(!revs || !revs.length) return [];
+  const { data:arqs } = await sb.from('cde_arquivo_auria')
+    .select('id,revisao_id,nome,extensao,frag_status,frag_path')
+    .in('revisao_id', revs.map(r=>r.id)).eq('frag_status','pronto');
+  if(!arqs || !arqs.length) return [];
+  // Só a revisão MAIS RECENTE de cada documento — analisar contra revisão
+  // velha é justamente o erro que o CDE existe para evitar.
+  const revDe={}; revs.forEach(r=>{ revDe[r.id]=r; });
+  const docDe={}; docs.forEach(d=>{ docDe[d.id]=d; });
+  const porDoc={};
+  arqs.forEach(a=>{
+    const r=revDe[a.revisao_id]; if(!r) return;
+    const d=docDe[r.documento_id]; if(!d) return;
+    const atual=porDoc[d.id];
+    if(!atual || new Date(r.recebido_em||0) > new Date(atual.rev.recebido_em||0))
+      porDoc[d.id]={ arq:a, rev:r, doc:d };
+  });
+  return Object.values(porDoc).map(x=>({
+    arquivoId: x.arq.id,
+    path: x.arq.frag_path,
+    nome: x.doc.codigo || x.arq.nome,
+    titulo: x.doc.titulo || '',
+    disciplina: x.doc.disciplina || '',
+    revisao: x.rev.revisao || '',
+    documentoId: x.doc.id,
+    revisaoId: x.rev.id
+  })).sort((a,b)=> (a.nome||'').localeCompare(b.nome||''));
+}
+
+// Baixa e carrega os .frag na cena. Aceita vários (federado).
+async function f3dCarregar(modelos, canvas, onMsg){
+  const msg = onMsg || (()=>{});
+  const { THREE, FRAGS, OrbitControls } = await f3dLibs();
+  msg('Baixando modelo…');
+  const baixados = await Promise.all(modelos.map(async m=>{
+    const url = await cdeSignedUrlApp(m.path, 'r2');
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error(`não consegui baixar "${m.nome}" (HTTP ${resp.status})`);
+    return { m, bytes:new Uint8Array(await resp.arrayBuffer()) };
+  }));
+
+  msg('Montando a cena…');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0f1117);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.zoomToCursor = true;
+  controls.screenSpacePanning = true;
+  // Pan no botão do meio (gesto do Navisworks/Revit). O direito fica livre
+  // porque no App ele já cria apontamento, como no 2D.
+  controls.mouseButtons = { LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.PAN, RIGHT:null };
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.30));
+  const sol = new THREE.DirectionalLight(0xffffff, 1.55); sol.position.set(1,2.2,1.4); scene.add(sol);
+  const fill = new THREE.DirectionalLight(0xcfe0ff, 0.55); fill.position.set(-1.4,0.7,-1.1); scene.add(fill);
+
+  const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
+  const carregados = [];
+  for(const {m, bytes} of baixados){
+    msg(baixados.length>1 ? `Carregando ${m.nome}…` : 'Carregando modelo…');
+    const model = await fragments.load(bytes, { modelId:'app:'+m.path, camera });
+    carregados.push({ ...m, model, visivel:true });
+    scene.add(model.object);
+  }
+  return { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, vivo:true, raf:null };
+}
+
+// ── Pavimentos por FILTRO (não por arquivo) ────────────────────────────────
+//  As alturas saem do TOPO DAS LAJES (IfcSlab), não do agrupamento por
+//  IfcBuildingStorey: em modelo do TQS o pavimento agrupa a laje do nível MAIS
+//  os pilares que sobem do pavimento de baixo, então a caixa dos filhos erra um
+//  pavimento inteiro. O topo da laje é a superfície em que se pisa, direto.
+async function f3dNiveis(E){
+  if(E.niveis) return E.niveis;
+  const tops=[];
+  for(const x of E.modelos){
+    try{
+      const cats = await x.model.getItemsOfCategories([/^IFCSLAB$/]);
+      const ids = Object.values(cats||{}).flat();
+      if(!ids.length) continue;
+      const caixas = await x.model.getBoxes(ids);
+      (caixas||[]).forEach(c=>{ if(c && isFinite(c.max.y)) tops.push(c.max.y); });
+    }catch(_){}
+  }
+  tops.sort((a,b)=>a-b);
+  // 1ª passada: junta alturas quase iguais (uma laje gera dezenas de caixas).
+  let g=[]; const tol=0.6;
+  tops.forEach(y=>{
+    const u=g[g.length-1];
+    if(u && Math.abs(y-u.soma/u.n)<=tol){ u.soma+=y; u.n++; } else g.push({soma:y,n:1});
+  });
+  g = g.filter(x=>x.n>=2);
+  // 2ª passada: pé-direito não é menor que ~2,2m, então grupos mais próximos
+  // que isso são o MESMO pavimento (laje + rebaixo de box, soleira). Fica o de
+  // mais caixas, que é a laje de piso de verdade.
+  const fund=[];
+  g.map(x=>({y:x.soma/x.n, n:x.n})).sort((a,b)=>a.y-b.y).forEach(nv=>{
+    const u=fund[fund.length-1];
+    if(u && (nv.y-u.y) < 2.2){ if(nv.n>u.n){ u.y=nv.y; u.n=nv.n; } } else fund.push(nv);
+  });
+  E.niveis = fund.map(x=>x.y);
+  return E.niveis;
+}
+
+// Mapeia cada elemento ao pavimento. A altura de referência depende do tipo:
+//
+//  - LAJE: pelo TOPO. Ela É o piso do nível cuja cota bate com seu topo. Pelo
+//    centro, a laje cairia no pavimento de BAIXO (o centro fica abaixo do topo)
+//    e escolher um pavimento mostraria o espaço sem o piso, flutuando.
+//  - Demais peças: pelo CENTRO. Assim o pilar que sobe de um pavimento e a
+//    viga logo abaixo da laje de cima ficam no pavimento de onde são VISTOS
+//    por quem está pisando ali — que é o que interessa numa revisão.
+async function f3dMapearPavimentos(E, onMsg){
+  if(E.porNivel) return E.porNivel;
+  const msg = onMsg || (()=>{});
+  const niveis = await f3dNiveis(E);
+  msg('Separando por pavimento…');
+  const doNivel = (y)=>{ let idx=0; for(let k=0;k<niveis.length;k++){ if(niveis[k]<=y+0.01) idx=k; } return idx; };
+  E.porNivel = [];
+  for(const x of E.modelos){
+    const mapa = new Map();   // idxNivel -> ids
+    try{
+      const cats = await x.model.getItemsOfCategories([/./]);
+      for(const [cat, ids] of Object.entries(cats||{})){
+        if(!ids || !ids.length) continue;
+        const ehLaje = /^IFC(SLAB|ROOF)$/.test(cat);
+        const caixas = await x.model.getBoxes(ids);
+        (caixas||[]).forEach((c,i)=>{
+          if(!c || c.isEmpty()) return;
+          const y = ehLaje ? c.max.y : (c.min.y + c.max.y)/2;
+          const idx = doNivel(y);
+          (mapa.get(idx) || mapa.set(idx,[]).get(idx)).push(ids[i]);
+        });
+      }
+    }catch(_){}
+    E.porNivel.push(mapa);
+  }
+  return E.porNivel;
+}
+
+// sel = Set de índices de pavimento visíveis. Vazio = mostra tudo.
+async function f3dFiltrarPavimentos(E, sel){
+  const porNivel = E.porNivel;
+  if(!porNivel) return;
+  const tudo = !sel || !sel.size;
+  for(let i=0;i<E.modelos.length;i++){
+    const x=E.modelos[i], mapa=porNivel[i];
+    try{
+      if(tudo){ await x.model.setVisible(undefined, true); continue; }
+      await x.model.setVisible(undefined, false);
+      for(const idx of sel){
+        const ids = mapa.get(idx);
+        if(ids && ids.length) await x.model.setVisible(ids, true);
+      }
+    }catch(_){}
+  }
+  try{ await E.fragments.update(true); }catch(_){}
+}
+
+// ── Apontamento sobre o modelo do CDE ──────────────────────────────────────
+//  O ponto guarda DUAS âncoras de propósito: a coordenada (que sobrevive a
+//  mudança de identificador interno) e o localId do elemento (que permite
+//  destacar a peça mesmo se a câmera não estiver na mesma posição). Nenhuma
+//  das duas é perfeitamente estável entre revisões; juntas cobrem mais casos.
+//
+//  E identifica o modelo pelo ARQUIVO DO CDE, não pelo projeto do Auria BIM —
+//  é o que amarra o apontamento à revisão de onde ele saiu.
+function f3dPonto(hit, m){
+  return { k3d:1,
+    x:hit.point.x, y:hit.point.y, z:hit.point.z,
+    cde_arquivo_id:m.arquivoId, cde_doc:m.documentoId, cde_rev:m.revisaoId,
+    localId:hit.localId, mdisc:m.disciplina||m.nome||'' };
+}
+function f3dWorldToScreen(E, x, y, z){
+  const el=E.renderer.domElement;
+  const v=new E.THREE.Vector3(x,y,z).project(E.camera);
+  if(v.z>1) return null;                       // atrás da câmera
+  return { x:((v.x+1)*0.5)*el.clientWidth, y:((1-v.y)*0.5)*el.clientHeight };
+}
+// Desenha os pinos dos apontamentos 3D deste modelo. Reusa pinSvg/corPrio do
+// 2D para o pino ser o MESMO objeto visual das pranchas — quem revisa não
+// deveria ter que aprender dois vocabulários.
+function f3dRenderPins(E, svg){
+  if(!svg) return;
+  if(!E || !E.vivo){ svg.innerHTML=''; return; }
+  if(!PINS_VISIVEIS && !(PIN_EDIT&&APT_EDIT)){ svg.innerHTML=''; return; }
+  const arqs = new Set(E.modelos.map(m=>m.arquivoId));
+  const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
+  let out='';
+  APTS.forEach((a,ai)=>{
+    if(a.id===editId) return;
+    (a.pontos_json||[]).forEach(pt=>{
+      if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
+      const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
+      if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="abrirAptIdx('+ai+');event.stopPropagation()">'
+         + pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
+    });
+  });
+  if(APT_EDIT){
+    (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
+      if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
+      const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="f3dPinEditClick('+pi+');event.stopPropagation()">'
+         + pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true)+'</g>';
+    });
+  }
+  svg.innerHTML=out;
+}
+function f3dPinEditClick(pi){
+  if(PIN_EDIT&&APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPinsList(); f3dPinsRefresh(); }
+}
+// Ponte para o resto do App poder repintar os pinos sem conhecer o estado 3D.
+let F3D=null;                       // estado do visualizador ativo (f3dCarregar)
+function f3dPinsRefresh(){ try{ if(F3D) f3dRenderPins(F3D, $('bimPinsSvg')); }catch(_){} }
+
+function f3dProximoId(disc){
+  const pref='BIM-'+(disc? disc.normalize('NFD').replace(/[̀-ͯ]/g,'').slice(0,3).toUpperCase() : 'GER');
+  let num=1;
+  APTS.forEach(a=>{ const s=String(a.id||''); if(s.indexOf(pref+'-')===0){ const n=parseInt(s.slice(pref.length+1),10); if(n>=num) num=n+1; } });
+  return { id:pref+'-'+num, num };
+}
+// Abre o editor com um apontamento novo na frente BIM. `grupo` vem preenchido
+// quando é a contraparte de um apontamento 2D já existente — é o que faz as
+// duas frentes aparecerem juntas no editor, cada uma com prazo e responsável
+// próprios.
+function f3dNovoApontamento(pt, m, grupo){
+  const mdisc = m.disciplina || m.nome || 'Modelo';
+  const g = f3dProximoId(mdisc);
+  const fornEmails=(FORN_DISC[mdisc]&&FORN_DISC[mdisc].emails.join(', '))||'';
+  APT_EDIT={
+    id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
+    disciplina:mdisc, status:'Em aberto', visibilidade:'Coordenação',
+    data_criacao:hojeBr(),
+    dimensao:'bim',
+    grupo_id: grupo || g.id,
+    participantes:{ [mdisc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
+    log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' no modelo '+(m.nome||mdisc)+' (revisão '+(m.revisao||'?')+') — frente BIM.',tipo:'sistema'}],
+    pontos_json:[pt],
+    drawings_json:[],
+    prancha_id:null,                         // frente BIM não pertence a prancha
+    cde_revisao_id: m.revisaoId || null,
+    _modeloNome: m.nome || '',
+    _novo:true
+  };
+  APT_IMGS=[];
+  // Print da vista, igual ao fluxo 2D: o apontamento nasce mostrando o que a
+  // pessoa estava vendo, sem depender de ela lembrar de anexar.
+  const pic=f3dPrint(); if(pic) APT_IMGS.push({data:pic});
+  abrirEditor();
+}
+// preserveDrawingBuffer não está ligado (custa memória), então o canvas pode
+// estar vazio na hora da leitura. Forçar um render imediatamente antes garante
+// conteúdo — é o mesmo motivo do print do 2D ser tirado logo após desenhar.
+function f3dPrint(){
+  try{
+    if(!F3D || !F3D.vivo) return null;
+    F3D.renderer.render(F3D.scene, F3D.camera);
+    return F3D.renderer.domElement.toDataURL('image/jpeg', 0.72);
+  }catch(_){ return null; }
+}
+
+// ── Modo "só BIM": o 3D ocupa a tela e a coluna lista os modelos ───────────
+let F3D_MODO=false, F3D_LISTA=[], F3D_SEL=new Set(), F3D_NIVSEL=new Set();
+
+async function f3dModo(lig){
+  F3D_MODO=!!lig;
+  document.body.classList.toggle('soBim', F3D_MODO);
+  const b=$('btnSoBim'); if(b) b.classList.toggle('on', F3D_MODO);
+  $('secPranchas').style.display   = F3D_MODO ? 'none' : '';
+  $('secModelosBim').style.display = F3D_MODO ? '' : 'none';
+  $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
+  if(!F3D_MODO){ f3dDescartar(); return; }
+  if(!EMP){ $('modList').innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
+  $('modList').innerHTML='<div class="hint">Procurando modelos no CDE…</div>';
+  try{
+    F3D_LISTA = await f3dModelosDoCde();
+  }catch(e){ console.warn('modelos CDE:', e); F3D_LISTA=[]; }
+  f3dRenderLista();
+}
+function f3dRenderLista(){
+  const el=$('modList'); if(!el) return;
+  if(!F3D_LISTA.length){
+    el.innerHTML='<div class="hint">Nenhum modelo com 3D pronto. No CDE, aba BIM, use “Converter para 3D”.</div>';
+    return;
+  }
+  el.innerHTML = F3D_LISTA.map((m,i)=>
+    `<label class="mitem"><input type="checkbox" ${F3D_SEL.has(i)?'checked':''} onchange="f3dTogglSel(${i},this.checked)">`
+    + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
+    + `<small>${esc(m.disciplina||'—')} · rev ${esc(m.revisao||'?')}</small></span></label>`).join('');
+}
+function f3dTogglSel(i, on){ if(on) F3D_SEL.add(i); else F3D_SEL.delete(i); }
+
+async function f3dAbrirSelecionados(){
+  if(!F3D_LISTA.length) return;
+  const escolhidos = F3D_SEL.size ? [...F3D_SEL].map(i=>F3D_LISTA[i]) : [F3D_LISTA[0]];
+  const msg=(t)=>{ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } };
+  const cv=$('bimCanvas');
+  f3dDescartar();
+  cv.style.display='block';
+  try{
+    F3D = await f3dCarregar(escolhidos, cv, msg);
+  }catch(e){
+    console.warn('3D CDE:', e);
+    msg('Não foi possível abrir: '+((e&&e.message)||e));
+    return;
+  }
+  const m=$('bimMsg'); if(m) m.style.display='none';
+  f3dResize();
+  f3dEnquadrar();
+  // Pavimentos e níveis em segundo plano: o modelo já aparece, e a separação
+  // (que percorre todas as caixas) chega logo depois sem travar a abertura.
+  f3dMapearPavimentos(F3D, msg).then(()=>{
+    const mm=$('bimMsg'); if(mm) mm.style.display='none';
+    f3dRenderPavimentos();
+  }).catch(()=>{});
+  f3dLoop();
+}
+function f3dDescartar(){
+  if(!F3D) return;
+  const E=F3D; F3D=null; E.vivo=false;
+  if(E.raf) cancelAnimationFrame(E.raf);
+  try{ E.controls.dispose(); }catch(_){}
+  try{ E.fragments.dispose(); }catch(_){}
+  try{ E.renderer.dispose(); }catch(_){}
+  const svg=$('bimPinsSvg'); if(svg) svg.innerHTML='';
+}
+function f3dResize(){
+  const E=F3D; if(!E) return;
+  const box=$('bimBody'); if(!box) return;
+  const w=box.clientWidth||1, h=box.clientHeight||1;
+  E.renderer.setSize(w,h,false);
+  E.camera.aspect=w/h; E.camera.updateProjectionMatrix();
+}
+function f3dEnquadrar(){
+  const E=F3D; if(!E) return;
+  const cx=new E.THREE.Box3();
+  E.modelos.forEach(x=>{ const b=x.model.box; if(b && !b.isEmpty()) cx.union(b); });
+  if(cx.isEmpty()) return;
+  const centro=cx.getCenter(new E.THREE.Vector3());
+  const tam=cx.getSize(new E.THREE.Vector3());
+  const raio=Math.max(tam.x,tam.y,tam.z)*0.5||1;
+  const dist=(raio/Math.sin((E.camera.fov*Math.PI/180)/2))*1.35;
+  E.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
+  // Faixa apertada: a razão far/near é o que define a precisão de
+  // profundidade, e uma faixa larga faz faces vizinhas piscarem.
+  E.camera.near=Math.max(raio/1000, 0.05);
+  E.camera.far =Math.max(raio*8, dist*2.5);
+  E.camera.updateProjectionMatrix();
+  E.controls.target.copy(centro);
+  E.controls.minDistance=Math.max(raio/500, 0.05);
+  E.controls.maxDistance=raio*20;
+  E.controls.update();
+  E.fragments.update(true).catch(()=>{});
+}
+function f3dLoop(){
+  const E=F3D; if(!E||!E.vivo) return;
+  E.raf=requestAnimationFrame(f3dLoop);
+  E.controls.update();
+  E.renderer.render(E.scene, E.camera);
+  f3dRenderPins(E, $('bimPinsSvg'));
+}
+// Caixa de pavimentos: reusa o popover que o App já tem.
+function f3dRenderPavimentos(){
+  const E=F3D, pop=$('bimFloorsPop'); if(!E||!pop) return;
+  const ns=E.niveis||[];
+  if(!ns.length){ pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Sem pavimentos detectados.</div>'; return; }
+  pop.innerHTML = ns.map((y,i)=>{
+    const cota=(y>=0?'+':'−')+Math.abs(y).toFixed(2).replace('.',',');
+    return `<label style="display:flex;gap:7px;align-items:center;padding:5px 9px;cursor:pointer;font-size:12px;color:#e2e8f0">`
+      + `<input type="checkbox" ${F3D_NIVSEL.has(i)?'checked':''} onchange="f3dTogglNivel(${i},this.checked)">`
+      + `<span>Nível ${i+1} · ${cota} m</span></label>`;
+  }).join('') + '<div style="border-top:1px solid rgba(255,255,255,.12);padding:5px 9px">'
+    + '<button class="bim-tb" style="width:100%" onclick="f3dTodosNiveis()">Mostrar todos</button></div>';
+}
+function f3dTogglNivel(i, on){
+  if(on) F3D_NIVSEL.add(i); else F3D_NIVSEL.delete(i);
+  if(F3D) f3dFiltrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
+}
+function f3dTodosNiveis(){
+  F3D_NIVSEL.clear(); f3dRenderPavimentos();
+  if(F3D) f3dFiltrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
+}
+window.addEventListener('resize', ()=>{ if(F3D) f3dResize(); });
+
+// ── Regras de verificação (o apito) ────────────────────────────────────────
+//  Aqui e não no CDE: verificar regra é ANÁLISE, e o achado precisa de
+//  responsável, prazo e resolução — que é a definição do que mora no App.
+//  Por isso cada achado pode virar apontamento direto, sem transporte entre
+//  sistemas.
+//
+//  Só regras que dependem de DADO e CAIXA, não de geometria fina. É de
+//  propósito: a conversão gasta 97% do tempo na geometria e nada disto a
+//  toca, então a verificação roda em segundos mesmo nos modelos pesados.
+let F3D_ACHADOS=[];
+
+function f3dRegrasToggle(){
+  const box=$('regBox'); if(!box) return;
+  const abriu=box.classList.toggle('on');
+  const b=$('btnRegras'); if(b) b.classList.toggle('on', abriu);
+}
+
+async function f3dRegrasRodar(){
+  const E=F3D;
+  if(!E || !E.modelos.length){ alert('Abra um modelo no 3D primeiro.'); return; }
+  const cx=$('regBox'), btn=$('regRodar'), res=$('regRes');
+  btn.disabled=true; btn.textContent='Verificando…';
+  res.innerHTML='<div class="rvazio">Lendo o modelo…</div>';
+  try{
+    const achados=[];
+    if($('regDup').checked)   achados.push(...await f3dRegraDuplicados(E));
+    if($('regProxy').checked) achados.push(...await f3dRegraProxy(E));
+    if(!F3D || !F3D.vivo) return;
+    F3D_ACHADOS = achados;
+    f3dRegrasRender();
+  }catch(e){
+    console.warn('regras:', e);
+    res.innerHTML='<div class="rvazio">Falhou: '+esc((e&&e.message)||String(e))+'</div>';
+  }finally{
+    btn.disabled=false; btn.textContent='Verificar modelo';
+  }
+}
+// Duplicados: mesma categoria + mesma caixa. Peça repetida em OUTRA posição é
+// reuso legítimo (instanciação); duplicata é a que ocupa o MESMO lugar.
+async function f3dRegraDuplicados(E){
+  const achados=[];
+  for(const x of E.modelos){
+    let cats;
+    try{ cats = await x.model.getItemsOfCategories([/./]); }catch(_){ continue; }
+    for(const [cat, ids] of Object.entries(cats||{})){
+      if(!ids || ids.length<2) continue;
+      let caixas;
+      try{ caixas = await x.model.getBoxes(ids); }catch(_){ continue; }
+      const mapa=new Map();
+      (caixas||[]).forEach((c,i)=>{
+        if(!c || c.isEmpty()) return;
+        // Arredonda a 5mm: absorve ruído de ponto flutuante sem juntar peças
+        // que de fato estão em lugares diferentes.
+        const k=[c.min.x,c.min.y,c.min.z,c.max.x,c.max.y,c.max.z].map(v=>Math.round(v*200)).join('|');
+        (mapa.get(k) || mapa.set(k,[]).get(k)).push(ids[i]);
+      });
+      for(const [,grupo] of mapa){
+        if(grupo.length<2) continue;
+        achados.push({ regra:'dup', sev:'#E8960A',
+          titulo:`${grupo.length}× ${cat.replace(/^IFC/,'')} no mesmo lugar`,
+          detalhe:`${x.nome||'modelo'} · ${grupo.length} peças sobrepostas`,
+          modelo:x, ids:grupo });
+      }
+    }
+  }
+  return achados;
+}
+// Entidade genérica: o exportador não soube dizer o que a peça é.
+async function f3dRegraProxy(E){
+  const achados=[];
+  for(const x of E.modelos){
+    try{
+      const cats = await x.model.getItemsOfCategories([/^IFCBUILDINGELEMENTPROXY$/]);
+      const ids = Object.values(cats||{}).flat();
+      if(ids.length) achados.push({ regra:'proxy', sev:'#A32D2D',
+        titulo:`${ids.length} peça(s) sem classe própria`,
+        detalhe:`${x.nome||'modelo'} · exportadas como IfcBuildingElementProxy`,
+        modelo:x, ids });
+    }catch(_){}
+  }
+  return achados;
+}
+const F_REGRA_ROT={ dup:'Elementos duplicados', proxy:'Entidade genérica' };
+function f3dRegrasRender(){
+  const res=$('regRes'), cont=$('regCont');
+  const achados=F3D_ACHADOS||[];
+  const total=achados.reduce((s,a)=>s+a.ids.length,0);
+  cont.textContent = achados.length ? (total+' peça(s)') : '';
+  if(!achados.length){ res.innerHTML='<div class="rvazio">Nenhum problema nas regras marcadas.</div>'; return; }
+  let html='';
+  ['dup','proxy'].forEach(r=>{
+    const gr=achados.filter(a=>a.regra===r);
+    if(!gr.length) return;
+    html+=`<div class="rgrupo">${F_REGRA_ROT[r]} (${gr.length})</div>`;
+    gr.forEach(a=>{
+      const i=achados.indexOf(a);
+      html+=`<div class="rach"><span class="rsev" style="background:${a.sev}"></span>`
+          + `<span class="rtxt" onclick="f3dIrAoAchado(${i})" title="Ver no modelo">${esc(a.titulo)}<br><small>${esc(a.detalhe)}</small></span>`
+          + `<button class="btn-sec rapt" onclick="f3dAchadoViraApontamento(${i})" title="Abrir apontamento a partir deste achado">➕</button></div>`;
+    });
+  });
+  res.innerHTML=html;
+}
+// Leva a câmera até o achado e o destaca — sem isso a lista é só um número.
+async function f3dIrAoAchado(i){
+  const E=F3D; if(!E) return;
+  const a=(F3D_ACHADOS||[])[i]; if(!a) return;
+  try{
+    for(const x of E.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+    await a.modelo.model.highlight(a.ids, { color:new E.THREE.Color(0xE8960A), renderedFaces:1, opacity:1, transparent:false });
+    const caixas = await a.modelo.model.getBoxes(a.ids);
+    const cx=new E.THREE.Box3();
+    (caixas||[]).forEach(c=>{ if(c && !c.isEmpty()) cx.union(c); });
+    if(!cx.isEmpty()){
+      const centro=cx.getCenter(new E.THREE.Vector3());
+      const tam=cx.getSize(new E.THREE.Vector3());
+      const raio=Math.max(tam.x,tam.y,tam.z)*0.5||1;
+      const dist=(raio/Math.sin((E.camera.fov*Math.PI/180)/2))*2.2;
+      E.camera.position.set(centro.x+dist*0.6, centro.y+dist*0.5, centro.z+dist*0.6);
+      E.controls.target.copy(centro);
+      E.controls.update();
+    }
+    await E.fragments.update(true);
+  }catch(e){ console.warn('ir ao achado:', e); }
+}
+// É isto que justifica a regra viver no App: o achado não vira relatório, vira
+// pendência com dono e prazo. O pino nasce no CENTRO das peças acusadas, então
+// a pessoa não precisa procurar onde clicar.
+async function f3dAchadoViraApontamento(i){
+  const E=F3D; if(!E) return;
+  const a=(F3D_ACHADOS||[])[i]; if(!a) return;
+  await f3dIrAoAchado(i);
+  let pt=null;
+  try{
+    const caixas = await a.modelo.model.getBoxes(a.ids);
+    const cx=new E.THREE.Box3();
+    (caixas||[]).forEach(c=>{ if(c && !c.isEmpty()) cx.union(c); });
+    if(!cx.isEmpty()){
+      const c=cx.getCenter(new E.THREE.Vector3());
+      pt={ k3d:1, x:c.x, y:c.y, z:c.z,
+           cde_arquivo_id:a.modelo.arquivoId, cde_doc:a.modelo.documentoId,
+           cde_rev:a.modelo.revisaoId, localId:a.ids[0], mdisc:a.modelo.disciplina||'' };
+    }
+  }catch(_){}
+  if(!pt){ alert('Não consegui localizar as peças para marcar o ponto.'); return; }
+  f3dNovoApontamento(pt, a.modelo);
+  // Preenche o que a regra já sabe — quem revisa só confirma e define o prazo.
+  APT_EDIT.titulo = a.titulo;
+  APT_EDIT.descricao = a.detalhe + '\n\nEncontrado pela verificação automática do modelo.';
+  // Tem de ser um valor de TIPOS_APT, senão o select abre em branco.
+  APT_EDIT.tipo = 'Falha Gráfica / Modelagem';
+  abrirEditor();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Auria BIM — split-screen 2D | 3D (SÓ LEITURA; não toca em nada do BIM)
 // Lê projects/floors do Supabase do BIM e embute o viewer publicado por URL.
 // ══════════════════════════════════════════════════════════════════════════
@@ -2945,6 +3597,7 @@ function abrirEditor(){
   $('apVisib').value=a.visibilidade||'Coordenação';
   if(!Array.isArray(a.drawings_json)) a.drawings_json=[];
   renderParts(); renderImgs(); renderPinsList(); renderLog(); renderDrawTools();
+  renderFrentes();
   $('apExcluir').style.display=a._novo?'none':'';
   abrirWin('apt', a._novo?'📌 Novo apontamento':('📌 '+a.id));
   renderPins(); renderDrawings();
@@ -2952,6 +3605,86 @@ function abrirEditor(){
 function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
 
 // Lista de pins do apontamento (com remoção); base para o multi-pin
+// ── Frentes do apontamento (2D | BIM) ──────────────────────────────────────
+//  Cada frente é uma LINHA de apontamento com status, prazo e responsável
+//  próprios — é assim que "o modelador resolveu e o projetista 2D ainda não"
+//  fica representável sem lógica de status nova. A faixa mostra as irmãs e
+//  deixa abrir cada uma; o que falta, oferece criar.
+const F_ROT={ '2d':'📐 2D · prancha', 'bim':'🧊 BIM · modelo' };
+function frentesDoGrupo(a){
+  if(!a) return [];
+  const g=a.grupo_id || a.id;
+  return APTS.filter(x=> (x.grupo_id||x.id)===g );
+}
+function renderFrentes(){
+  const el=$('apFrentes'); if(!el) return;
+  const a=APT_EDIT;
+  if(!a || a._novo){ el.style.display='none'; return; }
+  const irmas=frentesDoGrupo(a);
+  const temBim = irmas.some(x=>(x.dimensao||'2d')==='bim');
+  const tem2d  = irmas.some(x=>(x.dimensao||'2d')==='2d');
+  // Sem contraparte e sem nada a oferecer: não polui a tela.
+  if(irmas.length<2 && temBim && !tem2d && !F3D){ el.style.display='none'; return; }
+  el.style.display='';
+  const cartao=(x)=>{
+    const dim=(x.dimensao||'2d');
+    const atual = x.id===a.id;
+    const prazo = (x.participantes && Object.values(x.participantes)[0] || {}).prazo || '';
+    const cor = /resolv|conclu/i.test(x.status||'') ? '#1E8449' : (x.atrasado ? '#A32D2D' : 'var(--mut)');
+    return `<div style="flex:1;min-width:0;border:1.5px solid ${atual?'var(--accent)':'var(--line)'};border-radius:9px;
+        padding:7px 9px;background:${atual?'var(--panel2)':'var(--panel)'};cursor:${atual?'default':'pointer'}"
+        ${atual?'':`onclick="abrirFrente('${esc(x.id)}')"`} title="${atual?'Frente aberta':'Abrir esta frente'}">
+      <div style="font-size:11px;color:var(--mut)">${F_ROT[dim]||dim}</div>
+      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.id)}</div>
+      <div style="font-size:11px;color:${cor}">${esc(x.status||'—')}${prazo?(' · '+esc(prazo)):''}</div>
+    </div>`;
+  };
+  let html='<div style="font-size:11px;color:var(--mut);margin-bottom:5px">Frentes deste problema</div>'
+         + '<div style="display:flex;gap:7px">'
+         + irmas.map(cartao).join('');
+  if(!temBim) html+=`<button class="btn-sec" style="flex:1;font-size:11.5px;border-style:dashed" onclick="criarFrenteBim()"
+      title="Abrir a frente BIM deste mesmo problema, com prazo e responsável próprios">＋ frente BIM</button>`;
+  html+='</div>';
+  el.innerHTML=html;
+}
+function abrirFrente(id){
+  const i=APTS.findIndex(x=>x.id===id);
+  if(i>=0) abrirAptIdx(i);
+}
+// Cria a contraparte BIM do apontamento aberto: mesmo grupo, mesma
+// identificação do problema, mas prazo/responsável/resolução separados. O
+// ponto 3D fica para a pessoa marcar no modelo — daí exigir o 3D aberto.
+function criarFrenteBim(){
+  const a=APT_EDIT; if(!a) return;
+  if(!F3D || !F3D.modelos.length){
+    alert('Abra o modelo no 3D primeiro (🏗 Só BIM) e marque no modelo onde está o problema.');
+    return;
+  }
+  const m=F3D.modelos[0];
+  const g=f3dProximoId(m.disciplina||m.nome||'Modelo');
+  const fornEmails=(FORN_DISC[a.disciplina]&&FORN_DISC[a.disciplina].emails.join(', '))||'';
+  APT_EDIT={
+    id:g.id, id_num:g.num,
+    titulo:a.titulo||'', descricao:'',          // mesmo problema; a ORIENTAÇÃO é própria
+    tipo:a.tipo||'', prioridade:a.prioridade||'',
+    disciplina:a.disciplina, status:'Em aberto', visibilidade:a.visibilidade||'Coordenação',
+    local_txt:a.local_txt||'',
+    data_criacao:hojeBr(),
+    dimensao:'bim',
+    grupo_id: a.grupo_id || a.id,               // amarra à frente 2D existente
+    participantes:{ [a.disciplina]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
+    log_json:[{data:hojeBr(),texto:'Frente BIM de '+a.id+' criada por '+USER.nome+'.',tipo:'sistema'}],
+    pontos_json:[], drawings_json:[],
+    prancha_id:null,
+    cde_revisao_id: m.revisaoId||null,
+    _modeloNome: m.nome||'',
+    _novo:true
+  };
+  APT_IMGS=[];
+  abrirEditor();
+  alert('Frente BIM criada. Ligue “Editar pins” e clique no modelo para marcar onde está o problema.');
+}
+
 function renderPinsList(){
   const pts=(APT_EDIT&&APT_EDIT.pontos_json)||[];
   $('apPinsList').innerHTML = pts.length
@@ -3150,7 +3883,17 @@ async function salvarApt(){
     const row={
       id:a.id, user_id:USER.id, empreendimento:EMP.nome, empreendimento_id:EMP.id, analista:USER.nome,
       id_num:a.id_num||0, titulo:a.titulo, descricao:a.descricao, tipo:a.tipo,
-      disciplina:a.disciplina, prancha_nome:(PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||'',
+      disciplina:a.disciplina,
+      // Frente do problema. O objeto acima é uma lista EXPLÍCITA de colunas —
+      // sem estas duas linhas, dimensao/grupo_id seriam descartados em
+      // silêncio e todo apontamento BIM nasceria marcado como 2D.
+      dimensao: a.dimensao || '2d',
+      grupo_id: a.grupo_id || a.id,
+      // Na frente BIM não há prancha: usar a que estiver aberta carimbaria uma
+      // prancha alheia no apontamento.
+      prancha_nome: (a.dimensao==='bim')
+        ? (a._modeloNome||'')
+        : ((PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||''),
       obs_coord:(a.log_json||[]).filter(e=>e.tipo!=='sistema'),
       status:a.status, prioridade:a.prioridade, visibilidade:a.visibilidade||'Coordenação',
       etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
