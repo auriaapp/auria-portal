@@ -974,6 +974,28 @@ async function iniciarConversaoBim(arquivoId, docId){
 }
 function abrirBim3D(docId){ openDocInWindow(docId, 'bim'); }
 
+// Leva os modelos para o App, onde acontece a análise. Mesmo padrão da
+// prancha 2D — o CDE guarda e mostra; quem apura e abre apontamento é o App.
+// Passa os IDs dos ARQUIVOS (não dos documentos): é o arquivo que carrega o
+// .frag e amarra o apontamento à revisão de onde saiu.
+function abrirBimNoApp(docIds){
+  const arqs=[], semModelo=[];
+  (docIds||[]).forEach(id=>{
+    const d=DOCS.find(x=>x.id===id); if(!d) return;
+    const a=arquivoIfcDe(d);
+    if(a && a.frag_status==='pronto' && a.frag_path) arqs.push(a.id);
+    else semModelo.push(d.codigo||'(sem código)');
+  });
+  if(!arqs.length){
+    alert('Nenhum dos modelos tem a conversão 3D pronta.\n\nConverta primeiro pelo botão no card do modelo.');
+    return;
+  }
+  if(semModelo.length && !confirm('Estes ficam de fora por ainda não terem 3D convertido:\n\n  '
+      + semModelo.join('\n  ') + '\n\nLevar os '+arqs.length+' que estão prontos?')) return;
+  const url = 'app.html?emp='+encodeURIComponent(EMP_ID)+'&cde_bim='+encodeURIComponent(arqs.join(','));
+  window.open(url, '_blank');
+}
+
 // Federar = abrir várias disciplinas na MESMA cena. Só entram os que já têm
 // conversão pronta; os demais são nomeados antes de abrir, para ninguém achar
 // que "sumiu" um modelo da seleção.
@@ -1318,6 +1340,12 @@ function docMenuOpen(ev,id){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
   }
+  // Mesmo caminho da prancha 2D, agora para o modelo: quem analisa é o App.
+  // Só aparece com a conversão pronta — sem .frag não há o que abrir lá.
+  if(byExt.ifc && !READONLY && byExt.ifc.frag_status==='pronto'){
+    if(!byExt.pdf) rows.push('<div class="dm-sep"></div>');
+    rows.push(`<button onclick="docMenuAct('${id}','','appbim')"><span class="mi">🧊</span>Analisar no App (3D)</button>`);
+  }
   const revsComPdf=((d.revs)||[]).filter(r=>(r.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf')).length;
   if(revsComPdf>=2){
     rows.push('<div class="dm-sep"></div>');
@@ -1342,6 +1370,7 @@ async function docMenuAct(id,ext,mode){
   const d=DOCS.find(x=>x.id===id); if(!d) return;
   if(mode==='rev'){ await openDocInWindow(id); renderNav(); abrirDetalhes(); return; }
   if(mode==='app'){ await openDocInWindow(id); abrirNoApp(); return; }
+  if(mode==='appbim'){ abrirBimNoApp([id]); return; }
   if(mode==='link'){ abrirVincular(id); return; }
   if(mode==='cmp'){ abrirComparar(id); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
@@ -3422,8 +3451,11 @@ function renderMultiBar(){
   // não abrir pranchas 2D no App — que é o que a seleção múltipla faz nas
   // outras abas.
   const ehBim = SEL_DISC==='__BIM__';
+  // Na aba BIM há DOIS destinos: conferir aqui mesmo (federar) ou levar para
+  // o App, que é onde a análise vira apontamento.
   const acao = ehBim
-    ? `<button onclick="abrirBimFederado()">🧊 Ver federado</button>`
+    ? `<button onclick="abrirBimFederado()">🧊 Ver federado aqui</button>`
+      + `<button onclick="abrirBimNoApp([...MULTI_SEL])">🔍 Analisar no App</button>`
     : `<button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>`;
   bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
     ${acao}

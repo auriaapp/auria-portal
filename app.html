@@ -88,7 +88,10 @@
      no body para não duplicar estado — quem manda é uma variável só. */
   body.soBim #stage{display:none}
   body.soBim #bimPane{display:flex;border-left:none}
-  body.soBim .toolbar .tb:not(#btnSoBim):not(#btnVerPins):not(#btnBim){opacity:.35;pointer-events:none}
+  /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
+     têm o que operar. Ficam apagadas em vez de sumir, para a barra não dançar
+     ao trocar de modo. Sair do 3D e Pins seguem ativos. */
+  body.soBim .toolbar .tb:not(#btnSairBim):not(#btnVerPins){opacity:.35;pointer-events:none}
   /* Os itens são <label>, e `.side label` os deixaria em maiúsculas de 10px
      (é o estilo dos TÍTULOS da coluna). Aqui voltam a ser texto normal. */
   #modList .mitem{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--line);
@@ -358,7 +361,7 @@
         <button class="tb" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span class="sep"></span>
         <button class="tb" id="btnBim" onclick="bimToggle()" title="Dividir a tela com o modelo 3D (Auria BIM) do pavimento e disciplina">🧊 BIM</button>
-        <button class="tb" id="btnSoBim" onclick="f3dModo(!F3D_MODO)" title="Análise só do modelo: o 3D ocupa a tela toda e a coluna passa a listar os modelos do CDE">🏗 Só BIM</button>
+        <button class="tb" id="btnSairBim" onclick="f3dModo(false)" style="display:none" title="Voltar para a análise de pranchas 2D">✕ Sair do 3D</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
       <div id="stageRow">
@@ -666,7 +669,13 @@ async function boot(){
   // a primeira como base, as demais empilhadas como sobreposição.
   const _cdeDoc=_qs.get('cde_doc'), _cdeRev=_qs.get('cde_rev'), _apt=_qs.get('apt');
   const _cdeMulti=_qs.get('cde_multi');
-  if(_cdeMulti && EMP){
+  // ?cde_bim=arq1,arq2 (Analisar no App a partir da aba BIM do CDE): entra
+  // direto em análise de MODELO, sem passar pelo 2D.
+  const _cdeBim=_qs.get('cde_bim');
+  if(_cdeBim && EMP){
+    f3dModo(true, _cdeBim.split(',').map(s=>s.trim()).filter(Boolean))
+      .catch(e=>alert('Erro ao abrir o modelo do CDE: '+(e.message||e)));
+  }else if(_cdeMulti && EMP){
     const ids=_cdeMulti.split(',').map(s=>s.trim()).filter(Boolean);
     abrirMultiDoCDE(ids).catch(e=>alert('Erro ao abrir pranchas do CDE: '+(e.message||e)));
   }else if(_cdeDoc && EMP){
@@ -746,7 +755,11 @@ function abrirEscolhaOrigem(ev){
   pop.className='origPop'; pop.id='origPop';
   pop.innerHTML =
     `<button onclick="fecharEscolhaOrigem();abrirDialogo(${overlay})"><span class="ic">💻</span>Do meu computador</button>`
-    +`<button onclick="fecharEscolhaOrigem();abrirSeletorCDE(${overlay})"><span class="ic">🗂</span>Do CDE</button>`;
+    +`<button onclick="fecharEscolhaOrigem();abrirSeletorCDE(${overlay})"><span class="ic">🗂</span>Do CDE</button>`
+    // Entrada da análise de MODELO estando já no App. Fica aqui, junto das
+    // outras origens, porque a pergunta é a mesma: de onde vem o que vou
+    // analisar. Sem isto, só se entraria em 3D vindo do CDE.
+    +`<button onclick="fecharEscolhaOrigem();f3dModo(true)"><span class="ic">🧊</span>Modelo 3D do CDE</button>`;
   document.body.appendChild(pop);
   const r=ev.currentTarget.getBoundingClientRect(), w=220, h=pop.offsetHeight;
   let left=r.left, top=r.bottom+6;
@@ -2940,12 +2953,19 @@ function f3dPrint(){
 // ── Modo "só BIM": o 3D ocupa a tela e a coluna lista os modelos ───────────
 let F3D_MODO=false, F3D_LISTA=[], F3D_SEL=new Set(), F3D_NIVSEL=new Set();
 
-async function f3dModo(lig){
+// `preSel` = ids de cde_arquivo_auria vindos do CDE ("Analisar no App"): já
+// entra com eles marcados e abertos, sem a pessoa ter que remarcar o que
+// acabou de escolher lá.
+async function f3dModo(lig, preSel){
   F3D_MODO=!!lig;
   document.body.classList.toggle('soBim', F3D_MODO);
-  const b=$('btnSoBim'); if(b) b.classList.toggle('on', F3D_MODO);
   $('secPranchas').style.display   = F3D_MODO ? 'none' : '';
   $('secModelosBim').style.display = F3D_MODO ? '' : 'none';
+  // Em análise de MODELO o botão 🧊 não faz sentido — ele existe para trazer o
+  // 3D ao lado da prancha, e aqui já se está no 3D. No lugar dele, a saída.
+  const bB=$('btnBim'), bS=$('btnSairBim');
+  if(bB) bB.style.display = F3D_MODO ? 'none' : '';
+  if(bS) bS.style.display = F3D_MODO ? '' : 'none';
   $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
   if(!F3D_MODO){ f3dDescartar(); return; }
   if(!EMP){ $('modList').innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
@@ -2953,7 +2973,12 @@ async function f3dModo(lig){
   try{
     F3D_LISTA = await f3dModelosDoCde();
   }catch(e){ console.warn('modelos CDE:', e); F3D_LISTA=[]; }
+  if(preSel && preSel.length){
+    F3D_SEL=new Set();
+    preSel.forEach(aid=>{ const i=F3D_LISTA.findIndex(m=>m.arquivoId===aid); if(i>=0) F3D_SEL.add(i); });
+  }
   f3dRenderLista();
+  if(F3D_SEL.size) await f3dAbrirSelecionados();
 }
 function f3dRenderLista(){
   const el=$('modList'); if(!el) return;
