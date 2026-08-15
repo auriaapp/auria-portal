@@ -171,6 +171,32 @@ export function enquadrar(V){
   V.controls.maxDistance=raio*20;
   V.controls.update();
   V.fragments.update(true).catch(()=>{});
+  // Refaz a grade com o tamanho novo da caixa quando o modo claro está on.
+  if(V._estilo==='claro') visualEstilo(V,'claro');
+}
+
+// Alterna entre dois estilos de cena. O escuro (padrão) é bom para leitura
+// de fachada e composição de materiais; o claro com grade é o modo "estúdio"
+// dos visualizadores de BIM — piso visível dá noção de escala e cardinalidade
+// mesmo em modelos sem terreno importado.
+export function visualEstilo(V, modo){
+  const T=V.THREE;
+  V._estilo=modo;
+  V.scene.background = new T.Color(modo==='claro' ? 0xF1F5F9 : 0x2b3646);
+  if(V._grade){ try{ V.scene.remove(V._grade);
+    V._grade.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(_){} V._grade=null; }
+  if(modo==='claro'){
+    // Tamanho e passo a partir da caixa dos modelos: 2x a maior dimensão, com
+    // passo de 1m arredondado; assim funciona igual para casa e para lote.
+    const b=V.caixa;
+    const raio = b ? Math.max(b.getSize(new T.Vector3()).x, b.getSize(new T.Vector3()).z) : 20;
+    const lado = Math.max(20, Math.ceil(raio*2/10)*10);
+    const grade = new T.GridHelper(lado, lado, 0x94A3B8, 0xCBD5E1);
+    grade.material.transparent=true; grade.material.opacity=0.55;
+    grade.position.y = b ? b.min.y - 0.02 : -0.02;
+    V._grade = grade; V.scene.add(grade);
+  }
+  V.fragments.update(true).catch(()=>{});
 }
 
 // Tubo e duto de alguns exportadores são CASCA (superfície sem espessura). Com
@@ -397,6 +423,9 @@ export async function filtrarPavimentos(V, sel){
     }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
+  // Se há corte ativo, refaz a seção com o novo conjunto visível — sem isto,
+  // trocar de pavimento com o corte ligado ainda mostra fills antigos.
+  if(V.corte && V.corte.plano) corteArestas(V).catch(()=>{});
 }
 
 // ── Transparência (ver o que está atrás) ───────────────────────────────────
@@ -616,7 +645,22 @@ export async function corteArestas(V){
   for(const x of V.modelos){
     if(x.visivel===false) continue;
     try{
-      const s=await x.model.getSection(V.corte.plano);
+      // getSection ignora setVisible: mesmo com pavimentos filtrados, a
+      // seção pega a laje do andar de cima e desenha o fill dele bem no
+      // meio da vista atual — foi o "pavimento de cima flutuando" da
+      // segunda imagem do usuário. Solução: o 2º argumento restringe a
+      // peças; passamos só as visíveis quando há filtro (número menor que
+      // o total de peças com geometria).
+      let ids;
+      try{
+        const [vis, todas] = await Promise.all([
+          x.model.getItemsByVisibility(true),
+          x.model.getItemsWithGeometry()
+        ]);
+        if(vis && todas && vis.length && vis.length < todas.length) ids = vis;
+      }catch(_){ ids = undefined; }
+      const s = ids ? await x.model.getSection(V.corte.plano, ids)
+                    : await x.model.getSection(V.corte.plano);
       if(!s||!s.buffer||!s.buffer.length) continue;
       const temFill = V.hachura!==false && s.fillsIndices && s.fillsIndices.length;
 
