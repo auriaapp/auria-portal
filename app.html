@@ -1882,8 +1882,12 @@ async function carregarApts(){
   APTS=[];
   if(!EMP){ renderListaApts(); renderPins(); return; }
   try{
+    // Escopo por empreendimento_id (uuid) — não por nome. Nome se repete
+    // entre empresas, e a RLS já foi migrada para o id em
+    // supabase_apt_empreendimento_id.sql. Deixar o filtro por nome aqui
+    // deixava a leitura em desacordo com a política do banco.
     const { data, error }=await sb.from('apontamentos')
-      .select('*').eq('empreendimento', EMP.nome).limit(1000);
+      .select('*').eq('empreendimento_id', EMP.id).limit(1000);
     if(error) throw error;
     APTS=data||[];
   }catch(e){ console.error('carregarApts:', e.message||e); }
@@ -4219,7 +4223,11 @@ async function salvarApt(){
       // Só grava em CRIAÇÃO — edições posteriores não sobrescrevem a origem.
       cde_revisao_id: (a._novo && a.cde_revisao_id) ? a.cde_revisao_id : undefined
     };
-    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento,id' });
+    // Chave de conflito por (empreendimento_id, id) — não (nome, id). Nome
+    // colide entre empresas; a linha do banco tem coluna id (uuid) + a
+    // UNIQUE (empreendimento_id, id) criada em
+    // supabase_apt_unique_empreendimento_id.sql.
+    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento_id,id' });
     if(error) throw error;
     fecharApt();
     await carregarApts();
@@ -4253,7 +4261,9 @@ async function excluirApt(){
   if(!APT_EDIT||APT_EDIT._novo) return;
   if(!confirm('Excluir o apontamento '+APT_EDIT.id+'? Essa ação não pode ser desfeita.')) return;
   try{
-    const { error }=await sb.from('apontamentos').delete().eq('id',APT_EDIT.id).eq('empreendimento',EMP.nome);
+    // Delete por empreendimento_id — mesmo motivo do upsert e do carregar:
+    // nome não distingue duas empresas com empreendimentos homônimos.
+    const { error }=await sb.from('apontamentos').delete().eq('id',APT_EDIT.id).eq('empreendimento_id',EMP.id);
     if(error) throw error;
     fecharApt();
     await carregarApts();
