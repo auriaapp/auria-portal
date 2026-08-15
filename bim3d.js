@@ -1,3 +1,4 @@
+// bim3d version: 2026-08-15b  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -81,7 +82,8 @@ export async function criar(cont, opts={}){
   // Legibilidade das formas, não realismo: a hemisférica separa horizontal de
   // vertical sozinha; a principal dá relevo; a de preenchimento evita que o
   // lado escuro vire um borrão sem informação.
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25));
+  // Ficam expostas em V.luzes p/ o painel de configuração poder mexer nelas.
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25); scene.add(hemi);
   const ambiente = new THREE.AmbientLight(0xffffff, 0.30); scene.add(ambiente);
   const sol = new THREE.DirectionalLight(0xffffff, 1.55); sol.position.set(1,2.2,1.4); scene.add(sol);
   const fill = new THREE.DirectionalLight(0xcfe0ff, 0.55); fill.position.set(-1.4,0.7,-1.1); scene.add(fill);
@@ -90,6 +92,7 @@ export async function criar(cont, opts={}){
 
   const V = {
     THREE, FRAGS, cont, canvas, renderer, scene, camera, controls, fragments,
+    luzes: { hemi, ambiente, sol, fill },   // expostas p/ o painel de configuração
     modelos:[], vivo:true, raf:null, ro:null,
     caixa:null, unidade:1, niveis:null, porNivel:null,
     facesDuplas:true, _ultFaces:0,
@@ -265,6 +268,30 @@ export function visualGrade(V, lig){
     V._grade = grade; V.scene.add(grade);
   }
   V.fragments.update(true).catch(()=>{});
+}
+
+// ── Ajustes finos de renderização (para o painel de configuração) ──────────
+//  Todos os setters escrevem no OBJETO vivo da cena (renderer/luzes) — o laço
+//  de render pega a mudança no próximo quadro. Nenhum re-carrega modelo.
+export function setExposicao(V, n){       V.renderer.toneMappingExposure = +n; }
+export function setLuzAmbiente(V, n){     V.luzes.hemi.intensity          = +n; }
+export function setLuzSol(V, n){          V.luzes.sol.intensity  = +n;
+                                          V.luzes.fill.intensity = +n * 0.35; }   // fill sempre 35% do sol
+export function setFacesDuplas(V, on){
+  V.facesDuplas = !!on;
+  aplicarFaces(V, true);   // re-percorre os materiais agora, não espera o gate de 600ms
+}
+export function setAltaQualidade(V, on){
+  try{ V.fragments.settings.graphicsQuality = on ? 1 : 0; }catch(_){}
+  V.fragments.update(true).catch(()=>{});
+}
+// Restaura os padrões (mesmos números do criar()).
+export function restaurarPadroes(V){
+  setExposicao(V, 1.15);
+  setLuzAmbiente(V, 1.25);
+  setLuzSol(V, 1.55);
+  setFacesDuplas(V, true);
+  setAltaQualidade(V, false);
 }
 
 // Tubo e duto de alguns exportadores são CASCA (superfície sem espessura). Com

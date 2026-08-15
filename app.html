@@ -183,6 +183,12 @@
   .f3d-cfg .seg button{flex:1;background:transparent;border:none;color:#cbd5e1;padding:4px 8px;
     border-radius:5px;font-size:11px;cursor:pointer;font-weight:600}
   .f3d-cfg .seg button.on{background:var(--accent);color:#231703}
+  .f3d-cfg input[type=range]{flex:0 0 92px;accent-color:var(--accent)}
+  .f3d-cfg .val{flex:0 0 34px;text-align:right;color:#94a3b8;font-variant-numeric:tabular-nums;font-style:normal;font-size:11px}
+  .f3d-cfg .f3d-reset{width:100%;margin-top:10px;background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#e2e8f0;padding:5px;cursor:pointer;font-size:12px}
+  .f3d-cfg .f3d-reset:hover{background:rgba(255,255,255,.16)}
+  .f3d-cfg{max-height:82vh;overflow-y:auto}   /* painel maior: rola se não couber */
   /* Barra flutuante: SÓ ÍCONES, quadrados, com tooltip nativo do title. Os
      rótulos "Pav.", "Propriedades", "Regras", "Apontar" tornaram a barra
      comprida demais quando somamos as ferramentas do CDE. Como cada botão
@@ -496,7 +502,7 @@
           <div class="f3donly" style="position:relative">
             <button id="f3dBtnCfg" class="bim-tb ico" onclick="f3dCfgToggle()" title="Configurações de visualização">⚙</button>
             <div id="f3dCfgPop" class="f3d-cfg">
-              <h5>Visualização</h5>
+              <h5>Fundo &amp; piso</h5>
               <div class="lin"><span>Fundo</span>
                 <div class="seg">
                   <button data-f="escuro" onclick="f3dSetFundo('escuro')" class="on">Escuro</button>
@@ -506,7 +512,33 @@
               <div class="lin"><span>Plano de piso</span>
                 <input type="checkbox" id="f3dCfgGrade" onchange="f3dSetGrade(this.checked)">
               </div>
-              <p class="nota">A malha marca a cota Z=0 do projeto. No fundo escuro fica sutil, dois tons acima do preto do painel.</p>
+              <h5 style="margin-top:12px">Iluminação</h5>
+              <div class="lin"><span>Exposição</span>
+                <input type="range" data-c="expo" min="50" max="220" value="115"
+                       oninput="f3dSlider(this,'expo',v=>B3.setExposicao(F3D,v/100))">
+                <i class="val" data-v="expo">1,15</i>
+              </div>
+              <div class="lin"><span>Luz ambiente</span>
+                <input type="range" data-c="amb"  min="0"  max="200" value="125"
+                       oninput="f3dSlider(this,'amb',v=>B3.setLuzAmbiente(F3D,v/100))">
+                <i class="val" data-v="amb">1,25</i>
+              </div>
+              <div class="lin"><span>Contraste da luz</span>
+                <input type="range" data-c="sol"  min="0"  max="300" value="155"
+                       oninput="f3dSlider(this,'sol',v=>B3.setLuzSol(F3D,v/100))">
+                <i class="val" data-v="sol">1,55</i>
+              </div>
+              <h5 style="margin-top:12px">Modelo</h5>
+              <div class="lin"><span>Faces internas (tubos)</span>
+                <input type="checkbox" id="f3dCfgFaces" checked
+                       onchange="B3&amp;&amp;F3D&amp;&amp;B3.setFacesDuplas(F3D,this.checked)">
+              </div>
+              <div class="lin"><span>Alta qualidade</span>
+                <input type="checkbox" id="f3dCfgGQ"
+                       onchange="B3&amp;&amp;F3D&amp;&amp;B3.setAltaQualidade(F3D,this.checked)">
+              </div>
+              <button class="f3d-reset" onclick="f3dResetCfg()">Restaurar padrão</button>
+              <p class="nota">Configurações valem só nesta sessão. Fecha a aba, volta ao padrão.</p>
             </div>
           </div>
           <button id="f3dBtnApontar" class="bim-tb ico f3donly" onclick="f3dApontarToggle()" title="Criar apontamento: ligue e clique no elemento do modelo">➕</button>
@@ -2805,7 +2837,11 @@ function renderSideRight(){
 //  regras, pinos, lista de modelos.
 let _bim3dMod=null;
 function bim3d(){
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js').catch(e=>{ _bim3dMod=null; throw e; });
+  // Cache-buster no import: o navegador cacheia módulos ES agressivamente,
+  // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
+  // deploy do bim3d.js força o download. O valor bate com o comentário
+  // "bim3d version" no topo do arquivo — trocar os dois juntos.
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3191,6 +3227,29 @@ function f3dSetGrade(lig){
   B3.visualGrade(F3D, !!lig);
   const c=$('f3dCfgGrade'); if(c) c.checked=!!lig;
   try{ sessionStorage.setItem('f3dGrade', lig?'1':'0'); }catch(_){}
+}
+// Sliders (exposição, luz, contraste): atualiza o rótulo à direita e chama
+// o setter do módulo. `apply` é `v => B3.setXxx(F3D, v/100)` — o /100 é
+// porque o slider trabalha em inteiros e o valor real é fracionário.
+function f3dSlider(el, chave, apply){
+  if(!F3D || !B3) return;
+  const v = +el.value;
+  apply(v);
+  const rot = document.querySelector('.f3d-cfg [data-v="'+chave+'"]');
+  if(rot) rot.textContent = (v/100).toFixed(2).replace('.',',');
+}
+function f3dResetCfg(){
+  if(!F3D || !B3) return;
+  B3.restaurarPadroes(F3D);
+  // Reseta a UI para bater com os padrões do módulo (mesmos valores do criar()).
+  const p={ expo:115, amb:125, sol:155 };
+  Object.entries(p).forEach(([k,v])=>{
+    const s=document.querySelector('.f3d-cfg [data-c="'+k+'"]');
+    if(s){ s.value=v; const r=document.querySelector('.f3d-cfg [data-v="'+k+'"]');
+      if(r) r.textContent=(v/100).toFixed(2).replace('.',','); }
+  });
+  const f=$('f3dCfgFaces'); if(f) f.checked=true;
+  const g=$('f3dCfgGQ');    if(g) g.checked=false;
 }
 // Fecha o popover ao clicar fora — mesmo padrão do Pav./Regras.
 document.addEventListener('click', (e)=>{
