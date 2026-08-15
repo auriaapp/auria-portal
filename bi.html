@@ -562,6 +562,28 @@ function toggleTheme(){
   localStorage.setItem('auria_theme',t); applyTheme();
   if(_abaAtual==='aval') carregarAval(); else carregar();
 }
-async function _boot(){ applyTheme(); await _loadIssues(); carregar(); }
+// Guard de papel: BI é ferramenta interna da coordenação (analistas do
+// empreendimento + gestão da empresa). Outros papéis (projetista, setor,
+// financeiro) não devem ler agregados de apontamentos — mesmo com RLS
+// apertada, sequer devem enxergar a URL do BI.
+async function _guardRole(){
+  try{
+    const { data } = await sb.auth.getSession();
+    if(!data || !data.session){ location.replace('./'); return false; }
+    const { data: p } = await sb.from('usuarios_auria')
+      .select('role').eq('id', data.session.user.id).maybeSingle();
+    const r = p && p.role;
+    if(r!=='analista' && r!=='gerente' && r!=='super_admin'){
+      location.replace('portal.html'); return false;
+    }
+    return true;
+  }catch(e){ location.replace('./'); return false; }
+}
+async function _boot(){
+  applyTheme();
+  if(!await _guardRole()) return;
+  await _loadIssues();
+  carregar();
+}
 document.addEventListener('DOMContentLoaded',_boot);
 </script></body></html>

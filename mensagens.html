@@ -136,8 +136,25 @@ var sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','
 var USER={id:'',email:'',nome:''};
 var _APTS=[], _THREADS=[];
 async function _boot(){
-  try{ var s=await sb.auth.getSession(); var u=s.data.session&&s.data.session.user;
-    if(u){ USER.id=u.id; USER.email=u.email||''; USER.nome=(u.user_metadata&&(u.user_metadata.nome||u.user_metadata.full_name))||u.email||''; } }catch(e){}
+  var s=null;
+  try{ s=await sb.auth.getSession(); }catch(e){}
+  var u=s&&s.data&&s.data.session&&s.data.session.user;
+  if(!u){ location.replace('./'); return; }
+  USER.id=u.id; USER.email=u.email||'';
+  USER.nome=(u.user_metadata&&(u.user_metadata.nome||u.user_metadata.full_name))||u.email||'';
+  // Guard de papel: Central de Mensagens é da coordenação. Antes o boot
+  // seguia sem validar sessão nem role, e o `select('*').limit(1000)` de
+  // apontamentos passava direto para qualquer papel autenticado — o único
+  // freio era a RLS. Agora o front recusa não-coordenação e a URL para de
+  // vazar existência do painel.
+  try{
+    var pr=await sb.from('usuarios_auria').select('nome,role').eq('id',u.id).maybeSingle();
+    var role=pr.data&&pr.data.role;
+    if(role!=='analista' && role!=='gerente' && role!=='super_admin'){
+      location.replace('portal.html'); return;
+    }
+    if(pr.data&&pr.data.nome) USER.nome=pr.data.nome;
+  }catch(e){ location.replace('./'); return; }
   carregarInbox();
 }
 function _dt(s){ return s?new Date(s).toLocaleString('pt-BR'):''; }
