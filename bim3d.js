@@ -40,6 +40,11 @@ function libsLinha(){
 }
 
 const LARANJA = 0xE8960A;
+// Cor da HACHURA de corte. Deve ser DENSA e ESCURA — a hachura tem função de
+// leitura de projeto: mostra o "cheio" da peça atravessada pelo plano, então
+// a peça precisa parecer sólida, não translúcida. Azul-marinho profundo é a
+// convenção do Qonic (e do que se desenha em prancha de corte).
+const HACHURA = 0x0B1E3E;
 
 // ---------------------------------------------------------------------------
 //  criar(): monta a cena vazia. carregar() traz os modelos depois — separados
@@ -543,6 +548,12 @@ export function corteAplicar(V){
   V.fragments.update(true).catch(()=>{});
 }
 export function corteInverter(V){ if(V.corte.ancora){ V.corte.inv=!V.corte.inv; corteAplicar(V); corteArestas(V).catch(()=>{}); } }
+// Liga/desliga só a hachura (o preenchimento da seção). As arestas laranja
+// continuam — sem elas, o corte vira uma mancha sem contorno.
+export function corteHachura(V, lig){
+  V.hachura = !!lig;
+  if(V.corte.plano) corteArestas(V).catch(()=>{});
+}
 export function corteRemover(V){
   const C=V.corte; C.ancora=null; C.normal=null; C.plano=null; C.inv=false;
   sumirArestas(V); corteAplicar(V);
@@ -584,13 +595,15 @@ export async function corteArestas(V){
       mat.resolution.set(V.cont.clientWidth||1, V.cont.clientHeight||1);
       const linha=new L.LineSegments2(geo, mat); linha.renderOrder=997;
       grupo.add(linha);
-      // Hachura: os fills vêm como índices dentro do mesmo buffer.
+      // Hachura de corte (fills). OPACA, azul-marinho — é o "cheio" da peça
+      // atravessada. Transparente ficava só uma sugestão colorida e o corte
+      // parecia oco. Fica ATRÁS da aresta laranja (renderOrder menor) para o
+      // contorno continuar destacado.
       if(V.hachura!==false && s.fillsIndices && s.fillsIndices.length){
         const g2=new T.BufferGeometry();
         g2.setAttribute('position', new T.BufferAttribute(s.buffer,3));
         g2.setIndex(s.fillsIndices);
-        const m2=new T.MeshBasicMaterial({ color:LARANJA, transparent:true, opacity:0.35,
-          side:T.DoubleSide, depthTest:false });
+        const m2=new T.MeshBasicMaterial({ color:HACHURA, side:T.DoubleSide, depthTest:false });
         const malha=new T.Mesh(g2,m2); malha.renderOrder=996;
         grupo.add(malha);
       }
