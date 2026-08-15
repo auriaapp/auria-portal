@@ -186,14 +186,49 @@ export function visualEstilo(V, modo){
   if(V._grade){ try{ V.scene.remove(V._grade);
     V._grade.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(_){} V._grade=null; }
   if(modo==='claro'){
-    // Tamanho e passo a partir da caixa dos modelos: 2x a maior dimensão, com
-    // passo de 1m arredondado; assim funciona igual para casa e para lote.
-    const b=V.caixa;
+    // "Plano infinito" na prática: grade GIGANTE em relação ao modelo, com
+    // uma malha crua (célula de 5 m; a cada 5ª linha uma marcação grossa a
+    // 25 m). O que torna a sensação de infinito é o FADE radial no shader —
+    // as arestas somem antes de a borda física da grade aparecer. Sem o
+    // fade, uma grade grande mostra a linha do horizonte e denuncia o
+    // tamanho.
+    const b = V.caixa;
     const raio = b ? Math.max(b.getSize(new T.Vector3()).x, b.getSize(new T.Vector3()).z) : 20;
-    const lado = Math.max(20, Math.ceil(raio*2/10)*10);
-    const grade = new T.GridHelper(lado, lado, 0x94A3B8, 0xCBD5E1);
-    grade.material.transparent=true; grade.material.opacity=0.55;
+    const lado = Math.max(2000, Math.ceil(raio*40));   // >= 2 km
+    const passo = 5;                                    // 5 m por célula
+    const divs  = Math.round(lado/passo);
+    // Cores: azul-cinza claro; as linhas de 25 m um pouco mais fortes para
+    // dar leitura mesmo à distância.
+    const grade = new T.GridHelper(lado, divs, 0x7A94B8, 0xA8B8CC);
+    // Fade radial: a opacidade cai com a distância ao centro da grade, então
+    // a beira nunca aparece. Feito por onBeforeCompile para reaproveitar o
+    // material do GridHelper (LineBasicMaterial) sem reinventá-lo.
+    const mat = grade.material;
+    mat.transparent = true;
+    mat.depthWrite = false;
+    // A grade é referência: não deve variar de tom quando o ACES tonemap
+    // reage à luz da cena. Sem isto, com o modelo iluminado por sol forte,
+    // as linhas cinzas ganham matiz alaranjado.
+    mat.toneMapped = false;
+    mat.onBeforeCompile = (shader)=>{
+      shader.uniforms.uRaio = { value: lado*0.5 };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>','#include <common>\nvarying vec2 vXZ;')
+        .replace('#include <project_vertex>','#include <project_vertex>\nvXZ = position.xz;');
+      // O hook correto neste three (0.185) é <opaque_fragment>. O nome antigo
+      // (<output_fragment>) não existe mais e o .replace() sem match falha
+      // em silêncio — a grade compilava, mas sem o fade, e a borda física da
+      // malha aparecia.
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>','#include <common>\nvarying vec2 vXZ;\nuniform float uRaio;')
+        .replace('#include <opaque_fragment>',
+          'float _fd = length(vXZ)/uRaio;\n'+
+          'float _fa = 1.0 - smoothstep(0.55, 0.95, _fd);\n'+   // fade suave dos 55% até 95% do raio
+          'diffuseColor.a *= _fa;\n'+
+          '#include <opaque_fragment>');
+    };
     grade.position.y = b ? b.min.y - 0.02 : -0.02;
+    grade.renderOrder = -1;    // sempre atrás do modelo
     V._grade = grade; V.scene.add(grade);
   }
   V.fragments.update(true).catch(()=>{});
