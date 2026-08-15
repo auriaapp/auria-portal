@@ -235,7 +235,12 @@ export function visualEstilo(V, modo){
           'diffuseColor.a *= _fa;\n'+
           '#include <opaque_fragment>');
     };
-    grade.position.y = b ? b.min.y - 0.02 : -0.02;
+    // Sempre em Z=0 do MODELO (o "zero" do IFC/projeto, que aqui é Y do
+    // three porque Fragments converte Z-up→Y-up). Antes eu colocava no piso
+    // da caixa (min.y), o que fazia a grade "subir" no meio de subsolos e
+    // ficar acima do térreo. O -0.005 evita z-fighting com uma laje que
+    // esteja exatamente em cota zero.
+    grade.position.y = -0.005;
     grade.renderOrder = -1;    // sempre atrás do modelo
     V._grade = grade; V.scene.add(grade);
   }
