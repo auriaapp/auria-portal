@@ -167,6 +167,22 @@
   #f3dDica{position:absolute;left:12px;bottom:12px;z-index:4;display:none;font-size:11px;color:#cbd5e1;
     background:rgba(15,23,42,.65);padding:5px 9px;border-radius:6px;pointer-events:none;max-width:70%}
   #f3dCanvas.mira{cursor:crosshair}
+  /* Painel de configurações da visualização: popover ancorado ao botão ⚙
+     da barra do 3D. Cabeça e "lin" seguem o padrão do painel do CDE para
+     a experiência ser a mesma dos dois lados. */
+  .f3d-cfg{display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:9;
+    background:rgba(15,23,42,.95);border:1px solid rgba(255,255,255,.16);border-radius:9px;
+    padding:11px 12px;color:#e2e8f0;font-size:12px;width:238px;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+  .f3d-cfg.on{display:block}
+  .f3d-cfg h5{margin:0 0 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8;font-weight:700}
+  .f3d-cfg .lin{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px}
+  .f3d-cfg .lin span{flex:1}
+  .f3d-cfg input[type=checkbox]{accent-color:var(--accent);cursor:pointer;transform:scale(1.1)}
+  .f3d-cfg .nota{color:#94a3b8;font-size:11px;line-height:1.4;margin:6px 0 0}
+  .f3d-cfg .seg{display:flex;background:rgba(255,255,255,.08);border-radius:7px;padding:2px}
+  .f3d-cfg .seg button{flex:1;background:transparent;border:none;color:#cbd5e1;padding:4px 8px;
+    border-radius:5px;font-size:11px;cursor:pointer;font-weight:600}
+  .f3d-cfg .seg button.on{background:var(--accent);color:#231703}
   /* Barra flutuante: SÓ ÍCONES, quadrados, com tooltip nativo do title. Os
      rótulos "Pav.", "Propriedades", "Regras", "Apontar" tornaram a barra
      comprida demais quando somamos as ferramentas do CDE. Como cada botão
@@ -477,7 +493,22 @@
           </span>
           <button id="f3dBtnAndar" class="bim-tb ico f3donly" onclick="f3dTool('andar')" title="Caminhar pelo modelo, a 1,70 m do piso">🚶</button>
           <button class="bim-tb ico f3donly" onclick="f3dEnquadrar()" title="Enquadrar tudo">⤢</button>
-          <button id="f3dBtnEstilo" class="bim-tb ico f3donly" onclick="f3dEstiloToggle()" title="Fundo claro com malha de piso">◇</button>
+          <div class="f3donly" style="position:relative">
+            <button id="f3dBtnCfg" class="bim-tb ico" onclick="f3dCfgToggle()" title="Configurações de visualização">⚙</button>
+            <div id="f3dCfgPop" class="f3d-cfg">
+              <h5>Visualização</h5>
+              <div class="lin"><span>Fundo</span>
+                <div class="seg">
+                  <button data-f="escuro" onclick="f3dSetFundo('escuro')" class="on">Escuro</button>
+                  <button data-f="claro" onclick="f3dSetFundo('claro')">Claro</button>
+                </div>
+              </div>
+              <div class="lin"><span>Plano de piso</span>
+                <input type="checkbox" id="f3dCfgGrade" onchange="f3dSetGrade(this.checked)">
+              </div>
+              <p class="nota">A malha marca a cota Z=0 do projeto. No fundo escuro fica sutil, dois tons acima do preto do painel.</p>
+            </div>
+          </div>
           <button id="f3dBtnApontar" class="bim-tb ico f3donly" onclick="f3dApontarToggle()" title="Criar apontamento: ligue e clique no elemento do modelo">➕</button>
           <!-- Recolher a barra: a maioria das ferramentas fica ligada de
                forma pontual (mediu duas vezes, cortou, tirou uma cota) e
@@ -3046,13 +3077,16 @@ async function f3dAbrirSelecionados(){
   F3D_PAVPRONTO=false;
   const pop=$('bimFloorsPop');
   if(pop) pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Abra para separar por pavimento.</div>';
-  // Estilo salvo na sessão: se você prefere o modo claro, cada abertura já
-  // vem assim, sem precisar clicar de novo.
+  // Preferências salvas na sessão. Fundo padrão = escuro; grade padrão =
+  // desligada. Se você tem preferência diferente, cada abertura já vem
+  // configurada sem precisar clicar.
   try{
-    if(sessionStorage.getItem('f3dEstilo')==='claro'){
-      B3.visualEstilo(F3D,'claro');
-      const b=$('f3dBtnEstilo'); if(b) b.classList.add('on');
-    }
+    const fundo = sessionStorage.getItem('f3dFundo') || 'escuro';
+    const grade = sessionStorage.getItem('f3dGrade') === '1';
+    B3.visualFundo(F3D, fundo);
+    B3.visualGrade(F3D, grade);
+    [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===fundo));
+    const cg=$('f3dCfgGrade'); if(cg) cg.checked = grade;
   }catch(_){}
   f3dDica(DICA_NAV);
 }
@@ -3121,16 +3155,35 @@ function f3dMedirModo(modo){
 }
 function f3dCorteInverter(){ if(F3D && B3) B3.corteInverter(F3D); }
 function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
-// Estilo visual: escuro (padrão, boa leitura de fachada e materiais) ou claro
-// com malha de piso (dá noção de escala mesmo sem terreno importado, como no
-// Navisworks/Revit em vista "estúdio"). Guarda na sessão.
-function f3dEstiloToggle(){
-  if(!F3D || !B3) return;
-  const claro = !(F3D._estilo==='claro');
-  B3.visualEstilo(F3D, claro ? 'claro' : 'escuro');
-  const b=$('f3dBtnEstilo'); if(b) b.classList.toggle('on', claro);
-  try{ sessionStorage.setItem('f3dEstilo', claro?'claro':'escuro'); }catch(_){}
+// Painel de configurações de visualização. Fundo e plano de piso são opções
+// SEPARADAS: quem quer o escuro pode ter o plano; quem quer o claro pode não
+// ter. Antes um controlava o outro e as combinações "escuro + plano" e
+// "claro sem plano" ficavam impossíveis.
+function f3dCfgToggle(){
+  const p=$('f3dCfgPop'); if(!p) return;
+  const abriu=p.classList.toggle('on');
+  const b=$('f3dBtnCfg'); if(b) b.classList.toggle('on', abriu);
 }
+function f3dSetFundo(qual){
+  if(!F3D || !B3) return;
+  B3.visualFundo(F3D, qual);
+  [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===qual));
+  try{ sessionStorage.setItem('f3dFundo', qual); }catch(_){}
+}
+function f3dSetGrade(lig){
+  if(!F3D || !B3) return;
+  B3.visualGrade(F3D, !!lig);
+  const c=$('f3dCfgGrade'); if(c) c.checked=!!lig;
+  try{ sessionStorage.setItem('f3dGrade', lig?'1':'0'); }catch(_){}
+}
+// Fecha o popover ao clicar fora — mesmo padrão do Pav./Regras.
+document.addEventListener('click', (e)=>{
+  const p=$('f3dCfgPop');
+  if(p && p.classList.contains('on') && !e.target.closest('#f3dCfgPop') && !e.target.closest('#f3dBtnCfg')){
+    p.classList.remove('on');
+    const b=$('f3dBtnCfg'); if(b) b.classList.remove('on');
+  }
+});
 // Liga/desliga a hachura de corte (preenchimento azul-marinho na peça
 // atravessada). Vem ligada por padrão — é o que faz o corte parecer sólido,
 // como em prancha; sem hachura o corte fica só um contorno laranja no ar.

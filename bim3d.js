@@ -171,21 +171,36 @@ export function enquadrar(V){
   V.controls.maxDistance=raio*20;
   V.controls.update();
   V.fragments.update(true).catch(()=>{});
-  // Refaz a grade com o tamanho novo da caixa quando o modo claro está on.
-  if(V._estilo==='claro') visualEstilo(V,'claro');
+  // Refaz a grade com o tamanho novo da caixa se ela estiver ligada.
+  if(V._gradeOn) visualGrade(V, true);
 }
 
-// Alterna entre dois estilos de cena. O escuro (padrão) é bom para leitura
-// de fachada e composição de materiais; o claro com grade é o modo "estúdio"
-// dos visualizadores de BIM — piso visível dá noção de escala e cardinalidade
-// mesmo em modelos sem terreno importado.
-export function visualEstilo(V, modo){
+// FUNDO e GRADE são configurações INDEPENDENTES agora. Antes ligar a grade
+// exigia trocar o fundo — os dois eram um par. Ficou artificial: quem quer
+// ver o piso pode preferir o modo escuro; quem quer o modo claro pode
+// preferir sem o piso, para o modelo respirar mais.
+export function visualFundo(V, modo){
   const T=V.THREE;
-  V._estilo=modo;
-  V.scene.background = new T.Color(modo==='claro' ? 0xF1F5F9 : 0x2b3646);
+  V._fundo = modo==='claro' ? 'claro' : 'escuro';
+  V.scene.background = new T.Color(V._fundo==='claro' ? 0xF1F5F9 : 0x0F1117);
+  // A grade vive presa ao fundo (as cores dependem dele), então se estiver
+  // ligada, refaz.
+  if(V._grade) visualGrade(V, true);
+  V.fragments.update(true).catch(()=>{});
+}
+// Compatibilidade com quem ainda chama visualEstilo('claro'|'escuro') — troca
+// o fundo E liga a grade se o modo for claro (era o comportamento antigo).
+export function visualEstilo(V, modo){
+  visualFundo(V, modo);
+  visualGrade(V, modo==='claro');
+}
+export function visualGrade(V, lig){
+  const T=V.THREE;
+  V._gradeOn = !!lig;
   if(V._grade){ try{ V.scene.remove(V._grade);
     V._grade.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(_){} V._grade=null; }
-  if(modo==='claro'){
+  if(V._gradeOn){
+    const claro = V._fundo!=='escuro';   // 'claro' é o padrão para compat
     // "Plano infinito" na prática: grade GIGANTE em relação ao modelo, com
     // uma malha crua (célula de 5 m; a cada 5ª linha uma marcação grossa a
     // 25 m). O que torna a sensação de infinito é o FADE radial no shader —
@@ -197,13 +212,17 @@ export function visualEstilo(V, modo){
     const lado = Math.max(2000, Math.ceil(raio*40));   // >= 2 km
     const passo = 5;                                    // 5 m por célula
     const divs  = Math.round(lado/passo);
-    // Cores QUASE iguais ao fundo (0xF1F5F9) — a grade só se percebe se
-    // você olhar para procurar. Sem distinção forte entre linhas comuns e
-    // mestras: numa grade de referência de fundo, o contraste extra vira
-    // ruído. Espessura fica fixa em 1 px em qualquer GPU (linewidth do
+    // Cores duas tonalidades acima do fundo — no claro (bg 0xF1F5F9) fica
+    // levemente azul-cinza; no escuro (bg 0x0F1117) fica levemente cinza
+    // azulado. Nos dois casos a grade "sussurra": só se percebe se você
+    // olhar para procurar. Sem distinção forte entre linhas comuns e
+    // mestras — numa referência de fundo, contraste extra vira ruído.
+    // Espessura fica fixa em 1 px em qualquer GPU (linewidth do
     // LineBasicMaterial é ignorado), então o único jeito de "afinar" é
-    // baixar o contraste — que é o que este ajuste faz.
-    const grade = new T.GridHelper(lado, divs, 0xE0E6EE, 0xE6EBF1);
+    // baixar o contraste.
+    const cComum = claro ? 0xE0E6EE : 0x1D2331;
+    const cMestre= claro ? 0xE6EBF1 : 0x252C3B;
+    const grade = new T.GridHelper(lado, divs, cMestre, cComum);
     // Fade radial: a opacidade cai com a distância ao centro da grade, então
     // a beira nunca aparece. Feito por onBeforeCompile para reaproveitar o
     // material do GridHelper (LineBasicMaterial) sem reinventá-lo.
@@ -212,8 +231,9 @@ export function visualEstilo(V, modo){
     mat.depthWrite = false;
     // Opacidade base baixa — a grade fica só um sussurro sobre o fundo.
     // O shader multiplica esta alpha pelo fade radial, então a beira some
-    // ainda mais rápido.
-    mat.opacity = 0.55;
+    // ainda mais rápido. No fundo escuro, um pouco mais alta porque cores
+    // escuras sobre fundo escuro somem mais rápido que claras sobre claro.
+    mat.opacity = claro ? 0.55 : 0.75;
     // A grade é referência: não deve variar de tom quando o ACES tonemap
     // reage à luz da cena. Sem isto, com o modelo iluminado por sol forte,
     // as linhas cinzas ganham matiz alaranjado.
