@@ -3832,10 +3832,26 @@ function bimPopOut(){
 
 // ── Editor ──────────────────────────────────────────────────────────────────
 function proximoId(disc){
-  // prefixo = 3 primeiras letras SEM acento (EST, ARQ, HID, ELE…), como no desktop
+  // prefixo = 3 primeiras letras SEM acento (EST, ARQ, HID, ELE…), como no desktop.
+  // Antes eu comparava `a.disciplina===disc`, mas a disciplina pode ter sido
+  // gravada com um rótulo diferente do que a discAtiva devolve — por exemplo
+  // "Arquitetura" salvo antes e "ARQ" agora, ou variação de acento. Nesse
+  // caso o forEach não achava o apontamento anterior, devolvia N=1 de novo,
+  // e o upsert (empreendimento_id, id) SOBRESCREVIA a linha antiga porque
+  // o id colidia. Chave dupla de dano.
+  //
+  // Correção: contar por PREFIXO DO ID já usado (o que dita o "próximo" é o
+  // maior N encontrado com o mesmo prefixo — funciona igual à f3dProximoId
+  // e à proximoIdBim, que já fazem assim).
   const pref=(disc? disc.normalize('NFD').replace(/[̀-ͯ]/g,'').slice(0,3).toUpperCase() : 'GER');
   let num=1;
-  APTS.forEach(a=>{ if(a.disciplina===disc && (a.id_num||0)>=num) num=(a.id_num||0)+1; });
+  APTS.forEach(a=>{
+    const s=String(a.id||'');
+    if(s.indexOf(pref+'-')===0){
+      const n=parseInt(s.slice(pref.length+1),10);
+      if(!isNaN(n) && n>=num) num=n+1;
+    }
+  });
   return { id:pref+'-'+num, num };
 }
 // ── Foco: prancha/disciplina ativa para novos apontamentos ──────────────────
@@ -4196,6 +4212,14 @@ async function salvarApt(){
   const temPrazo=Object.values(a.participantes).some(p=>(p.prazo||'').trim());
   if(!temPrazo && a.status!=='Resolvido'
      && !confirm('Este apontamento não tem prazo definido para nenhum participante. Salvar mesmo assim?')) return;
+  // Aviso "Coordenação" (mesmo padrão do desktop). Coordenação = interno,
+  // não vai para o portal do projetista/fornecedor — quem salva precisa
+  // saber. Só na CRIAÇÃO, para não repetir a cada edição de um apontamento
+  // que já vinha assim, e também só se a pessoa mudou EXPLICITAMENTE algo:
+  // se abriu e salvou sem alterar a visibilidade, o aviso vira ruído.
+  if(a.visibilidade==='Coordenação' && a._novo){
+    if(!confirm('Apontamento salvo como Coordenação.\n\nEle fica visível apenas dentro do Auria App, para a equipe de coordenação. Não vai para o portal do projetista/fornecedor.\n\nContinuar?')) return;
+  }
   // Log automático das mudanças relevantes
   if(a._novo){ /* log de criação já existe */ }
   else{
