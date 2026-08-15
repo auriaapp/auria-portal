@@ -122,6 +122,11 @@
   /* O seletor de disciplina é do caminho antigo (xeokit) e fica vazio aqui —
      quem escolhe o modelo é a coluna da esquerda. */
   body.soBim #bimDisc, body.soBim .bim-head>span:first-child{display:none}
+  /* Trava: se o 🧊 BIM (xeokit) foi usado antes nesta sessão, o canvas dele
+     continuaria visível atrás do modelo do CDE. São motores e canvas
+     distintos, e no modo Só BIM só o do CDE aparece. */
+  body.soBim #bimCanvas{display:none !important}
+  body.soBim #bimPinsSvg{z-index:3}
   .bim-head select{font-size:12px;padding:4px 7px;border-radius:7px;border:1px solid #2a2d3a;background:#0f1117;color:#e2e8f0;max-width:150px}
   .bim-head .bim-x{margin-left:auto;background:none;border:none;color:#94a3b8;cursor:pointer;font-size:15px}
   .bim-head .bim-x+.bim-x{margin-left:0}
@@ -413,6 +418,12 @@
         <div id="bimBody" style="flex:1;position:relative;overflow:hidden">
           <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
           <canvas id="bimCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
+          <!-- Canvas PRÓPRIO do visualizador do CDE. Não pode dividir o
+               #bimCanvas com o xeokit: um canvas só aceita um contexto WebGL,
+               então o segundo motor pega o contexto do primeiro e os dois
+               modelos passam a desenhar na mesma tela — era o modelo "ao
+               fundo" que não fora selecionado. -->
+          <canvas id="f3dCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
           <div id="regBox" class="bim-props" style="left:12px;right:auto;width:330px">
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">Regras de verificação</b>
@@ -2961,8 +2972,11 @@ async function f3dAbrirSelecionados(){
   if(!F3D_LISTA.length) return;
   const escolhidos = F3D_SEL.size ? [...F3D_SEL].map(i=>F3D_LISTA[i]) : [F3D_LISTA[0]];
   const msg=(t)=>{ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } };
-  const cv=$('bimCanvas');
+  const cv=$('f3dCanvas');
   f3dDescartar();
+  // Esconde o canvas do xeokit: com os dois visíveis, o de baixo aparece por
+  // trás do modelo do CDE.
+  const cvAntigo=$('bimCanvas'); if(cvAntigo) cvAntigo.style.display='none';
   cv.style.display='block';
   try{
     F3D = await f3dCarregar(escolhidos, cv, msg);
@@ -2988,7 +3002,8 @@ function f3dDescartar(){
   if(E.raf) cancelAnimationFrame(E.raf);
   try{ E.controls.dispose(); }catch(_){}
   try{ E.fragments.dispose(); }catch(_){}
-  try{ E.renderer.dispose(); }catch(_){}
+  try{ E.renderer.dispose(); E.renderer.forceContextLoss(); }catch(_){}
+  const cv=$('f3dCanvas'); if(cv) cv.style.display='none';
   const svg=$('bimPinsSvg'); if(svg) svg.innerHTML='';
 }
 function f3dResize(){
