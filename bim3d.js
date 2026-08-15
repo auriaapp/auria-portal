@@ -576,8 +576,36 @@ function sumirAjudaCorte(V){
     C.ajuda.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(_){}
   C.ajuda=null;
 }
-// Aresta + HACHURA da seção. O getSection do Fragments devolve as arestas E os
-// preenchimentos (fillsIndices) — é a hachura de corte de projeto.
+// Aresta + HACHURA da seção. getSection devolve:
+//  - buffer:       posições (x,y,z...) dos segmentos de aresta e vértices de fill
+//  - fillsIndices: triangulação dos fills (o "cheio" da peça atravessada)
+//
+// Estratégia visual: hachura opaca azul-marinho + contorno GROSSO laranja só
+// no PERÍMETRO dos fills; arestas internas (que aparecem em dois triângulos
+// do mesmo fill) ficam FINAS. Sem isso, cada elemento contornado com traço
+// grosso vira uma malha confusa (o efeito da segunda imagem do usuário).
+//
+// Fronteira do polígono = aresta que aparece em UM só triângulo. Aresta
+// interna do fill = dois. Chave por (min,max) dos índices do fillsIndices.
+function fronteirasDosFills(idxs){
+  const cont=new Map();
+  const chave=(a,b)=> a<b ? (a*4294967296+b) : (b*4294967296+a);
+  for(let i=0;i<idxs.length;i+=3){
+    const a=idxs[i], b=idxs[i+1], c=idxs[i+2];
+    for(const [p,q] of [[a,b],[b,c],[c,a]]){
+      const k=chave(p,q);
+      cont.set(k, (cont.get(k)||0)+1);
+    }
+  }
+  const bordas=[];   // pares planos [i0,i1, i2,i3, ...]
+  for(let i=0;i<idxs.length;i+=3){
+    const a=idxs[i], b=idxs[i+1], c=idxs[i+2];
+    for(const [p,q] of [[a,b],[b,c],[c,a]]){
+      if(cont.get(chave(p,q))===1) bordas.push(p,q);
+    }
+  }
+  return bordas;
+}
 export async function corteArestas(V){
   sumirArestas(V);
   const C=V.corte; if(!C.plano) return;
@@ -590,22 +618,44 @@ export async function corteArestas(V){
     try{
       const s=await x.model.getSection(V.corte.plano);
       if(!s||!s.buffer||!s.buffer.length) continue;
-      const geo=new L.LineSegmentsGeometry(); geo.setPositions(s.buffer);
-      const mat=new L.LineMaterial({ color:LARANJA, linewidth:2.6, depthTest:false });
-      mat.resolution.set(V.cont.clientWidth||1, V.cont.clientHeight||1);
-      const linha=new L.LineSegments2(geo, mat); linha.renderOrder=997;
-      grupo.add(linha);
-      // Hachura de corte (fills). OPACA, azul-marinho — é o "cheio" da peça
-      // atravessada. Transparente ficava só uma sugestão colorida e o corte
-      // parecia oco. Fica ATRÁS da aresta laranja (renderOrder menor) para o
-      // contorno continuar destacado.
-      if(V.hachura!==false && s.fillsIndices && s.fillsIndices.length){
+      const temFill = V.hachura!==false && s.fillsIndices && s.fillsIndices.length;
+
+      // Aresta FINA por baixo: todas as arestas do getSection. Ficam como
+      // linhas de referência (elementos cortados que não geram fill, como
+      // vidros vazados, e a estrutura interna do próprio fill).
+      const gFina=new T.BufferGeometry();
+      gFina.setAttribute('position', new T.BufferAttribute(s.buffer,3));
+      const mFina=new T.LineBasicMaterial({ color:LARANJA, depthTest:false,
+        transparent:true, opacity: temFill ? 0.45 : 1.0 });
+      const linhaFina=new T.LineSegments(gFina, mFina); linhaFina.renderOrder=997;
+      grupo.add(linhaFina);
+
+      // Hachura sólida.
+      if(temFill){
         const g2=new T.BufferGeometry();
         g2.setAttribute('position', new T.BufferAttribute(s.buffer,3));
         g2.setIndex(s.fillsIndices);
         const m2=new T.MeshBasicMaterial({ color:HACHURA, side:T.DoubleSide, depthTest:false });
-        const malha=new T.Mesh(g2,m2); malha.renderOrder=996;
+        const malha=new T.Mesh(g2,m2); malha.renderOrder=998;
         grupo.add(malha);
+      }
+
+      // Contorno GROSSO só no perímetro do fill.
+      if(temFill){
+        const bordas=fronteirasDosFills(s.fillsIndices);
+        if(bordas.length){
+          const pts=new Float32Array(bordas.length*3);
+          for(let i=0;i<bordas.length;i++){
+            pts[i*3]   = s.buffer[bordas[i]*3];
+            pts[i*3+1] = s.buffer[bordas[i]*3+1];
+            pts[i*3+2] = s.buffer[bordas[i]*3+2];
+          }
+          const gGr=new L.LineSegmentsGeometry(); gGr.setPositions(pts);
+          const mGr=new L.LineMaterial({ color:LARANJA, linewidth:2.6, depthTest:false });
+          mGr.resolution.set(V.cont.clientWidth||1, V.cont.clientHeight||1);
+          const linha=new L.LineSegments2(gGr, mGr); linha.renderOrder=999;
+          grupo.add(linha);
+        }
       }
     }catch(_){}
   }
