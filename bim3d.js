@@ -197,13 +197,13 @@ export function visualEstilo(V, modo){
     const lado = Math.max(2000, Math.ceil(raio*40));   // >= 2 km
     const passo = 5;                                    // 5 m por célula
     const divs  = Math.round(lado/passo);
-    // Cores muito próximas ao fundo (0xF1F5F9) para a grade "recuar" e não
-    // competir com o modelo — ela é referência secundária, não desenho.
-    // As linhas de 25 m ficam só um pouco mais escuras que as comuns, para
-    // dar leitura sem chamar atenção. Espessura de linha é fixa em 1 px na
-    // maioria das GPUs (linewidth do LineBasicMaterial é ignorado), então
-    // o jeito de fazer as linhas parecerem finas é diminuir o contraste.
-    const grade = new T.GridHelper(lado, divs, 0xB8C4D4, 0xDCE3ED);
+    // Cores QUASE iguais ao fundo (0xF1F5F9) — a grade só se percebe se
+    // você olhar para procurar. Sem distinção forte entre linhas comuns e
+    // mestras: numa grade de referência de fundo, o contraste extra vira
+    // ruído. Espessura fica fixa em 1 px em qualquer GPU (linewidth do
+    // LineBasicMaterial é ignorado), então o único jeito de "afinar" é
+    // baixar o contraste — que é o que este ajuste faz.
+    const grade = new T.GridHelper(lado, divs, 0xE0E6EE, 0xE6EBF1);
     // Fade radial: a opacidade cai com a distância ao centro da grade, então
     // a beira nunca aparece. Feito por onBeforeCompile para reaproveitar o
     // material do GridHelper (LineBasicMaterial) sem reinventá-lo.
