@@ -349,7 +349,14 @@ function _filtros(){
 
 // ════════ Dados via Supabase (portados de _bi_compute/_avaliacao_compute) ════════
 const sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
-const EMP_NOME=new URLSearchParams(location.search).get('emp')||'';
+// Contexto do empreendimento vindo do App. Escopo por ID (uuid) é o correto —
+// o nome se repete entre empresas e escopar por nome vaza dados de outra
+// empresa (mesmo problema fechado em supabase_apt_empreendimento_id.sql para
+// a RLS). Mantemos ?emp=<nome> como fallback para links antigos que ainda
+// possam existir; ao lado de emp_id ele é ignorado.
+const _bi_qs = new URLSearchParams(location.search);
+const EMP_ID   = _bi_qs.get('emp_id')||'';
+const EMP_NOME = EMP_ID ? '' : (_bi_qs.get('emp')||'');
 let ISSUES=[];
 const _TIPOS_QUALIDADE=new Set(['Interferência / Divergência entre Disciplinas','Divergência de Informação','Inconsistência Técnica ou Normativa','Não atendimento às premissas']);
 const _AV_PESOS={pont:0.39,qual:0.30,resol:0.20,inter:0.11};
@@ -367,7 +374,8 @@ function _prazoMinStr(i){ const p=_parts(i); const pp=[]; for(const k in p){ con
 function _prazoMinDate(i){ const p=_parts(i); let mn=null; for(const k in p){ const d=_pd((p[k]||{}).prazo||''); if(d&&(!mn||d<mn))mn=d; } if(mn)return mn; return _pd(i.prazo_min||''); }
 async function _loadIssues(){
   let qy=sb.from('apontamentos').select('*').limit(3000);
-  if(EMP_NOME) qy=qy.eq('empreendimento',EMP_NOME);
+  if(EMP_ID)        qy=qy.eq('empreendimento_id', EMP_ID);
+  else if(EMP_NOME) qy=qy.eq('empreendimento',    EMP_NOME);   // fallback legado
   try{ const r=await qy; if(r.error){ console.warn('BI _loadIssues:', r.error.message); ISSUES=[]; } else ISSUES=r.data||[]; }
   catch(e){ console.warn('BI _loadIssues catch:', e.message||e); ISSUES=[]; }
 }

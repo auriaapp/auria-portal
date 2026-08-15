@@ -52,7 +52,7 @@
 const SUPA_URL='https://sabzccokueowpromwxdg.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
 const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
-var USER=null, EMP_NOMES=[], APT_DAY={}, TAR_DAY={};
+var USER=null, APT_DAY={}, TAR_DAY={};   // EMP_NOMES removido — agora usa EMP_IDS local em carregarDados
 var DIAS=['Domingo','Segunda','Terca','Quarta','Quinta','Sexta','Sabado'];
 var DIASC=['Dom','Seg','Ter','Qua','Qui','Sex','Sab'];
 var MESES=['Janeiro','Fevereiro','Marco','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -138,14 +138,24 @@ function carregarMes(){
 function renderCal(){var ano=calBase.getFullYear(),mes=calBase.getMonth();document.getElementById('lblMes').textContent=MESES[mes]+' '+ano;var grid=document.getElementById('calGrid');var html='';for(var i=0;i<7;i++)html+='<div class="cal-dn">'+DIASC[i][0]+'</div>';var agora=new Date();agora.setHours(0,0,0,0);var prim=new Date(ano,mes,1).getDay();var ult=new Date(ano,mes+1,0).getDate();var ultAnt=new Date(ano,mes,0).getDate();for(var i=prim-1;i>=0;i--){var d2=ultAnt-i;html+='<div class="cal-d other-m" onclick="selDia('+ano+','+(mes-1)+','+d2+')">'+d2+'</div>';}for(var d=1;d<=ult;d++){var dt=new Date(ano,mes,d);var cls='cal-d';if(dt.getTime()===agora.getTime())cls+=' is-today';if(dt.getTime()===diaAtual.getTime())cls+=' is-sel';if(diasEvs.indexOf(d)>=0)cls+=' has-ev';html+='<div class="'+cls+'" onclick="selDia('+ano+','+mes+','+d+')">'+d+'</div>';}var resto=(7-((prim+ult)%7))%7;for(var d3=1;d3<=resto;d3++)html+='<div class="cal-d other-m" onclick="selDia('+ano+','+(mes+1)+','+d3+')">'+d3+'</div>';grid.innerHTML=html;}
 
 async function carregarDados(){
-  // empreendimentos do analista
+  // Empreendimentos do analista, escopados por ID (uuid). Antes usava .nome,
+  // e nomes se repetem entre empresas — a agenda de "Diagonal by Pininfarina"
+  // de uma empresa vazava para outra empresa com o mesmo nome. Mesmo problema
+  // já fechado em supabase_apt_empreendimento_id.sql.
+  let EMP_IDS = [];
   try{
-    if(USER.role==='super_admin'){ const {data}=await sb.from('empreendimentos_auria').select('nome').is('deleted_at',null); EMP_NOMES=(data||[]).map(e=>e.nome); }
-    else{ const {data}=await sb.from('analista_empreendimento_auria').select('empreendimentos_auria(nome)').eq('analista_id',USER.id).eq('ativo',true); EMP_NOMES=(data||[]).map(r=>r.empreendimentos_auria&&r.empreendimentos_auria.nome).filter(Boolean); }
-  }catch(e){ EMP_NOMES=[]; }
+    if(USER.role==='super_admin'){
+      const {data}=await sb.from('empreendimentos_auria').select('id').is('deleted_at',null);
+      EMP_IDS=(data||[]).map(e=>e.id);
+    } else {
+      const {data}=await sb.from('analista_empreendimento_auria')
+        .select('empreendimento_id').eq('analista_id',USER.id).eq('ativo',true);
+      EMP_IDS=(data||[]).map(r=>r.empreendimento_id).filter(Boolean);
+    }
+  }catch(e){ EMP_IDS=[]; }
   APT_DAY={}; TAR_DAY={};
-  if(EMP_NOMES.length){
-    try{ const r=await sb.from('apontamentos').select('id,titulo,empreendimento,disciplina,prazo_min,status,prioridade,atrasado').in('empreendimento',EMP_NOMES);
+  if(EMP_IDS.length){
+    try{ const r=await sb.from('apontamentos').select('id,titulo,empreendimento,disciplina,prazo_min,status,prioridade,atrasado').in('empreendimento_id',EMP_IDS);
       (r.data||[]).forEach(function(a){ if(a.status==='Resolvido')return; var iso=prazoISO(a.prazo_min); if(!iso)return; var pc=prioClass(a.prioridade);
         (APT_DAY[iso]=APT_DAY[iso]||[]).push({id:a.id,titulo:a.titulo,empreendimento:a.empreendimento,disciplina:a.disciplina,prazo:(function(){var p=iso.split('-');return p[2]+'/'+p[1]+'/'+p[0];})(),status:a.status,prioridade_class:pc.c,prioridade_label:pc.l}); });
     }catch(e){}
