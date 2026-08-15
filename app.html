@@ -141,6 +141,28 @@
   .bim-pop label{display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;font-size:12px;color:#e2e8f0;cursor:pointer}
   .bim-pop label:hover{background:#0f1117}
   #bimCanvas.apontar{cursor:crosshair}
+  /* Ferramentas do 3D do CDE. Só aparecem no modo Só BIM, e as do caminho
+     antigo (xeokit) somem lá — são motores diferentes e misturar os dois
+     conjuntos de botões na mesma barra confunde sem ganhar nada. */
+  .f3donly,.f3dsub{display:none}
+  body.soBim .f3donly{display:inline-flex;align-items:center}
+  body.soBim .xkonly{display:none}
+  .f3dsub{align-items:center;gap:2px;padding-left:4px;margin-left:2px;border-left:1px solid rgba(255,255,255,.15)}
+  body.soBim .f3dsub.on{display:inline-flex}
+  body.soBim .f3dsub .bim-tb{padding:5px 7px}
+  #f3dAndarBar{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:7;
+    display:none;align-items:center;gap:8px;background:rgba(15,23,42,.9);
+    border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:6px 10px;color:#e2e8f0}
+  #f3dAndarBar.on{display:flex}
+  #f3dAndarBar button{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);
+    border-radius:6px;color:#e2e8f0;font-size:14px;line-height:1;padding:4px 9px;cursor:pointer}
+  #f3dAndarBar button:hover{background:rgba(255,255,255,.2)}
+  #f3dAndarBar button:disabled{opacity:.35;cursor:default}
+  #f3dAndarBar .nv{font-size:12px;min-width:122px;text-align:center}
+  #f3dAndarBar .nv .dica{display:block;font-size:10px;color:#94a3b8}
+  #f3dDica{position:absolute;left:12px;bottom:12px;z-index:4;display:none;font-size:11px;color:#cbd5e1;
+    background:rgba(15,23,42,.65);padding:5px 9px;border-radius:6px;pointer-events:none;max-width:70%}
+  #f3dCanvas.mira{cursor:crosshair}
   .bim-props{position:absolute;top:0;right:0;bottom:0;width:272px;max-width:72%;background:#141821;border-left:1px solid #2a2d3a;display:none;flex-direction:column;z-index:6;box-shadow:-8px 0 24px rgba(0,0,0,.4)}
   .bim-props.on{display:flex}
   .bp-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #2a2d3a;flex-shrink:0}
@@ -414,9 +436,22 @@
               <path d="M8.4 8.6h3.4v1.9H8.4z"/>
               <path d="M19.6 9.1a2 2 0 1 1 1.7-2"/>
             </svg>Regras</button>
-          <button id="bimApontarBtn" class="bim-tb" onclick="bimAtivarApontar()" title="Criar apontamento BIM: clique com o botão direito no modelo (ou ative aqui p/ o botão esquerdo). Pan = botão do meio (scroll)">➕ Apontar 3D</button>
-          <button class="bim-x" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
-          <button class="bim-x" onclick="bimToggle()" title="Fechar o 3D">✕</button>
+          <button id="f3dBtnMedir" class="bim-tb f3donly" onclick="f3dTool('medir')" title="Medir distância entre dois pontos">📏</button>
+          <span id="f3dMedeOpc" class="f3dsub">
+            <button id="f3dMLivre" class="bim-tb on" onclick="f3dMedirModo('livre')" title="Cota livre: distância direta entre os dois pontos, mesmo inclinada">↗</button>
+            <button id="f3dMEixo" class="bim-tb" onclick="f3dMedirModo('eixo')" title="Cota ortogonal: mede só ao longo de X, Y ou Z do projeto">⟂</button>
+          </span>
+          <button id="f3dBtnCorte" class="bim-tb f3donly" onclick="f3dTool('corte')" title="Plano de corte: clique numa superfície e arraste para deslocar">✂</button>
+          <span id="f3dCorteOpc" class="f3dsub">
+            <button class="bim-tb" onclick="f3dCorteInverter()" title="Inverter o lado cortado">⇄</button>
+            <button class="bim-tb" onclick="f3dCorteRemover()" title="Remover o corte">🗑</button>
+          </span>
+          <button id="f3dBtnAndar" class="bim-tb f3donly" onclick="f3dTool('andar')" title="Caminhar pelo modelo, a 1,70 m do piso">🚶</button>
+          <button class="bim-tb f3donly" onclick="f3dEnquadrar()" title="Enquadrar tudo">⤢</button>
+          <button id="f3dBtnApontar" class="bim-tb f3donly" onclick="f3dApontarToggle()" title="Criar apontamento: ligue e clique no elemento do modelo">➕ Apontar</button>
+          <button id="bimApontarBtn" class="bim-tb xkonly" onclick="bimAtivarApontar()" title="Criar apontamento BIM: clique com o botão direito no modelo (ou ative aqui p/ o botão esquerdo). Pan = botão do meio (scroll)">➕ Apontar 3D</button>
+          <button class="bim-x xkonly" onclick="bimPopOut()" title="Abrir no Auria BIM completo, em janela separada (2ª tela)">⧉</button>
+          <button class="bim-x xkonly" onclick="bimToggle()" title="Fechar o 3D">✕</button>
         </div>
         <div id="bimBody" style="flex:1;position:relative;overflow:hidden">
           <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
@@ -428,6 +463,15 @@
                fundo" que não fora selecionado. -->
           <canvas id="f3dCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+          <!-- Modo caminhar: pavimento atual e subir/descer. Fica embaixo, no
+               centro, para não disputar espaço com a barra de ferramentas. -->
+          <div id="f3dAndarBar">
+            <button onclick="f3dAndarNivelDelta(-1)" title="Descer um pavimento">▼</button>
+            <span class="nv"><b id="f3dAndarNv">—</b><span class="dica">W A S D anda · segure a roda para olhar</span></span>
+            <button onclick="f3dAndarNivelDelta(1)" title="Subir um pavimento">▲</button>
+            <button onclick="f3dTool('andar',false)" title="Sair do modo caminhar">Sair</button>
+          </div>
+          <div id="f3dDica"></div>
           <div id="regBox" class="bim-props" style="left:12px;right:auto;width:330px">
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">Regras de verificação</b>
               <span id="regCont" style="font-size:11px;color:#94a3b8;margin-right:6px"></span>
@@ -2661,17 +2705,20 @@ function renderSideRight(){
 //  Construído AO LADO do xeokit de propósito: enquanto a migração não fecha,
 //  o caminho antigo continua servindo o App em produção.
 // ══════════════════════════════════════════════════════════════════════════
-let _f3dLibs=null;
-function f3dLibs(){
-  if(_f3dLibs) return _f3dLibs;
-  _f3dLibs = Promise.all([
-    import('three'),
-    import('@thatopen/fragments'),
-    import('three/examples/jsm/controls/OrbitControls.js')
-  ]).then(([THREE, FRAGS, oc])=>({ THREE, FRAGS, OrbitControls: oc.OrbitControls }))
-    .catch(e=>{ _f3dLibs=null; throw e; });
-  return _f3dLibs;
+//  O visualizador em si NÃO mora aqui: é bim3d.js, o mesmo módulo que o CDE
+//  usa. Havia uma cópia neste arquivo, nascida depois da do CDE e sem as
+//  correções que vieram sendo feitas lá (o reancoramento do pivô, a dupla
+//  face dos tubos). Por isso o 3D do App parecia pior que o do CDE: era
+//  outra cópia, pior mesmo. Daqui para frente, função nova se escreve uma vez.
+//
+//  O que fica NESTE arquivo é o que é análise, não visualização: apontamento,
+//  regras, pinos, lista de modelos.
+let _bim3dMod=null;
+function bim3d(){
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js').catch(e=>{ _bim3dMod=null; throw e; });
+  return _bim3dMod;
 }
+let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
 
 // Modelos 3D disponíveis no CDE deste empreendimento: IFC da revisão vigente
 // com conversão pronta. Mesma trilha documento → revisão → arquivo do CDE.
@@ -2711,140 +2758,62 @@ async function f3dModelosDoCde(){
   })).sort((a,b)=> (a.nome||'').localeCompare(b.nome||''));
 }
 
-// Baixa e carrega os .frag na cena. Aceita vários (federado).
+// Monta a cena pelo módulo e liga os callbacks do App. Tudo o que o módulo
+// NÃO sabe fazer (e não deve saber) entra por aqui: o que acontece ao clicar
+// num elemento, quem desenha os pinos, onde vai a dica.
 async function f3dCarregar(modelos, canvas, onMsg){
   const msg = onMsg || (()=>{});
-  const { THREE, FRAGS, OrbitControls } = await f3dLibs();
-  msg('Baixando modelo…');
-  const baixados = await Promise.all(modelos.map(async m=>{
-    const url = await cdeSignedUrlApp(m.path, 'r2');
-    const resp = await fetch(url);
-    if(!resp.ok) throw new Error(`não consegui baixar "${m.nome}" (HTTP ${resp.status})`);
-    return { m, bytes:new Uint8Array(await resp.arrayBuffer()) };
-  }));
-
-  msg('Montando a cena…');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0f1117);
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10000);
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.zoomToCursor = true;
-  controls.screenSpacePanning = true;
-  // Pan no botão do meio (gesto do Navisworks/Revit). O direito fica livre
-  // porque no App ele já cria apontamento, como no 2D.
-  controls.mouseButtons = { LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.PAN, RIGHT:null };
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x6b7a8f, 1.25));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.30));
-  const sol = new THREE.DirectionalLight(0xffffff, 1.55); sol.position.set(1,2.2,1.4); scene.add(sol);
-  const fill = new THREE.DirectionalLight(0xcfe0ff, 0.55); fill.position.set(-1.4,0.7,-1.1); scene.add(fill);
-
-  const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
-  const carregados = [];
-  for(const {m, bytes} of baixados){
-    msg(baixados.length>1 ? `Carregando ${m.nome}…` : 'Carregando modelo…');
-    const model = await fragments.load(bytes, { modelId:'app:'+m.path, camera });
-    carregados.push({ ...m, model, visivel:true });
-    scene.add(model.object);
-  }
-  return { THREE, renderer, scene, camera, controls, fragments, modelos:carregados, vivo:true, raf:null };
+  B3 = await bim3d();
+  const V = await B3.criar($('bimBody'), {
+    canvas, fundo:0x0f1117,
+    on:{
+      selecionar: (v, ev)=> f3dClique(ev).catch(e=>console.warn('3D:', e)),
+      dica:       (t)=> f3dDica(t),
+      pinos:      (v)=> f3dRenderPins(v, $('bimPinsSvg')),
+      nivel:      (i, ns)=> f3dAndarMostraNivel(i, ns),
+      // O módulo também desliga o modo caminhar por conta própria (Esc), e
+      // sem este aviso o botão continuaria aceso.
+      modo:       (qual, lig)=>{ if(!lig && F3D_FERR===qual) F3D_FERR=''; f3dToolSync(); },
+      // Sem isto, digitar "sala" no título do apontamento andaria pelo modelo:
+      // W A S D também são letras.
+      podeTeclado: ()=>{
+        const a=document.activeElement;
+        return !(a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable));
+      }
+    }
+  });
+  await B3.carregar(V, modelos.map(m=>({
+    ...m, id:m.arquivoId, url:()=>cdeSignedUrlApp(m.path, 'r2')
+  })), msg);
+  return V;
+}
+function f3dDica(t){
+  const d=$('f3dDica'); if(!d) return;
+  d.textContent=t||''; d.style.display = t ? 'block' : 'none';
 }
 
 // ── Pavimentos por FILTRO (não por arquivo) ────────────────────────────────
-//  As alturas saem do TOPO DAS LAJES (IfcSlab), não do agrupamento por
-//  IfcBuildingStorey: em modelo do TQS o pavimento agrupa a laje do nível MAIS
-//  os pilares que sobem do pavimento de baixo, então a caixa dos filhos erra um
-//  pavimento inteiro. O topo da laje é a superfície em que se pisa, direto.
-async function f3dNiveis(E){
-  if(E.niveis) return E.niveis;
-  const tops=[];
-  for(const x of E.modelos){
-    try{
-      const cats = await x.model.getItemsOfCategories([/^IFCSLAB$/]);
-      const ids = Object.values(cats||{}).flat();
-      if(!ids.length) continue;
-      const caixas = await x.model.getBoxes(ids);
-      (caixas||[]).forEach(c=>{ if(c && isFinite(c.max.y)) tops.push(c.max.y); });
-    }catch(_){}
-  }
-  tops.sort((a,b)=>a-b);
-  // 1ª passada: junta alturas quase iguais (uma laje gera dezenas de caixas).
-  let g=[]; const tol=0.6;
-  tops.forEach(y=>{
-    const u=g[g.length-1];
-    if(u && Math.abs(y-u.soma/u.n)<=tol){ u.soma+=y; u.n++; } else g.push({soma:y,n:1});
-  });
-  g = g.filter(x=>x.n>=2);
-  // 2ª passada: pé-direito não é menor que ~2,2m, então grupos mais próximos
-  // que isso são o MESMO pavimento (laje + rebaixo de box, soleira). Fica o de
-  // mais caixas, que é a laje de piso de verdade.
-  const fund=[];
-  g.map(x=>({y:x.soma/x.n, n:x.n})).sort((a,b)=>a.y-b.y).forEach(nv=>{
-    const u=fund[fund.length-1];
-    if(u && (nv.y-u.y) < 2.2){ if(nv.n>u.n){ u.y=nv.y; u.n=nv.n; } } else fund.push(nv);
-  });
-  E.niveis = fund.map(x=>x.y);
-  return E.niveis;
-}
-
-// Mapeia cada elemento ao pavimento. A altura de referência depende do tipo:
+//  A detecção dos níveis e o mapeamento elemento→pavimento vivem no módulo
+//  (mesma regra do CDE: altura pelo TOPO das lajes, porque no TQS o pavimento
+//  agrupa a laje do nível MAIS os pilares que sobem de baixo).
 //
-//  - LAJE: pelo TOPO. Ela É o piso do nível cuja cota bate com seu topo. Pelo
-//    centro, a laje cairia no pavimento de BAIXO (o centro fica abaixo do topo)
-//    e escolher um pavimento mostraria o espaço sem o piso, flutuando.
-//  - Demais peças: pelo CENTRO. Assim o pilar que sobe de um pavimento e a
-//    viga logo abaixo da laje de cima ficam no pavimento de onde são VISTOS
-//    por quem está pisando ali — que é o que interessa numa revisão.
-async function f3dMapearPavimentos(E, onMsg){
-  if(E.porNivel) return E.porNivel;
-  const msg = onMsg || (()=>{});
-  const niveis = await f3dNiveis(E);
-  msg('Separando por pavimento…');
-  const doNivel = (y)=>{ let idx=0; for(let k=0;k<niveis.length;k++){ if(niveis[k]<=y+0.01) idx=k; } return idx; };
-  E.porNivel = [];
-  for(const x of E.modelos){
-    const mapa = new Map();   // idxNivel -> ids
-    try{
-      const cats = await x.model.getItemsOfCategories([/./]);
-      for(const [cat, ids] of Object.entries(cats||{})){
-        if(!ids || !ids.length) continue;
-        const ehLaje = /^IFC(SLAB|ROOF)$/.test(cat);
-        const caixas = await x.model.getBoxes(ids);
-        (caixas||[]).forEach((c,i)=>{
-          if(!c || c.isEmpty()) return;
-          const y = ehLaje ? c.max.y : (c.min.y + c.max.y)/2;
-          const idx = doNivel(y);
-          (mapa.get(idx) || mapa.set(idx,[]).get(idx)).push(ids[i]);
-        });
-      }
-    }catch(_){}
-    E.porNivel.push(mapa);
-  }
-  return E.porNivel;
-}
-
-// sel = Set de índices de pavimento visíveis. Vazio = mostra tudo.
-async function f3dFiltrarPavimentos(E, sel){
-  const porNivel = E.porNivel;
-  if(!porNivel) return;
-  const tudo = !sel || !sel.size;
-  for(let i=0;i<E.modelos.length;i++){
-    const x=E.modelos[i], mapa=porNivel[i];
-    try{
-      if(tudo){ await x.model.setVisible(undefined, true); continue; }
-      await x.model.setVisible(undefined, false);
-      for(const idx of sel){
-        const ids = mapa.get(idx);
-        if(ids && ids.length) await x.model.setVisible(ids, true);
-      }
-    }catch(_){}
-  }
-  try{ await E.fragments.update(true); }catch(_){}
+//  E rodam SOB DEMANDA, ao abrir a caixa de pavimentos — não ao carregar. Era
+//  aqui o travamento ao federar: o mapeamento percorre a caixa de todos os
+//  elementos de todos os modelos, e estava sendo disparado logo na abertura.
+let F3D_PAVPRONTO=false, F3D_PAVCARREGANDO=false;
+async function f3dPavimentosPrepara(){
+  if(!F3D || !B3 || F3D_PAVPRONTO || F3D_PAVCARREGANDO) return;
+  F3D_PAVCARREGANDO=true;
+  const pop=$('bimFloorsPop');
+  if(pop) pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Separando por pavimento…</div>';
+  try{
+    await B3.mapearPavimentos(F3D);
+    F3D_PAVPRONTO=true;
+    f3dRenderPavimentos();
+  }catch(e){
+    console.warn('pavimentos:', e);
+    if(pop) pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Não consegui separar os pavimentos.</div>';
+  }finally{ F3D_PAVCARREGANDO=false; }
 }
 
 // ── Apontamento sobre o modelo do CDE ──────────────────────────────────────
@@ -2967,7 +2936,15 @@ async function f3dModo(lig, preSel){
   if(bB) bB.style.display = F3D_MODO ? 'none' : '';
   if(bS) bS.style.display = F3D_MODO ? '' : 'none';
   $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
-  if(!F3D_MODO){ f3dDescartar(); return; }
+  if(!F3D_MODO){
+    f3dDescartar();
+    // Fecha os painéis do 3D ao sair: reabrir o App em 2D com o painel de
+    // propriedades de um elemento que já não está em cena confunde.
+    ['bimProps','regBox','bimFloorsPop'].forEach(id=>{ const e=$(id); if(e) e.classList.remove('on'); });
+    const bp=$('btnBimProps'); if(bp) bp.classList.remove('on');
+    F3D_PROPS=false;
+    return;
+  }
   if(!EMP){ $('modList').innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
   $('modList').innerHTML='<div class="hint">Procurando modelos no CDE…</div>';
   try{
@@ -2999,8 +2976,8 @@ async function f3dAbrirSelecionados(){
   const msg=(t)=>{ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } };
   const cv=$('f3dCanvas');
   f3dDescartar();
-  // Esconde o canvas do xeokit: com os dois visíveis, o de baixo aparece por
-  // trás do modelo do CDE.
+  // Esconde o canvas do xeokit: um canvas só aceita UM contexto WebGL, e com
+  // os dois visíveis o de baixo aparece por trás do modelo do CDE.
   const cvAntigo=$('bimCanvas'); if(cvAntigo) cvAntigo.style.display='none';
   cv.style.display='block';
   try{
@@ -3011,61 +2988,183 @@ async function f3dAbrirSelecionados(){
     return;
   }
   const m=$('bimMsg'); if(m) m.style.display='none';
-  f3dResize();
-  f3dEnquadrar();
-  // Pavimentos e níveis em segundo plano: o modelo já aparece, e a separação
-  // (que percorre todas as caixas) chega logo depois sem travar a abertura.
-  f3dMapearPavimentos(F3D, msg).then(()=>{
-    const mm=$('bimMsg'); if(mm) mm.style.display='none';
-    f3dRenderPavimentos();
-  }).catch(()=>{});
-  f3dLoop();
+  // Pavimentos NÃO são calculados aqui: só quando alguém abre a caixa "Pav.".
+  // Rodar isso na abertura era o que travava ao federar.
+  F3D_PAVPRONTO=false;
+  const pop=$('bimFloorsPop');
+  if(pop) pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Abra para separar por pavimento.</div>';
+  f3dDica(DICA_NAV);
 }
+const DICA_NAV='Arraste para girar · roda para zoom · clique da roda para deslocar';
 function f3dDescartar(){
   if(!F3D) return;
-  const E=F3D; F3D=null; E.vivo=false;
-  if(E.raf) cancelAnimationFrame(E.raf);
-  try{ E.controls.dispose(); }catch(_){}
-  try{ E.fragments.dispose(); }catch(_){}
-  try{ E.renderer.dispose(); E.renderer.forceContextLoss(); }catch(_){}
-  const cv=$('f3dCanvas'); if(cv) cv.style.display='none';
+  const E=F3D; F3D=null;
+  if(B3){ try{ B3.descartar(E); }catch(_){} }
+  f3dModoLimpar();
+  // O descarte PERDE o contexto WebGL de propósito — é assim que a memória de
+  // vídeo do modelo anterior volta. Só que um canvas com contexto perdido não
+  // aceita um contexto novo: trocar a seleção e abrir outro modelo estourava
+  // ("Cannot read properties of null"). Por isso o elemento é substituído por
+  // um irmão limpo, com o mesmo id e o mesmo estilo.
+  const cv=$('f3dCanvas');
+  if(cv && cv.parentNode){
+    const novo=cv.cloneNode(false);
+    novo.classList.remove('mira'); novo.style.display='none';
+    cv.parentNode.replaceChild(novo, cv);
+  }
   const svg=$('bimPinsSvg'); if(svg) svg.innerHTML='';
+  f3dDica('');
+  F3D_PAVPRONTO=false; F3D_NIVSEL.clear();
 }
-function f3dResize(){
-  const E=F3D; if(!E) return;
-  const box=$('bimBody'); if(!box) return;
-  const w=box.clientWidth||1, h=box.clientHeight||1;
-  E.renderer.setSize(w,h,false);
-  E.camera.aspect=w/h; E.camera.updateProjectionMatrix();
+function f3dEnquadrar(){ if(F3D && B3) B3.enquadrar(F3D); }
+
+// ── Barra de ferramentas (trena, corte, caminhar) ──────────────────────────
+//  Ligar uma desliga a outra: as três capturam o clique no modelo, e deixar
+//  duas ligadas faria o mesmo clique significar duas coisas.
+let F3D_FERR='';                     // '', 'medir', 'corte' ou 'andar'
+function f3dTool(qual, forcar){
+  if(!F3D || !B3) return;
+  const lig = (forcar!==undefined) ? !!forcar : (F3D_FERR!==qual);
+  if(lig && F3D_APONTAR) f3dApontarToggle(false);
+  if(F3D_FERR==='medir' && qual!=='medir') B3.modoMedir(F3D,false);
+  if(F3D_FERR==='corte' && qual!=='corte') B3.modoCorte(F3D,false);
+  if(F3D_FERR==='andar' && qual!=='andar') B3.modoAndar(F3D,false).catch(()=>{});
+  F3D_FERR = lig ? qual : '';
+  if(qual==='medir') B3.modoMedir(F3D, lig);
+  if(qual==='corte') B3.modoCorte(F3D, lig);
+  if(qual==='andar'){
+    B3.modoAndar(F3D, lig).catch(e=>{ console.warn('caminhar:', e); f3dDica('Não consegui achar os pavimentos deste modelo.'); });
+  }
+  f3dToolSync();
+  if(!lig) f3dDica(DICA_NAV);
 }
-function f3dEnquadrar(){
-  const E=F3D; if(!E) return;
-  const cx=new E.THREE.Box3();
-  E.modelos.forEach(x=>{ const b=x.model.box; if(b && !b.isEmpty()) cx.union(b); });
-  if(cx.isEmpty()) return;
-  const centro=cx.getCenter(new E.THREE.Vector3());
-  const tam=cx.getSize(new E.THREE.Vector3());
-  const raio=Math.max(tam.x,tam.y,tam.z)*0.5||1;
-  const dist=(raio/Math.sin((E.camera.fov*Math.PI/180)/2))*1.35;
-  E.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
-  // Faixa apertada: a razão far/near é o que define a precisão de
-  // profundidade, e uma faixa larga faz faces vizinhas piscarem.
-  E.camera.near=Math.max(raio/1000, 0.05);
-  E.camera.far =Math.max(raio*8, dist*2.5);
-  E.camera.updateProjectionMatrix();
-  E.controls.target.copy(centro);
-  E.controls.minDistance=Math.max(raio/500, 0.05);
-  E.controls.maxDistance=raio*20;
-  E.controls.update();
-  E.fragments.update(true).catch(()=>{});
+function f3dToolSync(){
+  const on=(id,v)=>{ const b=$(id); if(b) b.classList.toggle('on', !!v); };
+  on('f3dBtnMedir', F3D_FERR==='medir');
+  on('f3dBtnCorte', F3D_FERR==='corte');
+  on('f3dBtnAndar', F3D_FERR==='andar');
+  const me=$('f3dMedeOpc');  if(me) me.classList.toggle('on', F3D_FERR==='medir');
+  const co=$('f3dCorteOpc'); if(co) co.classList.toggle('on', F3D_FERR==='corte');
+  const ab=$('f3dAndarBar'); if(ab) ab.classList.toggle('on', !!(F3D && F3D.andar && F3D.andar.ativo));
 }
-function f3dLoop(){
-  const E=F3D; if(!E||!E.vivo) return;
-  E.raf=requestAnimationFrame(f3dLoop);
-  E.controls.update();
-  E.renderer.render(E.scene, E.camera);
-  f3dRenderPins(E, $('bimPinsSvg'));
+function f3dModoLimpar(){ F3D_FERR=''; F3D_APONTAR=false; f3dToolSync(); f3dApontarSync(); }
+function f3dMedirModo(modo){
+  if(!F3D || !B3) return;
+  B3.medirModo(F3D, modo);
+  const l=$('f3dMLivre'), e=$('f3dMEixo');
+  if(l) l.classList.toggle('on', modo==='livre');
+  if(e) e.classList.toggle('on', modo==='eixo');
+  f3dDica(modo==='eixo'
+    ? 'Cota ortogonal: mede só ao longo de um eixo (X, Y ou Z do projeto).'
+    : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
 }
+function f3dCorteInverter(){ if(F3D && B3) B3.corteInverter(F3D); }
+function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
+
+// ── Modo caminhar: barra com o pavimento atual ─────────────────────────────
+function f3dAndarMostraNivel(i, ns){
+  const b=$('f3dAndarNv');
+  if(b){
+    const y=(ns||[])[i];
+    b.textContent = (y===undefined) ? ('Nível '+(i+1))
+      : ('Nível '+(i+1)+' · '+(y>=0?'+':'−')+Math.abs(y).toFixed(2).replace('.',',')+' m');
+  }
+  f3dToolSync();
+}
+function f3dAndarNivelDelta(d){
+  if(!F3D || !B3 || !F3D.andar.ativo) return;
+  B3.irNivel(F3D, F3D.andar.nivel + d);
+}
+
+// ── Seleção: propriedades do IFC, ou apontamento se o modo estiver ligado ──
+let F3D_APONTAR=false, F3D_PROPS=false;
+function f3dApontarToggle(forcar){
+  F3D_APONTAR = (forcar!==undefined) ? !!forcar : !F3D_APONTAR;
+  if(F3D_APONTAR && F3D_FERR) f3dTool(F3D_FERR, false);
+  f3dApontarSync();
+  f3dDica(F3D_APONTAR ? 'Clique no elemento onde quer abrir o apontamento.' : DICA_NAV);
+}
+function f3dApontarSync(){
+  const b=$('f3dBtnApontar'); if(b) b.classList.toggle('on', F3D_APONTAR);
+  const cv=$('f3dCanvas');    if(cv) cv.classList.toggle('mira', F3D_APONTAR);
+}
+async function f3dClique(ev){
+  if(!F3D || !B3) return;
+  const hit = await B3.raycast(F3D, ev);
+  if(!F3D || !F3D.vivo) return;
+  if(!hit){
+    await B3.destacar(F3D, null, null);
+    const el=$('bimPropsBody');
+    if(el && F3D_PROPS) el.innerHTML='<div class="bp-empty">Clique num elemento do modelo.</div>';
+    return;
+  }
+  const m=hit.__modelo;
+  await B3.destacar(F3D, m, [hit.localId]);
+  if(F3D_APONTAR){
+    f3dApontarToggle(false);
+    f3dNovoApontamento(f3dPonto(hit, m), m);
+    return;
+  }
+  if(F3D_PROPS) f3dProps(hit, m).catch(e=>console.warn('props:', e));
+}
+async function f3dProps(hit, m){
+  const el=$('bimPropsBody'); if(!el) return;
+  el.innerHTML='<div class="bp-empty">Lendo propriedades…</div>';
+  try{
+    const dados = await m.model.getItemsData([hit.localId], {
+      attributesDefault:true,
+      // Só as relações que carregam propriedade útil. Puxar todas traria a
+      // árvore espacial inteira junto, cara e sem valor aqui.
+      relations:{ IsDefinedBy:{attributes:true,relations:false},
+                  IsTypedBy:{attributes:true,relations:false} },
+      relationsDefault:{attributes:false,relations:false}
+    });
+    el.innerHTML = f3dPropsHtml(dados && dados[0], m);
+  }catch(e){
+    el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
+  }
+}
+// O ItemData do Fragments é genérico: cada chave é um atributo ({value}) OU
+// uma lista de blocos aninhados (conjuntos de propriedades vindos das relações
+// do IFC). Percorrer genericamente evita depender dos nomes exatos de relação,
+// que variam com o exportador — o que não for reconhecido simplesmente não
+// aparece, em vez de quebrar o painel.
+function f3dPropsHtml(data, m){
+  const val=(v)=>{
+    if(v===null||v===undefined||v==='') return '—';
+    if(typeof v==='number') return String(Math.round(v*1e6)/1e6);
+    if(typeof v==='object'){ try{ return JSON.stringify(v); }catch(_){ return String(v); } }
+    return String(v);
+  };
+  const diretos=[], grupos=[];
+  for(const [k,v] of Object.entries(data||{})){
+    if(Array.isArray(v)){
+      v.forEach(sub=>{
+        if(!sub||typeof sub!=='object') return;
+        const nome=(sub.Name&&sub.Name.value)||k;
+        const ls=[];
+        for(const [k2,v2] of Object.entries(sub)){
+          if(k2==='Name'||Array.isArray(v2)) continue;
+          if(v2&&typeof v2==='object'&&'value' in v2) ls.push([k2, val(v2.value)]);
+        }
+        if(ls.length) grupos.push({nome, ls});
+      });
+    }else if(v&&typeof v==='object'&&'value' in v){
+      diretos.push([k, val(v.value)]);
+    }
+  }
+  if(!diretos.length && !grupos.length) return '<div class="bp-empty">Este elemento não trouxe propriedades.</div>';
+  const linhas=(ls)=> ls.map(([k,v])=>`<div class="bp-row"><span class="bp-k" title="${esc(k)}">${esc(k)}</span><span class="bp-v">${esc(v)}</span></div>`).join('');
+  let out='';
+  // Saber de QUAL disciplina veio o elemento importa no federado — sem isso o
+  // painel some com a informação mais útil da cena combinada.
+  if(m) out+='<div class="bp-grp"><div class="bp-t">Modelo</div>'
+    + linhas([['disciplina', m.disciplina||m.nome||'—'], ['revisão', m.revisao||'?']]) + '</div>';
+  if(diretos.length) out+='<div class="bp-grp"><div class="bp-t">Identificação</div>'+linhas(diretos)+'</div>';
+  grupos.forEach(g=>{ out+='<div class="bp-grp"><div class="bp-t">'+esc(g.nome)+'</div>'+linhas(g.ls)+'</div>'; });
+  return out;
+}
+
 // Caixa de pavimentos: reusa o popover que o App já tem.
 function f3dRenderPavimentos(){
   const E=F3D, pop=$('bimFloorsPop'); if(!E||!pop) return;
@@ -3073,21 +3172,20 @@ function f3dRenderPavimentos(){
   if(!ns.length){ pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Sem pavimentos detectados.</div>'; return; }
   pop.innerHTML = ns.map((y,i)=>{
     const cota=(y>=0?'+':'−')+Math.abs(y).toFixed(2).replace('.',',');
-    return `<label style="display:flex;gap:7px;align-items:center;padding:5px 9px;cursor:pointer;font-size:12px;color:#e2e8f0">`
-      + `<input type="checkbox" ${F3D_NIVSEL.has(i)?'checked':''} onchange="f3dTogglNivel(${i},this.checked)">`
-      + `<span>Nível ${i+1} · ${cota} m</span></label>`;
+    return '<label style="display:flex;gap:7px;align-items:center;padding:5px 9px;cursor:pointer;font-size:12px;color:#e2e8f0">'
+      + '<input type="checkbox" '+(F3D_NIVSEL.has(i)?'checked':'')+' onchange="f3dTogglNivel('+i+',this.checked)">'
+      + '<span>Nível '+(i+1)+' · '+cota+' m</span></label>';
   }).join('') + '<div style="border-top:1px solid rgba(255,255,255,.12);padding:5px 9px">'
     + '<button class="bim-tb" style="width:100%" onclick="f3dTodosNiveis()">Mostrar todos</button></div>';
 }
 function f3dTogglNivel(i, on){
   if(on) F3D_NIVSEL.add(i); else F3D_NIVSEL.delete(i);
-  if(F3D) f3dFiltrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
+  if(F3D && B3) B3.filtrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
 }
 function f3dTodosNiveis(){
   F3D_NIVSEL.clear(); f3dRenderPavimentos();
-  if(F3D) f3dFiltrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
+  if(F3D && B3) B3.filtrarPavimentos(F3D, F3D_NIVSEL).catch(()=>{});
 }
-window.addEventListener('resize', ()=>{ if(F3D) f3dResize(); });
 
 // ── Regras de verificação (o apito) ────────────────────────────────────────
 //  Aqui e não no CDE: verificar regra é ANÁLISE, e o achado precisa de
@@ -3381,7 +3479,14 @@ function bimFloorsRender(){
     BIM_FLOORS.map(f=>'<label><input type="checkbox" '+((!todos&&BIM_FSEL.has(f.ifc_guid))?'checked':'')+' onchange="bimFloorTick(this.getAttribute(\'data-g\'),this.checked)" data-g="'+esc(f.ifc_guid)+'">'+esc(f.name||'—')+'</label>').join('');
   btn.textContent=todos?'Pav.: todos ▾':('Pav. ('+BIM_FSEL.size+') ▾');
 }
-function bimFloorsToggle(){ const p=$('bimFloorsPop'); if(p) p.classList.toggle('on'); }
+function bimFloorsToggle(){
+  const p=$('bimFloorsPop'); if(!p) return;
+  const abriu=p.classList.toggle('on');
+  // No 3D do CDE a separação por pavimento só acontece AQUI, quando alguém
+  // pede para ver. Fazê-la ao carregar percorria a caixa de todos os
+  // elementos de todos os modelos e travava a abertura do federado.
+  if(abriu && F3D_MODO) f3dPavimentosPrepara();
+}
 function bimFloorsTodos(on){ if(on) BIM_FSEL=new Set(); bimFloorsRender(); bimApplyFloors(); }
 function bimFloorTick(guid,on){
   if(on) BIM_FSEL.add(guid); else BIM_FSEL.delete(guid);
@@ -3506,6 +3611,14 @@ function _bimShowProps(id){
 function bimPropsToggle(){
   var p=$('bimProps'), on=p.classList.toggle('on');
   var b=$('btnBimProps'); if(b) b.classList.toggle('on', on);
+  // O painel é o mesmo para os dois motores; a bandeira diz ao 3D do CDE que
+  // vale a pena ler as propriedades ao clicar (é ida ao worker, não se faz
+  // com o painel fechado).
+  F3D_PROPS = on;
+  if(on && F3D_MODO){
+    var c=$('bimPropsBody');
+    if(c && !c.querySelector('.bp-grp')) c.innerHTML='<div class="bp-empty">Clique num elemento do modelo.</div>';
+  }
 }
 // ── Pins 3D — MESMA estética dos pins 2D (pinSvg) ───────────────────────────
 function bimWorldToScreen(wx,wy,wz){
