@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15m  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15p  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -114,7 +114,7 @@ export async function criar(cont, opts={}){
     caixa:null, unidade:1, niveis:null, porNivel:null,
     facesDuplas:true, _ultFaces:0,
     corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
-    medida: { ativo:false, modo:'livre', pts:[], objs:[], cotas:[], marcas:[] },
+    medida: { ativo:false, modo:'eixo', pts:[], objs:[], cotas:[], marcas:[] },
     andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null,
               teclas:new Set(), camPos:null, camRot:null, alvo:null, ultUpd:0 },
     on: opts.on || {},          // { selecionar, medir, dica, pinos, nivel, modo, podeTeclado }
