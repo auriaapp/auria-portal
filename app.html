@@ -2922,7 +2922,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15r').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15s').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -2969,7 +2969,6 @@ async function f3dModelosDoCde(){
 // NÃO sabe fazer (e não deve saber) entra por aqui: o que acontece ao clicar
 // num elemento, quem desenha os pinos, onde vai a dica.
 async function f3dCarregar(modelos, canvas, onMsg){
-  console.log('%c[app-3d build 2026-08-15r]','color:#F0A72A;font-weight:bold');
   const msg = onMsg || (()=>{});
   B3 = await bim3d();
   const V = await B3.criar($('bimBody'), {
@@ -3049,22 +3048,13 @@ function f3dWorldToScreen(E, x, y, z){
 // deveria ter que aprender dois vocabulários.
 function f3dRenderPins(E, svg){
   if(!svg) return;
-  // Delegação: o `<g>` do pin é reescrito a cada frame (render loop),
-  // então onclick inline no `<g>` NUNCA dispara — o browser exige o mesmo
-  // node em mousedown e mouseup, e a cada 16ms troca. O handler mora no
-  // svg (estável) e localiza o pin pelo data-ai. Idempotente.
-  if(!svg._pinClick){
-    console.log('[pins] delegation LIGADA v2026-08-15q no svg', svg);
-    svg._pinClick = function(e){
-      const g = e.target.closest('g[data-ai]');
-      console.log('[pins] click no svg', {target:e.target && e.target.tagName, achou_g:!!g, ai:g&&g.dataset.ai});
-      if(!g) return;
-      e.stopPropagation();
-      if(g.dataset.edit==='1') f3dPinEditClick(+g.dataset.pi);
-      else                     f3dPinClick(+g.dataset.ai, e);
-    };
-    svg.addEventListener('click', svg._pinClick);
-  }
+  // O pino NÃO é clicável pelo SVG. O overlay é reescrito a cada frame do
+  // render loop (svg.innerHTML), e no Edge o pointer-events:none da raiz do
+  // <svg> impede os filhos de receberem o evento mesmo com auto no <g>.
+  // Então o clique é resolvido no MESMO caminho do canvas que já funciona
+  // (f3dClique/pointerup): aqui só GUARDAMOS onde cada pin está na tela
+  // (centro do círculo) para o hit-test por proximidade. Ver f3dPinNoPonto.
+  E._pinHits = [];
   if(!E || !E.vivo){ svg.innerHTML=''; return; }
   if(!PINS_VISIVEIS && !(PIN_EDIT&&APT_EDIT)){ svg.innerHTML=''; return; }
   const arqs = new Set(E.modelos.map(m=>m.arquivoId));
@@ -3076,19 +3066,35 @@ function f3dRenderPins(E, svg){
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" data-ai="'+ai+'">'
-         + pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
+      // pinSvg desenha o círculo 25px acima da âncora (a ponta = p.y)
+      E._pinHits.push({ ai, cx:p.x, cy:p.y-25, ty:p.y });
+      out+=pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false);
     });
   });
   if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" data-ai="-1" data-edit="1" data-pi="'+pi+'">'
-         + pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true)+'</g>';
+      out+=pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true);
     });
   }
   svg.innerHTML=out;
+}
+// Hit-test do pin por proximidade (o clique vem no espaço do canvas, os
+// pins também). Raio generoso — o pino é pequeno e o alvo precisa perdoar.
+function f3dPinNoPonto(ev){
+  if(!F3D || !F3D._pinHits || !F3D._pinHits.length) return null;
+  const cv=F3D.renderer && F3D.renderer.domElement; if(!cv) return null;
+  const r=cv.getBoundingClientRect();
+  const mx=ev.clientX-r.left, my=ev.clientY-r.top;
+  let best=null, bestD=18*18;                 // 18px de tolerância no círculo
+  for(const h of F3D._pinHits){
+    const dx=mx-h.cx, dy=my-h.cy, d=dx*dx+dy*dy;
+    if(d<bestD){ bestD=d; best=h; }
+    // também aceita clique na haste (entre o círculo e a ponta)
+    else if(Math.abs(mx-h.cx)<8 && my>=h.cy && my<=h.ty){ best=h; bestD=0; }
+  }
+  return best;
 }
 function f3dPinEditClick(pi){
   if(PIN_EDIT&&APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPinsList(); f3dPinsRefresh(); }
@@ -3827,6 +3833,13 @@ function f3dApontarSync(){
 }
 async function f3dClique(ev){
   if(!F3D || !B3) return;
+  // Pin primeiro: se o clique caiu sobre um pin de apontamento, abre o
+  // balão (como no 2D) e NÃO segue para seleção/props. Não intercepta
+  // durante Apontar (aí o clique cria o apontamento no ponto).
+  if(!F3D_APONTAR){
+    const hp=f3dPinNoPonto(ev);
+    if(hp){ f3dPinClick(hp.ai, ev); return; }
+  }
   const hit = await B3.raycast(F3D, ev);
   if(!F3D || !F3D.vivo) return;
   if(!hit){
