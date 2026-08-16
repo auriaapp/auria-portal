@@ -2922,7 +2922,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15p').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15q').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3048,6 +3048,19 @@ function f3dWorldToScreen(E, x, y, z){
 // deveria ter que aprender dois vocabulários.
 function f3dRenderPins(E, svg){
   if(!svg) return;
+  // Delegação: o `<g>` do pin é reescrito a cada frame (render loop),
+  // então onclick inline no `<g>` NUNCA dispara — o browser exige o mesmo
+  // node em mousedown e mouseup, e a cada 16ms troca. O handler mora no
+  // svg (estável) e localiza o pin pelo data-ai. Idempotente.
+  if(!svg._pinClick){
+    svg._pinClick = function(e){
+      const g = e.target.closest('g[data-ai]'); if(!g) return;
+      e.stopPropagation();
+      if(g.dataset.edit==='1') f3dPinEditClick(+g.dataset.pi);
+      else                     f3dPinClick(+g.dataset.ai, e);
+    };
+    svg.addEventListener('click', svg._pinClick);
+  }
   if(!E || !E.vivo){ svg.innerHTML=''; return; }
   if(!PINS_VISIVEIS && !(PIN_EDIT&&APT_EDIT)){ svg.innerHTML=''; return; }
   const arqs = new Set(E.modelos.map(m=>m.arquivoId));
@@ -3059,7 +3072,7 @@ function f3dRenderPins(E, svg){
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" onclick="f3dPinClick('+ai+',event);event.stopPropagation()">'
+      out+='<g style="pointer-events:auto;cursor:pointer" data-ai="'+ai+'">'
          + pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
     });
   });
@@ -3067,7 +3080,7 @@ function f3dRenderPins(E, svg){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" onclick="f3dPinEditClick('+pi+');event.stopPropagation()">'
+      out+='<g style="pointer-events:auto;cursor:pointer" data-ai="-1" data-edit="1" data-pi="'+pi+'">'
          + pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true)+'</g>';
     });
   }
@@ -3081,9 +3094,7 @@ function f3dPinEditClick(pi){
 // enxerga como "onde ele clicou" e já vem no evento, sem depender de
 // reprojetar do mundo (que pode ficar off-screen se a câmera girou).
 function f3dPinClick(ai, ev){
-  const a=APTS[ai];
-  console.log('[f3dPinClick]', {ai, tem_apt:!!a, id:a&&a.id, ev_type:ev&&ev.type, ev_x:ev&&ev.clientX});
-  if(!a) return;
+  const a=APTS[ai]; if(!a) return;
   const sx = (ev && ev.clientX) || window.innerWidth/2;
   const sy = (ev && ev.clientY) || window.innerHeight/2;
   mostrarBalaoPin(a, ai, sx, sy);
