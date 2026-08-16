@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15b  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15c  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -26,6 +26,23 @@ export function libs(){
     .catch(e=>{ _libs=null; throw e; });
   return _libs;
 }
+// Postprocessing (EffectComposer + SAO): só baixa quando alguém liga a sombra
+// de contato — o pacote é grande e a maioria dos usos do 3D não precisa.
+let _libsPos=null;
+function libsPos(){
+  if(_libsPos) return _libsPos;
+  _libsPos = Promise.all([
+    import('three/examples/jsm/postprocessing/EffectComposer.js'),
+    import('three/examples/jsm/postprocessing/RenderPass.js'),
+    import('three/examples/jsm/postprocessing/SAOPass.js'),
+    import('three/examples/jsm/postprocessing/OutputPass.js')
+  ]).then(([ec,rp,sao,op])=>({
+    EffectComposer: ec.EffectComposer, RenderPass: rp.RenderPass,
+    SAOPass: sao.SAOPass, OutputPass: op.OutputPass
+  })).catch(e=>{ _libsPos=null; throw e; });
+  return _libsPos;
+}
+
 // Linha grossa precisa de Line2: o `linewidth` do LineBasicMaterial é ignorado
 // pela maioria das placas. Só baixa quando alguém usa o corte.
 let _libsLinha=null;
@@ -149,6 +166,7 @@ export function descartar(V){
 export function redimensionar(V){
   const w=V.cont.clientWidth||1, h=V.cont.clientHeight||1;
   V.renderer.setSize(w,h,false);
+  if(V.composer) V.composer.setSize(w,h);           // senão a sombra fica na resolução antiga
   V.camera.aspect=w/h; V.camera.updateProjectionMatrix();
   if(V.corte.arestas) V.corte.arestas.traverse(o=>{ if(o.material&&o.material.resolution) o.material.resolution.set(w,h); });
 }
@@ -176,6 +194,9 @@ export function enquadrar(V){
   V.fragments.update(true).catch(()=>{});
   // Refaz a grade com o tamanho novo da caixa se ela estiver ligada.
   if(V._gradeOn) visualGrade(V, true);
+  // O saoScale depende do camera.far; sem reajustar, o efeito da sombra some
+  // (ficou fraco demais) ou fica preto demais quando trocamos o zoom base.
+  if(V.sao && V.sao.__razao) V.sao.params.saoScale = V.camera.far * V.sao.__razao;
 }
 
 // FUNDO e GRADE são configurações INDEPENDENTES agora. Antes ligar a grade
@@ -292,6 +313,58 @@ export function restaurarPadroes(V){
   setLuzSol(V, 1.55);
   setFacesDuplas(V, true);
   setAltaQualidade(V, false);
+  setSombra(V, false).catch(()=>{});
+  setSombraIntensidade(V, 6);
+  setSombraAlcance(V, 50);
+  setSombraAmostras(V, 16);
+}
+
+// ── Sombra de contato (SAO) ───────────────────────────────────────────────
+//  Não é sombra de sol nem GI: é ambient occlusion — escurece os cantos
+//  onde a luz não chega. Serve para dar CONTRASTE num render que fica
+//  achatado com iluminação uniforme. Custo real: mais uma passada de pós
+//  por quadro; se ficar pesado, desliga aqui.
+//
+//  A cadeia (composer + passes) é montada só na PRIMEIRA vez que alguém
+//  liga — antes disso o módulo nem baixa esses arquivos.
+export async function setSombra(V, lig){
+  if(!lig){ V.ao = false; return; }
+  if(!V.composer){
+    const { EffectComposer, RenderPass, SAOPass, OutputPass } = await libsPos();
+    if(!V.vivo) return;
+    const comp = new EffectComposer(V.renderer);
+    comp.addPass(new RenderPass(V.scene, V.camera));
+    const sao = new SAOPass(V.scene, V.camera);
+    sao.params.saoBlur       = true;
+    sao.params.saoBlurRadius = 6;
+    // saoKernelRadius é em PIXELS de tela (kernelRadius/size no shader),
+    // então vale igual em qualquer modelo.
+    sao.params.saoKernelRadius = 50;
+    sao.params.saoIntensity    = 0.06;
+    // saoScale NÃO é absoluto: o shader usa scale/cameraFar, e o far sai
+    // do tamanho do modelo. Um número fixo dá efeito nenhum num prédio e
+    // quase preto numa peça. Acompanha o far — razão medida em teste.
+    sao.__razao        = 0.024;
+    sao.params.saoScale = V.camera.far * sao.__razao;
+    comp.addPass(sao);
+    comp.addPass(new OutputPass());
+    comp.setSize(V.cont.clientWidth||1, V.cont.clientHeight||1);
+    V.composer = comp; V.sao = sao;
+  }
+  V.ao = true;
+}
+export function setSombraIntensidade(V, n){   // slider 1..40, valor real = n/100
+  if(V.sao) V.sao.params.saoIntensity = (+n)/100;
+}
+export function setSombraAlcance(V, n){       // pixels de tela, 10..140
+  if(V.sao) V.sao.params.saoKernelRadius = +n;
+}
+export function setSombraAmostras(V, n){      // 4..32 (é #define no shader → recompila)
+  if(!V.sao) return;
+  try{
+    V.sao.saoMaterial.defines.NUM_SAMPLES = +n;
+    V.sao.saoMaterial.needsUpdate = true;
+  }catch(_){}
 }
 
 // Tubo e duto de alguns exportadores são CASCA (superfície sem espessura). Com
@@ -325,7 +398,10 @@ function laco(V){
     if(V.andar.ativo) andarQuadro(V, dt); else V.controls.update();
     escalarMarcas(V);
     aplicarFaces(V);
-    V.renderer.render(V.scene, V.camera);
+    // Se a sombra está ligada, o composer renderiza (RenderPass + SAO + Output);
+    // senão o render direto do renderer é mais barato por quadro.
+    if(V.ao && V.composer) V.composer.render();
+    else                   V.renderer.render(V.scene, V.camera);
     atualizarCotas(V);
     if(V.on.pinos) V.on.pinos(V);
   };
