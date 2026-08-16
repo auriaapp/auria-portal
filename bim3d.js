@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15g  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15h  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -447,6 +447,23 @@ export async function raycast(V, ev){
   }
   return melhor;
 }
+// Como o raycast, mas devolve TODOS os hits ao longo do raio, ordenados por
+// distância. Usado pelo raio-X quando o usuário pede profundidade (ver a
+// segunda peça, terceira, etc.). Cada modelo entrega sua lista; agregamos e
+// ordenamos aqui.
+export async function raycastAll(V, ev){
+  const mouse=new V.THREE.Vector2(ev.clientX, ev.clientY);
+  const todos=[];
+  for(const x of V.modelos){
+    if(x.visivel===false) continue;
+    try{
+      const rs=await x.model.raycastAll({ camera:V.camera, mouse, dom:V.canvas });
+      (rs||[]).forEach(r=>{ if(r){ r.__modelo=x; todos.push(r); } });
+    }catch(_){}
+  }
+  todos.sort((a,b)=> (a.distance||0) - (b.distance||0));
+  return todos;
+}
 
 // ── Entrada (mouse/teclado) ────────────────────────────────────────────────
 function ligarEntrada(V){
@@ -642,21 +659,47 @@ export async function destacar(V, modelo, ids){
 //  Antes existia um modo "esfera de 1 m" que pré-indexava as caixas de
 //  todas as peças e pegava várias por vez. Ficou confuso — pegava peças
 //  atrás que o usuário não estava mirando. Simplificado para este.
-export async function raiosXHover(V, hit){
-  const OPAC = 0.12;   // quase transparente, mas com contorno ainda perceptível
-  const prev = V._xrayUlt;
-  // Mesma peça do último quadro → nada a fazer, evita ida ao worker
-  if(prev && hit && hit.__modelo===prev.modelo && hit.localId===prev.id) return;
-  // Restaura a peça anterior (se havia)
-  if(prev){
-    try{ await prev.modelo.model.resetOpacity([prev.id]); }catch(_){}
-    V._xrayUlt = null;
+// Aceita um HIT único (compat) OU uma LISTA de hits + profundidade N. Quando
+// vem lista, extrai as N primeiras peças ÚNICAS ao longo do raio (mesma peça
+// pode aparecer duas vezes se o raio pega a face frontal e a traseira).
+// Diff em relação ao conjunto anterior — só quem saiu vira reset, só quem
+// entrou vira setOpacity.
+export async function raiosXHover(V, hitOuHits, prof){
+  const OPAC = 0.12;
+  // Normaliza para lista de alvos { modelo, id }
+  let alvos = [];
+  const visto = new Set();
+  const consumir = (h)=>{
+    if(!h || !h.__modelo || h.localId===undefined || h.localId===null) return;
+    const k = (h.__modelo.arquivoId || h.__modelo.nome || '?') + ':' + h.localId;
+    if(visto.has(k)) return;
+    visto.add(k);
+    alvos.push({ modelo: h.__modelo, id: h.localId, k });
+  };
+  if(Array.isArray(hitOuHits)){
+    const N = Math.max(1, prof|0 || 1);
+    for(const h of hitOuHits){ consumir(h); if(alvos.length>=N) break; }
+  } else if(hitOuHits){
+    consumir(hitOuHits);
   }
-  // Aplica opacidade na nova peça hit (se houver)
-  if(hit && hit.__modelo && hit.localId!==undefined && hit.localId!==null){
-    try{ await hit.__modelo.model.setOpacity([hit.localId], OPAC); }catch(_){}
-    V._xrayUlt = { modelo: hit.__modelo, id: hit.localId };
-  }
+  // Diff com o anterior — sem trabalho se conjunto igual
+  const prev = V._xrayUlt || [];
+  const alvosSet = new Set(alvos.map(a=>a.k));
+  const prevSet  = new Set(prev.map(a=>a.k));
+  if(alvos.length===prev.length && prev.every(a=>alvosSet.has(a.k))) return;
+  // Agrupa saídas por modelo (uma chamada resetOpacity por modelo)
+  const sairPor = new Map();
+  prev.forEach(a=>{ if(!alvosSet.has(a.k)){
+    const arr = sairPor.get(a.modelo) || []; arr.push(a.id); sairPor.set(a.modelo, arr);
+  }});
+  for(const [m,ids] of sairPor){ try{ await m.model.resetOpacity(ids); }catch(_){} }
+  // Agrupa entradas por modelo (uma chamada setOpacity por modelo)
+  const entrarPor = new Map();
+  alvos.forEach(a=>{ if(!prevSet.has(a.k)){
+    const arr = entrarPor.get(a.modelo) || []; arr.push(a.id); entrarPor.set(a.modelo, arr);
+  }});
+  for(const [m,ids] of entrarPor){ try{ await m.model.setOpacity(ids, OPAC); }catch(_){} }
+  V._xrayUlt = alvos;
   try{ await V.fragments.update(true); }catch(_){}
 }
 // Solta tudo. Chamada ao desligar o raio-X ou ao descartar o visualizador.
@@ -665,6 +708,32 @@ export async function raiosXHover(V, hit){
 export async function raiosXLimpa(V){
   V._xrayUlt = null;
   for(const x of V.modelos){ try{ await x.model.resetOpacity(undefined); }catch(_){} }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+
+// ── Esconder / mostrar peças (right-click do App) ─────────────────────────
+//  Semantica diferente do raio-X: aqui é visibility, não opacidade. A peça
+//  some completamente e o raycast passa direto (então você pode clicar de
+//  novo pra esconder o que estava atrás dela). V._escondidos guarda a lista
+//  por modelo pra depois restaurar de uma só vez.
+export async function esconderPeca(V, hit){
+  if(!hit || !hit.__modelo || hit.localId===undefined || hit.localId===null) return;
+  try{
+    await hit.__modelo.model.setVisible([hit.localId], false);
+    if(!V._escondidos) V._escondidos = new Map();
+    const set = V._escondidos.get(hit.__modelo) || new Set();
+    set.add(hit.localId);
+    V._escondidos.set(hit.__modelo, set);
+    await V.fragments.update(true);
+  }catch(_){}
+}
+export async function mostrarTodos(V){
+  if(!V._escondidos || !V._escondidos.size) return;
+  for(const [m, ids] of V._escondidos){
+    if(!ids.size) continue;
+    try{ await m.model.setVisible([...ids], true); }catch(_){}
+  }
+  V._escondidos = new Map();
   try{ await V.fragments.update(true); }catch(_){}
 }
 

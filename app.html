@@ -2889,7 +2889,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15g').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15h').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3172,6 +3172,10 @@ async function f3dAbrirSelecionados(){
     return;
   }
   const m=$('bimMsg'); if(m) m.style.display='none';
+  // Right-click hide/unhide fica sempre disponível — sem modo pra ligar.
+  // O handler é agregado ao canvas atual (o clone limpo trocado no
+  // f3dDescartar leva o listener embora quando trocar de modelo).
+  cv.addEventListener('contextmenu', f3dContextMenu);
   // Pavimentos NÃO são calculados aqui: só quando alguém abre a caixa "Pav.".
   // Rodar isso na abertura era o que travava ao federar.
   F3D_PAVPRONTO=false;
@@ -3240,8 +3244,10 @@ function f3dModoLimpar(){
   F3D_FERR=''; F3D_APONTAR=false;
   // Raio-X também é modo interativo — reseta ao descartar visualizador
   // (senão o botão fica "on" apontando pra nada no próximo modelo).
-  F3D_XRAY=false;
-  const bx=$('f3dBtnXray'); if(bx) bx.classList.remove('on');
+  F3D_XRAY_DEPTH=0;
+  const bx=$('f3dBtnXray'); if(bx){ bx.textContent='◎'; bx.classList.remove('on'); }
+  // Timer pendente de right-click não faz sentido depois do descarte
+  if(_rcTimer){ clearTimeout(_rcTimer); _rcTimer=null; }
   f3dToolSync(); f3dApontarSync();
 }
 function f3dMedirModo(modo){
@@ -3257,57 +3263,109 @@ function f3dMedirModo(modo){
 function f3dCorteInverter(){ if(F3D && B3) B3.corteInverter(F3D); }
 function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
 
-// ── Raio-X (esfera transparente sob o cursor) ─────────────────────────────
-//  Toggle: ao ligar, indexa as caixas dos elementos (uma vez), instala
-//  handlers de mouse; ao desligar, reseta a transparência e solta os
-//  handlers. Exclusivo com medir/corte/andar/apontar — os outros modos
-//  também "capturam" o mouse e ter dois ativos vira briga por ponteiro.
-let F3D_XRAY=false;
+// Timer de throttle do mousemove do raio-X (compartilhado entre chamadas).
 let _xrayTimer=0;
-// Raio-X é peça-sob-cursor: raycast + setOpacity numa peça só. Sem
-// preparação — liga instantaneamente. Desliga outros modos que também
-// consomem o mouse (medir/corte/andar/apontar), senão o clique fica
-// ambíguo.
+// Raio-X com PROFUNDIDADE. O botão cicla off → 1 camada → 2 → 3 → off.
+// - 1 camada: transparenta só a peça sob o cursor (parede vira janela).
+// - 2 camadas: também transparenta o que vem imediatamente atrás (parede
+//   + tubo dentro da parede).
+// - 3 camadas: três peças em profundidade. Suficiente para modelos comuns.
+// Usa raycastAll (uma chamada ao worker) — o custo praticamente não muda
+// entre 1 e 3 camadas.
+let F3D_XRAY_DEPTH = 0;   // 0=off, 1..3=camadas
+// F3D_XRAY (bandeira antiga booleana) fica como derivada para o resto do
+// código que checa "raio-X está ligado?" — evita mudar em muitos lugares.
+Object.defineProperty(window, 'F3D_XRAY', { get: ()=> F3D_XRAY_DEPTH>0 });
+
 async function f3dXrayToggle(){
   if(!F3D || !B3) return;
-  if(F3D_XRAY){ await f3dXrayDesligar(); return; }
-  if(F3D_FERR)    f3dTool(F3D_FERR, false);
-  if(F3D_APONTAR) f3dApontarToggle(false);
-  F3D_XRAY = true;
-  const cv=$('f3dCanvas');
-  cv.addEventListener('mousemove', f3dXrayMove);
-  cv.addEventListener('mouseleave', f3dXrayReset);
-  const b=$('f3dBtnXray'); if(b) b.classList.add('on');
-  f3dDica('Passe o mouse sobre a peça que quer atravessar — ela fica transparente.');
+  const nova = (F3D_XRAY_DEPTH + 1) % 4;
+  if(nova === 0){ await f3dXrayDesligar(); return; }
+  // Se estava desligado (0 → 1), instala handlers e desliga modos conflitantes.
+  if(F3D_XRAY_DEPTH === 0){
+    if(F3D_FERR)    f3dTool(F3D_FERR, false);
+    if(F3D_APONTAR) f3dApontarToggle(false);
+    const cv=$('f3dCanvas');
+    cv.addEventListener('mousemove', f3dXrayMove);
+    cv.addEventListener('mouseleave', f3dXrayReset);
+  }
+  F3D_XRAY_DEPTH = nova;
+  const b=$('f3dBtnXray');
+  if(b){
+    // ¹²³ como badge no ícone. Se a fonte de algum navegador não renderizar
+    // bem, dá pra trocar por <sup>1</sup>, etc. Testar em produção.
+    const sup = {1:'¹', 2:'²', 3:'³'}[nova] || '';
+    b.textContent = '◎' + sup;
+    b.classList.add('on');
+    b.title = 'Raio-X ('+nova+' camada'+(nova>1?'s':'')+') — clique p/ aumentar, ou de novo p/ desligar';
+  }
+  const dica = nova===1 ? 'Raio-X ligado — passa o mouse na peça que quer atravessar.'
+             : nova===2 ? 'Raio-X 2 camadas — pega o que está imediatamente atrás.'
+                        : 'Raio-X 3 camadas — pega duas camadas atrás.';
+  f3dDica(dica);
 }
 async function f3dXrayDesligar(){
-  F3D_XRAY = false;
+  F3D_XRAY_DEPTH = 0;
   const cv=$('f3dCanvas');
   if(cv){
     cv.removeEventListener('mousemove', f3dXrayMove);
     cv.removeEventListener('mouseleave', f3dXrayReset);
   }
   if(B3 && F3D) await B3.raiosXLimpa(F3D);
-  const b=$('f3dBtnXray'); if(b) b.classList.remove('on');
+  const b=$('f3dBtnXray');
+  if(b){ b.textContent='◎'; b.classList.remove('on'); b.title='Raio-X: passe o mouse — a peça sob o cursor fica transparente'; }
   f3dDica(DICA_NAV);
 }
-// mousemove roda várias vezes por segundo. Limito a ~25Hz e uso uma flag
-// para não empilhar chamadas assíncronas se o raycast demorar.
+// mousemove throttled a ~25Hz + guarda de reentrância se o raycast demorar.
 let _xrayBusy=false;
 async function f3dXrayMove(e){
-  if(!F3D_XRAY || !F3D || !B3 || _xrayBusy) return;
+  if(!F3D_XRAY_DEPTH || !F3D || !B3 || _xrayBusy) return;
   const now = performance.now();
   if(now - _xrayTimer < 40) return;
   _xrayTimer = now; _xrayBusy = true;
   try{
-    const hit = await B3.raycast(F3D, e);
-    await B3.raiosXHover(F3D, hit);   // hit pode ser null — a função lida
+    const hits = await B3.raycastAll(F3D, e);
+    await B3.raiosXHover(F3D, hits, F3D_XRAY_DEPTH);
   }catch(_){}
   finally{ _xrayBusy = false; }
 }
 async function f3dXrayReset(){
-  if(!F3D_XRAY || !F3D || !B3) return;
-  try{ await B3.raiosXHover(F3D, null); }catch(_){}   // libera a última peça
+  if(!F3D_XRAY_DEPTH || !F3D || !B3) return;
+  try{ await B3.raiosXHover(F3D, null); }catch(_){}
+}
+
+// ── Right-click: esconder peça / duplo right-click: restaurar todos ──────
+//  Complementar ao raio-X: você "afasta" peças que estão sempre no caminho
+//  (parede, forro, laje). Diferente do raio-X, aqui a peça SOME até vc pedir
+//  pra voltar. Um clique direito esconde a peça sob o cursor; dois cliques
+//  direitos rápidos restauram TODOS os escondidos.
+//
+//  Não interfere em MODO CORTE — lá o right-click já gira a câmera. Se você
+//  precisa esconder no corte, sai do corte primeiro. Silencioso: sem aviso.
+let _rcTimer=null;
+const _RC_JANELA_MS = 350;
+async function f3dContextMenu(e){
+  e.preventDefault();
+  if(!F3D || !B3) return;
+  if(F3D_FERR === 'corte') return;          // corte usa right-click para rotate
+  if(_rcTimer){
+    // Segundo clique dentro da janela: cancela o "hide" que ia acontecer e
+    // restaura todos os escondidos.
+    clearTimeout(_rcTimer); _rcTimer=null;
+    await B3.mostrarTodos(F3D);
+    f3dDica('Todos os elementos escondidos voltaram.');
+    return;
+  }
+  const cx=e.clientX, cy=e.clientY;
+  _rcTimer = setTimeout(async ()=>{
+    _rcTimer = null;
+    try{
+      const hit = await B3.raycast(F3D, { clientX:cx, clientY:cy });
+      if(!hit) return;
+      await B3.esconderPeca(F3D, hit);
+      f3dDica('Elemento escondido. Duplo clique direito p/ mostrar tudo.');
+    }catch(_){}
+  }, _RC_JANELA_MS);
 }
 // Painel de configurações de visualização. Fundo e plano de piso são opções
 // SEPARADAS: quem quer o escuro pode ter o plano; quem quer o claro pode não
