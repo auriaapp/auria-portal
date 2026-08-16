@@ -91,7 +91,11 @@
   /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
      têm o que operar. Ficam apagadas em vez de sumir, para a barra não dançar
      ao trocar de modo. Sair do 3D e Pins seguem ativos. */
-  body.soBim .toolbar .tb:not(#btnSairBim):not(#btnVerPins){opacity:.35;pointer-events:none}
+  /* No modo Só BIM os controles 2D ficam desabilitados — MENOS o +Apontar
+     (que ganhou duplo papel: 2D e 3D) e o Sair/Pins. Sem o btnApontar
+     nesta exceção, ele aceitava clique visualmente mas o pointer-events
+     matava o handler — bug reportado em produção. */
+  body.soBim .toolbar .tb:not(#btnSairBim):not(#btnVerPins):not(#btnApontar){opacity:.35;pointer-events:none}
   /* Os itens são <label>, e `.side label` os deixaria em maiúsculas de 10px
      (é o estilo dos TÍTULOS da coluna). Aqui voltam a ser texto normal. */
   #modList .mitem{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--line);
@@ -388,7 +392,7 @@
       <div id="secPranchas">
         <label>Disciplinas e Pranchas</label>
         <div id="camList" style="margin:6px 0"></div>
-        <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="abrirEscolhaOrigem(event)" disabled>＋ Adicionar Prancha</button>
+        <button class="btn" id="btnAddCam" style="width:100%;font-size:13px" onclick="abrirEscolhaOrigem(event)" disabled>＋ Carregar arquivo</button>
         <div class="hint" style="margin-top:8px">Do computador: o PDF fica local, o Auria guarda identidade/pins/calibração. Do CDE: baixa a revisão vigente e amarra a prancha ao documento.</div>
       </div>
 
@@ -397,6 +401,9 @@
         <label>Modelos BIM</label>
         <div class="hint" style="margin:4px 0 6px">Vindos do CDE, revisão vigente. Marque para federar.</div>
         <div id="modList" style="margin:6px 0"><div class="hint">Carregando…</div></div>
+        <!-- Toggle nos checkboxes agora carrega/descarrega sozinho. Este botão
+             existe só como escape se algo travar (mostra "Recarregar modelo(s)"
+             quando já há modelo aberto; "Abrir no 3D" na primeira vez). -->
         <button class="btn" id="btnAbrirModelos" style="width:100%;font-size:13px" onclick="f3dAbrirSelecionados()">🧊 Abrir no 3D</button>
       </div>
 
@@ -3175,11 +3182,36 @@ function f3dRenderLista(){
     + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
     + `<small>${esc(m.disciplina||'—')} · rev ${esc(m.revisao||'?')}</small></span></label>`).join('');
 }
-function f3dTogglSel(i, on){ if(on) F3D_SEL.add(i); else F3D_SEL.delete(i); }
+// Marcar/desmarcar checkbox carrega/descarrega o modelo automaticamente.
+// Debounce de 200ms para o caso de o usuário clicar em vários rapidamente
+// (ex: marcar 4 disciplinas de uma vez) — assim tudo entra numa carga só.
+let _selTimer=null;
+function f3dTogglSel(i, on){
+  if(on) F3D_SEL.add(i); else F3D_SEL.delete(i);
+  if(_selTimer) clearTimeout(_selTimer);
+  _selTimer = setTimeout(()=>{ _selTimer=null; f3dAbrirSelecionados().catch(()=>{}); }, 200);
+}
+// Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
+// que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
+// travar (usuário força reload manual). Foi pedido do usuário.
+function f3dAbrirBotaoSync(){
+  const b=$('btnAbrirModelos'); if(!b) return;
+  b.innerHTML = F3D ? '🔄 Recarregar modelo(s)' : '🧊 Abrir no 3D';
+}
 
 async function f3dAbrirSelecionados(){
   if(!F3D_LISTA.length) return;
-  const escolhidos = F3D_SEL.size ? [...F3D_SEL].map(i=>F3D_LISTA[i]) : [F3D_LISTA[0]];
+  // Se o usuário desmarcou tudo, descarta o visualizador e volta ao aviso
+  // vazio — não faz sentido segurar um modelo aberto que ninguém pediu.
+  if(!F3D_SEL.size){
+    f3dDescartar();
+    const cv=$('f3dCanvas'); if(cv) cv.style.display='none';
+    const m=$('bimMsg');
+    if(m){ m.textContent='Marque um modelo na coluna para carregar.'; m.style.display='flex'; }
+    f3dAbrirBotaoSync();
+    return;
+  }
+  const escolhidos = [...F3D_SEL].map(i=>F3D_LISTA[i]);
   const msg=(t)=>{ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } };
   // A ordem importa: f3dDescartar() TROCA o elemento #f3dCanvas por um irmão
   // limpo (o antigo fica com o contexto WebGL perdido, inutilizado). Se eu
@@ -3200,6 +3232,7 @@ async function f3dAbrirSelecionados(){
     return;
   }
   const m=$('bimMsg'); if(m) m.style.display='none';
+  f3dAbrirBotaoSync();   // botão passa a mostrar "Recarregar modelo(s)"
   // Right-click hide/unhide fica sempre disponível — sem modo pra ligar.
   // O handler é agregado ao canvas atual (o clone limpo trocado no
   // f3dDescartar leva o listener embora quando trocar de modelo).
@@ -3229,6 +3262,7 @@ function f3dDescartar(){
   const E=F3D; F3D=null;
   if(B3){ try{ B3.descartar(E); }catch(_){} }
   f3dModoLimpar();
+  f3dAbrirBotaoSync();   // sem F3D → botão volta a "Abrir no 3D"
   // O descarte PERDE o contexto WebGL de propósito — é assim que a memória de
   // vídeo do modelo anterior volta. Só que um canvas com contexto perdido não
   // aceita um contexto novo: trocar a seleção e abrir outro modelo estourava
