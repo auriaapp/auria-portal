@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15i  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15j  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------

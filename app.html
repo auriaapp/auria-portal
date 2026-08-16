@@ -225,16 +225,18 @@
     display:none;flex-direction:column;z-index:6;color:#e2e8f0;
     backdrop-filter:blur(3px);box-shadow:-8px 0 24px rgba(0,0,0,.4)}
   .bim-props.on{display:flex}
-  .bim-props.recolhido{width:0;border-left:none;overflow:hidden}
-  .bim-props.recolhido *{display:none}
-  /* Aba: fica presa à borda esquerda do painel. Quando o painel está
-     recolhido, cola na beirada direita da cena. */
+  /* Aba: no modo Só BIM, fica SEMPRE visível no canto superior direito
+     da cena, exatamente como a bpAba do CDE. Sem painel aberto → cola na
+     beira direita (right:0) e um clique abre; painel aberto → fica na
+     borda esquerda do painel (right:272px) e um clique fecha. Este é o
+     único jeito de abrir/fechar propriedades agora — o botão da lupa
+     saiu da barra. */
   .bp-aba{position:absolute;top:8px;z-index:7;background:rgba(15,23,42,.85);
     color:#e2e8f0;border:1px solid rgba(255,255,255,.15);border-right:none;
     border-radius:6px 0 0 6px;padding:6px 8px;cursor:pointer;font-size:13px;
-    line-height:1;display:none}
-  .bim-props.on ~ .bp-aba{display:block;right:272px}
-  .bim-props.on.recolhido ~ .bp-aba{right:0}
+    line-height:1;display:none;right:0}
+  body.soBim .bp-aba{display:block}
+  body.soBim .bim-props.on ~ .bp-aba{right:272px}
   .bp-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid #2a2d3a;flex-shrink:0}
   .bp-body{flex:1;overflow-y:auto;padding:8px 11px}
   /* Painel de regras — reusa a moldura do de propriedades, mas nasce à
@@ -503,7 +505,6 @@
             <button id="bimFloorsBtn" class="bim-tb ico" onclick="bimFloorsToggle()" title="Pavimentos visíveis">▤</button>
             <div id="bimFloorsPop" class="bim-pop"></div>
           </div>
-          <button id="btnBimProps" class="bim-tb ico" onclick="bimPropsToggle()" title="Propriedades IFC — clique num elemento do modelo">🔍</button>
           <button id="btnRegras" class="bim-tb ico" onclick="f3dRegrasToggle()" title="Regras de verificação (apito)" style="display:inline-flex;align-items:center;justify-content:center">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M2.5 10.5h6.6a5.6 5.6 0 1 1 0 6.4H2.5z"/>
@@ -591,7 +592,8 @@
               <p class="nota">Suas escolhas ficam salvas — cada modelo abre já com esta configuração.</p>
             </div>
           </div>
-          <button id="f3dBtnApontar" class="bim-tb ico f3donly" onclick="f3dApontarToggle()" title="Criar apontamento: ligue e clique no elemento do modelo">➕</button>
+          <!-- Botão "+ Apontar" agora vive no header superior (id btnApontar) — vale tanto
+               para 2D quanto para 3D. Ver ativarApontar(). -->
           <!-- Recolher a barra: a maioria das ferramentas fica ligada de
                forma pontual (mediu duas vezes, cortou, tirou uma cota) e
                depois o que se quer é a cena limpa. -->
@@ -645,9 +647,10 @@
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🔍 Propriedades IFC</b><button class="bim-x" onclick="bimPropsToggle()" title="Fechar">✕</button></div>
             <div id="bimPropsBody" class="bp-body"><div class="bp-empty">Clique com o botão esquerdo num elemento do modelo para ver suas propriedades.</div></div>
           </div>
-          <!-- Aba de recolher — mesmo controle do CDE: ▸ mostra o painel, ◂ recolhe.
-               Só aparece quando o painel de propriedades está aberto. -->
-          <button class="bp-aba" id="bimPropsAba" onclick="bimPropsRecolher()" title="Recolher / expandir painel">▸</button>
+          <!-- Aba fixa (padrão CDE): sempre visível no canto superior direito
+               do canvas quando em modo Só BIM. Um clique abre/fecha o
+               painel de propriedades. Substitui o antigo botão 🔍 da barra. -->
+          <button class="bp-aba" id="bimPropsAba" onclick="bimPropsToggle()" title="Propriedades IFC (clique num elemento do modelo)">◂</button>
         </div>
       </div>
       </div>
@@ -2050,8 +2053,11 @@ function toggleVerPins(){
   $('btnVerPins').classList.toggle('on', PINS_VISIVEIS);
   renderPins();
 }
-// "Apontar": próximo clique na prancha cria um novo apontamento (one-shot).
+// "Apontar": mesmo botão do header vale para 2D e 3D — se o App está em
+// modo Só BIM (F3D_MODO), delega para f3dApontarToggle; senão, comportamento
+// 2D original (próximo clique na prancha cria apontamento).
 function ativarApontar(){
+  if(F3D_MODO){ f3dApontarToggle(); return; }
   APONTAR=!APONTAR;
   $('btnApontar').classList.toggle('on', APONTAR);
   $('stage').classList.toggle('modo-pin', APONTAR||PIN_EDIT);
@@ -2894,7 +2900,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15i').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15j').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3223,7 +3229,10 @@ function f3dTool(qual, forcar){
   if(!F3D || !B3) return;
   const lig = (forcar!==undefined) ? !!forcar : (F3D_FERR!==qual);
   if(lig && F3D_APONTAR) f3dApontarToggle(false);
-  if(lig && F3D_XRAY)    f3dXrayDesligar();   // ferramenta ativa desliga raio-X (mouse dividido)
+  // Raio-X é INCOMPATÍVEL com medir/corte (que também usam mousemove/click),
+  // mas COMPATÍVEL com andar — os dois podem ficar ativos ao mesmo tempo.
+  // No modo andar+raio-X, setas ↑↓ mudam de pavimento (ver f3dXrayKey).
+  if(lig && F3D_XRAY && qual!=='andar') f3dXrayDesligar();
   if(F3D_FERR==='medir' && qual!=='medir') B3.modoMedir(F3D,false);
   if(F3D_FERR==='corte' && qual!=='corte') B3.modoCorte(F3D,false);
   if(F3D_FERR==='andar' && qual!=='andar') B3.modoAndar(F3D,false).catch(()=>{});
@@ -3286,11 +3295,17 @@ Object.defineProperty(window, 'F3D_XRAY', { get: ()=> F3D_XRAY_ON });
 async function f3dXrayToggle(){
   if(!F3D || !B3) return;
   if(F3D_XRAY_ON){ await f3dXrayDesligar(); return; }
-  if(F3D_FERR)    f3dTool(F3D_FERR, false);
+  // Andar pode ficar ativo (mousemove do módulo não conflita com o do raio-X;
+  // e no combo, setas ↑↓ do teclado passam a mudar de pavimento).
+  if(F3D_FERR && F3D_FERR!=='andar') f3dTool(F3D_FERR, false);
   if(F3D_APONTAR) f3dApontarToggle(false);
   const cv=$('f3dCanvas');
   cv.addEventListener('mousemove', f3dXrayMove);
   cv.addEventListener('mouseleave', f3dXrayReset);
+  // Ao ligar o raio-X, instala captura de setas ↑↓ para trocar pavimento
+  // no modo andar. `capture:true` garante rodar ANTES do handler do módulo
+  // (que mapeia arrows como W/S).
+  document.addEventListener('keydown', f3dXrayKey, true);
   F3D_XRAY_ON = true;
   f3dXraySync();
   f3dDica('Raio-X ligado — profundidade '+F3D_XRAY_PROF+'. Passe o mouse na peça.');
@@ -3302,9 +3317,25 @@ async function f3dXrayDesligar(){
     cv.removeEventListener('mousemove', f3dXrayMove);
     cv.removeEventListener('mouseleave', f3dXrayReset);
   }
+  document.removeEventListener('keydown', f3dXrayKey, true);
   if(B3 && F3D) await B3.raiosXLimpa(F3D);
   f3dXraySync();
   f3dDica(DICA_NAV);
+}
+// Enquanto raio-X E andar estiverem ativos, ↑ e ↓ mudam de pavimento (em
+// vez de andar frente/trás). Left/Right e W/A/S/D continuam funcionando
+// normalmente — só as duas setas verticais mudam de comportamento. Fora
+// desse combo, este handler não faz nada e o handler do módulo pega.
+function f3dXrayKey(e){
+  if(!F3D || !F3D.andar || !F3D.andar.ativo) return;
+  const k = e.key.toLowerCase();
+  if(k==='arrowup' || k==='pageup'){
+    B3.irNivel(F3D, F3D.andar.nivel + 1);
+    e.preventDefault(); e.stopImmediatePropagation();
+  } else if(k==='arrowdown' || k==='pagedown'){
+    B3.irNivel(F3D, F3D.andar.nivel - 1);
+    e.preventDefault(); e.stopImmediatePropagation();
+  }
 }
 // Muda profundidade (via submenu). Se o raio-X já está ligado, aplica
 // agora — o próximo movimento do mouse pega mais/menos camadas. Persiste
@@ -3575,8 +3606,11 @@ function f3dApontarToggle(forcar){
   f3dDica(F3D_APONTAR ? 'Clique no elemento onde quer abrir o apontamento.' : DICA_NAV);
 }
 function f3dApontarSync(){
-  const b=$('f3dBtnApontar'); if(b) b.classList.toggle('on', F3D_APONTAR);
-  const cv=$('f3dCanvas');    if(cv) cv.classList.toggle('mira', F3D_APONTAR);
+  // Botão "+ Apontar" agora é o do header (compartilhado com 2D). Reflete
+  // o estado do apontamento 3D também nele — assim o usuário vê on/off
+  // no mesmo lugar independente de qual modo está.
+  const b=$('btnApontar'); if(b) b.classList.toggle('on', F3D_APONTAR);
+  const cv=$('f3dCanvas'); if(cv) cv.classList.toggle('mira', F3D_APONTAR);
 }
 async function f3dClique(ev){
   if(!F3D || !B3) return;
@@ -4100,9 +4134,8 @@ function _bimShowProps(id){
 }
 function bimPropsToggle(){
   var p=$('bimProps'), on=p.classList.toggle('on');
-  var b=$('btnBimProps'); if(b) b.classList.toggle('on', on);
-  // Fechar zera também o estado "recolhido" — abrir de novo já vem cheio.
-  if(!on) p.classList.remove('recolhido');
+  // Aba: ◂ empurra fechar (painel aberto), ▸ empurra abrir (painel fechado).
+  var a=$('bimPropsAba'); if(a) a.textContent = on ? '▸' : '◂';
   // O painel é o mesmo para os dois motores; a bandeira diz ao 3D do CDE que
   // vale a pena ler as propriedades ao clicar (é ida ao worker, não se faz
   // com o painel fechado).
@@ -4111,12 +4144,6 @@ function bimPropsToggle(){
     var c=$('bimPropsBody');
     if(c && !c.querySelector('.bp-grp')) c.innerHTML='<div class="bp-empty">Clique num elemento do modelo.</div>';
   }
-}
-// Recolhe/expande o painel sem fechá-lo — mesmo padrão da bpAba do CDE.
-function bimPropsRecolher(){
-  var p=$('bimProps'); if(!p||!p.classList.contains('on')) return;
-  var rec=p.classList.toggle('recolhido');
-  var a=$('bimPropsAba'); if(a) a.textContent = rec ? '◂' : '▸';
 }
 // ── Pins 3D — MESMA estética dos pins 2D (pinSvg) ───────────────────────────
 function bimWorldToScreen(wx,wy,wz){
