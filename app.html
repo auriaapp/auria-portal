@@ -523,6 +523,7 @@
             <button class="bim-tb ico" onclick="f3dCorteRemover()" title="Remover o corte">🗑</button>
           </span>
           <button id="f3dBtnAndar" class="bim-tb ico f3donly" onclick="f3dTool('andar')" title="Caminhar pelo modelo, a 1,70 m do piso">🚶</button>
+          <button id="f3dBtnXray" class="bim-tb ico f3donly" onclick="f3dXrayToggle()" title="Raio-X: passe o mouse — o círculo de 1 m fica transparente">◎</button>
           <div class="f3donly" style="position:relative">
             <button id="f3dBtnCfg" class="bim-tb ico" onclick="f3dCfgToggle()" title="Configurações de visualização">⚙</button>
             <div id="f3dCfgPop" class="f3d-cfg">
@@ -2888,7 +2889,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15d').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15e').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3213,6 +3214,7 @@ function f3dTool(qual, forcar){
   if(!F3D || !B3) return;
   const lig = (forcar!==undefined) ? !!forcar : (F3D_FERR!==qual);
   if(lig && F3D_APONTAR) f3dApontarToggle(false);
+  if(lig && F3D_XRAY)    f3dXrayDesligar();   // ferramenta ativa desliga raio-X (mouse dividido)
   if(F3D_FERR==='medir' && qual!=='medir') B3.modoMedir(F3D,false);
   if(F3D_FERR==='corte' && qual!=='corte') B3.modoCorte(F3D,false);
   if(F3D_FERR==='andar' && qual!=='andar') B3.modoAndar(F3D,false).catch(()=>{});
@@ -3234,7 +3236,14 @@ function f3dToolSync(){
   const co=$('f3dCorteOpc'); if(co) co.classList.toggle('on', F3D_FERR==='corte');
   const ab=$('f3dAndarBar'); if(ab) ab.classList.toggle('on', !!(F3D && F3D.andar && F3D.andar.ativo));
 }
-function f3dModoLimpar(){ F3D_FERR=''; F3D_APONTAR=false; f3dToolSync(); f3dApontarSync(); }
+function f3dModoLimpar(){
+  F3D_FERR=''; F3D_APONTAR=false;
+  // Raio-X também é modo interativo — reseta ao descartar visualizador
+  // (senão o botão fica "on" apontando pra nada no próximo modelo).
+  F3D_XRAY=false;
+  const bx=$('f3dBtnXray'); if(bx) bx.classList.remove('on');
+  f3dToolSync(); f3dApontarSync();
+}
 function f3dMedirModo(modo){
   if(!F3D || !B3) return;
   B3.medirModo(F3D, modo);
@@ -3247,6 +3256,64 @@ function f3dMedirModo(modo){
 }
 function f3dCorteInverter(){ if(F3D && B3) B3.corteInverter(F3D); }
 function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
+
+// ── Raio-X (esfera transparente sob o cursor) ─────────────────────────────
+//  Toggle: ao ligar, indexa as caixas dos elementos (uma vez), instala
+//  handlers de mouse; ao desligar, reseta a transparência e solta os
+//  handlers. Exclusivo com medir/corte/andar/apontar — os outros modos
+//  também "capturam" o mouse e ter dois ativos vira briga por ponteiro.
+let F3D_XRAY=false;
+let _xrayTimer=0;
+async function f3dXrayToggle(){
+  if(!F3D || !B3) return;
+  if(F3D_XRAY){ await f3dXrayDesligar(); return; }
+  // Desliga outros modos que também reagem ao mouse
+  if(F3D_FERR)    f3dTool(F3D_FERR, false);
+  if(F3D_APONTAR) f3dApontarToggle(false);
+  f3dDica('Preparando raio-X…');
+  try{
+    await B3.raiosXPrepara(F3D);
+  }catch(e){
+    console.warn('raio-X:', e);
+    f3dDica('Não consegui preparar o raio-X.');
+    return;
+  }
+  F3D_XRAY = true;
+  const cv=$('f3dCanvas');
+  cv.addEventListener('mousemove', f3dXrayMove);
+  cv.addEventListener('mouseleave', f3dXrayReset);
+  const b=$('f3dBtnXray'); if(b) b.classList.add('on');
+  f3dDica('Passe o mouse sobre o modelo — o círculo de 1 m fica transparente.');
+}
+async function f3dXrayDesligar(){
+  F3D_XRAY = false;
+  const cv=$('f3dCanvas');
+  if(cv){
+    cv.removeEventListener('mousemove', f3dXrayMove);
+    cv.removeEventListener('mouseleave', f3dXrayReset);
+  }
+  if(B3 && F3D) await B3.raiosXLimpa(F3D);
+  const b=$('f3dBtnXray'); if(b) b.classList.remove('on');
+  f3dDica(DICA_NAV);
+}
+// mousemove roda várias vezes por segundo. Limito a ~25Hz e uso uma flag
+// para não empilhar chamadas assíncronas se o raycast/setOpacity demoraram.
+let _xrayBusy=false;
+async function f3dXrayMove(e){
+  if(!F3D_XRAY || !F3D || !B3 || _xrayBusy) return;
+  const now = performance.now();
+  if(now - _xrayTimer < 40) return;
+  _xrayTimer = now; _xrayBusy = true;
+  try{
+    const hit = await B3.raycast(F3D, e);
+    if(hit && hit.point) await B3.raiosXEsfera(F3D, hit.point, 1.0);
+  }catch(_){}
+  finally{ _xrayBusy = false; }
+}
+async function f3dXrayReset(){
+  if(!F3D_XRAY || !F3D || !B3) return;
+  try{ await B3.raiosXLimpa(F3D); }catch(_){}
+}
 // Painel de configurações de visualização. Fundo e plano de piso são opções
 // SEPARADAS: quem quer o escuro pode ter o plano; quem quer o claro pode não
 // ter. Antes um controlava o outro e as combinações "escuro + plano" e
@@ -3424,6 +3491,7 @@ let F3D_APONTAR=false, F3D_PROPS=false;
 function f3dApontarToggle(forcar){
   F3D_APONTAR = (forcar!==undefined) ? !!forcar : !F3D_APONTAR;
   if(F3D_APONTAR && F3D_FERR) f3dTool(F3D_FERR, false);
+  if(F3D_APONTAR && F3D_XRAY) f3dXrayDesligar();
   f3dApontarSync();
   f3dDica(F3D_APONTAR ? 'Clique no elemento onde quer abrir o apontamento.' : DICA_NAV);
 }

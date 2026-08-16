@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15d  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15e  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -629,6 +629,63 @@ export async function destacar(V, modelo, ids){
     try{ await modelo.model.highlight(ids, {
       color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+
+// ── Raio-X (esfera de transparência em torno de um ponto) ─────────────────
+//  A ideia: como o médico enxerga o osso pela pele, aqui você "vê" o que
+//  está dentro de uma esfera de N metros ao redor do cursor. Peças com
+//  bounding-box dentro da esfera ganham opacidade baixa; o resto continua
+//  sólido. Ao mover o mouse, o conjunto muda; só o DIFF é reaplicado (quem
+//  saiu do raio volta ao normal, quem entrou fica translúcido). Isso evita
+//  reprocessar tudo a cada quadro.
+//
+//  raiosXPrepara() carrega o índice espacial (ids + caixas) uma vez. Rápido
+//  para modelos comuns; se for o empreendimento inteiro pode demorar 1-2s
+//  na primeira chamada. Depois disso, cada movimento do mouse é uma
+//  varredura em memória — sem ida ao worker do Fragments.
+export async function raiosXPrepara(V){
+  if(V._xrayReady) return;
+  const cache=[];
+  for(const x of V.modelos){
+    try{
+      const ids  = await x.model.getItemsWithGeometry();
+      const bxs  = await x.model.getBoxes(ids);
+      cache.push({ x, ids, bxs });
+    }catch(_){ cache.push({ x, ids:[], bxs:[] }); }
+  }
+  V._xrayCache = cache;
+  V._xrayAtivos = new Map();   // modelo → Set<ids atualmente transparentes>
+  V._xrayReady = true;
+}
+// Aplica a esfera. Recalcula o conjunto de dentro e aplica só o DIFF em
+// relação ao anterior — mudar 20 peças por quadro é OK, mudar mil quebra.
+export async function raiosXEsfera(V, ponto, raio){
+  if(!V._xrayReady) return;
+  const OPAC = 0.12;   // quase transparente, mas com contorno visível
+  for(const d of V._xrayCache){
+    const alvos = new Set();
+    for(let i=0;i<d.ids.length;i++){
+      const b = d.bxs[i];
+      if(b && b.distanceToPoint(ponto) <= raio) alvos.add(d.ids[i]);
+    }
+    const prev = V._xrayAtivos.get(d.x) || new Set();
+    const sair=[], entrar=[];
+    prev.forEach(id=>{ if(!alvos.has(id)) sair.push(id); });
+    alvos.forEach(id=>{ if(!prev.has(id)) entrar.push(id); });
+    if(sair.length)   try{ await d.x.model.resetOpacity(sair);      }catch(_){}
+    if(entrar.length) try{ await d.x.model.setOpacity(entrar, OPAC); }catch(_){}
+    V._xrayAtivos.set(d.x, alvos);
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+// Solta tudo. Chamada ao desligar o raio-X ou ao descartar o visualizador.
+export async function raiosXLimpa(V){
+  if(!V._xrayReady) return;
+  for(const d of V._xrayCache){
+    try{ await d.x.model.resetOpacity(undefined); }catch(_){}
+  }
+  V._xrayAtivos = new Map();
   try{ await V.fragments.update(true); }catch(_){}
 }
 
