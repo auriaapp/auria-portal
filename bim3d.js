@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15k  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15m  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -151,6 +151,56 @@ export async function carregar(V, modelos, msg){
   await V.fragments.update(true);
 }
 let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
+
+// ── Carga incremental (adicionar/remover UM modelo sem recarregar os outros) ─
+//  Padrão Solibri: marcar/desmarcar disciplina não reprocessa o resto. E
+//  crítico: NÃO chama enquadrar() — quem já está posicionado numa parte da
+//  cena mantém a mesma vista quando outra disciplina entra. Só a primeira
+//  chamada (V.modelos vazio) enquadra, para o modelo aparecer no centro.
+export async function adicionarModelo(V, m, msg){
+  const aviso = msg || (()=>{});
+  const meu = ++V._job;
+  aviso('Baixando '+(m.nome||'modelo')+'…');
+  const resp = await fetch(await m.url());
+  if(!resp.ok) throw new Error('HTTP '+resp.status+' baixando "'+(m.nome||'')+'"');
+  const bytes = new Uint8Array(await resp.arrayBuffer());
+  if(V._job!==meu || !V.vivo) return null;
+  aviso('Carregando '+(m.nome||'modelo')+'…');
+  const model = await V.fragments.load(bytes, {
+    modelId: opts_id(V)+':'+(m.id||m.nome),
+    camera: V.camera
+  });
+  if(V._job!==meu || !V.vivo){ try{ model.dispose(); }catch(_){} return null; }
+  const wrapper = { ...m, model, visivel:true };
+  const eraVazio = V.modelos.length === 0;
+  V.modelos.push(wrapper);
+  V.scene.add(model.object);
+  aplicarFaces(V, true);
+  redimensionar(V);
+  // Só enquadra no PRIMEIRO modelo — nos subsequentes, preserva a câmera
+  // atual do usuário (não teleporta a vista quando marca outra disciplina).
+  if(eraVazio) enquadrar(V);
+  // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
+  // será refeito na próxima ativação.
+  V._xrayReady = false; V._xrayCache = null;
+  try{ await V.fragments.update(true); }catch(_){}
+  return wrapper;
+}
+// Remove um modelo específico da cena e libera memória.
+export async function descarregarUm(V, idBusca){
+  const i = V.modelos.findIndex(x => (x.arquivoId||x.id||x.nome) === idBusca);
+  if(i<0) return;
+  const x = V.modelos[i];
+  V.modelos.splice(i, 1);
+  try{ V.scene.remove(x.model.object); }catch(_){}
+  try{ x.model.dispose(); }catch(_){}
+  // Se a peça anterior de raio-X estava neste modelo, some junto.
+  if(V._xrayUlt && V._xrayUlt.modelo === x) V._xrayUlt = null;
+  // Se estava escondendo peça deste modelo, esquece.
+  if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
+  V._xrayReady = false; V._xrayCache = null;
+  try{ await V.fragments.update(true); }catch(_){}
+}
 
 export function descartar(V){
   if(!V) return;

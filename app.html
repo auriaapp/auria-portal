@@ -2086,9 +2086,15 @@ function setPinEdit(on){
 // Clique num pin → balão com resumo do apontamento partindo do pin (como no desktop).
 function pinClick(ai, pi){
   const a=APTS[ai]; if(!a) return;
-  fecharPinBalao();
   const pt=(a.pontos_json||[])[pi]; if(!pt) return;
   const p=pageToScreen(pt.nx,pt.ny), r=$('stage').getBoundingClientRect();
+  mostrarBalaoPin(a, ai, r.left + p.x, r.top + p.y);
+}
+// Balão compartilhado: mesma UI do 2D chamada tanto pelo pin do 2D quanto
+// pelo pin do 3D (F3D). Recebe já a POSIÇÃO EM PIXELS DE TELA do pin —
+// cada chamador calcula do seu jeito.
+function mostrarBalaoPin(a, ai, sx, sy){
+  fecharPinBalao();
   const prazo=a.prazo_min?(_dispData(a.prazo_min)+(a.atrasado?' · ⚠ atrasado':'')):'—';
   const b=document.createElement('div'); b.id='pinBalao'; b.className='pin-balao';
   b.innerHTML=`<div class="pb-h" style="border-left:4px solid ${corPrio(a.prioridade)}">
@@ -2101,9 +2107,9 @@ function pinClick(ai, pi){
     <button class="pb-open" onclick="abrirAptIdx(${ai});fecharPinBalao()">Abrir apontamento ›</button>`;
   document.body.appendChild(b);
   const bw=b.offsetWidth, bh=b.offsetHeight;
-  let left=Math.max(8,Math.min(window.innerWidth-bw-8, r.left+p.x-bw/2));
-  let top=r.top+p.y-bh-16, below=false;
-  if(top<8){ top=r.top+p.y+18; below=true; }
+  let left=Math.max(8,Math.min(window.innerWidth-bw-8, sx-bw/2));
+  let top=sy-bh-16, below=false;
+  if(top<8){ top=sy+18; below=true; }
   b.classList.toggle('below', below);
   b.style.left=left+'px'; b.style.top=top+'px';
   setTimeout(()=>document.addEventListener('mousedown', fecharPinBalaoOut),0);
@@ -2909,7 +2915,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15k').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15m').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3046,7 +3052,7 @@ function f3dRenderPins(E, svg){
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" onclick="abrirAptIdx('+ai+');event.stopPropagation()">'
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="f3dPinClick('+ai+',event);event.stopPropagation()">'
          + pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
     });
   });
@@ -3062,6 +3068,16 @@ function f3dRenderPins(E, svg){
 }
 function f3dPinEditClick(pi){
   if(PIN_EDIT&&APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPinsList(); f3dPinsRefresh(); }
+}
+// Pin do 3D: mostra o MESMO balão do 2D (mostrarBalaoPin). Preferimos usar
+// o ponto do clique do mouse como origem — é o mesmo pixel que o usuário
+// enxerga como "onde ele clicou" e já vem no evento, sem depender de
+// reprojetar do mundo (que pode ficar off-screen se a câmera girou).
+function f3dPinClick(ai, ev){
+  const a=APTS[ai]; if(!a) return;
+  const sx = (ev && ev.clientX) || window.innerWidth/2;
+  const sy = (ev && ev.clientY) || window.innerHeight/2;
+  mostrarBalaoPin(a, ai, sx, sy);
 }
 // Ponte para o resto do App poder repintar os pinos sem conhecer o estado 3D.
 let F3D=null;                       // estado do visualizador ativo (f3dCarregar)
@@ -3189,7 +3205,51 @@ let _selTimer=null;
 function f3dTogglSel(i, on){
   if(on) F3D_SEL.add(i); else F3D_SEL.delete(i);
   if(_selTimer) clearTimeout(_selTimer);
-  _selTimer = setTimeout(()=>{ _selTimer=null; f3dAbrirSelecionados().catch(()=>{}); }, 200);
+  // Sincroniza incrementalmente: só o que MUDOU é baixado/removido, o
+  // resto da cena permanece intocado (e a câmera preserva a vista). O
+  // botão "Recarregar" continua para força bruta em caso de travamento.
+  _selTimer = setTimeout(()=>{ _selTimer=null; f3dSincronizarSelecao().catch(()=>{}); }, 200);
+}
+// Padrão Solibri: marcar/desmarcar disciplina não reprocessa a cena inteira.
+// Faz diff entre o que já está carregado e o que o usuário escolheu, adiciona
+// só os novos, remove só os que saíram. Preserva a posição da câmera.
+async function f3dSincronizarSelecao(){
+  // Primeira carga (nada aberto ainda) — usa o caminho completo, que também
+  // trata setup de canvas, callbacks e restauração de config.
+  if(!F3D){ return f3dAbrirSelecionados(); }
+  if(!F3D_LISTA.length) return;
+  const escolhidos = [...F3D_SEL].map(i => F3D_LISTA[i]);
+  // Desmarcou tudo → descarta o visualizador (não segura modelo sem pedido).
+  if(!escolhidos.length){
+    f3dDescartar();
+    const cv=$('f3dCanvas'); if(cv) cv.style.display='none';
+    const m=$('bimMsg');
+    if(m){ m.textContent='Marque um modelo na coluna para carregar.'; m.style.display='flex'; }
+    return;
+  }
+  const key = m => m.arquivoId || m.id || m.nome;
+  const carregados = new Set((F3D.modelos||[]).map(key));
+  const desejados  = new Set(escolhidos.map(key));
+  // Remove os que saíram (rápido — só solta da cena)
+  for(const id of carregados){
+    if(!desejados.has(id)) await B3.descarregarUm(F3D, id);
+  }
+  // Baixa os novos (paralelo, cada um chega quando fica pronto)
+  const novos = escolhidos.filter(m => !carregados.has(key(m)));
+  if(novos.length){
+    const msg=(t)=>{ const el=$('bimMsg'); if(el){ el.textContent=t; el.style.display='flex'; } };
+    msg(novos.length>1 ? `Carregando ${novos.length} modelos…` : `Carregando ${novos[0].nome}…`);
+    try{
+      const specs = novos.map(m => ({ ...m, id: m.arquivoId, url: () => cdeSignedUrlApp(m.path, 'r2') }));
+      await Promise.all(specs.map(s => B3.adicionarModelo(F3D, s)));
+    }catch(e){
+      console.warn('adicionar modelo:', e);
+      msg('Falhou ao adicionar: '+((e&&e.message)||e));
+      return;
+    }
+    const mel=$('bimMsg'); if(mel) mel.style.display='none';
+  }
+  f3dAbrirBotaoSync();
 }
 // Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
 // que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
