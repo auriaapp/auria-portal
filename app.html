@@ -2889,7 +2889,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15e').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15f').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3272,10 +3272,16 @@ async function f3dXrayToggle(){
   if(F3D_APONTAR) f3dApontarToggle(false);
   f3dDica('Preparando raio-X…');
   try{
-    await B3.raiosXPrepara(F3D);
+    // Timeout de segurança: se em 15s a preparação não terminar, aborta
+    // em vez de deixar o botão "carregando" para sempre. Federado grande
+    // pode chegar em 5-8s; 15s é folga confortável.
+    await Promise.race([
+      B3.raiosXPrepara(F3D),
+      new Promise((_,rej)=> setTimeout(()=>rej(new Error('timeout 15s')), 15000))
+    ]);
   }catch(e){
     console.warn('raio-X:', e);
-    f3dDica('Não consegui preparar o raio-X.');
+    f3dDica('Não consegui preparar o raio-X: '+(e.message||e)+' (F12 tem detalhes).');
     return;
   }
   F3D_XRAY = true;

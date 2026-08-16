@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15e  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15f  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -646,17 +646,36 @@ export async function destacar(V, modelo, ids){
 //  varredura em memória — sem ida ao worker do Fragments.
 export async function raiosXPrepara(V){
   if(V._xrayReady) return;
+  const t0 = performance.now();
   const cache=[];
-  for(const x of V.modelos){
+  // Processa modelos em paralelo — federado com 4 modelos, cada um leva
+  // ~400ms; sequencial dava 1.6s de tela travada em "Preparando…".
+  await Promise.all(V.modelos.map(async x=>{
+    let ids=[], bxs=[];
     try{
-      const ids  = await x.model.getItemsWithGeometry();
-      const bxs  = await x.model.getBoxes(ids);
-      cache.push({ x, ids, bxs });
-    }catch(_){ cache.push({ x, ids:[], bxs:[] }); }
-  }
+      // Nome CORRETO da API que devolve IDs de itens com geometria é
+      // `getItemsIdsWithGeometry`. O `getItemsWithGeometry` devolve objetos
+      // (não IDs) — passar isso pro `getBoxes` fazia a promessa nunca resolver
+      // (o worker do Fragments ficava esperando IDs que não eram IDs).
+      // Fallback para versões da lib onde o nome novo não existe.
+      const fn = x.model.getItemsIdsWithGeometry
+              ? x.model.getItemsIdsWithGeometry.bind(x.model)
+              : x.model.getItemsWithGeometry.bind(x.model);
+      ids = await fn();
+      if(Array.isArray(ids) && ids.length){
+        bxs = await x.model.getBoxes(ids);
+      }
+    }catch(e){
+      console.warn('[raio-X] prepara "'+(x.nome||x.id||'?')+'":', e);
+      ids=[]; bxs=[];
+    }
+    cache.push({ x, ids, bxs });
+  }));
   V._xrayCache = cache;
   V._xrayAtivos = new Map();   // modelo → Set<ids atualmente transparentes>
   V._xrayReady = true;
+  console.log('[raio-X] pronto em', Math.round(performance.now()-t0),'ms —',
+              cache.map(d=>(d.x.nome||'?')+':'+d.ids.length).join(', '));
 }
 // Aplica a esfera. Recalcula o conjunto de dentro e aplica só o DIFF em
 // relação ao anterior — mudar 20 peças por quadro é OK, mudar mil quebra.
