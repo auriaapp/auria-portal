@@ -555,11 +555,11 @@
               <h5 style="margin-top:12px">Modelo</h5>
               <div class="lin"><span>Faces internas (tubos)</span>
                 <input type="checkbox" id="f3dCfgFaces" checked
-                       onchange="B3&amp;&amp;F3D&amp;&amp;B3.setFacesDuplas(F3D,this.checked)">
+                       onchange="f3dSetFaces(this.checked)">
               </div>
               <div class="lin"><span>Alta qualidade</span>
                 <input type="checkbox" id="f3dCfgGQ"
-                       onchange="B3&amp;&amp;F3D&amp;&amp;B3.setAltaQualidade(F3D,this.checked)">
+                       onchange="f3dSetGQ(this.checked)">
               </div>
               <div class="lin"><span>Sombra de contato</span>
                 <input type="checkbox" id="f3dCfgSao" onchange="f3dSetSombra(this.checked)">
@@ -582,7 +582,7 @@
                 </div>
               </div>
               <button class="f3d-reset" onclick="f3dResetCfg()">Restaurar padrão</button>
-              <p class="nota">Configurações valem só nesta sessão. Fecha a aba, volta ao padrão.</p>
+              <p class="nota">Suas escolhas ficam salvas — cada modelo abre já com esta configuração.</p>
             </div>
           </div>
           <button id="f3dBtnApontar" class="bim-tb ico f3donly" onclick="f3dApontarToggle()" title="Criar apontamento: ligue e clique no elemento do modelo">➕</button>
@@ -2888,7 +2888,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15d').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3176,17 +3176,10 @@ async function f3dAbrirSelecionados(){
   F3D_PAVPRONTO=false;
   const pop=$('bimFloorsPop');
   if(pop) pop.innerHTML='<div style="padding:8px;color:#94a3b8;font-size:11px">Abra para separar por pavimento.</div>';
-  // Preferências salvas na sessão. Fundo padrão = escuro; grade padrão =
-  // desligada. Se você tem preferência diferente, cada abertura já vem
-  // configurada sem precisar clicar.
-  try{
-    const fundo = sessionStorage.getItem('f3dFundo') || 'escuro';
-    const grade = sessionStorage.getItem('f3dGrade') === '1';
-    B3.visualFundo(F3D, fundo);
-    B3.visualGrade(F3D, grade);
-    [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===fundo));
-    const cg=$('f3dCfgGrade'); if(cg) cg.checked = grade;
-  }catch(_){}
+  // Preferências salvas em localStorage — persistem entre sessões. Se você
+  // tem uma configuração preferida (fundo, luzes, sombra), cada abertura
+  // de modelo já vem assim, sem precisar refazer no painel.
+  f3dCfgAplicar(f3dCfgLer()).catch(e=>console.warn('f3dCfg:', e));
   f3dDica(DICA_NAV);
 }
 const DICA_NAV='Arraste para girar · roda para zoom · clique da roda para deslocar';
@@ -3263,29 +3256,59 @@ function f3dCfgToggle(){
   const abriu=p.classList.toggle('on');
   const b=$('f3dBtnCfg'); if(b) b.classList.toggle('on', abriu);
 }
+// ── Persistência das preferências de visualização ─────────────────────────
+//  Guardadas em localStorage (não sessionStorage) para sobreviver a fechar
+//  a aba e voltar outro dia. Uma chave só (`f3dCfg`), objeto JSON com todos
+//  os valores. Padrão vem dos números do bim3d.js:criar().
+const F3D_CFG_PAD = { fundo:'escuro', grade:false,
+  expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
+  ao:false, aoInt:6, aoRaio:50, aoAm:16 };
+function f3dCfgLer(){
+  try{
+    const raw = localStorage.getItem('f3dCfg');
+    // Migração: se ainda tem só as chaves antigas em sessionStorage, usa
+    // como base para não perder a preferência que você já tinha.
+    const legado = raw ? null : {
+      fundo: sessionStorage.getItem('f3dFundo'),
+      grade: sessionStorage.getItem('f3dGrade')==='1'
+    };
+    return Object.assign({}, F3D_CFG_PAD, raw ? JSON.parse(raw) : legado);
+  }catch(_){ return Object.assign({}, F3D_CFG_PAD); }
+}
+function f3dCfgSalvar(patch){
+  try{
+    const cur = Object.assign({}, F3D_CFG_PAD, JSON.parse(localStorage.getItem('f3dCfg')||'{}'));
+    Object.assign(cur, patch);
+    localStorage.setItem('f3dCfg', JSON.stringify(cur));
+  }catch(_){}
+}
+
 function f3dSetFundo(qual){
   if(!F3D || !B3) return;
   B3.visualFundo(F3D, qual);
   [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===qual));
-  try{ sessionStorage.setItem('f3dFundo', qual); }catch(_){}
+  f3dCfgSalvar({ fundo:qual });
 }
 function f3dSetGrade(lig){
   if(!F3D || !B3) return;
   B3.visualGrade(F3D, !!lig);
   const c=$('f3dCfgGrade'); if(c) c.checked=!!lig;
-  try{ sessionStorage.setItem('f3dGrade', lig?'1':'0'); }catch(_){}
+  f3dCfgSalvar({ grade:!!lig });
 }
-// Sliders (exposição, luz, contraste, sombra): atualiza o rótulo à direita
-// e chama o setter do módulo. `inteiro` = true quando o valor exibido é o
-// próprio valor do slider (alcance, amostras, intensidade da sombra); false
-// (padrão) quando é fracionário e mostramos v/100 com duas casas.
+// Sliders (exposição, luz, contraste, sombra): atualiza o rótulo à direita,
+// chama o setter do módulo, e persiste. `chave` é o data-c/data-v; `save`
+// diz onde no objeto de config guardar o VALOR REAL (v/100 nos fracionários,
+// v cru nos inteiros).
 function f3dSlider(el, chave, apply, inteiro){
   if(!F3D || !B3) return;
   const v = +el.value;
   apply(v);
   const rot = document.querySelector('.f3d-cfg [data-v="'+chave+'"]');
-  if(!rot) return;
-  rot.textContent = inteiro ? String(v) : (v/100).toFixed(2).replace('.',',');
+  if(rot) rot.textContent = inteiro ? String(v) : (v/100).toFixed(2).replace('.',',');
+  // Mapa data-c → chave no f3dCfg (nome mais legível no armazenamento)
+  const mapa = { expo:'expo', amb:'amb', sol:'sol', aoInt:'aoInt', aoRaio:'aoRaio', aoAm:'aoAm' };
+  const key = mapa[chave]; if(!key) return;
+  f3dCfgSalvar({ [key]: inteiro ? v : v/100 });
 }
 // Sombra de contato: primeira ligação baixa o módulo de postprocessing
 // (pesado, ~50KB). Enquanto isso o checkbox fica "carregando" — se o
@@ -3295,6 +3318,7 @@ async function f3dSetSombra(lig){
   const sub=$('f3dCfgSaoSub'); if(sub) sub.classList.toggle('off', !lig);
   try{
     await B3.setSombra(F3D, !!lig);
+    f3dCfgSalvar({ ao: !!lig });
   }catch(e){
     console.warn('sombra:', e);
     const cb=$('f3dCfgSao'); if(cb) cb.checked=false;
@@ -3302,26 +3326,59 @@ async function f3dSetSombra(lig){
     f3dDica('Não consegui carregar a sombra de contato.');
   }
 }
-function f3dResetCfg(){
+// Aplica um objeto de config completo no visualizador (chamado ao abrir o
+// modelo). Ordem importa: fundo antes da grade (a grade lê o fundo).
+async function f3dCfgAplicar(c){
   if(!F3D || !B3) return;
-  B3.restaurarPadroes(F3D);
-  // Reseta a UI para bater com os padrões do módulo (mesmos valores do criar()).
-  const p={ expo:115, amb:125, sol:155 };
-  Object.entries(p).forEach(([k,v])=>{
-    const s=document.querySelector('.f3d-cfg [data-c="'+k+'"]');
-    if(s){ s.value=v; const r=document.querySelector('.f3d-cfg [data-v="'+k+'"]');
-      if(r) r.textContent=(v/100).toFixed(2).replace('.',','); }
-  });
-  const f=$('f3dCfgFaces'); if(f) f.checked=true;
-  const g=$('f3dCfgGQ');    if(g) g.checked=false;
-  const s=$('f3dCfgSao');   if(s) s.checked=false;
-  const sub=$('f3dCfgSaoSub'); if(sub) sub.classList.add('off');
-  // Sub-controles da sombra: valores padrão da criar() no bim3d.js.
-  const psao={ aoInt:6, aoRaio:50, aoAm:16 };
-  Object.entries(psao).forEach(([k,v])=>{
-    const sl=document.querySelector('.f3d-cfg [data-c="'+k+'"]');
-    if(sl){ sl.value=v; const r=document.querySelector('.f3d-cfg [data-v="'+k+'"]'); if(r) r.textContent=String(v); }
-  });
+  B3.visualFundo(F3D, c.fundo);
+  B3.visualGrade(F3D, !!c.grade);
+  B3.setExposicao(F3D,   c.expo);
+  B3.setLuzAmbiente(F3D, c.amb);
+  B3.setLuzSol(F3D,      c.sol);
+  B3.setFacesDuplas(F3D, c.faces);
+  B3.setAltaQualidade(F3D, c.gq);
+  // Reflete na UI do painel
+  [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===c.fundo));
+  const set = (id,val)=>{ const e=$(id); if(e) e.checked=val; };
+  set('f3dCfgGrade', !!c.grade);
+  set('f3dCfgFaces', !!c.faces);
+  set('f3dCfgGQ',    !!c.gq);
+  set('f3dCfgSao',   !!c.ao);
+  const upd = (chave,val,inteiro)=>{
+    const s=document.querySelector('.f3d-cfg [data-c="'+chave+'"]');
+    if(!s) return;
+    s.value = inteiro ? val : Math.round(val*100);
+    const r=document.querySelector('.f3d-cfg [data-v="'+chave+'"]');
+    if(r) r.textContent = inteiro ? String(val) : (+val).toFixed(2).replace('.',',');
+  };
+  upd('expo',  c.expo);   upd('amb',   c.amb);   upd('sol',   c.sol);
+  upd('aoInt', c.aoInt, true); upd('aoRaio', c.aoRaio, true); upd('aoAm', c.aoAm, true);
+  const sub=$('f3dCfgSaoSub'); if(sub) sub.classList.toggle('off', !c.ao);
+  // Sombra é a mais pesada — só liga depois de tudo aplicado (baixa lib)
+  if(c.ao){
+    try{
+      await B3.setSombra(F3D, true);
+      B3.setSombraIntensidade(F3D, c.aoInt);
+      B3.setSombraAlcance(F3D, c.aoRaio);
+      B3.setSombraAmostras(F3D, c.aoAm);
+    }catch(_){ set('f3dCfgSao', false); if(sub) sub.classList.add('off'); }
+  }
+}
+function f3dSetFaces(on){
+  if(!F3D || !B3) return;
+  B3.setFacesDuplas(F3D, !!on);
+  f3dCfgSalvar({ faces: !!on });
+}
+function f3dSetGQ(on){
+  if(!F3D || !B3) return;
+  B3.setAltaQualidade(F3D, !!on);
+  f3dCfgSalvar({ gq: !!on });
+}
+// Reset: aplica os padrões E persiste (para o próximo abrir também vir zerado).
+async function f3dResetCfg(){
+  if(!F3D || !B3) return;
+  try{ localStorage.setItem('f3dCfg', JSON.stringify(F3D_CFG_PAD)); }catch(_){}
+  await f3dCfgAplicar(F3D_CFG_PAD);
 }
 // Fecha o popover ao clicar fora — mesmo padrão do Pav./Regras.
 document.addEventListener('click', (e)=>{

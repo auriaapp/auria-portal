@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15c  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15d  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -346,6 +346,20 @@ export async function setSombra(V, lig){
     // quase preto numa peça. Acompanha o far — razão medida em teste.
     sao.__razao        = 0.024;
     sao.params.saoScale = V.camera.far * sao.__razao;
+    // Anti-oclusão do plano de piso: o SAO calcula AO a partir da profundidade
+    // de TUDO na cena, então uma parede em cima da malha projeta escuridão
+    // sobre ela — usuário vê a grade "manchada". Como a "beauty" (RenderPass,
+    // que vem ANTES) já rodou com a grade visível, basta escondê-la nos
+    // passes internos do SAO (depth/normal): a AO ali resulta em zero para
+    // os pixels da grade, e a beauty passa intacta. Modelo continua ganhando
+    // AO normalmente porque a grade estava lá fora nesses passes.
+    const origSaoRender = sao.render.bind(sao);
+    sao.render = function(){
+      const g = V._grade, wasVis = g && g.visible;
+      if(g) g.visible = false;
+      try{ return origSaoRender.apply(this, arguments); }
+      finally{ if(g) g.visible = wasVis; }
+    };
     comp.addPass(sao);
     comp.addPass(new OutputPass());
     comp.setSize(V.cont.clientWidth||1, V.cont.clientHeight||1);
