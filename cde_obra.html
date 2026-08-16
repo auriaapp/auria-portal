@@ -1544,6 +1544,7 @@ class CdeWin {
       +       '<div class="lin"><span>Luz ambiente</span><input type="range" data-c="amb" min="0" max="200" value="125"><i class="val">1,25</i></div>'
       +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
       +       '<div class="lin"><span>Faces internas (tubos)</span><input type="checkbox" data-c="faces" checked></div>'
+      +       '<div class="lin"><span>Trena com encaixe (snap)</span><input type="checkbox" data-c="snap" checked></div>'
       +       '<h5 style="margin-top:10px">Efeitos pesados</h5>'
       +       '<div class="lin"><span>Modelo em alta</span><input type="checkbox" data-c="gq"></div>'
       +       '<div class="lin"><span>Sombra de contato</span><input type="checkbox" data-c="ao"></div>'
@@ -1620,6 +1621,14 @@ class CdeWin {
       this.bimMsgDica(e.target.checked
         ? 'Faces internas visíveis — tubo modelado como casca deixa de sumir pela metade.'
         : 'Só faces externas.');
+    });
+    cfg('snap').addEventListener('change', (e)=>{
+      const B=this.B3; if(!B) return;
+      B.medida.snapOn = e.target.checked;
+      if(!e.target.checked) this.bimSnapEsconder();
+      this.bimMsgDica(e.target.checked
+        ? 'Trena com encaixe: gruda em vértices, arestas e faces.'
+        : 'Trena sem encaixe: mede o ponto exato do clique na superfície.');
     });
     cfg('gq').addEventListener('change', (e)=>{
       const B=this.B3; if(!B) return;
@@ -1997,7 +2006,7 @@ class CdeWin {
         facesDuplas:true, ultFaces:0,                    // tubo-casca não some pela metade
         luzes:{ amb:ambiente, hemi:hemis, sol:principal, fill:preench },
         corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
-        medida: { ativo:false, modo:'eixo', pts:[], objs:[], cotas:[], marcas:[] },
+        medida: { ativo:false, modo:'eixo', snapOn:true, pts:[], objs:[], cotas:[], marcas:[] },
         andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
                   camPos:null, camRot:null, alvo:null, ultUpd:0 },
         niveis: null,   // alturas de piso, achadas sob demanda ao entrar no modo caminhar
@@ -2072,6 +2081,17 @@ class CdeWin {
         dn.arrastou=true; dn.ux=e.clientX; dn.uy=e.clientY;
         this.bimCorteArrastar(dx, dy);
       });
+      // Snap da trena: hover sobre o modelo gruda em vértice/aresta/face.
+      // Throttle p/ não disparar um raycast pesado a cada pixel.
+      let medHoverT=0, medHoverBusy=false;
+      renderer.domElement.addEventListener('pointermove', async (e)=>{
+        const B=this.B3; if(!B || !B.medida.ativo || !B.medida.snapOn) return;
+        const now=performance.now(); if(medHoverBusy || now-medHoverT<40) return;
+        medHoverT=now; medHoverBusy=true;
+        try{ await this.bimMedirHover(e); }catch(_){}
+        medHoverBusy=false;
+      });
+      renderer.domElement.addEventListener('pointerleave', ()=> this.bimSnapEsconder());
       // Reancora o alvo antes/depois dos gestos que dependem da distância.
       // Com folga (200ms) porque cada chamada é um raycast no worker; o
       // pan pede na hora (forçar), senão o primeiro arrasto ainda sairia com
@@ -2652,7 +2672,7 @@ class CdeWin {
     t.querySelector('[data-t=medir]').classList.toggle('on', lig);
     t.querySelector('.bimMedeOpc').classList.toggle('on', lig);
     B.renderer.domElement.style.cursor = lig ? 'crosshair' : '';
-    if(!lig) this.bimLimparMedidas();
+    if(!lig){ this.bimLimparMedidas(); this.bimSnapEsconder(); }
     else this.bimMsgDica('Clique em dois pontos para medir · ↗ cota livre · ⟂ cota ortogonal · 📏 sai e limpa');
   }
   bimMedirModo(modo){
@@ -2670,11 +2690,13 @@ class CdeWin {
   }
   async bimMedirPonto(ev){
     const B=this.B3; if(!B) return;
-    const melhor = await this.bimRaycast(ev);
-    if(!B.vivo) return;
-    if(!melhor || !melhor.point){ this.bimMsgDica('Clique sobre o modelo — não peguei nenhum ponto ali.'); return; }
+    // Usa o ponto GRUDADO (snap) se ligado e achou algo; senão cai no raycast
+    // cru da superfície.
+    let pt=null;
+    if(B.medida.snapOn){ const s=await this.bimSnap(ev); if(!B.vivo) return; if(s&&s.point) pt=s.point.clone(); }
+    if(!pt){ const h=await this.bimRaycast(ev); if(!B.vivo) return; if(h&&h.point) pt=h.point.clone(); }
+    if(!pt){ this.bimMsgDica('Clique sobre o modelo — não peguei nenhum ponto ali.'); return; }
     const M=B.medida, T=B.THREE;
-    const pt=melhor.point.clone();
     M.pts.push(pt);
     // Marcador com RAIO 1: o tamanho real é dado por escala, recalculada a
     // cada quadro em bimEscalarMarcas para ficar constante na TELA. Fixar o
@@ -2720,12 +2742,14 @@ class CdeWin {
   // Mantém os marcadores com o MESMO tamanho aparente em qualquer zoom: o raio
   // no mundo cresce com a distância à câmera, então na tela fica constante.
   bimEscalarMarcas(){
-    const B=this.B3; if(!B||!B.medida.marcas.length) return;
+    const B=this.B3; if(!B) return;
     const h=this.bimWrap.clientHeight||1;
     const k=2*Math.tan((B.camera.fov*Math.PI/180)/2)/h*5;   // ~5 px de raio
-    B.medida.marcas.forEach(m=>{
-      m.scale.setScalar(Math.max(1e-6, B.camera.position.distanceTo(m.position)*k));
-    });
+    const esc=(m)=> m.scale.setScalar(Math.max(1e-6, B.camera.position.distanceTo(m.position)*k));
+    B.medida.marcas.forEach(esc);
+    // marcadores de snap (hover) também mantêm tamanho constante na tela
+    const vis=B.medida.snapVis;
+    if(vis){ [vis[0],vis[1],vis[2]].forEach(m=>{ if(m.visible) esc(m); }); }
   }
   bimLimparMedidas(){
     const B=this.B3; if(!B) return;
@@ -2815,6 +2839,65 @@ class CdeWin {
       }catch(_){ /* modelo ainda carregando: ignora */ }
     }
     return melhor;
+  }
+  // ── Snap da trena (estilo Solibri) ──────────────────────────────────────
+  //  raycastWithSnapping do Fragments: prioriza vértice (POINT=0) > aresta
+  //  (LINE=1, com os dois extremos) > face (FACE=2). Gruda no ponto exato.
+  async bimSnap(ev){
+    const B=this.B3; if(!B) return null;
+    const mouse=new B.THREE.Vector2(ev.clientX, ev.clientY);
+    let melhor=null;
+    for(const x of B.modelos){
+      if(x.visivel===false) continue;
+      try{
+        const rs=await x.model.raycastWithSnapping({ camera:B.camera, mouse, dom:B.renderer.domElement, snappingClasses:[0,1,2] });
+        (rs||[]).forEach(r=>{ if(r && r.point){
+          const melhorQue = !melhor || (r.snappingClass!==melhor.snappingClass
+            ? r.snappingClass<melhor.snappingClass : (r.distance||0)<(melhor.distance||0));
+          if(melhorQue) melhor=r;
+        }});
+      }catch(_){}
+    }
+    return melhor;
+  }
+  bimSnapVis(){
+    const B=this.B3, T=B.THREE;
+    if(B.medida.snapVis) return B.medida.snapVis;
+    const mat=(c)=> new T.MeshBasicMaterial({ color:c, depthTest:false });
+    const mk=(geo,c)=>{ const m=new T.Mesh(geo,mat(c)); m.renderOrder=1000; m.visible=false; B.scene.add(m); return m; };
+    const vis={
+      0: mk(new T.BoxGeometry(1.8,1.8,1.8), 0x22c55e),   // vértice
+      1: mk(new T.OctahedronGeometry(1.2),  0x22d3ee),   // aresta
+      2: mk(new T.SphereGeometry(1,12,12),  0xE8960A),   // face
+      linha: (()=>{ const l=new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(),new T.Vector3()]),
+                      new T.LineBasicMaterial({ color:0x22d3ee, depthTest:false })); l.renderOrder=1000; l.visible=false; B.scene.add(l); return l; })()
+    };
+    B.medida.snapVis=vis; return vis;
+  }
+  bimSnapEsconder(){
+    const B=this.B3; const vis=B&&B.medida&&B.medida.snapVis; if(!vis) return;
+    vis[0].visible=vis[1].visible=vis[2].visible=vis.linha.visible=false;
+    B.medida.snap=null;
+  }
+  async bimMedirHover(ev){
+    const B=this.B3; if(!B||!B.vivo||!B.medida.ativo) return;
+    if(!B.medida.snapOn){ this.bimSnapEsconder(); return; }
+    const s=await this.bimSnap(ev);
+    if(!B.vivo||!B.medida.ativo) return;
+    B.medida.snap=s;
+    const vis=this.bimSnapVis();
+    vis[0].visible=vis[1].visible=vis[2].visible=vis.linha.visible=false;
+    if(!s) return;
+    const cls=s.snappingClass|0;
+    const mk=vis[cls]||vis[2];
+    mk.position.copy(s.point); mk.visible=true;
+    if(cls===1 && s.snappedEdgeP1 && s.snappedEdgeP2){
+      const g=vis.linha.geometry, pos=g.attributes.position;
+      pos.setXYZ(0, s.snappedEdgeP1.x, s.snappedEdgeP1.y, s.snappedEdgeP1.z);
+      pos.setXYZ(1, s.snappedEdgeP2.x, s.snappedEdgeP2.y, s.snappedEdgeP2.z);
+      pos.needsUpdate=true; g.computeBoundingSphere();
+      vis.linha.visible=true;
+    }
   }
   // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
   async bimSelecionarEm(ev){

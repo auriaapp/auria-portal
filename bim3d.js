@@ -114,7 +114,7 @@ export async function criar(cont, opts={}){
     caixa:null, unidade:1, niveis:null, porNivel:null,
     facesDuplas:true, _ultFaces:0,
     corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
-    medida: { ativo:false, modo:'eixo', pts:[], objs:[], cotas:[], marcas:[] },
+    medida: { ativo:false, modo:'eixo', snapOn:true, pts:[], objs:[], cotas:[], marcas:[] },
     andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null,
               teclas:new Set(), camPos:null, camRot:null, alvo:null, ultUpd:0 },
     on: opts.on || {},          // { selecionar, medir, dica, pinos, nivel, modo, podeTeclado }
@@ -803,6 +803,9 @@ export function modoMedir(V, lig){
   else dica(V,'Clique em dois pontos para medir. O cursor gruda em vértices, arestas e faces.');
 }
 export function medirModo(V, modo){ V.medida.modo=modo; }
+// Liga/desliga o snap da trena (grudar em vértice/aresta/face). Desligado, a
+// medição usa o ponto cru do raycast na superfície. Preferência do usuário.
+export function setSnap(V, on){ V.medida.snapOn=!!on; if(!on) snapEsconder(V); }
 export function fmtDist(d){
   if(!isFinite(d)) return '—';
   if(d<1) return (d*100).toFixed(1).replace('.',',')+' cm';
@@ -858,6 +861,7 @@ export function snapEsconder(V){
 // clique usar exatamente o mesmo ponto que o usuário vê.
 export async function medirHover(V, ev){
   if(!V.vivo || !V.medida.ativo) return;
+  if(!V.medida.snapOn){ snapEsconder(V); return; }
   const s=await melhorSnap(V, ev);
   if(!V.vivo || !V.medida.ativo) return;
   V.medida.snap=s;
@@ -880,12 +884,15 @@ export async function medirHover(V, ev){
 const EIXO_IFC={ x:'X', y:'Z', z:'Y' };   // Fragments entrega Y p/ cima; o IFC usa Z
 async function medirPonto(V, ev){
   // Usa o ponto GRUDADO (snap) se houver — é o que o cursor mostrava. Só cai
-  // no raycast puro se o snapping não achou nada (fora do modelo).
+  // no raycast puro se o snapping não achou nada (fora do modelo) ou se o
+  // usuário desligou o snap nas configurações.
   let pt=null;
-  const s=await melhorSnap(V, ev);
-  if(!V.vivo) return;
-  if(s && s.point) pt=s.point.clone();
-  else { const hit=await raycast(V,ev); if(hit&&hit.point) pt=hit.point.clone(); }
+  if(V.medida.snapOn){
+    const s=await melhorSnap(V, ev);
+    if(!V.vivo) return;
+    if(s && s.point) pt=s.point.clone();
+  }
+  if(!pt){ const hit=await raycast(V,ev); if(!V.vivo) return; if(hit&&hit.point) pt=hit.point.clone(); }
   if(!pt){ dica(V,'Clique sobre o modelo.'); return; }
   const T=V.THREE, M=V.medida;
   M.pts.push(pt);
