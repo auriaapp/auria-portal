@@ -167,6 +167,9 @@
   .cdeWin-bim .bimMedeOpc{display:none;align-items:center;gap:2px;padding-left:5px;margin-left:2px;
     border-left:1px solid rgba(255,255,255,.15)}
   .cdeWin-bim .bimMedeOpc.on{display:flex}
+  .cdeWin-bim .bimXrayOpc{display:none;align-items:center;gap:2px;padding-left:5px;margin-left:2px;
+    border-left:1px solid rgba(255,255,255,.15)}
+  .cdeWin-bim .bimXrayOpc.on{display:flex}
   /* Painel de configuração de visualização */
   .cdeWin-bim .bimCfg{position:absolute;top:46px;left:8px;z-index:6;width:238px;display:none;
     background:rgba(15,23,42,.95);border:1px solid rgba(255,255,255,.16);border-radius:9px;
@@ -1532,6 +1535,12 @@ class CdeWin {
       +       '</div>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
+      +       '<button data-t="xray" title="Raio-X: passe o mouse — a peça sob o cursor fica transparente">◎</button>'
+      +       '<div class="bimXrayOpc">'
+      +         '<button data-t="xN1" class="on" title="1 camada — só a peça sob o cursor">1</button>'
+      +         '<button data-t="xN2" title="2 camadas — pega o que está atrás">2</button>'
+      +         '<button data-t="xN3" title="3 camadas — pega duas camadas atrás">3</button>'
+      +       '</div>'
       +       '<button data-t="cfg" title="Configurações de visualização">⚙</button>'
       +       '<div class="bimCorte">'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
@@ -1674,6 +1683,10 @@ class CdeWin {
     tools.querySelector('[data-t=mEixo]') .addEventListener('click', ()=> this.bimMedirModo('eixo'));
     tools.querySelector('[data-t=inv]')  .addEventListener('click',  ()=> this.bimCorteInverter());
     tools.querySelector('[data-t=limpaCorte]').addEventListener('click', ()=> this.bimCorteRemover());
+    tools.querySelector('[data-t=xray]').addEventListener('click', ()=> this.bimXrayToggle());
+    tools.querySelector('[data-t=xN1]') .addEventListener('click', ()=> this.bimXraySetProf(1));
+    tools.querySelector('[data-t=xN2]') .addEventListener('click', ()=> this.bimXraySetProf(2));
+    tools.querySelector('[data-t=xN3]') .addEventListener('click', ()=> this.bimXraySetProf(3));
     w.querySelector('.cdeWin-bim .bpAba').addEventListener('click', (e)=>{
       e.stopPropagation();
       const off = this.bimWrap.classList.toggle('semPainel');
@@ -2092,6 +2105,13 @@ class CdeWin {
         medHoverBusy=false;
       });
       renderer.domElement.addEventListener('pointerleave', ()=> this.bimSnapEsconder());
+      // Botão direito: gesto composto (esconder / restaurar / segurar=raio-X).
+      // contextmenu bloqueado p/ o menu do navegador não aparecer.
+      renderer.domElement.addEventListener('contextmenu', (e)=> e.preventDefault());
+      renderer.domElement.addEventListener('pointerdown',  (e)=> this.bimRmbDown(e));
+      renderer.domElement.addEventListener('pointermove',  (e)=> this.bimRmbMove(e));
+      renderer.domElement.addEventListener('pointerup',    (e)=> this.bimRmbUp(e).catch(()=>{}));
+      renderer.domElement.addEventListener('pointercancel',(e)=> this.bimRmbUp(e).catch(()=>{}));
       // Reancora o alvo antes/depois dos gestos que dependem da distância.
       // Com folga (200ms) porque cada chamada é um raycast no worker; o
       // pan pede na hora (forçar), senão o primeiro arrasto ainda sairia com
@@ -2345,6 +2365,7 @@ class CdeWin {
   }
   async bimModoAndar(lig){
     const B=this.B3; if(!B) return;
+    if(lig && this.xrayOn) this.bimXrayDesligar();
     const W=B.andar;
     this.bimToolsEl.querySelector('[data-t=andar]').classList.toggle('on', lig);
     this.bimWrap.querySelector('.bimAndar').classList.toggle('on', lig);
@@ -2465,6 +2486,7 @@ class CdeWin {
   //  (viewer xeokit) para a sensação de uso ser idêntica.
   bimModoCorte(lig){
     const B=this.B3; if(!B) return;
+    if(lig && this.xrayOn) this.bimXrayDesligar();
     const C=B.corte;
     C.ativo=lig;
     const t=this.bimToolsEl;
@@ -2667,6 +2689,7 @@ class CdeWin {
     // Medir e cortar disputam o mesmo clique esquerdo — ligar um desliga o
     // outro, em vez de deixar os dois responderem ao mesmo gesto.
     if(lig && B.corte.ativo) this.bimModoCorte(false);
+    if(lig && this.xrayOn) this.bimXrayDesligar();
     B.medida.ativo=lig;
     const t=this.bimToolsEl;
     t.querySelector('[data-t=medir]').classList.toggle('on', lig);
@@ -2838,7 +2861,7 @@ class CdeWin {
       if(x.visivel===false) continue;
       try{
         const r = await x.model.raycast({ camera:B.camera, mouse, dom:B.renderer.domElement });
-        if(r && (!melhor || r.distance < melhor.distance)){ r.__nomeModelo = x.nome; melhor = r; }
+        if(r && (!melhor || r.distance < melhor.distance)){ r.__nomeModelo = x.nome; r.__modelo = x; melhor = r; }
       }catch(_){ /* modelo ainda carregando: ignora */ }
     }
     return melhor;
@@ -2902,6 +2925,185 @@ class CdeWin {
       vis.linha.visible=true;
     }
   }
+  // ── Raio-X: peça sob o cursor fica translúcida (com profundidade 1/2/3) ──
+  //  Duplicado do App (bim3d.js). Mesma semântica: raycastAll → opacidade nas
+  //  N peças mais próximas ao longo do raio. Diff com o quadro anterior p/ não
+  //  refazer trabalho.
+  async bimRaycastAll(ev){
+    const B=this.B3; if(!B) return [];
+    const mouse=new B.THREE.Vector2(ev.clientX, ev.clientY);
+    const todos=[];
+    for(const x of B.modelos){
+      if(x.visivel===false) continue;
+      try{
+        const rs=await x.model.raycastAll({ camera:B.camera, mouse, dom:B.renderer.domElement });
+        (rs||[]).forEach(r=>{ if(r){ r.__modelo=x; todos.push(r); } });
+      }catch(_){}
+    }
+    todos.sort((a,b)=> (a.distance||0)-(b.distance||0));
+    return todos;
+  }
+  async bimRaiosXHover(hitOuHits, prof){
+    const B=this.B3; if(!B) return;
+    const OPAC=0.12;
+    let alvos=[]; const visto=new Set();
+    const consumir=(h)=>{
+      if(!h || !h.__modelo || h.localId===undefined || h.localId===null) return;
+      const k=(h.__modelo.nome||'?')+':'+h.localId;
+      if(visto.has(k)) return; visto.add(k);
+      alvos.push({ modelo:h.__modelo, id:h.localId, k });
+    };
+    if(Array.isArray(hitOuHits)){ const N=Math.max(1, prof|0||1); for(const h of hitOuHits){ consumir(h); if(alvos.length>=N) break; } }
+    else if(hitOuHits) consumir(hitOuHits);
+    const prev=B._xrayUlt||[];
+    const alvosSet=new Set(alvos.map(a=>a.k)), prevSet=new Set(prev.map(a=>a.k));
+    if(alvos.length===prev.length && prev.every(a=>alvosSet.has(a.k))) return;
+    const sairPor=new Map();
+    prev.forEach(a=>{ if(!alvosSet.has(a.k)){ const arr=sairPor.get(a.modelo)||[]; arr.push(a.id); sairPor.set(a.modelo,arr); }});
+    for(const [m,ids] of sairPor){ try{ await m.model.resetOpacity(ids); }catch(_){} }
+    const entrarPor=new Map();
+    alvos.forEach(a=>{ if(!prevSet.has(a.k)){ const arr=entrarPor.get(a.modelo)||[]; arr.push(a.id); entrarPor.set(a.modelo,arr); }});
+    for(const [m,ids] of entrarPor){ try{ await m.model.setOpacity(ids, OPAC); }catch(_){} }
+    B._xrayUlt=alvos;
+    try{ await B.fragments.update(true); }catch(_){}
+  }
+  async bimRaiosXLimpa(){
+    const B=this.B3; if(!B) return;
+    B._xrayUlt=null;
+    for(const x of B.modelos){ try{ await x.model.resetOpacity(undefined); }catch(_){} }
+    try{ await B.fragments.update(true); }catch(_){}
+  }
+  async bimEsconderPeca(hit){
+    const B=this.B3; if(!B||!hit||!hit.__modelo||hit.localId==null) return;
+    try{
+      await hit.__modelo.model.setVisible([hit.localId], false);
+      if(!B._escondidos) B._escondidos=new Map();
+      const set=B._escondidos.get(hit.__modelo)||new Set(); set.add(hit.localId);
+      B._escondidos.set(hit.__modelo, set);
+      await B.fragments.update(true);
+    }catch(_){}
+  }
+  async bimMostrarTodos(){
+    const B=this.B3; if(!B||!B._escondidos||!B._escondidos.size) return;
+    for(const [m,ids] of B._escondidos){ if(!ids.size) continue; try{ await m.model.setVisible([...ids], true); }catch(_){} }
+    B._escondidos=new Map();
+    try{ await B.fragments.update(true); }catch(_){}
+  }
+  bimXraySync(){
+    const on=!!this.xrayOn, prof=this.xrayProf||1;
+    const b=this.bimToolsEl && this.bimToolsEl.querySelector('[data-t=xray]');
+    if(b){ b.textContent='◎'+(on?({1:'¹',2:'²',3:'³'}[prof]||''):''); b.classList.toggle('on', on); }
+    const opc=this.bimToolsEl && this.bimToolsEl.querySelector('.bimXrayOpc');
+    if(opc) opc.classList.toggle('on', on);
+    ['xN1','xN2','xN3'].forEach((t,i)=>{ const el=this.bimToolsEl.querySelector('[data-t='+t+']'); if(el) el.classList.toggle('on', prof===i+1); });
+  }
+  async bimXrayToggle(){
+    const B=this.B3; if(!B) return;
+    if(this.xrayOn){ await this.bimXrayDesligar(); return; }
+    // incompatível com medir/corte (disputam mousemove/clique)
+    if(B.medida.ativo) this.bimModoMedir(false);
+    if(B.corte.ativo)  this.bimModoCorte(false);
+    this.xrayOn=true;
+    this._xrayMove = this._xrayMove || ((e)=> this.bimXrayMove(e));
+    this._xrayReset= this._xrayReset|| (()=> this.bimXrayReset());
+    B.renderer.domElement.addEventListener('mousemove', this._xrayMove);
+    B.renderer.domElement.addEventListener('mouseleave', this._xrayReset);
+    this.bimXraySync();
+    this.bimMsgDica('Raio-X ligado — profundidade '+(this.xrayProf||1)+'. Passe o mouse na peça.');
+  }
+  async bimXrayDesligar(){
+    const B=this.B3;
+    this.xrayOn=false;
+    if(B){
+      if(this._xrayMove)  B.renderer.domElement.removeEventListener('mousemove', this._xrayMove);
+      if(this._xrayReset) B.renderer.domElement.removeEventListener('mouseleave', this._xrayReset);
+      await this.bimRaiosXLimpa();
+    }
+    this.bimXraySync();
+    this.bimMsgDica('Arraste para girar · roda para zoom · clique da roda para deslocar');
+  }
+  async bimXraySetProf(n){
+    this.xrayProf=Math.max(1, Math.min(3, n|0));
+    this.bimXraySync();
+    if(this.xrayOn){ try{ await this.bimRaiosXHover(null); }catch(_){} this.bimMsgDica('Raio-X profundidade '+this.xrayProf+'.'); }
+  }
+  async bimXrayMove(e){
+    if(!this.xrayOn || this._xrayBusy) return;
+    const now=performance.now(); if(now-(this._xrayT||0)<40) return;
+    this._xrayT=now; this._xrayBusy=true;
+    try{ const hits=await this.bimRaycastAll(e); await this.bimRaiosXHover(hits, this.xrayProf||1); }catch(_){}
+    this._xrayBusy=false;
+  }
+  async bimXrayReset(){ if(this.xrayOn){ try{ await this.bimRaiosXHover(null); }catch(_){} } }
+  // ── Botão direito: gesto composto (igual ao App) ────────────────────────
+  //  • clique rápido sem mover → esconde a peça sob o cursor
+  //  • dois cliques rápidos    → restaura todos os escondidos
+  //  • segurar / mover         → raio-X TEMPORÁRIO enquanto pressionado
+  //  Ignora o MODO CORTE (lá o botão direito gira a câmera).
+  bimRmbDown(e){
+    const B=this.B3; if(e.button!==2 || !B) return;
+    if(B.corte.ativo || B.andar.ativo) return;   // corte usa direito p/ girar; andar tem gesto próprio
+    this._rmb = this._rmb || {};
+    this._rmb.pressed=true; this._rmb.forced=false; this._rmb.x0=e.clientX; this._rmb.y0=e.clientY;
+    if(this._rmb.timer) clearTimeout(this._rmb.timer);
+    this._rmb.timer=setTimeout(()=> this._rmbAtivaXray(this._rmb.x0, this._rmb.y0), 200);
+  }
+  bimRmbMove(e){
+    const r=this._rmb; if(!r || !r.pressed || r.forced) return;
+    if(Math.abs(e.clientX-r.x0)+Math.abs(e.clientY-r.y0) > 5){
+      if(r.timer){ clearTimeout(r.timer); r.timer=null; }
+      this._rmbAtivaXray(e.clientX, e.clientY);
+    }
+  }
+  async bimRmbUp(e){
+    if(e.button!==2) return;
+    const r=this._rmb; if(!r) return;
+    const wasPressed=r.pressed; r.pressed=false;
+    if(r.timer){ clearTimeout(r.timer); r.timer=null; }
+    if(!wasPressed) return;
+    if(r.forced){ await this._rmbSoltaXray(); return; }
+    if(this._rcTimer){
+      clearTimeout(this._rcTimer); this._rcTimer=null;
+      try{ await this.bimMostrarTodos(); }catch(_){}
+      this.bimMsgDica('Todos os elementos escondidos voltaram.');
+      return;
+    }
+    const cx=e.clientX, cy=e.clientY;
+    this._rcTimer=setTimeout(async ()=>{
+      this._rcTimer=null;
+      try{
+        const hit=await this.bimRaycast({ clientX:cx, clientY:cy });
+        if(!hit) return;
+        await this.bimEsconderPeca(hit);
+        this.bimMsgDica('Elemento escondido. Duplo clique direito p/ mostrar tudo.');
+      }catch(_){}
+    }, 350);
+  }
+  async _rmbAtivaXray(cx, cy){
+    const B=this.B3; if(!B) return;
+    this._rmb.forced=true; this._rmb.prevXrayOn=this.xrayOn;
+    if(!this.xrayOn){
+      this.xrayOn=true;
+      this._xrayMove = this._xrayMove || ((e)=> this.bimXrayMove(e));
+      this._xrayReset= this._xrayReset|| (()=> this.bimXrayReset());
+      B.renderer.domElement.addEventListener('mousemove', this._xrayMove);
+      B.renderer.domElement.addEventListener('mouseleave', this._xrayReset);
+      this.bimXraySync();
+    }
+    try{ const hits=await this.bimRaycastAll({ clientX:cx, clientY:cy }); await this.bimRaiosXHover(hits, this.xrayProf||1); }catch(_){}
+  }
+  async _rmbSoltaXray(){
+    const B=this.B3; this._rmb.forced=false;
+    if(!this._rmb.prevXrayOn){
+      this.xrayOn=false;
+      if(B){
+        if(this._xrayMove)  B.renderer.domElement.removeEventListener('mousemove', this._xrayMove);
+        if(this._xrayReset) B.renderer.domElement.removeEventListener('mouseleave', this._xrayReset);
+        try{ await this.bimRaiosXLimpa(); }catch(_){}
+      }
+      this.bimXraySync();
+    } else { try{ await this.bimRaiosXHover(null); }catch(_){} }
+  }
   // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
   async bimSelecionarEm(ev){
     const B=this.B3; if(!B) return;
@@ -2953,6 +3155,11 @@ class CdeWin {
       this.bimToolsEl.querySelectorAll('button.on').forEach(b=>b.classList.remove('on'));
       const c=this.bimToolsEl.querySelector('.bimCorte'); if(c) c.classList.remove('on');
     }
+    // Raio-X / gesto do botão direito: zera estado da instância (senão a
+    // próxima abertura herdaria xrayOn=true apontando pra nada).
+    this.xrayOn=false;
+    if(this._rmb){ if(this._rmb.timer) clearTimeout(this._rmb.timer); this._rmb=null; }
+    if(this._rcTimer){ clearTimeout(this._rcTimer); this._rcTimer=null; }
     const B=this.B3; if(!B) return;
     this.B3=null; B.vivo=false;
     if(B.raf) cancelAnimationFrame(B.raf);
