@@ -2922,7 +2922,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15t').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15u').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3392,17 +3392,39 @@ function f3dTool(qual, forcar){
   // mas COMPATÍVEL com andar — os dois podem ficar ativos ao mesmo tempo.
   // No modo andar+raio-X, setas ↑↓ mudam de pavimento (ver f3dXrayKey).
   if(lig && F3D_XRAY && qual!=='andar') f3dXrayDesligar();
-  if(F3D_FERR==='medir' && qual!=='medir') B3.modoMedir(F3D,false);
+  if(F3D_FERR==='medir' && qual!=='medir'){ B3.modoMedir(F3D,false); f3dMedirHoverLigar(false); }
   if(F3D_FERR==='corte' && qual!=='corte') B3.modoCorte(F3D,false);
   if(F3D_FERR==='andar' && qual!=='andar') B3.modoAndar(F3D,false).catch(()=>{});
   F3D_FERR = lig ? qual : '';
-  if(qual==='medir') B3.modoMedir(F3D, lig);
+  if(qual==='medir'){ B3.modoMedir(F3D, lig); f3dMedirHoverLigar(lig); }
   if(qual==='corte') B3.modoCorte(F3D, lig);
   if(qual==='andar'){
     B3.modoAndar(F3D, lig).catch(e=>{ console.warn('caminhar:', e); f3dDica('Não consegui achar os pavimentos deste modelo.'); });
   }
   f3dToolSync();
   if(!lig) f3dDica(DICA_NAV);
+}
+// Snap da trena: enquanto medir está ligado, o mouse sobre o modelo gruda em
+// vértices/arestas/faces (raycastWithSnapping do Fragments) e mostra o
+// marcador. Throttle p/ não fazer um raycast pesado a cada pixel.
+let _medHoverBusy=false, _medHoverTimer=0;
+async function f3dMedirMove(e){
+  if(!F3D || !B3) return;
+  const now=performance.now();
+  if(_medHoverBusy || now-_medHoverTimer<40) return;
+  _medHoverTimer=now; _medHoverBusy=true;
+  try{ await B3.medirHover(F3D, e); }catch(_){}
+  _medHoverBusy=false;
+}
+function f3dMedirSair(){ try{ if(B3&&F3D) B3.snapEsconder(F3D); }catch(_){} }
+function f3dMedirHoverLigar(lig){
+  const cv=$('f3dCanvas'); if(!cv) return;
+  cv.removeEventListener('mousemove', f3dMedirMove);
+  cv.removeEventListener('mouseleave', f3dMedirSair);
+  if(lig){
+    cv.addEventListener('mousemove', f3dMedirMove);
+    cv.addEventListener('mouseleave', f3dMedirSair);
+  } else f3dMedirSair();
 }
 function f3dToolSync(){
   const on=(id,v)=>{ const b=$(id); if(b) b.classList.toggle('on', !!v); };
@@ -3423,6 +3445,7 @@ function f3dModoLimpar(){
   f3dXraySync();
   // Timer pendente de right-click não faz sentido depois do descarte
   if(_rcTimer){ clearTimeout(_rcTimer); _rcTimer=null; }
+  f3dMedirHoverLigar(false);
   f3dToolSync(); f3dApontarSync();
 }
 function f3dMedirModo(modo){

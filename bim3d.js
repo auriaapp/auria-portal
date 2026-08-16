@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15p  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15u  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -799,8 +799,8 @@ export function modoMedir(V, lig){
   if(lig && V.corte.ativo) modoCorte(V,false);
   V.medida.ativo=lig;
   V.canvas.style.cursor = lig ? 'crosshair' : '';
-  if(!lig) limparMedidas(V);
-  else dica(V,'Clique em dois pontos para medir.');
+  if(!lig){ limparMedidas(V); snapEsconder(V); }
+  else dica(V,'Clique em dois pontos para medir. O cursor gruda em vértices, arestas e faces.');
 }
 export function medirModo(V, modo){ V.medida.modo=modo; }
 export function fmtDist(d){
@@ -808,12 +808,86 @@ export function fmtDist(d){
   if(d<1) return (d*100).toFixed(1).replace('.',',')+' cm';
   return d.toFixed(d<10?3:2).replace('.',',')+' m';
 }
+
+// ── Snap da trena (estilo Solibri) ───────────────────────────────────────────
+//  A lib Fragments tem raycastWithSnapping: além do ponto da face, devolve o
+//  vértice mais próximo (POINT=0), a aresta (LINE=1, com os dois extremos) ou
+//  a face (FACE=2). Priorizamos POINT > LINE > FACE — é o que o Solibri faz:
+//  perto de um canto, gruda no canto; senão na aresta; senão na superfície.
+const SNAP_COR = { 0:0x22c55e, 1:0x22d3ee, 2:LARANJA };   // vértice / aresta / face
+function snapMelhorQue(r, cur){
+  if(r.snappingClass!==cur.snappingClass) return r.snappingClass < cur.snappingClass;
+  return (r.distance||0) < (cur.distance||0);
+}
+async function melhorSnap(V, ev){
+  const mouse=new V.THREE.Vector2(ev.clientX, ev.clientY);
+  let melhor=null;
+  for(const x of V.modelos){
+    if(x.visivel===false) continue;
+    try{
+      const rs=await x.model.raycastWithSnapping({ camera:V.camera, mouse, dom:V.canvas, snappingClasses:[0,1,2] });
+      (rs||[]).forEach(r=>{ if(r && r.point){ r.__modelo=x; if(!melhor || snapMelhorQue(r,melhor)) melhor=r; } });
+    }catch(_){}
+  }
+  return melhor;
+}
+// Garante os 3 marcadores de hover (um por tipo) + a linha de realce da aresta.
+function snapVis(V){
+  const T=V.THREE, M=V.medida;
+  if(M.snapVis) return M.snapVis;
+  const mat=(c)=> new T.MeshBasicMaterial({ color:c, depthTest:false });
+  const mk=(geo,c)=>{ const m=new T.Mesh(geo,mat(c)); m.renderOrder=1000; m.visible=false; V.scene.add(m); return m; };
+  const vis={
+    // vértice: cubinho; aresta: losango (octaedro); face: esfera
+    0: mk(new T.BoxGeometry(1.8,1.8,1.8), SNAP_COR[0]),
+    1: mk(new T.OctahedronGeometry(1.2),  SNAP_COR[1]),
+    2: mk(new T.SphereGeometry(1,12,12),  SNAP_COR[2]),
+    linha: (()=>{ const l=new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(),new T.Vector3()]),
+                    new T.LineBasicMaterial({ color:SNAP_COR[1], depthTest:false, linewidth:2 }));
+                  l.renderOrder=1000; l.visible=false; V.scene.add(l); return l; })()
+  };
+  M.snapVis=vis; return vis;
+}
+export function snapEsconder(V){
+  const vis=V&&V.medida&&V.medida.snapVis; if(!vis) return;
+  vis[0].visible=vis[1].visible=vis[2].visible=vis.linha.visible=false;
+  V.medida.snap=null;
+}
+// Hover: chamada a cada movimento do mouse com a trena ligada. Faz o snapping
+// e posiciona os marcadores. Guarda o ponto grudado em V.medida.snap para o
+// clique usar exatamente o mesmo ponto que o usuário vê.
+export async function medirHover(V, ev){
+  if(!V.vivo || !V.medida.ativo) return;
+  const s=await melhorSnap(V, ev);
+  if(!V.vivo || !V.medida.ativo) return;
+  V.medida.snap=s;
+  const vis=snapVis(V);
+  vis[0].visible=vis[1].visible=vis[2].visible=vis.linha.visible=false;
+  if(!s){ return; }
+  const cls=s.snappingClass|0;
+  const mk=vis[cls] || vis[2];
+  mk.position.copy(s.point); mk.visible=true;
+  // aresta: realça o segmento inteiro entre os dois extremos
+  if(cls===1 && s.snappedEdgeP1 && s.snappedEdgeP2){
+    const g=vis.linha.geometry;
+    const pos=g.attributes.position;
+    pos.setXYZ(0, s.snappedEdgeP1.x, s.snappedEdgeP1.y, s.snappedEdgeP1.z);
+    pos.setXYZ(1, s.snappedEdgeP2.x, s.snappedEdgeP2.y, s.snappedEdgeP2.z);
+    pos.needsUpdate=true; g.computeBoundingSphere();
+    vis.linha.visible=true;
+  }
+}
 const EIXO_IFC={ x:'X', y:'Z', z:'Y' };   // Fragments entrega Y p/ cima; o IFC usa Z
 async function medirPonto(V, ev){
-  const hit=await raycast(V,ev);
+  // Usa o ponto GRUDADO (snap) se houver — é o que o cursor mostrava. Só cai
+  // no raycast puro se o snapping não achou nada (fora do modelo).
+  let pt=null;
+  const s=await melhorSnap(V, ev);
   if(!V.vivo) return;
-  if(!hit||!hit.point){ dica(V,'Clique sobre o modelo.'); return; }
-  const T=V.THREE, M=V.medida, pt=hit.point.clone();
+  if(s && s.point) pt=s.point.clone();
+  else { const hit=await raycast(V,ev); if(hit&&hit.point) pt=hit.point.clone(); }
+  if(!pt){ dica(V,'Clique sobre o modelo.'); return; }
+  const T=V.THREE, M=V.medida;
   M.pts.push(pt);
   // Raio 1 + escala por quadro: o marcador fica com tamanho constante NA TELA.
   const esf=new T.Mesh(new T.SphereGeometry(1,12,12), new T.MeshBasicMaterial({color:LARANJA, depthTest:false}));
@@ -848,10 +922,14 @@ export function limparMedidas(V){
   M.objs=[]; M.cotas=[]; M.pts=[]; M.marcas=[];
 }
 function escalarMarcas(V){
-  const M=V.medida; if(!M.marcas.length) return;
+  const M=V.medida;
   const h=V.cont.clientHeight||1;
   const k=2*Math.tan((V.camera.fov*Math.PI/180)/2)/h*5;   // ~5px de raio
-  M.marcas.forEach(m=> m.scale.setScalar(Math.max(1e-6, V.camera.position.distanceTo(m.position)*k)));
+  const esc=(m)=> m.scale.setScalar(Math.max(1e-6, V.camera.position.distanceTo(m.position)*k));
+  M.marcas.forEach(esc);
+  // marcadores de snap (hover) também mantêm tamanho constante na tela
+  const vis=M.snapVis;
+  if(vis){ [vis[0],vis[1],vis[2]].forEach(m=>{ if(m.visible) esc(m); }); }
 }
 function atualizarCotas(V){
   const M=V.medida; if(!M.cotas.length) return;
