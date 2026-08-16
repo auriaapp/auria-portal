@@ -523,7 +523,12 @@
             <button class="bim-tb ico" onclick="f3dCorteRemover()" title="Remover o corte">🗑</button>
           </span>
           <button id="f3dBtnAndar" class="bim-tb ico f3donly" onclick="f3dTool('andar')" title="Caminhar pelo modelo, a 1,70 m do piso">🚶</button>
-          <button id="f3dBtnXray" class="bim-tb ico f3donly" onclick="f3dXrayToggle()" title="Raio-X: passe o mouse — o círculo de 1 m fica transparente">◎</button>
+          <button id="f3dBtnXray" class="bim-tb ico f3donly" onclick="f3dXrayToggle()" title="Raio-X: passe o mouse — a peça sob o cursor fica transparente">◎</button>
+          <span id="f3dXrayOpc" class="f3dsub">
+            <button id="f3dXrayN1" class="bim-tb ico on" onclick="f3dXraySetProf(1)" title="1 camada — só a peça sob o cursor">1</button>
+            <button id="f3dXrayN2" class="bim-tb ico"    onclick="f3dXraySetProf(2)" title="2 camadas — pega o que está atrás">2</button>
+            <button id="f3dXrayN3" class="bim-tb ico"    onclick="f3dXraySetProf(3)" title="3 camadas — pega duas camadas atrás">3</button>
+          </span>
           <div class="f3donly" style="position:relative">
             <button id="f3dBtnCfg" class="bim-tb ico" onclick="f3dCfgToggle()" title="Configurações de visualização">⚙</button>
             <div id="f3dCfgPop" class="f3d-cfg">
@@ -2889,7 +2894,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15h').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15i').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3243,9 +3248,11 @@ function f3dToolSync(){
 function f3dModoLimpar(){
   F3D_FERR=''; F3D_APONTAR=false;
   // Raio-X também é modo interativo — reseta ao descartar visualizador
-  // (senão o botão fica "on" apontando pra nada no próximo modelo).
-  F3D_XRAY_DEPTH=0;
-  const bx=$('f3dBtnXray'); if(bx){ bx.textContent='◎'; bx.classList.remove('on'); }
+  // (senão o botão fica "on" apontando pra nada no próximo modelo). A
+  // PROFUNDIDADE escolhida (F3D_XRAY_PROF) fica preservada — é preferência
+  // do usuário, próximo modelo já entra com ela quando ligar de novo.
+  F3D_XRAY_ON=false;
+  f3dXraySync();
   // Timer pendente de right-click não faz sentido depois do descarte
   if(_rcTimer){ clearTimeout(_rcTimer); _rcTimer=null; }
   f3dToolSync(); f3dApontarSync();
@@ -3265,72 +3272,86 @@ function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
 
 // Timer de throttle do mousemove do raio-X (compartilhado entre chamadas).
 let _xrayTimer=0;
-// Raio-X com PROFUNDIDADE. O botão cicla off → 1 camada → 2 → 3 → off.
-// - 1 camada: transparenta só a peça sob o cursor (parede vira janela).
-// - 2 camadas: também transparenta o que vem imediatamente atrás (parede
-//   + tubo dentro da parede).
-// - 3 camadas: três peças em profundidade. Suficiente para modelos comuns.
-// Usa raycastAll (uma chamada ao worker) — o custo praticamente não muda
-// entre 1 e 3 camadas.
-let F3D_XRAY_DEPTH = 0;   // 0=off, 1..3=camadas
-// F3D_XRAY (bandeira antiga booleana) fica como derivada para o resto do
-// código que checa "raio-X está ligado?" — evita mudar em muitos lugares.
-Object.defineProperty(window, 'F3D_XRAY', { get: ()=> F3D_XRAY_DEPTH>0 });
+// Raio-X: botão principal LIGA/DESLIGA. Submenu (1/2/3) muda a profundidade
+// no ar e é persistido — na próxima vez que ligar o raio-X, entra com a
+// profundidade escolhida. Padrão de UX igual ao medir (livre/eixo) e ao
+// corte (inverter/hachura/limpar): o botão principal é o toggle, o submenu
+// só aparece quando o modo está ativo.
+let F3D_XRAY_ON   = false;                                // ativo?
+let F3D_XRAY_PROF = 1;                                    // 1..3 (persistido em f3dCfg.xrayProf)
+// F3D_XRAY (bandeira booleana) — derivada, para o resto do código que checa
+// "raio-X está ligado?" (ex: outros toggles desligam-no).
+Object.defineProperty(window, 'F3D_XRAY', { get: ()=> F3D_XRAY_ON });
 
 async function f3dXrayToggle(){
   if(!F3D || !B3) return;
-  const nova = (F3D_XRAY_DEPTH + 1) % 4;
-  if(nova === 0){ await f3dXrayDesligar(); return; }
-  // Se estava desligado (0 → 1), instala handlers e desliga modos conflitantes.
-  if(F3D_XRAY_DEPTH === 0){
-    if(F3D_FERR)    f3dTool(F3D_FERR, false);
-    if(F3D_APONTAR) f3dApontarToggle(false);
-    const cv=$('f3dCanvas');
-    cv.addEventListener('mousemove', f3dXrayMove);
-    cv.addEventListener('mouseleave', f3dXrayReset);
-  }
-  F3D_XRAY_DEPTH = nova;
-  const b=$('f3dBtnXray');
-  if(b){
-    // ¹²³ como badge no ícone. Se a fonte de algum navegador não renderizar
-    // bem, dá pra trocar por <sup>1</sup>, etc. Testar em produção.
-    const sup = {1:'¹', 2:'²', 3:'³'}[nova] || '';
-    b.textContent = '◎' + sup;
-    b.classList.add('on');
-    b.title = 'Raio-X ('+nova+' camada'+(nova>1?'s':'')+') — clique p/ aumentar, ou de novo p/ desligar';
-  }
-  const dica = nova===1 ? 'Raio-X ligado — passa o mouse na peça que quer atravessar.'
-             : nova===2 ? 'Raio-X 2 camadas — pega o que está imediatamente atrás.'
-                        : 'Raio-X 3 camadas — pega duas camadas atrás.';
-  f3dDica(dica);
+  if(F3D_XRAY_ON){ await f3dXrayDesligar(); return; }
+  if(F3D_FERR)    f3dTool(F3D_FERR, false);
+  if(F3D_APONTAR) f3dApontarToggle(false);
+  const cv=$('f3dCanvas');
+  cv.addEventListener('mousemove', f3dXrayMove);
+  cv.addEventListener('mouseleave', f3dXrayReset);
+  F3D_XRAY_ON = true;
+  f3dXraySync();
+  f3dDica('Raio-X ligado — profundidade '+F3D_XRAY_PROF+'. Passe o mouse na peça.');
 }
 async function f3dXrayDesligar(){
-  F3D_XRAY_DEPTH = 0;
+  F3D_XRAY_ON = false;
   const cv=$('f3dCanvas');
   if(cv){
     cv.removeEventListener('mousemove', f3dXrayMove);
     cv.removeEventListener('mouseleave', f3dXrayReset);
   }
   if(B3 && F3D) await B3.raiosXLimpa(F3D);
-  const b=$('f3dBtnXray');
-  if(b){ b.textContent='◎'; b.classList.remove('on'); b.title='Raio-X: passe o mouse — a peça sob o cursor fica transparente'; }
+  f3dXraySync();
   f3dDica(DICA_NAV);
+}
+// Muda profundidade (via submenu). Se o raio-X já está ligado, aplica
+// agora — o próximo movimento do mouse pega mais/menos camadas. Persiste
+// em localStorage para próxima vez.
+async function f3dXraySetProf(n){
+  F3D_XRAY_PROF = Math.max(1, Math.min(3, n|0));
+  f3dCfgSalvar({ xrayProf: F3D_XRAY_PROF });
+  f3dXraySync();
+  if(F3D_XRAY_ON){
+    // Não vai esperar mousemove — refaz com o hit atual (se tiver algum),
+    // ou libera até o próximo hover.
+    if(B3 && F3D){ try{ await B3.raiosXHover(F3D, null); }catch(_){} }
+    f3dDica('Raio-X profundidade '+F3D_XRAY_PROF+'.');
+  }
+}
+// Atualiza a aparência: badge no botão principal (com o número quando
+// ligado), submenu visível/oculto, sub-botão ativo destacado.
+function f3dXraySync(){
+  const b=$('f3dBtnXray');
+  if(b){
+    const sup = F3D_XRAY_ON ? ({1:'¹',2:'²',3:'³'}[F3D_XRAY_PROF]||'') : '';
+    b.textContent = '◎' + sup;
+    b.classList.toggle('on', F3D_XRAY_ON);
+    b.title = F3D_XRAY_ON
+      ? 'Raio-X ('+F3D_XRAY_PROF+' camada'+(F3D_XRAY_PROF>1?'s':'')+') — clique para desligar'
+      : 'Raio-X: passe o mouse — a peça sob o cursor fica transparente';
+  }
+  const opc=$('f3dXrayOpc'); if(opc) opc.classList.toggle('on', F3D_XRAY_ON);
+  ['f3dXrayN1','f3dXrayN2','f3dXrayN3'].forEach((id,i)=>{
+    const el=$(id); if(el) el.classList.toggle('on', F3D_XRAY_PROF===(i+1));
+  });
 }
 // mousemove throttled a ~25Hz + guarda de reentrância se o raycast demorar.
 let _xrayBusy=false;
 async function f3dXrayMove(e){
-  if(!F3D_XRAY_DEPTH || !F3D || !B3 || _xrayBusy) return;
+  if(!F3D_XRAY_ON || !F3D || !B3 || _xrayBusy) return;
   const now = performance.now();
   if(now - _xrayTimer < 40) return;
   _xrayTimer = now; _xrayBusy = true;
   try{
     const hits = await B3.raycastAll(F3D, e);
-    await B3.raiosXHover(F3D, hits, F3D_XRAY_DEPTH);
+    await B3.raiosXHover(F3D, hits, F3D_XRAY_PROF);
   }catch(_){}
   finally{ _xrayBusy = false; }
 }
 async function f3dXrayReset(){
-  if(!F3D_XRAY_DEPTH || !F3D || !B3) return;
+  if(!F3D_XRAY_ON || !F3D || !B3) return;
   try{ await B3.raiosXHover(F3D, null); }catch(_){}
 }
 
@@ -3382,7 +3403,8 @@ function f3dCfgToggle(){
 //  os valores. Padrão vem dos números do bim3d.js:criar().
 const F3D_CFG_PAD = { fundo:'escuro', grade:false,
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
-  ao:false, aoInt:6, aoRaio:50, aoAm:16 };
+  ao:false, aoInt:6, aoRaio:50, aoAm:16,
+  xrayProf:1 };   // profundidade padrão do raio-X quando ligar
 function f3dCfgLer(){
   try{
     const raw = localStorage.getItem('f3dCfg');
@@ -3474,6 +3496,10 @@ async function f3dCfgAplicar(c){
   upd('expo',  c.expo);   upd('amb',   c.amb);   upd('sol',   c.sol);
   upd('aoInt', c.aoInt, true); upd('aoRaio', c.aoRaio, true); upd('aoAm', c.aoAm, true);
   const sub=$('f3dCfgSaoSub'); if(sub) sub.classList.toggle('off', !c.ao);
+  // Restaura preferência de profundidade do raio-X. NÃO liga sozinho — só
+  // sincroniza qual botão do submenu está marcado como o preferido.
+  F3D_XRAY_PROF = Math.max(1, Math.min(3, c.xrayProf|0 || 1));
+  f3dXraySync();
   // Sombra é a mais pesada — só liga depois de tudo aplicado (baixa lib)
   if(c.ao){
     try{
