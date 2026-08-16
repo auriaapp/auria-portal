@@ -644,7 +644,9 @@
             </div>
           </div>
           <div id="bimProps" class="bim-props">
-            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🔍 Propriedades IFC</b><button class="bim-x" onclick="bimPropsToggle()" title="Fechar">✕</button></div>
+            <!-- Cabeçalho SEM o botão ✕: a aba lateral (◂/▸) fecha o painel,
+                 então um segundo botão de fechar era redundância. -->
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🔍 Propriedades IFC</b></div>
             <div id="bimPropsBody" class="bp-body"><div class="bp-empty">Clique com o botão esquerdo num elemento do modelo para ver suas propriedades.</div></div>
           </div>
           <!-- Aba fixa (padrão CDE): sempre visível no canto superior direito
@@ -2900,7 +2902,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15j').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15k').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3113,6 +3115,21 @@ let F3D_MODO=false, F3D_LISTA=[], F3D_SEL=new Set(), F3D_NIVSEL=new Set();
 async function f3dModo(lig, preSel){
   F3D_MODO=!!lig;
   document.body.classList.toggle('soBim', F3D_MODO);
+  // Sidebar direita (agenda/kanban/BI…) recolhe automaticamente no modo
+  // Só BIM — 3D precisa da tela toda para respirar. Ao sair, restaura o
+  // estado que o usuário tinha (guardado em _sideRightAntes).
+  const sr = $('sideRight');
+  if(F3D_MODO){
+    if(sr && !('_sideRightAntes' in window)){
+      window._sideRightAntes = sr.classList.contains('collapsed');
+    }
+    if(sr) sr.classList.add('collapsed');
+  } else {
+    if(sr && '_sideRightAntes' in window){
+      sr.classList.toggle('collapsed', !!window._sideRightAntes);
+      delete window._sideRightAntes;
+    }
+  }
   // Restaura a preferência de barra recolhida entre aberturas na mesma
   // sessão; ao SAIR do modo Só BIM, garante que a barra volta ao normal.
   if(F3D_MODO){
@@ -3186,7 +3203,15 @@ async function f3dAbrirSelecionados(){
   // Right-click hide/unhide fica sempre disponível — sem modo pra ligar.
   // O handler é agregado ao canvas atual (o clone limpo trocado no
   // f3dDescartar leva o listener embora quando trocar de modelo).
-  cv.addEventListener('contextmenu', f3dContextMenu);
+  // Right-click do 3D: gesto composto (ver f3dRmbDown/Move/Up).
+  // - clique rápido esconde a peça
+  // - dois cliques rápidos restauram todos escondidos
+  // - segurar aciona raio-X TEMPORÁRIO (solta = desativa)
+  cv.addEventListener('contextmenu', e=> e.preventDefault());
+  cv.addEventListener('pointerdown',  f3dRmbDown);
+  cv.addEventListener('pointermove',  f3dRmbMove);
+  cv.addEventListener('pointerup',    f3dRmbUp);
+  cv.addEventListener('pointercancel',f3dRmbUp);
   // Pavimentos NÃO são calculados aqui: só quando alguém abre a caixa "Pav.".
   // Rodar isso na abertura era o que travava ao federar.
   F3D_PAVPRONTO=false;
@@ -3394,23 +3419,57 @@ async function f3dXrayReset(){
 //
 //  Não interfere em MODO CORTE — lá o right-click já gira a câmera. Se você
 //  precisa esconder no corte, sai do corte primeiro. Silencioso: sem aviso.
+// Botão direito no 3D é um gesto composto (todos ignoram modo CORTE, onde o
+// right-click já gira a câmera):
+//
+//   • clique rápido, sem mover        → esconde a peça sob o cursor
+//   • dois cliques rápidos (<350 ms)  → restaura TODOS os escondidos
+//   • segurar (>200 ms) ou mover      → ativa RAIO-X TEMPORÁRIO enquanto
+//                                       o botão está pressionado; ao soltar,
+//                                       volta ao estado anterior do raio-X
+//                                       (se já estava ligado, mantém)
+//
+// A lógica coexiste com o toggle permanente do ◎ na toolbar: o hold é uma
+// segunda porta pra o mesmo comando, sem substituir a primeira.
 let _rcTimer=null;
 const _RC_JANELA_MS = 350;
-async function f3dContextMenu(e){
-  e.preventDefault();
+const _RMB_HOLD_MS = 200;
+const _RMB_MOV_PX  = 5;
+let _rmb = { pressed:false, forced:false, prevXrayOn:false, x0:0, y0:0, timer:null };
+function f3dRmbDown(e){
+  if(e.button !== 2) return;
   if(!F3D || !B3) return;
-  if(F3D_FERR === 'corte') return;          // corte usa right-click para rotate
+  if(F3D_FERR === 'corte') return;
+  _rmb.pressed=true; _rmb.forced=false;
+  _rmb.x0=e.clientX; _rmb.y0=e.clientY;
+  if(_rmb.timer) clearTimeout(_rmb.timer);
+  _rmb.timer = setTimeout(()=>{ _rmbAtivaXray(_rmb.x0, _rmb.y0); }, _RMB_HOLD_MS);
+}
+function f3dRmbMove(e){
+  if(!_rmb.pressed || _rmb.forced) return;
+  const dx=Math.abs(e.clientX-_rmb.x0), dy=Math.abs(e.clientY-_rmb.y0);
+  if(dx+dy > _RMB_MOV_PX){
+    if(_rmb.timer){ clearTimeout(_rmb.timer); _rmb.timer=null; }
+    _rmbAtivaXray(e.clientX, e.clientY);
+  }
+}
+async function f3dRmbUp(e){
+  if(e.button !== 2) return;
+  const wasPressed = _rmb.pressed;
+  _rmb.pressed=false;
+  if(_rmb.timer){ clearTimeout(_rmb.timer); _rmb.timer=null; }
+  if(!wasPressed) return;
+  if(_rmb.forced){ await _rmbSoltaXray(); return; }
+  // Clique rápido sem movimento — hide/double-restore como antes
   if(_rcTimer){
-    // Segundo clique dentro da janela: cancela o "hide" que ia acontecer e
-    // restaura todos os escondidos.
     clearTimeout(_rcTimer); _rcTimer=null;
-    await B3.mostrarTodos(F3D);
+    try{ await B3.mostrarTodos(F3D); }catch(_){}
     f3dDica('Todos os elementos escondidos voltaram.');
     return;
   }
   const cx=e.clientX, cy=e.clientY;
   _rcTimer = setTimeout(async ()=>{
-    _rcTimer = null;
+    _rcTimer=null;
     try{
       const hit = await B3.raycast(F3D, { clientX:cx, clientY:cy });
       if(!hit) return;
@@ -3418,6 +3477,42 @@ async function f3dContextMenu(e){
       f3dDica('Elemento escondido. Duplo clique direito p/ mostrar tudo.');
     }catch(_){}
   }, _RC_JANELA_MS);
+}
+async function _rmbAtivaXray(cx, cy){
+  _rmb.forced=true;
+  _rmb.prevXrayOn = F3D_XRAY_ON;
+  // Se raio-X permanente já está ligado, só refaz o hover na posição atual
+  // e não instala novos listeners (o toggle permanente já cuidou disso).
+  if(!F3D_XRAY_ON){
+    F3D_XRAY_ON=true;
+    const cv=$('f3dCanvas');
+    if(cv){
+      cv.addEventListener('mousemove', f3dXrayMove);
+      cv.addEventListener('mouseleave', f3dXrayReset);
+    }
+    f3dXraySync();
+  }
+  try{
+    const hits = await B3.raycastAll(F3D, { clientX:cx, clientY:cy });
+    await B3.raiosXHover(F3D, hits, F3D_XRAY_PROF);
+  }catch(_){}
+}
+async function _rmbSoltaXray(){
+  _rmb.forced=false;
+  if(!_rmb.prevXrayOn){
+    // Estava OFF antes do hold — desliga e limpa
+    F3D_XRAY_ON=false;
+    const cv=$('f3dCanvas');
+    if(cv){
+      cv.removeEventListener('mousemove', f3dXrayMove);
+      cv.removeEventListener('mouseleave', f3dXrayReset);
+    }
+    if(B3 && F3D){ try{ await B3.raiosXLimpa(F3D); }catch(_){} }
+    f3dXraySync();
+  } else {
+    // Já estava ON — mantém como estava, só solta o último hover
+    if(B3 && F3D){ try{ await B3.raiosXHover(F3D, null); }catch(_){} }
+  }
 }
 // Painel de configurações de visualização. Fundo e plano de piso são opções
 // SEPARADAS: quem quer o escuro pode ter o plano; quem quer o claro pode não

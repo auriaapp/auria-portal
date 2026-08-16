@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15j  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15k  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -188,7 +188,10 @@ export function enquadrar(V){
   V.camera.far =Math.max(raio*8, dist*2.5);
   V.camera.updateProjectionMatrix();
   V.controls.target.copy(centro);
-  V.controls.minDistance=Math.max(raio/500, 0.05);
+  // minDistance BAIXO (2 cm) para o dolly conseguir cruzar paredes finas
+  // quando o pivô está posto 0,5 m atrás da superfície (ver pivotarCentro).
+  // Sem isso, controls trava a câmera antes de ela cruzar a parede.
+  V.controls.minDistance=Math.max(raio/5000, 0.02);
   V.controls.maxDistance=raio*20;
   V.controls.update();
   V.fragments.update(true).catch(()=>{});
@@ -432,7 +435,11 @@ export async function pivotarCentro(V){
   const hit=await raycast(V, { clientX:r.left+r.width/2, clientY:r.top+r.height/2 });
   if(!V.vivo || !hit || !(hit.distance>0)) return;
   const dir=new V.THREE.Vector3(); V.camera.getWorldDirection(dir);
-  V.controls.target.copy(V.camera.position).addScaledVector(dir, hit.distance);
+  // Empurra o alvo 0,5 m para ALÉM da superfície atingida. Sem isso, o
+  // dolly da OrbitControls não consegue cruzar parede/vidro — o zoom
+  // aproxima câmera do alvo mas nunca cruza, e o alvo estaria EM CIMA
+  // da superfície. Com o alvo atrás, o dolly avança e a câmera passa.
+  V.controls.target.copy(V.camera.position).addScaledVector(dir, hit.distance + 0.5);
 }
 
 export async function raycast(V, ev){
