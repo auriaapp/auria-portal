@@ -2889,7 +2889,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15f').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-15g').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3264,32 +3264,21 @@ function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
 //  também "capturam" o mouse e ter dois ativos vira briga por ponteiro.
 let F3D_XRAY=false;
 let _xrayTimer=0;
+// Raio-X é peça-sob-cursor: raycast + setOpacity numa peça só. Sem
+// preparação — liga instantaneamente. Desliga outros modos que também
+// consomem o mouse (medir/corte/andar/apontar), senão o clique fica
+// ambíguo.
 async function f3dXrayToggle(){
   if(!F3D || !B3) return;
   if(F3D_XRAY){ await f3dXrayDesligar(); return; }
-  // Desliga outros modos que também reagem ao mouse
   if(F3D_FERR)    f3dTool(F3D_FERR, false);
   if(F3D_APONTAR) f3dApontarToggle(false);
-  f3dDica('Preparando raio-X…');
-  try{
-    // Timeout de segurança: se em 15s a preparação não terminar, aborta
-    // em vez de deixar o botão "carregando" para sempre. Federado grande
-    // pode chegar em 5-8s; 15s é folga confortável.
-    await Promise.race([
-      B3.raiosXPrepara(F3D),
-      new Promise((_,rej)=> setTimeout(()=>rej(new Error('timeout 15s')), 15000))
-    ]);
-  }catch(e){
-    console.warn('raio-X:', e);
-    f3dDica('Não consegui preparar o raio-X: '+(e.message||e)+' (F12 tem detalhes).');
-    return;
-  }
   F3D_XRAY = true;
   const cv=$('f3dCanvas');
   cv.addEventListener('mousemove', f3dXrayMove);
   cv.addEventListener('mouseleave', f3dXrayReset);
   const b=$('f3dBtnXray'); if(b) b.classList.add('on');
-  f3dDica('Passe o mouse sobre o modelo — o círculo de 1 m fica transparente.');
+  f3dDica('Passe o mouse sobre a peça que quer atravessar — ela fica transparente.');
 }
 async function f3dXrayDesligar(){
   F3D_XRAY = false;
@@ -3303,7 +3292,7 @@ async function f3dXrayDesligar(){
   f3dDica(DICA_NAV);
 }
 // mousemove roda várias vezes por segundo. Limito a ~25Hz e uso uma flag
-// para não empilhar chamadas assíncronas se o raycast/setOpacity demoraram.
+// para não empilhar chamadas assíncronas se o raycast demorar.
 let _xrayBusy=false;
 async function f3dXrayMove(e){
   if(!F3D_XRAY || !F3D || !B3 || _xrayBusy) return;
@@ -3312,13 +3301,13 @@ async function f3dXrayMove(e){
   _xrayTimer = now; _xrayBusy = true;
   try{
     const hit = await B3.raycast(F3D, e);
-    if(hit && hit.point) await B3.raiosXEsfera(F3D, hit.point, 1.0);
+    await B3.raiosXHover(F3D, hit);   // hit pode ser null — a função lida
   }catch(_){}
   finally{ _xrayBusy = false; }
 }
 async function f3dXrayReset(){
   if(!F3D_XRAY || !F3D || !B3) return;
-  try{ await B3.raiosXLimpa(F3D); }catch(_){}
+  try{ await B3.raiosXHover(F3D, null); }catch(_){}   // libera a última peça
 }
 // Painel de configurações de visualização. Fundo e plano de piso são opções
 // SEPARADAS: quem quer o escuro pode ter o plano; quem quer o claro pode não

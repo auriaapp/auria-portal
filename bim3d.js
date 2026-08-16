@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15f  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-15g  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -632,79 +632,39 @@ export async function destacar(V, modelo, ids){
   try{ await V.fragments.update(true); }catch(_){}
 }
 
-// ── Raio-X (esfera de transparência em torno de um ponto) ─────────────────
-//  A ideia: como o médico enxerga o osso pela pele, aqui você "vê" o que
-//  está dentro de uma esfera de N metros ao redor do cursor. Peças com
-//  bounding-box dentro da esfera ganham opacidade baixa; o resto continua
-//  sólido. Ao mover o mouse, o conjunto muda; só o DIFF é reaplicado (quem
-//  saiu do raio volta ao normal, quem entrou fica translúcido). Isso evita
-//  reprocessar tudo a cada quadro.
+// ── Raio-X (peça sob o cursor fica transparente) ──────────────────────────
+//  Modelo mental: como o médico "afasta" o tecido para ver o osso, aqui
+//  você "afasta" a peça sob o cursor para ver o que está atrás — parede
+//  → tubulação, forro → dutos, laje → armadura. Só UMA peça por vez fica
+//  translúcida: a que o raycast atinge primeiro. Instantâneo — não indexa
+//  nada, cada movimento do mouse é só um raycast + setOpacity numa peça.
 //
-//  raiosXPrepara() carrega o índice espacial (ids + caixas) uma vez. Rápido
-//  para modelos comuns; se for o empreendimento inteiro pode demorar 1-2s
-//  na primeira chamada. Depois disso, cada movimento do mouse é uma
-//  varredura em memória — sem ida ao worker do Fragments.
-export async function raiosXPrepara(V){
-  if(V._xrayReady) return;
-  const t0 = performance.now();
-  const cache=[];
-  // Processa modelos em paralelo — federado com 4 modelos, cada um leva
-  // ~400ms; sequencial dava 1.6s de tela travada em "Preparando…".
-  await Promise.all(V.modelos.map(async x=>{
-    let ids=[], bxs=[];
-    try{
-      // Nome CORRETO da API que devolve IDs de itens com geometria é
-      // `getItemsIdsWithGeometry`. O `getItemsWithGeometry` devolve objetos
-      // (não IDs) — passar isso pro `getBoxes` fazia a promessa nunca resolver
-      // (o worker do Fragments ficava esperando IDs que não eram IDs).
-      // Fallback para versões da lib onde o nome novo não existe.
-      const fn = x.model.getItemsIdsWithGeometry
-              ? x.model.getItemsIdsWithGeometry.bind(x.model)
-              : x.model.getItemsWithGeometry.bind(x.model);
-      ids = await fn();
-      if(Array.isArray(ids) && ids.length){
-        bxs = await x.model.getBoxes(ids);
-      }
-    }catch(e){
-      console.warn('[raio-X] prepara "'+(x.nome||x.id||'?')+'":', e);
-      ids=[]; bxs=[];
-    }
-    cache.push({ x, ids, bxs });
-  }));
-  V._xrayCache = cache;
-  V._xrayAtivos = new Map();   // modelo → Set<ids atualmente transparentes>
-  V._xrayReady = true;
-  console.log('[raio-X] pronto em', Math.round(performance.now()-t0),'ms —',
-              cache.map(d=>(d.x.nome||'?')+':'+d.ids.length).join(', '));
-}
-// Aplica a esfera. Recalcula o conjunto de dentro e aplica só o DIFF em
-// relação ao anterior — mudar 20 peças por quadro é OK, mudar mil quebra.
-export async function raiosXEsfera(V, ponto, raio){
-  if(!V._xrayReady) return;
-  const OPAC = 0.12;   // quase transparente, mas com contorno visível
-  for(const d of V._xrayCache){
-    const alvos = new Set();
-    for(let i=0;i<d.ids.length;i++){
-      const b = d.bxs[i];
-      if(b && b.distanceToPoint(ponto) <= raio) alvos.add(d.ids[i]);
-    }
-    const prev = V._xrayAtivos.get(d.x) || new Set();
-    const sair=[], entrar=[];
-    prev.forEach(id=>{ if(!alvos.has(id)) sair.push(id); });
-    alvos.forEach(id=>{ if(!prev.has(id)) entrar.push(id); });
-    if(sair.length)   try{ await d.x.model.resetOpacity(sair);      }catch(_){}
-    if(entrar.length) try{ await d.x.model.setOpacity(entrar, OPAC); }catch(_){}
-    V._xrayAtivos.set(d.x, alvos);
+//  Antes existia um modo "esfera de 1 m" que pré-indexava as caixas de
+//  todas as peças e pegava várias por vez. Ficou confuso — pegava peças
+//  atrás que o usuário não estava mirando. Simplificado para este.
+export async function raiosXHover(V, hit){
+  const OPAC = 0.12;   // quase transparente, mas com contorno ainda perceptível
+  const prev = V._xrayUlt;
+  // Mesma peça do último quadro → nada a fazer, evita ida ao worker
+  if(prev && hit && hit.__modelo===prev.modelo && hit.localId===prev.id) return;
+  // Restaura a peça anterior (se havia)
+  if(prev){
+    try{ await prev.modelo.model.resetOpacity([prev.id]); }catch(_){}
+    V._xrayUlt = null;
+  }
+  // Aplica opacidade na nova peça hit (se houver)
+  if(hit && hit.__modelo && hit.localId!==undefined && hit.localId!==null){
+    try{ await hit.__modelo.model.setOpacity([hit.localId], OPAC); }catch(_){}
+    V._xrayUlt = { modelo: hit.__modelo, id: hit.localId };
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
 // Solta tudo. Chamada ao desligar o raio-X ou ao descartar o visualizador.
+// Também zera opacidade em TODAS as peças (defesa: se por qualquer motivo
+// tivesse sobrado gente translúcida do modo esfera antigo, sai limpo).
 export async function raiosXLimpa(V){
-  if(!V._xrayReady) return;
-  for(const d of V._xrayCache){
-    try{ await d.x.model.resetOpacity(undefined); }catch(_){}
-  }
-  V._xrayAtivos = new Map();
+  V._xrayUlt = null;
+  for(const x of V.modelos){ try{ await x.model.resetOpacity(undefined); }catch(_){} }
   try{ await V.fragments.update(true); }catch(_){}
 }
 
