@@ -592,16 +592,18 @@
       <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Título</div>
       <input id="apNovoTit" maxlength="120" placeholder="Ex.: Conflito viga × duto no eixo 3" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px">
       <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 5px">Descrição</div>
-      <textarea id="apNovoDesc" rows="4" placeholder="Descreva o problema encontrado…" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"></textarea>
+      <textarea id="apNovoDesc" rows="3" placeholder="Descreva o problema encontrado…" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"></textarea>
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 5px">Tipo de apontamento</div>
+      <select id="apNovoTipo" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px"></select>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
         <div>
           <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Disciplina</div>
           <select id="apNovoDisc" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px"></select>
         </div>
         <div>
-          <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Prioridade</div>
+          <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Criticidade</div>
           <select id="apNovoPrio" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px">
-            <option>Importante</option><option>Severa</option><option>Leve</option>
+            <option>Severa / Imediata</option><option>Importante / Programada</option><option>Observação / Atenção</option>
           </select>
         </div>
       </div>
@@ -3980,6 +3982,11 @@ function setZoomWin(on){
 function pdfZoomWin(){ const w=cdeAtiva(); if(!w||!w.V.page) return; setZoomWin(!ZOOMWIN_ON); }
 
 // ── Abrir apontamento no CDE (obra/projetista) ──────────────────────────────
+// Tipos idênticos aos do App (arquivos independentes; duplicado de propósito).
+const TIPOS_APT_CDE=["Interferência / Divergência entre Disciplinas","Falha Gráfica / Modelagem",
+  "Dúvida","Divergência de Informação","Alteração de Premissa / Definição",
+  "Ausência de Informação","Melhoria / Otimização","Inconsistência Técnica ou Normativa",
+  "Não atendimento às premissas"];
 let APONTAR_ON=false;
 let _apCtx=null;   // {win, doc, nx, ny, pg} do ponto clicado
 function toggleApontarCde(){
@@ -4003,7 +4010,8 @@ function abrirFormApontarCDE(win, pt){
   const dd = doc.disciplina || '';
   if(dd && !discs.includes(dd)) discs.unshift(dd);
   $('apNovoDisc').innerHTML = discs.map(d=>`<option${d===dd?' selected':''}>${esc(d)}</option>`).join('');
-  $('apNovoTit').value=''; $('apNovoDesc').value=''; $('apNovoPrio').value='Importante';
+  $('apNovoTipo').innerHTML = '<option value="">— selecione —</option>'+TIPOS_APT_CDE.map(t=>`<option>${esc(t)}</option>`).join('');
+  $('apNovoTit').value=''; $('apNovoDesc').value=''; $('apNovoPrio').value='Importante / Programada';
   $('apNovoMsg').textContent='';
   $('apNovoCod').textContent = _apPrefixo()+'-'+_apDiscSigla(dd)+'-…  ·  '+doc.codigo;
   const vis=_apVisibilidade();
@@ -4019,9 +4027,11 @@ async function salvarApontarCDE(){
   const win=_apCtx.win, doc=_apCtx.doc, nx=_apCtx.nx, ny=_apCtx.ny, pg=_apCtx.pg;
   const tit=$('apNovoTit').value.trim();
   if(!tit){ $('apNovoMsg').textContent='Dê um título ao apontamento.'; return; }
+  const tipo=$('apNovoTipo').value;
+  if(!tipo){ $('apNovoMsg').textContent='Escolha o tipo de apontamento.'; return; }
   const desc=$('apNovoDesc').value.trim();
   const disc=$('apNovoDisc').value || doc.disciplina || '';
-  const prio=$('apNovoPrio').value || 'Importante';
+  const prio=$('apNovoPrio').value || 'Importante / Programada';
   const btn=$('apNovoSalvar'); btn.disabled=true; $('apNovoMsg').textContent='Salvando…';
   try{
     // 1) garante a prancha (RPC SECURITY DEFINER — obra/projetista não criam direto)
@@ -4042,7 +4052,8 @@ async function salvarApontarCDE(){
     const hoje=new Date().toISOString().slice(0,10).split('-').reverse().join('/');
     const linha={
       id:codigo, id_num:num, empreendimento_id:EMP_ID, empreendimento:EMP.nome,
-      titulo:tit, descricao:desc, disciplina:disc, tipo:'',
+      analista:'',   // responsável (analista) indefinido até a triagem no App
+      titulo:tit, descricao:desc, disciplina:disc, tipo:tipo,
       status:'Em aberto', prioridade:prio, visibilidade:vis,
       dimensao:'2d', grupo_id:codigo,
       pontos_json:[{ nx, ny, pg }],
