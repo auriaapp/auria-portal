@@ -2094,6 +2094,15 @@ function pinClick(ai, pi){
   const p=pageToScreen(pt.nx,pt.ny), r=$('stage').getBoundingClientRect();
   mostrarBalaoPin(a, ai, r.left + p.x, r.top + p.y);
 }
+// Origem externa do apontamento (obra/projetista) — usado para o realce que
+// deixa o analista identificar de relance o que veio de fora da coordenação.
+// Baseado em criado_por_papel (setado na criação; ver supabase_apontamentos_origem.sql).
+function aptOrigem(a){
+  const p=String(a&&a.criado_por_papel||'').toLowerCase();
+  if(p==='obra')       return { rot:'Obra' };
+  if(p==='projetista') return { rot:'Projetista' };
+  return null;
+}
 // Balão compartilhado: mesma UI do 2D chamada tanto pelo pin do 2D quanto
 // pelo pin do 3D (F3D). Recebe já a POSIÇÃO EM PIXELS DE TELA do pin —
 // cada chamador calcula do seu jeito.
@@ -2104,9 +2113,12 @@ function mostrarBalaoPin(a, ai, sx, sy){
   document.removeEventListener('mousedown', fecharPinBalaoOut);
   fecharPinBalao();
   const prazo=a.prazo_min?(_dispData(a.prazo_min)+(a.atrasado?' · ⚠ atrasado':'')):'—';
+  const orig=aptOrigem(a);
   const b=document.createElement('div'); b.id='pinBalao'; b.className='pin-balao';
+  if(orig) b.style.background='#E8F1FB';   // origem externa → azul-claro (analista identifica de relance)
+  const pillOrig=orig?` <span class="ap-st" style="background:#5B9BD522;color:#2E6DA4">${esc(orig.rot)}</span>`:'';
   b.innerHTML=`<div class="pb-h" style="border-left:4px solid ${corPrio(a.prioridade)}">
-      <b>${esc(a.id)}</b> <span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>
+      <b>${esc(a.id)}</b> <span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>${pillOrig}
       <button class="pb-x" onclick="fecharPinBalao()">✕</button></div>
     <div class="pb-t">${esc(a.titulo||'Sem título')}</div>
     <div class="pb-m">${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade):''}</div>
@@ -5010,15 +5022,19 @@ function renderListaApts(){
     const i=APTS.indexOf(a);
     const nesta=PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
     const late=estaAtrasado(a);
-    // Cores do desktop: atrasado #FADBD8, resolvido #D5F5E3, texto escuro (resolvido vence)
+    const orig=aptOrigem(a);   // obra/projetista → destaque de origem externa
+    // Cores do desktop: atrasado #FADBD8, resolvido #D5F5E3, texto escuro (resolvido vence).
+    // Origem externa tinge azul-claro, mas SÓ sem status forte (resolvido/atrasado vencem).
     const tint = a.status==='Resolvido' ? {bg:'#D5F5E3',fg:'#145A32',mt:'#1E8449'}
-               : late ? {bg:'#FADBD8',fg:'#7B241C',mt:'#A93226'} : null;
+               : late ? {bg:'#FADBD8',fg:'#7B241C',mt:'#A93226'}
+               : orig ? {bg:'#E8F1FB',fg:'#1B4F72',mt:'#2E6DA4'} : null;
     const cs = tint ? `background:${tint.bg};color:${tint.fg};border-left-color:${corPrio(a.prioridade)}` : `border-left-color:${corPrio(a.prioridade)}`;
     const mc = tint ? tint.mt : 'var(--mut)';
-    // Duas tags: status + "Em atraso" (vermelho) quando aplicável
+    // Tags: status + "Em atraso" (vermelho) + origem externa (azul) quando aplicável
     const pillSt=`<span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>`;
     const pillAtr=late?`<span class="ap-st" style="background:#E74C3C22;color:#E74C3C;margin-left:4px">Em atraso</span>`:'';
-    const tags=pillSt+pillAtr;
+    const pillOrig=orig?`<span class="ap-st" style="background:#5B9BD522;color:#2E6DA4;margin-left:4px">${esc(orig.rot)}</span>`:'';
+    const tags=pillSt+pillAtr+pillOrig;
     if(APT_VIEW==='estendido'){
       const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line)">`).join('');
       const prazo=a.prazo_min?('📅 '+_dispData(a.prazo_min)):'';
