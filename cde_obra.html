@@ -466,9 +466,10 @@
           <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M3 6V3h3"/><path d="M10 3h3v3"/><path d="M13 10v3h-3"/><path d="M6 13H3v-3"/></svg></button>
         <span style="width:8px"></span>
-        <button class="tb" id="vPrev" onclick="pdfPage(-1)">◀</button>
+        <button class="tb" id="vPrev" onclick="pdfNav(-1)" title="Prancha anterior (← ) · prancha de várias páginas: página anterior">◀</button>
         <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
-        <button class="tb" id="vNext" onclick="pdfPage(1)">▶</button>
+        <button class="tb" id="vNext" onclick="pdfNav(1)" title="Próxima prancha ( →) · prancha de várias páginas: próxima página">▶</button>
+        <button class="tb ico" id="btnInbox" onclick="toggleInbox()" title="Só desta disciplina: as setas andam apenas entre as pranchas da mesma disciplina (abre a próxima se não estiver aberta)">📥</button>
       </span>
       <span id="dxfHint" class="tit" style="display:none">role/arraste para navegar</span>
       <span style="width:8px"></span>
@@ -3724,9 +3725,12 @@ function atualizarCmpSub(w){
 }
 function atualizarPageLbl(w){
   if(!w || !w.V.doc){ $('vPg').textContent='—'; $('vPrev').disabled=true; $('vNext').disabled=true; return; }
-  $('vPg').textContent = w.V.pageNum + ' / ' + w.V.doc.numPages;
-  $('vPrev').disabled = w.V.pageNum<=1;
-  $('vNext').disabled = w.V.pageNum>=w.V.doc.numPages;
+  // Prancha de VÁRIAS páginas: as setas paginam (desabilitadas nos extremos, rótulo "p/N").
+  // Prancha de 1 página: as setas navegam entre PRANCHAS — nunca desabilitar; rótulo em branco.
+  const multi = w.V.doc.numPages>1;
+  $('vPg').textContent = multi ? (w.V.pageNum + ' / ' + w.V.doc.numPages) : '';
+  $('vPrev').disabled = multi ? w.V.pageNum<=1 : false;
+  $('vNext').disabled = multi ? w.V.pageNum>=w.V.doc.numPages : false;
 }
 // Taskbar SEMPRE visível quando há janelas — é o alternador entre projetos:
 // clicar numa aba foca a janela (restaurando se estava minimizada). A ativa
@@ -3785,6 +3789,68 @@ function pdfZoom(dir){ const w=cdeAtiva(); if(!w||!w.V.doc) return;
   w.zoomAt(dir>0?1.25:0.8, w.stage.clientWidth/2, w.stage.clientHeight/2); }
 function pdfFit(){ const w=cdeAtiva(); if(w) w.fitPage(); }
 function pdfPage(delta){ const w=cdeAtiva(); if(w) w.pdfPage(delta); }
+// Setas ◀ ▶ (e teclado ← →): prancha de VÁRIAS páginas → pagina; prancha de 1
+// página → navega entre PRANCHAS. delta -1 = anterior, +1 = próxima.
+function pdfNav(delta){
+  const w=cdeAtiva(); if(!w) return;
+  if(w.V.doc && w.V.doc.numPages>1){ w.pdfPage(delta); return; }
+  navPrancha(delta);
+}
+// 📥 modo "só desta disciplina": liga/desliga.
+let INBOX_ON=false;
+function toggleInbox(){ INBOX_ON=!INBOX_ON; const b=$('btnInbox'); if(b) b.classList.toggle('on', INBOX_ON); }
+// Foca a janela e coloca em TELA CHEIA (o pedido é sempre maximizar ao navegar).
+function focarMax(w){
+  if(!w) return;
+  if(w.state==='min') w.restaurar();
+  if(w.state!=='max') w.maximizar(); else focar(w);
+}
+// Número da prancha para ordenar dentro da disciplina (usa o campo 'numero' da
+// convenção; se vazio, cai nos dígitos do código).
+function _numPrancha(d){
+  let n=parseInt(String(d.numero||'').replace(/\D/g,''),10);
+  if(!isFinite(n)) n=parseInt((String(d.codigo||'').match(/(\d+)/)||[])[1]||'',10);
+  return isFinite(n)?n:0;
+}
+function navPrancha(delta){
+  const w=cdeAtiva();
+  if(INBOX_ON){ navPranchaDisc(w, delta); return; }
+  // Modo normal: alterna entre as PRANCHAS ABERTAS (ordem da barra inferior).
+  const abertas = WIN_STATE.list.filter(x=> x.DOC_SEL && !x.isCmp && !x.isFed);
+  if(abertas.length<2) return;
+  let i = abertas.indexOf(w); if(i<0) i=0;
+  const alvo = abertas[(i+delta+abertas.length)%abertas.length];   // circular
+  focarMax(alvo);
+}
+// 📥 ligado: anda só entre pranchas da MESMA disciplina, por número. Abre a
+// próxima/anterior se não estiver aberta. Como a lista só tem docs EXISTENTES,
+// mover o índice já "pula" para a próxima que existe quando há buraco na numeração.
+function navPranchaDisc(w, delta){
+  if(!w || !w.DOC_SEL){ navPrancha(delta); return; }   // sem doc: cai no modo normal
+  const disc = w.DOC_SEL.disciplina;
+  const irmas = DOCS.filter(d=> d.disciplina===disc)
+    .sort((a,b)=> _numPrancha(a)-_numPrancha(b) || String(a.codigo||'').localeCompare(String(b.codigo||'')));
+  if(!irmas.length) return;
+  let i = irmas.findIndex(d=> d.id===w.DOC_SEL.id); if(i<0) i=0;
+  const alvo = irmas[i+delta];
+  if(!alvo) return;   // não há anterior/posterior nessa disciplina
+  openDocInWindow(alvo.id).then(()=>{
+    const win = WIN_STATE.list.find(x=> x.DOC_SEL && x.DOC_SEL.id===alvo.id && !x.isCmp && !x.isFed);
+    focarMax(win);
+  }).catch(()=>{});
+}
+// Teclado ← → espelha as setas — só quando há prancha PDF ativa, fora de campos
+// de texto e sem modal aberto (senão atrapalha digitação/diálogos).
+document.addEventListener('keydown', (e)=>{
+  if(e.key!=='ArrowLeft' && e.key!=='ArrowRight') return;
+  const t=e.target;
+  if(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+  if(t && t.isContentEditable) return;
+  if(document.querySelector('.ov.on')) return;            // modal aberto
+  const w=cdeAtiva(); if(!w || !w.V.doc) return;           // só em prancha PDF ativa
+  e.preventDefault();
+  pdfNav(e.key==='ArrowRight' ? 1 : -1);
+});
 // Zoom-window: modo em que arrastar um retângulo sobre a prancha dá zoom naquela
 // área. É single-shot (sai sozinho após um zoom). Flag global; cada janela trata
 // o arrasto no próprio stage (ver pointerdown/move/end da CdeWin).
