@@ -69,6 +69,10 @@
   .tb.ico{padding:5px 8px;display:inline-flex;align-items:center;justify-content:center}
   .tb.ico svg{display:block}
   .tb.ico.on{background:var(--accent);border-color:var(--accent);color:#231703}
+  /* Snap de janela: prévia da metade da tela ao arrastar para a borda */
+  .cdeWin-snapPrev{position:absolute;z-index:8500;pointer-events:none;box-sizing:border-box;
+    background:rgba(240,167,42,.12);border:2px dashed var(--accent);border-radius:8px;
+    transition:left .08s ease,width .08s ease}
   /* Zoom-window: cursor de mira e retângulo de arrasto sobre a prancha */
   body.zwin .cdeWin-stage{cursor:crosshair}
   .cdeWin-zwin{position:absolute;z-index:8;pointer-events:none;border:1.5px solid var(--accent);
@@ -1744,9 +1748,21 @@ class CdeWin {
       const sp = $('winSpace').getBoundingClientRect();
       const b  = this.el.getBoundingClientRect();
       const x0 = b.left - sp.left, y0 = b.top - sp.top, dx0=e.clientX, dy0=e.clientY;
-      const mv = (m)=>{ const nx=Math.max(0,x0+(m.clientX-dx0)), ny=Math.max(0,y0+(m.clientY-dy0));
-        this.el.style.left = nx+'px'; this.el.style.top = ny+'px'; };
-      const up = ()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); this._snapshot(); };
+      const BORDA=48;   // faixa perto da borda que arma o snap à metade
+      const mv = (m)=>{
+        const nx=Math.max(0,x0+(m.clientX-dx0)), ny=Math.max(0,y0+(m.clientY-dy0));
+        this.el.style.left = nx+'px'; this.el.style.top = ny+'px';
+        // Zona de snap pela posição do CURSOR relativa ao winSpace
+        const px=m.clientX - sp.left;
+        this._snapZona = px<=BORDA ? 'left' : (px>=sp.width-BORDA ? 'right' : null);
+        mostrarSnapPreview(this._snapZona);
+      };
+      const up = ()=>{
+        document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up);
+        mostrarSnapPreview(null);
+        if(this._snapZona){ const z=this._snapZona; this._snapZona=null; this.snapMetade(z); }
+        else this._snapshot();
+      };
       document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
       e.preventDefault();
     });
@@ -1880,6 +1896,24 @@ class CdeWin {
     this.state='max'; this.el.classList.add('max'); this.el.classList.remove('min');
     this.el.style.left=''; this.el.style.top=''; this.el.style.width=''; this.el.style.height='';
     focar(this); atualizarTaskbar();
+  }
+  // Snap à METADE da tela (arrastar para a borda esq/dir). Se houver exatamente
+  // UMA outra janela de prancha aberta, ela vai para a outra metade — formando
+  // as duas janelas lado a lado. `semParceiro` evita recursão no parceiro.
+  snapMetade(lado, semParceiro){
+    const sp=$('winSpace'); const W=sp.clientWidth, H=sp.clientHeight, halfW=Math.floor(W/2);
+    this.state='restored'; this.el.classList.remove('max','min');
+    this.el.style.left=(lado==='right'?halfW:0)+'px';
+    this.el.style.top='0px';
+    this.el.style.width=halfW+'px';
+    this.el.style.height=H+'px';
+    focar(this); atualizarTaskbar();
+    if(this.V.page) this.fitPage();
+    this._snapshot();
+    if(!semParceiro){
+      const outras = WIN_STATE.list.filter(w=> w!==this && w.state!=='min' && !w.isCmp);
+      if(outras.length===1) outras[0].snapMetade(lado==='left'?'right':'left', true);
+    }
   }
   restaurar(){
     this.state='restored'; this.el.classList.remove('max'); this.el.classList.remove('min');
@@ -3640,6 +3674,19 @@ class CdeWin {
 }
 CdeWin._seq = 0;
 
+// Prévia do snap (metade da tela) durante o arraste. zona = 'left'|'right'|null.
+let _snapPrev=null;
+function mostrarSnapPreview(zona){
+  const sp=$('winSpace'); if(!sp) return;
+  if(!zona){ if(_snapPrev) _snapPrev.style.display='none'; return; }
+  if(!_snapPrev){ _snapPrev=document.createElement('div'); _snapPrev.className='cdeWin-snapPrev'; sp.appendChild(_snapPrev); }
+  const W=sp.clientWidth, H=sp.clientHeight, halfW=Math.floor(W/2);
+  _snapPrev.style.display='block';
+  _snapPrev.style.left=(zona==='right'?halfW:0)+'px';
+  _snapPrev.style.top='0px';
+  _snapPrev.style.width=halfW+'px';
+  _snapPrev.style.height=H+'px';
+}
 function focar(w){
   if(!w) return;
   WIN_STATE.act = w;
