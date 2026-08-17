@@ -69,6 +69,10 @@
   .tb.ico{padding:5px 8px;display:inline-flex;align-items:center;justify-content:center}
   .tb.ico svg{display:block}
   .tb.ico.on{background:var(--accent);border-color:var(--accent);color:#231703}
+  /* Zoom-window: cursor de mira e retângulo de arrasto sobre a prancha */
+  body.zwin .cdeWin-stage{cursor:crosshair}
+  .cdeWin-zwin{position:absolute;z-index:8;pointer-events:none;border:1.5px solid var(--accent);
+    background:rgba(240,167,42,.14);border-radius:2px}
   .st{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:11px;color:#fff}
   /* Workspace de janelas — o container relative aloja janelas absolutas */
   #winSpace{flex:1;position:relative;overflow:hidden;background:transparent}
@@ -458,6 +462,9 @@
         <button class="tb ico" onclick="pdfZoom(1)" title="Aumentar">
           <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="8" cy="8" r="6"/><line x1="5.2" y1="8" x2="10.8" y2="8"/><line x1="8" y1="5.2" x2="8" y2="10.8"/></svg></button>
+        <button class="tb ico" id="btnZoomWin" onclick="pdfZoomWin()" title="Zoom por janela: arraste um retângulo sobre a prancha">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 6V3h3"/><path d="M10 3h3v3"/><path d="M13 10v3h-3"/><path d="M6 13H3v-3"/></svg></button>
         <span style="width:8px"></span>
         <button class="tb" id="vPrev" onclick="pdfPage(-1)">◀</button>
         <span class="tit" id="vPg" style="font-variant-numeric:tabular-nums">—</span>
@@ -1775,6 +1782,18 @@ class CdeWin {
     }, { passive:false });
     s.addEventListener('pointerdown',(e)=>{
       if(!this.V.page) return;
+      // Zoom-window ligado: o botão esquerdo desenha um retângulo em vez de dar pan.
+      if(window.ZOOMWIN_ON && e.button===0){
+        e.preventDefault();
+        const r=s.getBoundingClientRect();
+        const x0=e.clientX-r.left, y0=e.clientY-r.top;
+        const el=document.createElement('div'); el.className='cdeWin-zwin';
+        el.style.left=x0+'px'; el.style.top=y0+'px'; el.style.width='0px'; el.style.height='0px';
+        s.appendChild(el);
+        try{ s.setPointerCapture(e.pointerId); }catch(_){}
+        this._zwin={ id:e.pointerId, x0, y0, el, r };
+        return;
+      }
       if(e.button!==0 && e.button!==1) return;
       if(e.button===0 && e.target && e.target.closest && e.target.closest('.cdePin')) return;
       if(e.button===0 && e.target && e.target.closest && e.target.closest('.cdeWin-cmpDiv')) return;
@@ -1786,6 +1805,14 @@ class CdeWin {
     // Pan limitado a UMA atualização por frame: sem isso o arraste enfileira
     // centenas de recálculos de layout por segundo e engasga mesmo sem render.
     s.addEventListener('pointermove',(e)=>{
+      // Zoom-window em andamento: só redimensiona o retângulo.
+      const zw=this._zwin;
+      if(zw && e.pointerId===zw.id){
+        const x=e.clientX-zw.r.left, y=e.clientY-zw.r.top;
+        zw.el.style.left=Math.min(zw.x0,x)+'px'; zw.el.style.top=Math.min(zw.y0,y)+'px';
+        zw.el.style.width=Math.abs(x-zw.x0)+'px'; zw.el.style.height=Math.abs(y-zw.y0)+'px';
+        return;
+      }
       const d=this._pan; if(!d || e.pointerId!==d.id) return;
       this._panPend={ x:d.px-(e.clientX-d.x), y:d.py-(e.clientY-d.y) };
       if(this._rafId) return;
@@ -1797,6 +1824,16 @@ class CdeWin {
       });
     });
     const end = (e)=>{
+      // Fim do zoom-window: enquadra o retângulo e sai do modo (single-shot).
+      const zw=this._zwin;
+      if(zw && (!e || e.pointerId===zw.id)){
+        try{ s.releasePointerCapture(zw.id); }catch(_){}
+        const x = (e?e.clientX:0) - zw.r.left, y = (e?e.clientY:0) - zw.r.top;
+        if(e) this.zoomToRect(zw.x0, zw.y0, x, y);
+        zw.el.remove(); this._zwin=null;
+        setZoomWin(false);
+        return;
+      }
       const d=this._pan; if(!d || (e && e.pointerId!==d.id)) return;
       try{ s.releasePointerCapture(d.id); }catch(_){}
       this._pan=null; s.classList.remove('grab');
@@ -3526,6 +3563,26 @@ class CdeWin {
     this.V.zoom=novo;
     this.updateCss();   // sem render: o zoom é composição na GPU
   }
+  // Zoom-window: enquadra o retângulo (coords EM PIXELS relativas ao stage).
+  // Converte os cantos para coords de página (pág=(tela+pan)/zoom), escolhe o
+  // zoom que faz o retângulo caber e centraliza. Ignora retângulo minúsculo
+  // (foi clique, não arraste).
+  zoomToRect(x0,y0,x1,y1){
+    if(!this.V.page) return;
+    const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
+    const w=Math.abs(x1-x0), h=Math.abs(y1-y0);
+    if(w<8||h<8) return;
+    const lx=Math.min(x0,x1), ly=Math.min(y0,y1), z=this.V.zoom;
+    const pX=(lx+this.V.panX)/z, pY=(ly+this.V.panY)/z, pW=w/z, pH=h/z;
+    let nz=Math.min(cw/pW, ch/pH)*0.98;
+    nz=Math.min(20, Math.max(0.05, nz));
+    this.V.zoom=nz;
+    const pcx=pX+pW/2, pcy=pY+pH/2;
+    this.V.panX=pcx*nz - cw/2;
+    this.V.panY=pcy*nz - ch/2;
+    this.updateCss();
+    this._revisarBase();   // se o zoom subiu muito, reavalia a resolução da base
+  }
   async pdfPage(delta){
     if(!this.V.doc) return;
     const n=this.V.pageNum+delta; if(n<1||n>this.V.doc.numPages) return;
@@ -3728,6 +3785,16 @@ function pdfZoom(dir){ const w=cdeAtiva(); if(!w||!w.V.doc) return;
   w.zoomAt(dir>0?1.25:0.8, w.stage.clientWidth/2, w.stage.clientHeight/2); }
 function pdfFit(){ const w=cdeAtiva(); if(w) w.fitPage(); }
 function pdfPage(delta){ const w=cdeAtiva(); if(w) w.pdfPage(delta); }
+// Zoom-window: modo em que arrastar um retângulo sobre a prancha dá zoom naquela
+// área. É single-shot (sai sozinho após um zoom). Flag global; cada janela trata
+// o arrasto no próprio stage (ver pointerdown/move/end da CdeWin).
+let ZOOMWIN_ON=false;
+function setZoomWin(on){
+  ZOOMWIN_ON=!!on;
+  document.body.classList.toggle('zwin', ZOOMWIN_ON);
+  const b=$('btnZoomWin'); if(b) b.classList.toggle('on', ZOOMWIN_ON);
+}
+function pdfZoomWin(){ const w=cdeAtiva(); if(!w||!w.V.page) return; setZoomWin(!ZOOMWIN_ON); }
 
 function abrirNoApp(){
   const w = cdeAtiva(); const doc = w ? w.DOC_SEL : null;
