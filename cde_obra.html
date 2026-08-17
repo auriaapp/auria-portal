@@ -73,8 +73,9 @@
   .cdeWin-snapPrev{position:absolute;z-index:8500;pointer-events:none;box-sizing:border-box;
     background:rgba(240,167,42,.12);border:2px dashed var(--accent);border-radius:8px;
     transition:left .08s ease,width .08s ease}
-  /* Zoom-window: cursor de mira e retângulo de arrasto sobre a prancha */
-  body.zwin .cdeWin-stage{cursor:crosshair}
+  .tb.on{background:var(--accent);border-color:var(--accent);color:#231703}
+  /* Zoom-window e Apontar: cursor de mira sobre a prancha */
+  body.zwin .cdeWin-stage, body.apontar .cdeWin-stage{cursor:crosshair}
   .cdeWin-zwin{position:absolute;z-index:8;pointer-events:none;border:1.5px solid var(--accent);
     background:rgba(240,167,42,.14);border-radius:2px}
   .st{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:11px;color:#fff}
@@ -479,6 +480,7 @@
       <span style="width:8px"></span>
       <button class="tb" id="btnCmpMode" onclick="toggleCmpMode()" title="Alternar visualização da comparação" style="display:none">◧ Slider</button>
       <button class="tb cde-wr" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
+      <button class="tb" id="btnApontarCde" onclick="toggleApontarCde()" title="Abrir um apontamento nesta prancha" style="display:none">＋ Apontar</button>
       <button class="tb cde-wr" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
     </div>
@@ -579,6 +581,40 @@
   </div>
 </div>
 
+<!-- Novo apontamento (obra/projetista) sobre a prancha do CDE -->
+<div class="ov" id="ovApontar" onclick="if(event.target===this)fecharApontarCDE()">
+  <div class="modal" style="width:min(460px,100%)">
+    <div class="modal-h">
+      <div style="flex:1"><b>＋ Novo apontamento</b><div class="cod" id="apNovoCod">—</div></div>
+      <button class="x" onclick="fecharApontarCDE()">×</button>
+    </div>
+    <div class="modal-b">
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Título</div>
+      <input id="apNovoTit" maxlength="120" placeholder="Ex.: Conflito viga × duto no eixo 3" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px">
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 5px">Descrição</div>
+      <textarea id="apNovoDesc" rows="4" placeholder="Descreva o problema encontrado…" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px;resize:vertical"></textarea>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <div>
+          <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Disciplina</div>
+          <select id="apNovoDisc" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px"></select>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Prioridade</div>
+          <select id="apNovoPrio" style="width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13px">
+            <option>Importante</option><option>Severa</option><option>Leve</option>
+          </select>
+        </div>
+      </div>
+      <div class="nav-hint" id="apNovoInfo" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-f">
+      <span class="msg" id="apNovoMsg" style="flex:1"></span>
+      <button class="btn sec" onclick="fecharApontarCDE()">Cancelar</button>
+      <button class="btn pri" id="apNovoSalvar" onclick="salvarApontarCDE()">Abrir apontamento</button>
+    </div>
+  </div>
+</div>
+
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 const sb = window.supabase.createClient(
@@ -607,16 +643,27 @@ let MULTI_MODE=false, MULTI_SEL=new Set();   // seleção múltipla → abrir ju
 // App. A RLS já barra a escrita; isto apenas esconde os controles que falhariam.
 let READONLY = false;
 let USER_ROLE = null;      // papel global — Fase 2 usa p/ distinguir obra (abre apontamento) de setor
+let USER_NOME = '';        // nome do usuário (autoria do apontamento)
+let CAN_APONTAR = false;   // pode abrir apontamento neste empreendimento (flag abrir_apont da matriz)
 async function boot(){
   const { data:{ session } } = await sb.auth.getSession();
   if(!session){ location.replace('./'); return; }
   USER = session.user;
   try{
-    const { data: prof } = await sb.from('usuarios_auria').select('role').eq('id',USER.id).maybeSingle();
+    const { data: prof } = await sb.from('usuarios_auria').select('role,nome').eq('id',USER.id).maybeSingle();
     USER_ROLE = prof && prof.role || null;
+    USER_NOME = (prof && prof.nome) || USER.email || '';
     // Fase 1: obra entra em modo CONSULTA (vê/baixa arquivos), como o setor.
     // Fase 2 liberará abrir apontamento para 'obra' via flags da matriz.
     READONLY = (USER_ROLE==='setor' || USER_ROLE==='obra');
+  }catch(e){}
+  // Capacidade de ABRIR APONTAMENTO: flag abrir_apont na matriz do empreendimento
+  // (obra/projetista). Independente do READONLY — o +Apontar é liberado por flag,
+  // não pelo papel. A RLS (apt_externo_ins) é a barreira real; isto é só a UI.
+  try{
+    const { data: acc } = await sb.from('cde_acesso_auria')
+      .select('abrir_apont').eq('empreendimento_id',EMP_ID).eq('usuario_id',USER.id).maybeSingle();
+    CAN_APONTAR = !!(acc && acc.abrir_apont);
   }catch(e){}
   if(READONLY){
     document.body.classList.add('cde-ro');
@@ -1817,6 +1864,7 @@ class CdeWin {
       if(e.button===1) e.preventDefault();
       try{ s.setPointerCapture(e.pointerId); }catch(_){}
       this._pan={ id:e.pointerId, x:e.clientX, y:e.clientY, px:this.V.panX, py:this.V.panY };
+      this._panMoved=false;   // distingue clique (coloca pino) de arraste (pan) no modo Apontar
       s.classList.add('grab');
     });
     // Pan limitado a UMA atualização por frame: sem isso o arraste enfileira
@@ -1831,6 +1879,7 @@ class CdeWin {
         return;
       }
       const d=this._pan; if(!d || e.pointerId!==d.id) return;
+      if(Math.abs(e.clientX-d.x)+Math.abs(e.clientY-d.y)>4) this._panMoved=true;
       this._panPend={ x:d.px-(e.clientX-d.x), y:d.py-(e.clientY-d.y) };
       if(this._rafId) return;
       this._rafId=requestAnimationFrame(()=>{
@@ -1865,9 +1914,14 @@ class CdeWin {
     s.addEventListener('auxclick',(e)=>{ if(e.button===1) e.preventDefault(); });
     s.addEventListener('click',(e)=>{
       const pin = e.target && e.target.closest && e.target.closest('.cdePin');
-      if(!pin) return; e.stopPropagation();
-      const apt = this.CDE_APTS.find(a=> String(a.id)===String(pin.dataset.apt));
-      if(apt) mostrarCdePinCard(apt, e.clientX, e.clientY, this);
+      if(pin){ e.stopPropagation();
+        const apt = this.CDE_APTS.find(a=> String(a.id)===String(pin.dataset.apt));
+        if(apt) mostrarCdePinCard(apt, e.clientX, e.clientY, this);
+        return; }
+      // Modo Apontar: clique (sem arrastar) na prancha abre o formulário no ponto.
+      if(APONTAR_ON && !this._panMoved && this.V.page && this.VIEW_FMT==='pdf'){
+        this.apontarNoPonto(e);
+      }
     });
     // Observa o próprio stage — mudança de tamanho (restore, max, resize, browser).
     // PRESERVA a vista (zoom/pan/página). Como o bitmap é da página inteira,
@@ -3671,6 +3725,17 @@ class CdeWin {
       });
     });
   }
+  // Modo Apontar: converte o clique (px do stage) em coords normalizadas da
+  // página e abre o formulário. Inverso de renderPinsCDE (x = nx*pw*zoom - panX).
+  apontarNoPonto(ev){
+    const r=this.stage.getBoundingClientRect();
+    const sx=ev.clientX-r.left, sy=ev.clientY-r.top;
+    const { pw, ph } = this._dims();
+    const nx=(sx + this.V.panX)/(pw*this.V.zoom);
+    const ny=(sy + this.V.panY)/(ph*this.V.zoom);
+    if(nx<0||nx>1||ny<0||ny>1) return;   // clicou fora da página
+    abrirFormApontarCDE(this, { nx, ny, pg:this.V.pageNum });
+  }
 }
 CdeWin._seq = 0;
 
@@ -3718,6 +3783,7 @@ function atualizarToolbar(){
     $('vFmt').style.display='none';
     $('pdfCtrls').style.display='none'; $('dxfHint').style.display='none';
     $('btnAnalisar').style.display='none';
+    $('btnApontarCde').style.display='none';
     $('btnCmpMode').style.display='none';
     $('vPg').textContent='—'; $('vPrev').disabled=true; $('vNext').disabled=true;
     return;
@@ -3737,6 +3803,10 @@ function atualizarToolbar(){
   $('pdfCtrls').style.display = isPdf ? 'inline-flex' : 'none';
   $('dxfHint').style.display = (isPdf || w.isCmp) ? 'none' : 'inline';
   $('btnAnalisar').style.display = w.VIEW_FILES.pdf ? 'inline-flex' : 'none';
+  // +Apontar: só para quem tem a flag abrir_apont (obra/projetista) e em PDF.
+  const bap=$('btnApontarCde');
+  if(bap){ bap.style.display = (CAN_APONTAR && isPdf) ? 'inline-flex' : 'none';
+           bap.classList.toggle('on', APONTAR_ON); }
   const cmpBtn=$('btnCmpMode');
   if(w.isCmp){
     cmpBtn.style.display='inline-flex';
@@ -3908,6 +3978,91 @@ function setZoomWin(on){
   const b=$('btnZoomWin'); if(b) b.classList.toggle('on', ZOOMWIN_ON);
 }
 function pdfZoomWin(){ const w=cdeAtiva(); if(!w||!w.V.page) return; setZoomWin(!ZOOMWIN_ON); }
+
+// ── Abrir apontamento no CDE (obra/projetista) ──────────────────────────────
+let APONTAR_ON=false;
+let _apCtx=null;   // {win, doc, nx, ny, pg} do ponto clicado
+function toggleApontarCde(){
+  const w=cdeAtiva();
+  if(!w || !CAN_APONTAR || w.VIEW_FMT!=='pdf') return;
+  APONTAR_ON=!APONTAR_ON;
+  document.body.classList.toggle('apontar', APONTAR_ON);
+  const b=$('btnApontarCde'); if(b) b.classList.toggle('on', APONTAR_ON);
+  if(APONTAR_ON && ZOOMWIN_ON) setZoomWin(false);   // um modo interativo por vez
+}
+function _apPrefixo(){ return USER_ROLE==='obra' ? 'OBR' : (USER_ROLE==='projetista' ? 'PRJ' : 'APT'); }
+function _apVisibilidade(){ return USER_ROLE==='obra' ? 'Público' : 'Coordenação'; }
+function _apDiscSigla(disc){
+  const s=String(disc||'GER').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  return s.slice(0,3) || 'GER';
+}
+function abrirFormApontarCDE(win, pt){
+  const doc = win.DOC_SEL; if(!doc) return;
+  _apCtx = { win, doc, nx:pt.nx, ny:pt.ny, pg:pt.pg };
+  const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
+  const dd = doc.disciplina || '';
+  if(dd && !discs.includes(dd)) discs.unshift(dd);
+  $('apNovoDisc').innerHTML = discs.map(d=>`<option${d===dd?' selected':''}>${esc(d)}</option>`).join('');
+  $('apNovoTit').value=''; $('apNovoDesc').value=''; $('apNovoPrio').value='Importante';
+  $('apNovoMsg').textContent='';
+  $('apNovoCod').textContent = _apPrefixo()+'-'+_apDiscSigla(dd)+'-…  ·  '+doc.codigo;
+  const vis=_apVisibilidade();
+  $('apNovoInfo').innerHTML = 'Vai abrir como <b>'+esc(vis)+'</b>'
+    + (vis==='Público' ? ' — aparece para todos no CDE.' : ' — só a coordenação e você veem.')
+    + ' O analista recebe no App.';
+  $('ovApontar').classList.add('on');
+  setTimeout(()=>$('apNovoTit').focus(), 50);
+}
+function fecharApontarCDE(){ $('ovApontar').classList.remove('on'); _apCtx=null; }
+async function salvarApontarCDE(){
+  if(!_apCtx) return;
+  const win=_apCtx.win, doc=_apCtx.doc, nx=_apCtx.nx, ny=_apCtx.ny, pg=_apCtx.pg;
+  const tit=$('apNovoTit').value.trim();
+  if(!tit){ $('apNovoMsg').textContent='Dê um título ao apontamento.'; return; }
+  const desc=$('apNovoDesc').value.trim();
+  const disc=$('apNovoDisc').value || doc.disciplina || '';
+  const prio=$('apNovoPrio').value || 'Importante';
+  const btn=$('apNovoSalvar'); btn.disabled=true; $('apNovoMsg').textContent='Salvando…';
+  try{
+    // 1) garante a prancha (RPC SECURITY DEFINER — obra/projetista não criam direto)
+    const d=win._dims();
+    const { data:prancha, error:eRpc } = await sb.rpc('cde_garantir_prancha', {
+      p_doc: doc.id, p_nome: doc.codigo, p_disc: doc.disciplina||null,
+      p_npages: win.V.doc ? win.V.doc.numPages : 1, p_w: d.pw, p_h: d.ph
+    });
+    if(eRpc) throw eRpc;
+    // 2) próximo número do prefixo OBR/PRJ-DIS-nn no empreendimento
+    const base=_apPrefixo()+'-'+_apDiscSigla(disc)+'-';
+    const { data:existentes } = await sb.from('apontamentos')
+      .select('id').eq('empreendimento_id',EMP_ID).ilike('id', base+'%');
+    let num=1; (existentes||[]).forEach(a=>{ const n=parseInt(String(a.id).slice(base.length),10); if(isFinite(n)&&n>=num) num=n+1; });
+    const codigo=base+num;
+    // 3) insere o apontamento (RLS apt_externo_ins exige criado_por_id=auth.uid + abrir_apont)
+    const vis=_apVisibilidade();
+    const hoje=new Date().toISOString().slice(0,10).split('-').reverse().join('/');
+    const linha={
+      id:codigo, id_num:num, empreendimento_id:EMP_ID, empreendimento:EMP.nome,
+      titulo:tit, descricao:desc, disciplina:disc, tipo:'',
+      status:'Em aberto', prioridade:prio, visibilidade:vis,
+      dimensao:'2d', grupo_id:codigo,
+      pontos_json:[{ nx, ny, pg }],
+      prancha_id:prancha, prancha_nome:doc.codigo,
+      cde_revisao_id: doc.atual ? doc.atual.id : null,
+      data_criacao:hoje,
+      criado_por_id:USER.id, criado_por_nome:USER_NOME, criado_por_papel:USER_ROLE,
+      log_json:[{ data:hoje, texto:'Apontamento '+codigo+' aberto por '+USER_NOME+' ('+(USER_ROLE||'')+') no CDE.', tipo:'sistema' }]
+    };
+    const { error:eIns } = await sb.from('apontamentos').insert(linha);
+    if(eIns) throw eIns;
+    fecharApontarCDE();
+    if(APONTAR_ON) toggleApontarCde();          // sai do modo
+    win.CDE_PIN_SEL = codigo;
+    await win.carregarPinsCDE(doc.id);           // o pino aparece na hora
+  }catch(e){
+    console.warn('apontar CDE:', e);
+    $('apNovoMsg').textContent='Falhou: '+((e&&e.message)||e);
+  }finally{ btn.disabled=false; }
+}
 
 function abrirNoApp(){
   const w = cdeAtiva(); const doc = w ? w.DOC_SEL : null;
