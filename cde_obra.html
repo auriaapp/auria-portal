@@ -267,8 +267,10 @@
   .cdePinCard .cod{font-family:var(--mono);color:var(--navy);font-weight:700;font-size:11px}
   .cdePinCard .row{display:flex;gap:6px;align-items:center;margin-top:5px;color:var(--txt2);font-size:11.5px;flex-wrap:wrap}
   .cdePinCard .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:700;color:#fff}
-  .cdePinCard .desc{margin-top:8px;color:var(--txt2);line-height:1.5;font-size:12px;max-height:80px;overflow:hidden}
-  .cdePinCard .acts{margin-top:11px;display:flex;gap:7px}
+  .cdePinCard .desc{margin-top:8px;color:var(--txt2);line-height:1.5;font-size:12px;max-height:120px;overflow:auto}
+  .cdePinCard .prints{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+  .cdePinCard .prints img{width:52px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:zoom-in}
+  .cdePinCard .acts{margin-top:11px;display:flex;gap:7px;flex-wrap:wrap}
   .cdePinCard .acts button{background:var(--navy);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
   .cdePinCard .acts button.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
   /* Seleção múltipla → abrir juntas no App */
@@ -3705,7 +3707,7 @@ class CdeWin {
     // Coordenação tem que ser conversa fechada. Filtro direto no server;
     // se você quer ver os "internos", abre no App.
     const { data: apts, error } = await sb.from('apontamentos')
-      .select('id,id_num,titulo,descricao,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade')
+      .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel')
       .eq('prancha_id', pr.id)
       .neq('visibilidade', 'Coordenação');
     if(error){ console.warn('apts CDE:', error.message); this.CDE_APTS=[]; }
@@ -4030,25 +4032,34 @@ function _apDiscSigla(disc){
   const s=String(disc||'GER').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   return s.slice(0,3) || 'GER';
 }
-function abrirFormApontarCDE(win, pt){
+function abrirFormApontarCDE(win, pt, editApt){
   const doc = win.DOC_SEL; if(!doc) return;
-  _apCtx = { win, doc, nx:pt.nx, ny:pt.ny, pg:pt.pg };
+  _apCtx = { win, doc, nx:pt.nx, ny:pt.ny, pg:pt.pg, edit: editApt||null };
   const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
-  const dd = doc.disciplina || '';
+  const dd = (editApt && editApt.disciplina) || doc.disciplina || '';
   if(dd && !discs.includes(dd)) discs.unshift(dd);
   $('apNovoDisc').innerHTML = discs.map(d=>`<option${d===dd?' selected':''}>${esc(d)}</option>`).join('');
-  $('apNovoTipo').innerHTML = '<option value="">— selecione —</option>'+TIPOS_APT_CDE.map(t=>`<option>${esc(t)}</option>`).join('');
-  $('apNovoTit').value=''; $('apNovoDesc').value=''; $('apNovoPrio').value='Importante / Programada';
+  const tp=(editApt && editApt.tipo)||'';
+  $('apNovoTipo').innerHTML = '<option value="">— selecione —</option>'+TIPOS_APT_CDE.map(t=>`<option${t===tp?' selected':''}>${esc(t)}</option>`).join('');
+  $('apNovoTit').value=(editApt&&editApt.titulo)||''; $('apNovoDesc').value=(editApt&&editApt.descricao)||'';
+  $('apNovoPrio').value=(editApt&&editApt.prioridade)||'Importante / Programada';
   $('apNovoMsg').textContent='';
-  $('apNovoCod').textContent = _apPrefixo()+'-'+_apDiscSigla(dd)+'-…  ·  '+doc.codigo;
-  const vis=_apVisibilidade();
-  $('apNovoInfo').innerHTML = 'Vai abrir como <b>'+esc(vis)+'</b>'
-    + (vis==='Público' ? ' — aparece para todos no CDE.' : ' — só a coordenação e você veem.')
-    + ' O analista recebe no App.';
-  // Print AUTOMÁTICO da vista atual ao redor do ponto (como no App).
+  // Cabeçalho, código e ação mudam entre criar e editar.
+  const modal=$('ovApontar');
+  const hEl=modal.querySelector('.modal-h b'); if(hEl) hEl.textContent = editApt ? '✎ Editar apontamento' : '＋ Novo apontamento';
+  $('apNovoSalvar').textContent = editApt ? 'Salvar alterações' : 'Abrir apontamento';
+  $('apNovoCod').textContent = editApt ? (esc(editApt.id)+'  ·  '+doc.codigo)
+                                       : (_apPrefixo()+'-'+_apDiscSigla(dd)+'-…  ·  '+doc.codigo);
+  const vis=(editApt&&editApt.visibilidade)||_apVisibilidade();
+  $('apNovoInfo').innerHTML = editApt
+    ? 'Editando o apontamento que você abriu ('+esc(vis)+').'
+    : 'Vai abrir como <b>'+esc(vis)+'</b>'
+      + (vis==='Público' ? ' — aparece para todos no CDE.' : ' — só a coordenação e você veem.')
+      + ' O analista recebe no App.';
+  // Prints: na edição carrega os existentes; na criação captura a vista atual.
   _apImgs=[];
-  const auto=win.capturarVistaCDE(pt.nx, pt.ny);
-  if(auto) _apImgs.push({ data:auto, auto:true });
+  if(editApt){ (editApt.imagens_json||[]).filter(Boolean).forEach(u=> _apImgs.push({ url:u })); }
+  else { const auto=win.capturarVistaCDE(pt.nx, pt.ny); if(auto) _apImgs.push({ data:auto, auto:true }); }
   apRenderThumbs();
   $('ovApontar').classList.add('on');
   setTimeout(()=>$('apNovoTit').focus(), 50);
@@ -4087,8 +4098,37 @@ async function salvarApontarCDE(){
   const desc=$('apNovoDesc').value.trim();
   const disc=$('apNovoDisc').value || doc.disciplina || '';
   const prio=$('apNovoPrio').value || 'Importante / Programada';
+  const edit=_apCtx.edit;
   const btn=$('apNovoSalvar'); btn.disabled=true; $('apNovoMsg').textContent='Salvando…';
+  // Sobe os prints pendentes ({data}); os que já são URL passam direto.
+  const subirPrints = async (codeForPath)=>{
+    $('apNovoMsg').textContent='Subindo prints…';
+    const imgs=[];
+    for(let i=0;i<_apImgs.length;i++){
+      const im=_apImgs[i];
+      if(im.url){ imgs.push(im.url); continue; }
+      const blob=await (await fetch(im.data)).blob();
+      const path=USER.id+'/'+codeForPath+'/img_'+Date.now()+'_'+i+'.jpg';
+      const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:true});
+      if(up.error) throw new Error('upload de print: '+up.error.message);
+      imgs.push(sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl);
+    }
+    return imgs;
+  };
   try{
+    // ── MODO EDIÇÃO: UPDATE do próprio apontamento (autor é dono; guard permite) ──
+    if(edit){
+      const imgs=await subirPrints(edit.id);
+      $('apNovoMsg').textContent='Salvando…';
+      const { error:eUpd } = await sb.from('apontamentos')
+        .update({ titulo:tit, descricao:desc, tipo:tipo, disciplina:disc, prioridade:prio, imagens_json:imgs })
+        .eq('empreendimento_id',EMP_ID).eq('id',edit.id);
+      if(eUpd) throw eUpd;
+      fecharApontarCDE();
+      await win.carregarPinsCDE(doc.id);
+      return;
+    }
+    // ── MODO CRIAÇÃO ──
     // 1) garante a prancha (RPC SECURITY DEFINER — obra/projetista não criam direto)
     const d=win._dims();
     const { data:prancha, error:eRpc } = await sb.rpc('cde_garantir_prancha', {
@@ -4102,19 +4142,8 @@ async function salvarApontarCDE(){
       .select('id').eq('empreendimento_id',EMP_ID).ilike('id', base+'%');
     let num=1; (existentes||[]).forEach(a=>{ const n=parseInt(String(a.id).slice(base.length),10); if(isFinite(n)&&n>=num) num=n+1; });
     const codigo=base+num;
-    // 3) sobe os prints (auto + adicionados) → imagens_json (URLs), mesmo bucket do App
-    $('apNovoMsg').textContent='Subindo prints…';
-    const imgs=[];
-    for(let i=0;i<_apImgs.length;i++){
-      const im=_apImgs[i];
-      if(im.url){ imgs.push(im.url); continue; }
-      const blob=await (await fetch(im.data)).blob();
-      const path=USER.id+'/'+codigo+'/img_'+Date.now()+'_'+i+'.jpg';
-      const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:true});
-      if(up.error) throw new Error('upload de print: '+up.error.message);
-      imgs.push(sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl);
-    }
-    // 4) insere o apontamento (RLS apt_externo_ins exige criado_por_id=auth.uid + abrir_apont)
+    const imgs=await subirPrints(codigo);
+    // 3) insere o apontamento (RLS apt_externo_ins exige criado_por_id=auth.uid + abrir_apont)
     $('apNovoMsg').textContent='Salvando…';
     const vis=_apVisibilidade();
     const hoje=new Date().toISOString().slice(0,10).split('-').reverse().join('/');
@@ -4126,7 +4155,7 @@ async function salvarApontarCDE(){
       // de empreendimento; o autor também é registrado em criado_por_* p/ o card.
       user_id:USER.id, analista:USER_NOME,
       titulo:tit, descricao:desc, disciplina:disc, tipo:tipo,
-      status:'Em aberto', prioridade:prio, visibilidade:vis,
+      status:'Em aberto', prioridade:prio, visibilidade:_apVisibilidade(),
       dimensao:'2d', grupo_id:codigo,
       pontos_json:[{ nx, ny, pg }], imagens_json:imgs,
       prancha_id:prancha, prancha_nome:doc.codigo,
@@ -4606,19 +4635,27 @@ function mostrarCdePinCard(a, cx, cy, win){
               : a.prioridade && /importante|programada/i.test(a.prioridade) ? '#B7791F'
               : '#64748B';
   const dt = (a.data_criacao || '').split('T')[0] || '';
+  const ehEquipe = ['analista','gerente','super_admin'].includes(USER_ROLE);
+  const souAutor = a.criado_por_id && USER && a.criado_por_id===USER.id;
+  const imgs=(a.imagens_json||[]).filter(Boolean);
+  const thumbs = imgs.length
+    ? '<div class="prints">'+imgs.slice(0,6).map(u=>'<img src="'+esc(u)+'" onclick="cdeAbrirPrint(\''+esc(u)+'\')">').join('')+'</div>' : '';
   c.innerHTML =
     '<div class="cod">'+esc(a.id||'')+'</div>'
     + '<div class="tit">'+esc(a.titulo||'(sem título)')+'</div>'
     + '<div class="row"><span class="pill" style="background:'+stCor+'">'+esc(st)+'</span>'
     + (a.prioridade?'<span class="pill" style="background:'+prCor+'">'+esc(a.prioridade)+'</span>':'')
     + (a.disciplina?'<span style="color:var(--mut)">· '+esc(a.disciplina)+'</span>':'')+'</div>'
+    + (a.tipo?'<div class="row"><span style="color:var(--txt2)">🏷 '+esc(a.tipo)+'</span></div>':'')
     + '<div class="row"><span style="color:var(--mut)">'+esc(a.analista||'')+(dt?' · '+esc(dt):'')+'</span></div>'
+    + (a.prazo_min?'<div class="row"><span style="color:var(--mut)">📅 prazo '+esc(a.prazo_min)+(a.atrasado?' · ⚠ atrasado':'')+'</span></div>':'')
     + (a.descricao?'<div class="desc">'+esc(a.descricao)+'</div>':'')
+    + thumbs
     + '<div class="acts">'
-    // "Abrir no App" só para a equipe (analista/gerente/super_admin) — obra,
-    // projetista e setor não têm acesso ao App.
-    + (['analista','gerente','super_admin'].includes(USER_ROLE)
-        ? '<button onclick="abrirAptNoApp(\''+esc(a.id)+'\')">Abrir no App</button>' : '')
+    // Editar: só o AUTOR do apontamento pode editar o próprio.
+    + (souAutor ? '<button onclick="cdeEditarApt(\''+esc(a.id)+'\')">Editar</button>' : '')
+    // "Abrir no App" só para a equipe (obra/projetista/setor não têm App).
+    + (ehEquipe ? '<button onclick="abrirAptNoApp(\''+esc(a.id)+'\')">Abrir no App</button>' : '')
     + '<button class="sec" onclick="esconderCdePinCard()">Fechar</button>'
     + '</div>';
   c.style.display='block';
@@ -4632,6 +4669,25 @@ function mostrarCdePinCard(a, cx, cy, win){
 function esconderCdePinCard(){
   const c=$('cdePinCard'); if(c) c.style.display='none';
   if(_CDE_CARD_WIN){ _CDE_CARD_WIN.CDE_PIN_SEL=null; _CDE_CARD_WIN.renderPinsCDE(); _CDE_CARD_WIN=null; }
+}
+// Print em tela cheia (clique numa miniatura do card).
+function cdeAbrirPrint(url){
+  let lb=$('cdeLightbox');
+  if(!lb){ lb=document.createElement('div'); lb.id='cdeLightbox';
+    lb.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+    lb.onclick=()=>{ lb.style.display='none'; };
+    document.body.appendChild(lb); }
+  lb.innerHTML='<img src="'+esc(url)+'" style="max-width:92%;max-height:92%;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,.6)">';
+  lb.style.display='flex';
+}
+// Editar o próprio apontamento (só o autor vê o botão). Reabre o formulário
+// pré-preenchido em modo edição (UPDATE em vez de INSERT).
+function cdeEditarApt(aptId){
+  const win=_CDE_CARD_WIN || cdeAtiva(); if(!win) return;
+  const a=(win.CDE_APTS||[]).find(x=>String(x.id)===String(aptId)); if(!a) return;
+  esconderCdePinCard();
+  const pt=(a.pontos_json&&a.pontos_json[0])||{nx:0.5,ny:0.5,pg:1};
+  abrirFormApontarCDE(win, pt, a);
 }
 document.addEventListener('mousedown', (e)=>{
   const c=$('cdePinCard'); if(!c || c.style.display==='none') return;
