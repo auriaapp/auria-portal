@@ -4456,12 +4456,32 @@ function avaliarLote(){
       const files=g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
         const antigo=jaTem&&jaTem.has(f.name.toLowerCase());
         return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}" style="${antigo?'opacity:.4':''}" title="${antigo?'já enviado':'novo'}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
+      // Documento NOVO exige um TÍTULO (resumo do conteúdo). Revisão de doc já
+      // existente herda o título — não re-pergunta.
+      const titRow = a.tipo==='novo'
+        ? `<tr><td colspan="5" style="padding-top:0"><input class="loteTit" data-base="${esc(g.base)}" value="${esc(g.titulo||'')}" placeholder="Título / resumo do conteúdo desta prancha (obrigatório)" oninput="loteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid ${(g.titulo||'').trim()?'var(--line)':'#E67E22'};border-radius:7px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:12.5px"></td></tr>`
+        : '';
       return `<tr><td><div class="cod">${esc(p.codigoDoc||g.base)}</div>${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
         <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td><td class="cod">${esc(p.revisao||'—')}</td>
-        <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`;
+        <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`+titRow;
     }).join('')+'</tbody>';
   $('prevWrap').style.display='block';
-  $('btnConfirmar').disabled=validos.length===0;
+  $('btnConfirmar').disabled=!loteConfirmavel();
+  const falta=LOTE.some(g=>g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim());
+  $('recMsg').textContent = falta ? 'Preencha o título dos documentos novos para confirmar.' : '';
+}
+// Confirmável = há algo a registrar E todo documento NOVO tem título.
+function loteConfirmavel(){
+  const validos=LOTE.filter(g=>g.acao&&['novo','rev','add'].includes(g.acao.tipo));
+  if(!validos.length) return false;
+  return !LOTE.some(g=> g.acao&&g.acao.tipo==='novo' && !(g.titulo||'').trim());
+}
+function loteTitInput(el){
+  const g=LOTE.find(x=>x.base===el.dataset.base); if(g) g.titulo=el.value;
+  el.style.borderColor=(el.value||'').trim()?'var(--line)':'#E67E22';
+  $('btnConfirmar').disabled=!loteConfirmavel();
+  const falta=LOTE.some(x=>x.acao&&x.acao.tipo==='novo'&&!(x.titulo||'').trim());
+  $('recMsg').textContent = falta ? 'Preencha o título dos documentos novos para confirmar.' : '';
 }
 async function sha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; } }
 async function confirmarLote(){
@@ -4478,7 +4498,7 @@ async function confirmarLote(){
       let docId=g.acao.doc?g.acao.doc.id:null;
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
-          empreendimento_id:EMP_ID, codigo:g.parse.codigoDoc, titulo:g.parse.codigoDoc,
+          empreendimento_id:EMP_ID, codigo:g.parse.codigoDoc, titulo:(g.titulo||'').trim()||g.parse.codigoDoc,
           disciplina:g.parse.disciplina, campos:g.parse.vals, numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
         }).select('id').single();
         if(error) throw error; docId=d.id;
