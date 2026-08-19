@@ -5061,9 +5061,22 @@ function renderListaApts(){
     </div>`;
   }).join('');
 }
-function clicarAptLista(i){
+async function clicarAptLista(i){
   const a=APTS[i]; if(!a) return;
-  // se tem pin nesta prancha/página: centraliza; sempre abre o editor
+  // Se a prancha do apontamento NÃO está aberta como base, tenta abri-la.
+  // Pranchas do CDE auto-carregam pelo cde_documento_id; pranchas locais (sem
+  // vínculo CDE) não têm como recarregar sem o arquivo, então só abre o editor.
+  const jaBase = PRANCHA && a.prancha_id && a.prancha_id===PRANCHA.id;
+  if(!jaBase && a.prancha_id){
+    try{
+      const { data:pr } = await sb.from('pranchas_auria')
+        .select('cde_documento_id').eq('id',a.prancha_id).maybeSingle();
+      if(pr && pr.cde_documento_id){
+        await abrirDoCDE(pr.cde_documento_id, a.cde_revisao_id||null, false);
+      }
+    }catch(e){ console.warn('abrir prancha do apontamento:', e.message||e); }
+  }
+  // Com a prancha certa aberta, centraliza no pin (se houver na página atual).
   if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
     const pt=a.pontos_json[0];
     if((pt.pg||1)===V.pageNum){
