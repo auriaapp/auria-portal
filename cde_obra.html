@@ -486,6 +486,7 @@
       <span style="width:8px"></span>
       <button class="tb" id="btnCmpMode" onclick="toggleCmpMode()" title="Alternar visualização da comparação" style="display:none">◧ Slider</button>
       <button class="tb cde-wr" onclick="addAoGrupo()" title="Adicionar este documento a um grupo">＋ Grupo</button>
+      <button class="tb ico" id="btnHistCde" onclick="toggleHistCDE()" title="Histórico: mostrar também os apontamentos encerrados (resolvidos/reprovados)" style="display:none">🕓</button>
       <button class="tb" id="btnApontarCde" onclick="toggleApontarCde()" title="Abrir um apontamento nesta prancha" style="display:none">＋ Apontar</button>
       <button class="tb cde-wr" id="btnAnalisar" onclick="abrirNoApp()" title="Abrir esta prancha no Auria App (com pins e escala)" style="display:none">🔍 Analisar no App</button>
       <button class="tb" onclick="abrirDetalhes()" title="Revisões, arquivos e status">ⓘ Detalhes / status</button>
@@ -3705,15 +3706,12 @@ class CdeWin {
       .select('id').eq('empreendimento_id', EMP_ID).eq('cde_documento_id', cdeDocId).maybeSingle();
     if(!pr){ this.CDE_PRANCHA_ID=null; this.CDE_APTS=[]; this.renderPinsCDE(); return; }
     this.CDE_PRANCHA_ID = pr.id;
-    // Apontamentos de visibilidade='Coordenação' são INTERNOS ao App
-    // (equipe de coordenação/analista) e não devem aparecer como pin no
-    // CDE — o CDE é a ferramenta compartilhada com projetista/setor, e
-    // Coordenação tem que ser conversa fechada. Filtro direto no server;
-    // se você quer ver os "internos", abre no App.
+    // Visibilidade é decidida pela RLS por papel (obra/setor só veem Público +
+    // o que abriram; equipe/coordenação veem Coordenação também). Não filtramos
+    // Coordenação no cliente — quem pode ver, vê; quem não pode, a RLS barra.
     const { data: apts, error } = await sb.from('apontamentos')
       .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json')
-      .eq('prancha_id', pr.id)
-      .neq('visibilidade', 'Coordenação');
+      .eq('prancha_id', pr.id);
     if(error){ console.warn('apts CDE:', error.message); this.CDE_APTS=[]; }
     else this.CDE_APTS = apts||[];
     this.renderPinsCDE();
@@ -3724,6 +3722,10 @@ class CdeWin {
     const { pw, ph } = this._dims();   // mesmas dimensões do canvas (com /Rotate aplicado)
     const pg = this.V.pageNum;
     this.CDE_APTS.forEach(a=>{
+      // Prancha limpa: só apontamentos ABERTOS. Encerrados (Resolvido/Reprovado)
+      // só aparecem com o Histórico ligado (botão 🕓).
+      const encerrado = a.status==='Resolvido' || a.status==='Reprovado';
+      if(encerrado && !CDE_HIST_ON) return;
       (a.pontos_json||[]).forEach((pt,idx)=>{
         if(!pt) return; const ptPg = pt.pg || 1; if(ptPg !== pg) return;
         const x = (pt.nx||0) * pw * this.V.zoom - this.V.panX;
@@ -3842,6 +3844,10 @@ function atualizarToolbar(){
   const bap=$('btnApontarCde');
   if(bap){ bap.style.display = (CAN_APONTAR && isPdf) ? 'inline-flex' : 'none';
            bap.classList.toggle('on', APONTAR_ON); }
+  // Histórico (mostrar encerrados): sempre disponível em PDF.
+  const bh=$('btnHistCde');
+  if(bh){ bh.style.display = isPdf ? 'inline-flex' : 'none';
+          bh.classList.toggle('on', CDE_HIST_ON); }
   const cmpBtn=$('btnCmpMode');
   if(w.isCmp){
     cmpBtn.style.display='inline-flex';
@@ -4022,6 +4028,15 @@ const TIPOS_APT_CDE=["Interferência / Divergência entre Disciplinas","Falha Gr
   "Não atendimento às premissas"];
 let APONTAR_ON=false;
 let _apCtx=null;   // {win, doc, nx, ny, pg} do ponto clicado
+// Histórico: quando ligado, a prancha mostra também os pins de apontamentos
+// ENCERRADOS (Resolvido/Reprovado). Desligado (padrão), só os abertos.
+let CDE_HIST_ON=false;
+function toggleHistCDE(){
+  CDE_HIST_ON=!CDE_HIST_ON;
+  const b=$('btnHistCde'); if(b){ b.classList.toggle('on', CDE_HIST_ON); b.textContent = CDE_HIST_ON ? '🕓' : '🕓'; }
+  // repinta os pins em todas as janelas abertas
+  WIN_STATE.list.forEach(w=>{ try{ if(w.renderPinsCDE) w.renderPinsCDE(); }catch(_){} });
+}
 function toggleApontarCde(){
   const w=cdeAtiva();
   if(!w || !CAN_APONTAR || w.VIEW_FMT!=='pdf') return;
