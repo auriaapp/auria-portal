@@ -747,7 +747,7 @@
         <option value=""></option>
         <option>Severa / Imediata</option><option>Importante / Programada</option><option>Observação / Atenção</option>
       </select></div>
-      <div class="fg"><label>Status</label><select id="apStatus">
+      <div class="fg"><label>Status</label><select id="apStatus" onchange="apStatusMudou()">
         <option>Em aberto</option><option>Em análise</option><option>Resolvido</option><option>Reprovado</option>
       </select></div>
     </div>
@@ -4606,6 +4606,7 @@ function abrirEditor(){
   $('apTipo').innerHTML='<option value=""></option>'+TIPOS_APT.map(t=>`<option${t===a.tipo?' selected':''}>${esc(t)}</option>`).join('');
   $('apPrio').value=a.prioridade||'';
   $('apStatus').value=a.status||'Em aberto';
+  _apStatusAntes=a.status||'Em aberto';   // base para reverter se a justificativa for cancelada
   // Local/Pavimento = lista PRÉ-DEFINIDA do empreendimento (não texto livre)
   const locais=locaisDoEmp();
   if(a.local_txt && !locais.includes(a.local_txt)) locais.unshift(a.local_txt);
@@ -4738,6 +4739,27 @@ function renderLog(){
 function logAdd(texto){
   (APT_EDIT.log_json=APT_EDIT.log_json||[]).push(
     { data:hojeBr(), texto:texto, tipo:'edicao', autor:USER.nome });
+}
+// Ao Reprovar/Resolver um apontamento de ORIGEM EXTERNA (obra/projetista), o
+// analista deve justificar (reprovação) ou dar evidência (resolução). Pede o
+// texto na hora e registra no histórico; se cancelar/deixar vazio, reverte o
+// status. Apontamento próprio do analista segue sem exigência.
+let _apStatusAntes=null;   // status ao abrir/última confirmação (p/ reverter)
+function apStatusMudou(){
+  const a=APT_EDIT; if(!a) return;
+  const st=$('apStatus').value;
+  if(!aptOrigem(a)){ _apStatusAntes=st; return; }   // só exige para origem externa
+  if(st==='Reprovado' || st==='Resolvido'){
+    const rot = st==='Reprovado' ? 'a JUSTIFICATIVA da reprovação' : 'a EVIDÊNCIA/descrição da resolução';
+    const j = prompt('Para marcar como '+st+', descreva '+rot+'\n(pode anexar prints também, no campo de imagens):', '');
+    if(j===null || !j.trim()){
+      $('apStatus').value = _apStatusAntes || a.status || 'Em aberto';   // reverte
+      return;
+    }
+    logAdd((st==='Reprovado'?'❌ Reprovado — ':'✅ Resolvido — ')+j.trim());
+    renderLog();
+  }
+  _apStatusAntes=st;
 }
 
 function renderParts(){
