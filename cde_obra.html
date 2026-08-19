@@ -607,6 +607,14 @@
           </select>
         </div>
       </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 6px">
+        <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Prints</div>
+        <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="apAddPrint()">＋ Adicionar print</button>
+      </div>
+      <input type="file" id="apNovoFile" accept="image/*" multiple style="display:none" onchange="apArquivosPrint(this.files)">
+      <div id="apNovoThumbs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 5px">Arquivos relacionados (links)</div>
+      <textarea id="apNovoLinks" rows="2" placeholder="Cole endereços/links, um por linha (opcional)" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:12.5px;resize:vertical"></textarea>
       <div class="nav-hint" id="apNovoInfo" style="margin-top:12px"></div>
     </div>
     <div class="modal-f">
@@ -3738,6 +3746,27 @@ class CdeWin {
     if(nx<0||nx>1||ny<0||ny>1) return;   // clicou fora da página
     abrirFormApontarCDE(this, { nx, ny, pg:this.V.pageNum });
   }
+  // Print automático: recorta a região do bitmap base ao redor do ponto e
+  // marca o local. Reusa o bitmap já renderizado (this.canvas @ B.scale) —
+  // sem novo render do PDF.js. Devolve dataURL JPEG (ou null).
+  capturarVistaCDE(nx, ny){
+    try{
+      const cv=this.canvas; if(!cv||!cv.width||!this.B.valido) return null;
+      const { pw, ph } = this._dims(), bs=this.B.scale, z=this.V.zoom;
+      const cx=nx*pw*bs, cy=ny*ph*bs;                          // ponto no bitmap base
+      const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
+      const w=Math.min(cv.width,  Math.max(60, Math.round((cw*0.6/z)*bs)));
+      const h=Math.min(cv.height, Math.max(60, Math.round((ch*0.6/z)*bs)));
+      const sx=Math.max(0,Math.min(cv.width-w,  Math.round(cx-w/2)));
+      const sy=Math.max(0,Math.min(cv.height-h, Math.round(cy-h/2)));
+      const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+      const tc=tmp.getContext('2d'); tc.fillStyle='#fff'; tc.fillRect(0,0,w,h);
+      tc.drawImage(cv, sx,sy,w,h, 0,0,w,h);
+      tc.strokeStyle='#E74C3C'; tc.lineWidth=Math.max(2, bs*1.2);
+      tc.beginPath(); tc.arc(cx-sx, cy-sy, Math.max(10, bs*8), 0, Math.PI*2); tc.stroke();
+      return tmp.toDataURL('image/jpeg', 0.75);
+    }catch(e){ console.warn('print CDE:', e); return null; }
+  }
 }
 CdeWin._seq = 0;
 
@@ -4012,16 +4041,44 @@ function abrirFormApontarCDE(win, pt){
   $('apNovoDisc').innerHTML = discs.map(d=>`<option${d===dd?' selected':''}>${esc(d)}</option>`).join('');
   $('apNovoTipo').innerHTML = '<option value="">— selecione —</option>'+TIPOS_APT_CDE.map(t=>`<option>${esc(t)}</option>`).join('');
   $('apNovoTit').value=''; $('apNovoDesc').value=''; $('apNovoPrio').value='Importante / Programada';
-  $('apNovoMsg').textContent='';
+  $('apNovoLinks').value=''; $('apNovoMsg').textContent='';
   $('apNovoCod').textContent = _apPrefixo()+'-'+_apDiscSigla(dd)+'-…  ·  '+doc.codigo;
   const vis=_apVisibilidade();
   $('apNovoInfo').innerHTML = 'Vai abrir como <b>'+esc(vis)+'</b>'
     + (vis==='Público' ? ' — aparece para todos no CDE.' : ' — só a coordenação e você veem.')
     + ' O analista recebe no App.';
+  // Print AUTOMÁTICO da vista atual ao redor do ponto (como no App).
+  _apImgs=[];
+  const auto=win.capturarVistaCDE(pt.nx, pt.ny);
+  if(auto) _apImgs.push({ data:auto, auto:true });
+  apRenderThumbs();
   $('ovApontar').classList.add('on');
   setTimeout(()=>$('apNovoTit').focus(), 50);
 }
-function fecharApontarCDE(){ $('ovApontar').classList.remove('on'); _apCtx=null; }
+// Prints do apontamento em criação: {data:dataURL} até subir. auto=print da vista.
+let _apImgs=[];
+function apRenderThumbs(){
+  const w=$('apNovoThumbs'); if(!w) return;
+  if(!_apImgs.length){ w.innerHTML='<span style="font-size:11.5px;color:var(--mut)">Nenhum print.</span>'; return; }
+  w.innerHTML=_apImgs.map((im,i)=>
+    '<div style="position:relative">'
+    + '<img src="'+(im.data||im.url)+'" style="width:56px;height:56px;object-fit:cover;border-radius:7px;border:1px solid var(--line)">'
+    + (im.auto?'<span style="position:absolute;left:2px;bottom:2px;background:rgba(0,0,0,.6);color:#fff;font-size:8px;padding:1px 3px;border-radius:4px">auto</span>':'')
+    + '<button onclick="apRemPrint('+i+')" title="Remover" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:#E74C3C;color:#fff;font-size:12px;line-height:1;cursor:pointer">×</button>'
+    + '</div>').join('');
+}
+function apRemPrint(i){ _apImgs.splice(i,1); apRenderThumbs(); }
+function apAddPrint(){ $('apNovoFile').click(); }
+function apArquivosPrint(files){
+  [...(files||[])].forEach(f=>{
+    if(!/^image\//.test(f.type)) return;
+    const r=new FileReader();
+    r.onload=()=>{ _apImgs.push({ data:r.result }); apRenderThumbs(); };
+    r.readAsDataURL(f);
+  });
+  $('apNovoFile').value='';
+}
+function fecharApontarCDE(){ $('ovApontar').classList.remove('on'); _apCtx=null; _apImgs=[]; }
 async function salvarApontarCDE(){
   if(!_apCtx) return;
   const win=_apCtx.win, doc=_apCtx.doc, nx=_apCtx.nx, ny=_apCtx.ny, pg=_apCtx.pg;
@@ -4047,9 +4104,26 @@ async function salvarApontarCDE(){
       .select('id').eq('empreendimento_id',EMP_ID).ilike('id', base+'%');
     let num=1; (existentes||[]).forEach(a=>{ const n=parseInt(String(a.id).slice(base.length),10); if(isFinite(n)&&n>=num) num=n+1; });
     const codigo=base+num;
-    // 3) insere o apontamento (RLS apt_externo_ins exige criado_por_id=auth.uid + abrir_apont)
+    // 3) sobe os prints (auto + adicionados) → imagens_json (URLs), mesmo bucket do App
+    $('apNovoMsg').textContent='Subindo prints…';
+    const imgs=[];
+    for(let i=0;i<_apImgs.length;i++){
+      const im=_apImgs[i];
+      if(im.url){ imgs.push(im.url); continue; }
+      const blob=await (await fetch(im.data)).blob();
+      const path=USER.id+'/'+codigo+'/img_'+Date.now()+'_'+i+'.jpg';
+      const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:true});
+      if(up.error) throw new Error('upload de print: '+up.error.message);
+      imgs.push(sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl);
+    }
+    // links de arquivos relacionados → entrada no log (o analista vê no App)
+    const links=$('apNovoLinks').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    // 4) insere o apontamento (RLS apt_externo_ins exige criado_por_id=auth.uid + abrir_apont)
+    $('apNovoMsg').textContent='Salvando…';
     const vis=_apVisibilidade();
     const hoje=new Date().toISOString().slice(0,10).split('-').reverse().join('/');
+    const log=[{ data:hoje, texto:'Apontamento '+codigo+' aberto por '+USER_NOME+' ('+(USER_ROLE||'')+') no CDE.', tipo:'sistema' }];
+    if(links.length) log.push({ data:hoje, texto:'Arquivos relacionados:\n'+links.join('\n'), tipo:'sistema' });
     const linha={
       id:codigo, id_num:num, empreendimento_id:EMP_ID, empreendimento:EMP.nome,
       // user_id faz parte da PK (identidade legada usuário+id): é o CRIADOR.
@@ -4059,12 +4133,12 @@ async function salvarApontarCDE(){
       titulo:tit, descricao:desc, disciplina:disc, tipo:tipo,
       status:'Em aberto', prioridade:prio, visibilidade:vis,
       dimensao:'2d', grupo_id:codigo,
-      pontos_json:[{ nx, ny, pg }],
+      pontos_json:[{ nx, ny, pg }], imagens_json:imgs,
       prancha_id:prancha, prancha_nome:doc.codigo,
       cde_revisao_id: doc.atual ? doc.atual.id : null,
       data_criacao:hoje,
       criado_por_id:USER.id, criado_por_nome:USER_NOME, criado_por_papel:USER_ROLE,
-      log_json:[{ data:hoje, texto:'Apontamento '+codigo+' aberto por '+USER_NOME+' ('+(USER_ROLE||'')+') no CDE.', tipo:'sistema' }]
+      log_json:log
     };
     const { error:eIns } = await sb.from('apontamentos').insert(linha);
     if(eIns) throw eIns;
