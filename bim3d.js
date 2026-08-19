@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-18a  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-18b  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -114,7 +114,7 @@ export async function criar(cont, opts={}){
     caixa:null, unidade:1, niveis:null, porNivel:null,
     facesDuplas:true, _ultFaces:0,
     corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
-    medida: { ativo:false, modo:'eixo', snapOn:true, medidas:[], pend:null },
+    medida: { ativo:false, modo:'eixo', snapOn:true, medidas:[], pend:null, _seq:0 },
     andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null,
               teclas:new Set(), camPos:null, camRot:null, alvo:null, ultUpd:0 },
     on: opts.on || {},          // { selecionar, medir, dica, pinos, nivel, modo, podeTeclado }
@@ -919,13 +919,16 @@ async function medirPonto(V, ev){
   el.style.cssText='position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:auto;'
     +'background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;padding:2px 4px 2px 8px;'
     +'border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;gap:4px';
-  const medida={ marks:[M.pend.mark, esf], line:linha, el, meio:a.clone().add(b).multiplyScalar(0.5), dist };
-  el.innerHTML='<span>'+rot+fmtDist(dist)+'</span><span class="x" title="Apagar esta medida" style="cursor:pointer;font-weight:800;font-size:13px;line-height:1;opacity:.65;padding:0 2px">×</span>';
-  el.querySelector('.x').addEventListener('click', (e)=>{ e.stopPropagation(); removerMedida(V, medida); });
+  const texto=rot+fmtDist(dist);
+  const medida={ id:(++M._seq), marks:[M.pend.mark, esf], line:linha, el,
+    meio:a.clone().add(b).multiplyScalar(0.5), dist, texto, visivel:true };
+  el.innerHTML='<span>'+texto+'</span><span class="x" title="Apagar esta medida" style="cursor:pointer;font-weight:800;font-size:13px;line-height:1;opacity:.65;padding:0 2px">×</span>';
+  el.querySelector('.x').addEventListener('click', (e)=>{ e.stopPropagation(); removerMedida(V, medida); if(V.on.medidas) V.on.medidas(V); });
   V.cont.appendChild(el);
   M.medidas.push(medida);
   M.pend=null;
-  if(V.on.medir) V.on.medir(dist);
+  if(V.on.medir)   V.on.medir(dist);
+  if(V.on.medidas) V.on.medidas(V);   // avisa o host para redesenhar o painel de cotas
 }
 // Remove UMA medida (o ×) — dispõe seus objetos da cena e a etiqueta.
 function removerMedida(V, medida){
@@ -940,9 +943,29 @@ export function limparMedidas(V){
   const M=V.medida;
   (M.medidas||[]).slice().forEach(md=> removerMedida(V, md));
   if(M.pend){ try{ V.scene.remove(M.pend.mark); }catch(_){} M.pend=null; }
+  if(V.on.medidas) V.on.medidas(V);
 }
-// Quantas cotas existem (para a UI mostrar/ocultar o botão limpar).
+// ── API do painel de cotas (lista estilo Solibri) ───────────────────────────
+export function listaMedidas(V){
+  return (V&&V.medida&&V.medida.medidas||[]).map(m=>({ id:m.id, texto:m.texto, visivel:m.visivel!==false }));
+}
 export function contarMedidas(V){ return (V&&V.medida&&V.medida.medidas)?V.medida.medidas.length:0; }
+export function removerMedidaId(V, id){
+  const md=(V.medida.medidas||[]).find(m=>m.id===id);
+  if(md){ removerMedida(V, md); if(V.on.medidas) V.on.medidas(V); }
+}
+// Liga/desliga a VISUALIZAÇÃO de uma cota (sem apagá-la): esconde/mostra a
+// linha, os marcadores e a etiqueta.
+export function medidaVisivel(V, id, vis){
+  const md=(V.medida.medidas||[]).find(m=>m.id===id); if(!md) return;
+  md.visivel = (vis===undefined) ? !md.visivel : !!vis;
+  const on=md.visivel;
+  try{ md.line.visible=on; }catch(_){}
+  md.marks.forEach(m=>{ try{ m.visible=on; }catch(_){} });
+  md.el.style.display = on ? 'flex' : 'none';
+  md._forcarOculto = !on;   // atualizarCotas respeita o oculto
+  if(V.on.medidas) V.on.medidas(V);
+}
 function escalarMarcas(V){
   const M=V.medida;
   const h=V.cont.clientHeight||1;
@@ -958,6 +981,7 @@ function atualizarCotas(V){
   const M=V.medida; if(!M.medidas||!M.medidas.length) return;
   const w=V.cont.clientWidth, h=V.cont.clientHeight;
   M.medidas.forEach(md=>{
+    if(md._forcarOculto){ md.el.style.display='none'; return; }   // desligada no painel
     const p=md.meio.clone().project(V.camera);
     if(p.z>1){ md.el.style.display='none'; return; }
     md.el.style.display='flex';
