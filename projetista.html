@@ -1944,12 +1944,30 @@ function cdeAvaliar(){
   cdeEl('cde-prev-tbl').innerHTML='<thead><tr><th>Código</th><th>Disciplina</th><th>Rev.</th><th>Arquivos</th><th>Situação</th></tr></thead><tbody>'
     + CDE_LOTE.map(function(g){ const p=g.parse,a=g.acao;
         const files=g.arquivos.map(function(f){ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||''; return '<span class="cde-fchip '+(ext.toLowerCase()==='pdf'?'pdf':'')+'">'+escH(ext.toUpperCase()||'?')+'</span>'; }).join('');
+        // Documento NOVO exige TÍTULO (resumo do conteúdo); revisão herda o do doc.
+        const titRow = a.tipo==='novo'
+          ? '<tr><td colspan="5" style="padding-top:0"><input class="cdeLoteTit" data-base="'+escH(g.base)+'" maxlength="90" value="'+escH(g.titulo||'')+'" placeholder="Título / resumo do conteúdo desta prancha (obrigatório, até 90 caracteres)" oninput="cdeLoteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid '+((g.titulo||'').trim()?'#d9dee6':'#E67E22')+';border-radius:7px;font-family:inherit;font-size:12.5px"></td></tr>'
+          : '';
         return '<tr><td><span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span>'+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
           +'<td>'+escH(p.disciplina?cdeDiscLabel(p.disciplina):'—')+'</td><td class="cde-cod">'+escH(p.revisao||'—')+'</td>'
-          +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>';
+          +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>'+titRow;
       }).join('')+'</tbody>';
   cdeEl('cde-prev').style.display='block';
-  cdeEl('cde-btn-enviar').disabled=validos.length===0;
+  cdeEl('cde-btn-enviar').disabled=!cdeLoteConfirmavel();
+  const falta=CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); });
+  cdeEl('cde-msg').textContent = falta ? 'Preencha o título dos documentos novos para enviar.' : '';
+}
+function cdeLoteConfirmavel(){
+  const validos=CDE_LOTE.filter(function(g){ return g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'); });
+  if(!validos.length) return false;
+  return !CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); });
+}
+function cdeLoteTitInput(el){
+  const g=CDE_LOTE.find(function(x){ return x.base===el.dataset.base; }); if(g) g.titulo=el.value;
+  el.style.borderColor=(el.value||'').trim()?'#d9dee6':'#E67E22';
+  cdeEl('cde-btn-enviar').disabled=!cdeLoteConfirmavel();
+  const falta=CDE_LOTE.some(function(x){ return x.acao&&x.acao.tipo==='novo'&&!(x.titulo||'').trim(); });
+  cdeEl('cde-msg').textContent = falta ? 'Preencha o título dos documentos novos para enviar.' : '';
 }
 
 async function cdeSha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return Array.prototype.map.call(new Uint8Array(h),function(b){ return b.toString(16).padStart(2,'0'); }).join(''); }catch(e){ return null; } }
@@ -1966,7 +1984,7 @@ async function cdeConfirmar(){
       var docId=g.acao.doc?g.acao.doc.id:null;
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
-          empreendimento_id:CDE_CUR.id, codigo:g.parse.codigoDoc, titulo:g.parse.codigoDoc,
+          empreendimento_id:CDE_CUR.id, codigo:g.parse.codigoDoc, titulo:(g.titulo||'').trim()||g.parse.codigoDoc,
           disciplina:g.parse.disciplina, campos:g.parse.vals, numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
         }).select('id').single();
         if(error) throw error; docId=d.id;
