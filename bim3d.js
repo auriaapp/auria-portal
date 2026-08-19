@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-15u  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-08-18a  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -114,7 +114,7 @@ export async function criar(cont, opts={}){
     caixa:null, unidade:1, niveis:null, porNivel:null,
     facesDuplas:true, _ultFaces:0,
     corte:  { ativo:false, ancora:null, normal:null, inv:false, plano:null, ajuda:null, arestas:null, mostrarAjuda:true },
-    medida: { ativo:false, modo:'eixo', snapOn:true, pts:[], objs:[], cotas:[], marcas:[] },
+    medida: { ativo:false, modo:'eixo', snapOn:true, medidas:[], pend:null },
     andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null,
               teclas:new Set(), camPos:null, camRot:null, alvo:null, ultUpd:0 },
     on: opts.on || {},          // { selecionar, medir, dica, pinos, nivel, modo, podeTeclado }
@@ -799,8 +799,10 @@ export function modoMedir(V, lig){
   if(lig && V.corte.ativo) modoCorte(V,false);
   V.medida.ativo=lig;
   V.canvas.style.cursor = lig ? 'crosshair' : '';
-  if(!lig){ limparMedidas(V); snapEsconder(V); }
-  else dica(V,'Clique em dois pontos para medir. O cursor gruda em vértices, arestas e faces.');
+  // Sair do modo NÃO apaga as cotas já feitas (estilo Solibri: elas persistem
+  // na tela até você apagar). Só descarta um primeiro-ponto pendente e o snap.
+  if(!lig){ snapEsconder(V); if(V.medida.pend){ try{ V.scene.remove(V.medida.pend.mark); }catch(_){} V.medida.pend=null; } }
+  else dica(V,'Clique em dois pontos para medir. O cursor gruda em vértices, arestas e faces. As cotas ficam na tela.');
 }
 export function medirModo(V, modo){ V.medida.modo=modo; }
 // Liga/desliga o snap da trena (grudar em vértice/aresta/face). Desligado, a
@@ -895,58 +897,72 @@ async function medirPonto(V, ev){
   if(!pt){ const hit=await raycast(V,ev); if(!V.vivo) return; if(hit&&hit.point) pt=hit.point.clone(); }
   if(!pt){ dica(V,'Clique sobre o modelo.'); return; }
   const T=V.THREE, M=V.medida;
-  M.pts.push(pt);
   // Raio 1 + escala por quadro: o marcador fica com tamanho constante NA TELA.
   const esf=new T.Mesh(new T.SphereGeometry(1,12,12), new T.MeshBasicMaterial({color:LARANJA, depthTest:false}));
-  esf.position.copy(pt); esf.renderOrder=999;
-  V.scene.add(esf); M.objs.push(esf); M.marcas.push(esf);
-  if(M.pts.length%2!==0){ dica(V,'Agora o segundo ponto.'); return; }
-  const a=M.pts[M.pts.length-2];
-  let b=pt, rot='';
+  esf.position.copy(pt); esf.renderOrder=999; V.scene.add(esf);
+  // Primeiro ponto → fica pendente até o segundo.
+  if(!M.pend){ M.pend={ mark:esf, pt:pt.clone() }; dica(V,'Agora o segundo ponto.'); return; }
+  // Segundo ponto → completa a medida (uma unidade deletável).
+  const a=M.pend.pt; let b=pt, rot='';
   if(M.modo==='eixo'){
     const d=new T.Vector3().subVectors(pt,a);
     const e=(Math.abs(d.x)>=Math.abs(d.y)&&Math.abs(d.x)>=Math.abs(d.z))?'x':(Math.abs(d.y)>=Math.abs(d.z)?'y':'z');
     b=a.clone(); b[e]=pt[e]; rot=EIXO_IFC[e]+' ';
-    esf.position.copy(b); M.pts[M.pts.length-1]=b;
+    esf.position.copy(b);
   }
   const linha=new T.Line(new T.BufferGeometry().setFromPoints([a,b]),
     new T.LineBasicMaterial({color:LARANJA, depthTest:false}));
-  linha.renderOrder=999; V.scene.add(linha); M.objs.push(linha);
+  linha.renderOrder=999; V.scene.add(linha);
+  const dist=a.distanceTo(b);
   const el=document.createElement('div');
   el.className='bim3dCota';
-  el.style.cssText='position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:none;'
-    +'background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;padding:2px 6px;'
-    +'border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)';
-  el.textContent=rot+fmtDist(a.distanceTo(b));
+  el.style.cssText='position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:auto;'
+    +'background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;padding:2px 4px 2px 8px;'
+    +'border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;gap:4px';
+  const medida={ marks:[M.pend.mark, esf], line:linha, el, meio:a.clone().add(b).multiplyScalar(0.5), dist };
+  el.innerHTML='<span>'+rot+fmtDist(dist)+'</span><span class="x" title="Apagar esta medida" style="cursor:pointer;font-weight:800;font-size:13px;line-height:1;opacity:.65;padding:0 2px">×</span>';
+  el.querySelector('.x').addEventListener('click', (e)=>{ e.stopPropagation(); removerMedida(V, medida); });
   V.cont.appendChild(el);
-  M.cotas.push({ el, meio:a.clone().add(b).multiplyScalar(0.5) });
-  if(V.on.medir) V.on.medir(a.distanceTo(b));
+  M.medidas.push(medida);
+  M.pend=null;
+  if(V.on.medir) V.on.medir(dist);
 }
+// Remove UMA medida (o ×) — dispõe seus objetos da cena e a etiqueta.
+function removerMedida(V, medida){
+  const M=V.medida; const i=M.medidas.indexOf(medida); if(i<0) return;
+  medida.marks.forEach(m=>{ try{ V.scene.remove(m); m.geometry&&m.geometry.dispose(); m.material&&m.material.dispose(); }catch(_){} });
+  try{ V.scene.remove(medida.line); medida.line.geometry&&medida.line.geometry.dispose(); medida.line.material&&medida.line.material.dispose(); }catch(_){}
+  try{ medida.el.remove(); }catch(_){}
+  M.medidas.splice(i,1);
+}
+// Apaga TODAS as medidas (botão limpar) + um pendente.
 export function limparMedidas(V){
   const M=V.medida;
-  M.objs.forEach(o=>{ try{ V.scene.remove(o); o.geometry&&o.geometry.dispose(); o.material&&o.material.dispose(); }catch(_){} });
-  M.cotas.forEach(c=>{ try{ c.el.remove(); }catch(_){} });
-  M.objs=[]; M.cotas=[]; M.pts=[]; M.marcas=[];
+  (M.medidas||[]).slice().forEach(md=> removerMedida(V, md));
+  if(M.pend){ try{ V.scene.remove(M.pend.mark); }catch(_){} M.pend=null; }
 }
+// Quantas cotas existem (para a UI mostrar/ocultar o botão limpar).
+export function contarMedidas(V){ return (V&&V.medida&&V.medida.medidas)?V.medida.medidas.length:0; }
 function escalarMarcas(V){
   const M=V.medida;
   const h=V.cont.clientHeight||1;
   const k=2*Math.tan((V.camera.fov*Math.PI/180)/2)/h*5;   // ~5px de raio
   const esc=(m)=> m.scale.setScalar(Math.max(1e-6, V.camera.position.distanceTo(m.position)*k));
-  M.marcas.forEach(esc);
+  (M.medidas||[]).forEach(md=> md.marks.forEach(esc));
+  if(M.pend) esc(M.pend.mark);
   // marcadores de snap (hover) também mantêm tamanho constante na tela
   const vis=M.snapVis;
   if(vis){ [vis[0],vis[1],vis[2]].forEach(m=>{ if(m.visible) esc(m); }); }
 }
 function atualizarCotas(V){
-  const M=V.medida; if(!M.cotas.length) return;
+  const M=V.medida; if(!M.medidas||!M.medidas.length) return;
   const w=V.cont.clientWidth, h=V.cont.clientHeight;
-  M.cotas.forEach(c=>{
-    const p=c.meio.clone().project(V.camera);
-    if(p.z>1){ c.el.style.display='none'; return; }
-    c.el.style.display='block';
-    c.el.style.left=((p.x*0.5+0.5)*w)+'px';
-    c.el.style.top =((-p.y*0.5+0.5)*h)+'px';
+  M.medidas.forEach(md=>{
+    const p=md.meio.clone().project(V.camera);
+    if(p.z>1){ md.el.style.display='none'; return; }
+    md.el.style.display='flex';
+    md.el.style.left=((p.x*0.5+0.5)*w)+'px';
+    md.el.style.top =((-p.y*0.5+0.5)*h)+'px';
   });
 }
 
