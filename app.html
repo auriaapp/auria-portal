@@ -2585,7 +2585,13 @@ function iaContexto(){
     +'Apontamentos: '+n+' no total, '+ab+' em aberto, '+at+' atrasados.\n'
     +'Responda de forma concisa e técnica, em português. Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.'
     +(F3D_SEL_CTX
-      ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA ---\nQuando o usuário disser "este elemento", "esta peça", "isso" ou perguntar sobre o item selecionado, responda com base NESTES dados (não invente valores que não estão aqui):\n'+F3D_SEL_CTX
+      ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
+        +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
+        +'Quando ele perguntar "o que é este elemento", "esta peça", "isso", ou algo sobre o item, '
+        +'responda DIRETO e CURTO sobre ESTE elemento específico (tipo, nome, disciplina, dimensões, '
+        +'propriedades relevantes que estão abaixo). NÃO dê definições genéricas de BIM, NÃO faça tabelas '
+        +'de LOD, NÃO liste normas a menos que perguntado. NÃO invente valores ausentes — se algo pedido '
+        +'não estiver nos dados, diga que o modelo não traz esse dado.\nDADOS DO ELEMENTO:\n'+F3D_SEL_CTX
       : '');
 }
 function _iaFmt(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>'); }
@@ -4017,11 +4023,14 @@ async function f3dClique(ev){
     f3dNovoApontamento(f3dPonto(hit, m), m);
     return;
   }
-  if(F3D_PROPS) f3dProps(hit, m).catch(e=>console.warn('props:', e));
+  // SEMPRE captura o elemento: o painel só aparece se F3D_PROPS, mas o contexto
+  // da IA (F3D_SEL_CTX) precisa ser gravado mesmo com o painel fechado.
+  f3dProps(hit, m).catch(e=>console.warn('props:', e));
 }
 async function f3dProps(hit, m){
-  const el=$('bimPropsBody'); if(!el) return;
-  el.innerHTML='<div class="bp-empty">Lendo propriedades…</div>';
+  const el=$('bimPropsBody');
+  const showPanel = F3D_PROPS && !!el;   // captura contexto sempre; renderiza painel só se aberto
+  if(showPanel) el.innerHTML='<div class="bp-empty">Lendo propriedades…</div>';
   try{
     const dados = await m.model.getItemsData([hit.localId], {
       attributesDefault:true,
@@ -4034,10 +4043,10 @@ async function f3dProps(hit, m){
     });
     let cx=null;
     try{ const bs=await m.model.getBoxes([hit.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
-    F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // contexto p/ a IA
-    el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
+    F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // sempre → contexto da IA
+    if(showPanel) el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
   }catch(e){
-    el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
+    if(showPanel) el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
   }
 }
 // O ItemData do Fragments é genérico: cada chave é um atributo ({value}) OU
