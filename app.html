@@ -4055,7 +4055,15 @@ function f3dPropsHtml(data, m){
       diretos.push([k, val(v.value)]);
     }
   }
-  if(!diretos.length && !grupos.length) return '<div class="bp-empty">Este elemento não trouxe propriedades.</div>';
+  // Esconde CÓDIGOS que não ajudam o analista (GUID, Tag, BATID, IDs internos)
+  // e linhas vazias — só o interpretável, como no Solibri.
+  const RUIDO=/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash)$/i;
+  const vazio=(v)=> v==null || v==='' || v==='—';
+  const limpa=(ls)=> ls.filter(([k,v])=> !RUIDO.test(String(k).trim()) && !vazio(v));
+  const diretosL = limpa(diretos);
+  grupos.forEach(g=> g.ls = limpa(g.ls));
+  const gruposL = grupos.filter(g=> g.ls.length);
+  if(!diretosL.length && !gruposL.length) return '<div class="bp-empty">Este elemento não trouxe propriedades relevantes.</div>';
   const linhas=(ls)=> ls.map(([k,v])=>`<div class="bp-row"><span class="bp-k" title="${esc(k)}">${esc(k)}</span><span class="bp-v">${esc(v)}</span></div>`).join('');
   const pset =(g)=> '<div class="bp-grp"><div class="bp-t">'+esc(g.nome)+'</div>'+linhas(g.ls)+'</div>';
   const cat  =(titulo, corpo)=> corpo ? '<div class="bp-cat"><h6>'+esc(titulo)+'</h6>'+corpo+'</div>' : '';
@@ -4063,7 +4071,7 @@ function f3dPropsHtml(data, m){
   // (BaseQuantities/Qto_*), Material (associação), Propriedades (demais Psets).
   const ehQuant=(n)=> /quantit|basequant|^qto/i.test(n);
   const qG=[], mG=[], pG=[];
-  grupos.forEach(g=>{
+  gruposL.forEach(g=>{
     const n=g.nome, assoc=(g.rel==='HasAssociations');
     if(assoc && /classif/i.test(n)) pG.push(g);
     else if(/material/i.test(n) || assoc) mG.push(g);
@@ -4074,7 +4082,7 @@ function f3dPropsHtml(data, m){
   // Identificação: disciplina/revisão (útil no federado) + atributos diretos.
   const ident=[];
   if(m){ ident.push(['Disciplina', m.disciplina||m.nome||'—']); ident.push(['Revisão', m.revisao||'?']); }
-  ident.push(...diretos);
+  ident.push(...diretosL);
   out += cat('Identificação', linhas(ident));
   out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
   out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
