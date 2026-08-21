@@ -3113,24 +3113,48 @@ class CdeWin {
     if(cfg) cfg.querySelectorAll('.segF button').forEach(b=> b.classList.toggle('on', b.dataset.bg===qual));
     if(B.grade) this.bimVisualGrade(true);
   }
-  // Plano de piso: uma grade dimensionada pela caixa do modelo, no nível do
-  // piso (min Y). Recriada a cada liga/refit para acompanhar o modelo.
+  // Plano de piso "infinito" (igual ao App): grade GIGANTE (≥2 km) com fade
+  // radial no shader — a borda física some antes de aparecer, então parece
+  // não ter fim. Sem o fade, uma grade grande denuncia a linha do horizonte.
   bimVisualGrade(lig){
     const B=this.B3; if(!B) return;
-    if(B.grade){ try{ B.scene.remove(B.grade); B.grade.geometry.dispose(); B.grade.material.dispose(); }catch(_){} B.grade=null; }
+    B._gradeOn=!!lig;
+    if(B.grade){ try{ B.scene.remove(B.grade);
+      B.grade.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); }); }catch(_){} B.grade=null; }
     const cfg=this.bimCfgEl, chk=cfg&&cfg.querySelector('[data-c=grade]'); if(chk) chk.checked=!!lig;
     if(!lig) return;
     const T=B.THREE, box=new T.Box3();
     B.modelos.forEach(x=>{ try{ box.expandByObject(x.model.object); }catch(_){} });
-    if(box.isEmpty()) return;
-    const c=box.getCenter(new T.Vector3()), s=box.getSize(new T.Vector3());
-    const lado=(Math.max(s.x, s.z)||10)*1.5;
-    const div=Math.max(4, Math.min(120, Math.round(lado)));
-    const claro=B.fundo==='claro';
-    const g=new T.GridHelper(lado, div, claro?0x94a3b8:0x5b6b7f, claro?0xc2ccd6:0x3c4859);
-    g.position.set(c.x, box.min.y, c.z);
-    g.material.transparent=true; g.material.opacity=0.55; g.renderOrder=-1;
-    B.scene.add(g); B.grade=g;
+    const raio = box.isEmpty() ? 20 : Math.max(box.getSize(new T.Vector3()).x, box.getSize(new T.Vector3()).z);
+    const lado = Math.max(2000, Math.ceil(raio*40));   // >= 2 km
+    const passo = 5, divs = Math.round(lado/passo);     // célula de 5 m
+    const claro = B.fundo==='claro';
+    // Grade "sussurro": cores próximas do fundo; fade some a beira.
+    const cComum = claro ? 0xE0E6EE : 0x1D2331;
+    const cMestre= claro ? 0xE6EBF1 : 0x252C3B;
+    const grade = new T.GridHelper(lado, divs, cMestre, cComum);
+    const mat = grade.material;
+    mat.transparent=true; mat.depthWrite=false;
+    mat.opacity = claro ? 0.55 : 0.75;
+    mat.toneMapped = false;   // não deixa o tonemap dar matiz alaranjado às linhas
+    mat.onBeforeCompile = (shader)=>{
+      shader.uniforms.uRaio = { value: lado*0.5 };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>','#include <common>\nvarying vec2 vXZ;')
+        .replace('#include <project_vertex>','#include <project_vertex>\nvXZ = position.xz;');
+      // Hook correto no three 0.185 é <opaque_fragment> (o antigo
+      // <output_fragment> não existe mais e o replace falharia em silêncio).
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>','#include <common>\nvarying vec2 vXZ;\nuniform float uRaio;')
+        .replace('#include <opaque_fragment>',
+          'float _fd = length(vXZ)/uRaio;\n'+
+          'float _fa = 1.0 - smoothstep(0.55, 0.95, _fd);\n'+
+          'diffuseColor.a *= _fa;\n'+
+          '#include <opaque_fragment>');
+    };
+    grade.position.y = -0.005;   // cota zero do projeto (evita z-fighting c/ laje em Y=0)
+    grade.renderOrder = -1;      // sempre atrás do modelo
+    B.grade=grade; B.scene.add(grade);
   }
   // Aplica um objeto de config completo ao abrir o modelo. Aplica o runtime
   // direto (sem disparar os handlers, p/ não soltar mensagens de dica) e
