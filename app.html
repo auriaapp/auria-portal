@@ -262,6 +262,9 @@
   #regBox .rtxt small{color:#94a3b8}
   #regBox .rapt{flex:none;padding:2px 7px;font-size:12px;border-radius:8px}
   .bp-empty{color:#64748b;font-size:12px;padding:22px 14px;text-align:center;line-height:1.5}
+  .bp-cat{margin:0 0 12px}
+  .bp-cat > h6{margin:0 0 6px;padding:4px 8px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+    color:#7FB3D3;font-weight:800;background:rgba(127,179,211,.10);border-radius:5px}
   .bp-grp{margin-bottom:11px}
   .bp-t{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#7FB3D3;font-weight:800;margin:2px 0 5px}
   .bp-row{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;padding:3px 0;border-bottom:1px solid #1e2130}
@@ -4014,7 +4017,8 @@ async function f3dProps(hit, m){
       // Só as relações que carregam propriedade útil. Puxar todas traria a
       // árvore espacial inteira junto, cara e sem valor aqui.
       relations:{ IsDefinedBy:{attributes:true,relations:false},
-                  IsTypedBy:{attributes:true,relations:false} },
+                  IsTypedBy:{attributes:true,relations:false},
+                  HasAssociations:{attributes:true,relations:true} },   // material / classificação
       relationsDefault:{attributes:false,relations:false}
     });
     el.innerHTML = f3dPropsHtml(dados && dados[0], m);
@@ -4045,7 +4049,7 @@ function f3dPropsHtml(data, m){
           if(k2==='Name'||Array.isArray(v2)) continue;
           if(v2&&typeof v2==='object'&&'value' in v2) ls.push([k2, val(v2.value)]);
         }
-        if(ls.length) grupos.push({nome, ls});
+        if(ls.length) grupos.push({nome, ls, rel:k});
       });
     }else if(v&&typeof v==='object'&&'value' in v){
       diretos.push([k, val(v.value)]);
@@ -4053,13 +4057,28 @@ function f3dPropsHtml(data, m){
   }
   if(!diretos.length && !grupos.length) return '<div class="bp-empty">Este elemento não trouxe propriedades.</div>';
   const linhas=(ls)=> ls.map(([k,v])=>`<div class="bp-row"><span class="bp-k" title="${esc(k)}">${esc(k)}</span><span class="bp-v">${esc(v)}</span></div>`).join('');
+  const pset =(g)=> '<div class="bp-grp"><div class="bp-t">'+esc(g.nome)+'</div>'+linhas(g.ls)+'</div>';
+  const cat  =(titulo, corpo)=> corpo ? '<div class="bp-cat"><h6>'+esc(titulo)+'</h6>'+corpo+'</div>' : '';
+  // Classifica cada grupo em categorias (estilo Solibri): Quantidades
+  // (BaseQuantities/Qto_*), Material (associação), Propriedades (demais Psets).
+  const ehQuant=(n)=> /quantit|basequant|^qto/i.test(n);
+  const qG=[], mG=[], pG=[];
+  grupos.forEach(g=>{
+    const n=g.nome, assoc=(g.rel==='HasAssociations');
+    if(assoc && /classif/i.test(n)) pG.push(g);
+    else if(/material/i.test(n) || assoc) mG.push(g);
+    else if(ehQuant(n)) qG.push(g);
+    else pG.push(g);
+  });
   let out='';
-  // Saber de QUAL disciplina veio o elemento importa no federado — sem isso o
-  // painel some com a informação mais útil da cena combinada.
-  if(m) out+='<div class="bp-grp"><div class="bp-t">Modelo</div>'
-    + linhas([['disciplina', m.disciplina||m.nome||'—'], ['revisão', m.revisao||'?']]) + '</div>';
-  if(diretos.length) out+='<div class="bp-grp"><div class="bp-t">Identificação</div>'+linhas(diretos)+'</div>';
-  grupos.forEach(g=>{ out+='<div class="bp-grp"><div class="bp-t">'+esc(g.nome)+'</div>'+linhas(g.ls)+'</div>'; });
+  // Identificação: disciplina/revisão (útil no federado) + atributos diretos.
+  const ident=[];
+  if(m){ ident.push(['Disciplina', m.disciplina||m.nome||'—']); ident.push(['Revisão', m.revisao||'?']); }
+  ident.push(...diretos);
+  out += cat('Identificação', linhas(ident));
+  out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
+  out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
+  out += cat('Propriedades', pG.map(pset).join(''));
   return out;
 }
 

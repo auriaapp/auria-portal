@@ -162,6 +162,9 @@
   .cdeWin-bim .bpProps{flex:1;min-height:0}
   .cdeWin-bim .bpConteudo{padding:8px 10px;overflow:auto;flex:1;min-height:0;line-height:1.5}
   .cdeWin-bim .bpVazio{color:#94a3b8;font-style:italic}
+  .cdeWin-bim .bpCat{margin:0 0 12px}
+  .cdeWin-bim .bpCat > h6{margin:0 0 6px;padding:4px 8px;font-size:10.5px;letter-spacing:.05em;
+    text-transform:uppercase;color:#7FB3D3;font-weight:800;background:rgba(127,179,211,.10);border-radius:5px}
   .cdeWin-bim .bpGrupo{margin:0 0 10px}
   .cdeWin-bim .bpGrupo b{display:block;color:#facc15;font-size:11px;margin-bottom:2px}
   .cdeWin-bim .bpLinha{display:flex;gap:6px;padding:1px 0;border-bottom:1px dotted rgba(255,255,255,.08)}
@@ -1186,7 +1189,7 @@ function bimPropsHtml(data, hit){
           if(k2==='Name' || Array.isArray(v2)) continue;
           if(v2 && typeof v2==='object' && 'value' in v2) ls.push([k2, val(v2.value)]);
         }
-        if(ls.length) grupos.push({ nome, ls });
+        if(ls.length) grupos.push({ nome, ls, rel:k });
       });
     }else if(v && typeof v==='object' && 'value' in v){
       diretos.push([k, val(v.value)]);
@@ -1194,12 +1197,29 @@ function bimPropsHtml(data, hit){
   }
   if(!diretos.length && !grupos.length) return '<div class="bpVazio">Este elemento não trouxe propriedades.</div>';
   const linhas=(ls)=> ls.map(([k,v])=>`<div class="bpLinha"><i title="${esc(k)}">${esc(k)}</i><em>${esc(v)}</em></div>`).join('');
+  const pset =(g)=> `<div class="bpGrupo"><b>${esc(g.nome)}</b>${linhas(g.ls)}</div>`;
+  const cat  =(titulo, corpo)=> corpo ? `<div class="bpCat"><h6>${esc(titulo)}</h6>${corpo}</div>` : '';
+  // Classifica cada grupo por TIPO, para virar categorias (estilo Solibri):
+  //  - Quantidades: BaseQuantities/Qto_*/…  - Material: associação de material
+  //  - Propriedades: os demais Psets (Pset_*, TQS_*, …)
+  const ehQuant=(n)=> /quantit|basequant|^qto/i.test(n);
+  const qG=[], mG=[], pG=[];
+  grupos.forEach(g=>{
+    const n=g.nome, assoc=(g.rel==='HasAssociations');
+    if(assoc && /classif/i.test(n)) pG.push(g);          // classificação fica em Propriedades por ora
+    else if(/material/i.test(n) || assoc) mG.push(g);     // associação (não-classif) ≈ material
+    else if(ehQuant(n)) qG.push(g);
+    else pG.push(g);
+  });
   let out='';
-  // Saber de QUAL disciplina veio o elemento importa no federado — sem isso o
-  // painel some com a informação mais útil da cena combinada.
-  if(hit && hit.__nomeModelo) out+=`<div class="bpGrupo"><b>Modelo</b>${linhas([['disciplina',hit.__nomeModelo]])}</div>`;
-  if(diretos.length) out+=`<div class="bpGrupo"><b>Identificação</b>${linhas(diretos)}</div>`;
-  grupos.forEach(g=>{ out+=`<div class="bpGrupo"><b>${esc(g.nome)}</b>${linhas(g.ls)}</div>`; });
+  // Identificação: disciplina/modelo (útil no federado) + atributos diretos.
+  const ident=[];
+  if(hit && hit.__nomeModelo) ident.push(['Disciplina/Modelo', hit.__nomeModelo]);
+  ident.push(...diretos);
+  out += cat('Identificação', linhas(ident));
+  out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
+  out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
+  out += cat('Propriedades', pG.map(pset).join(''));
   return out;
 }
 
@@ -3542,7 +3562,8 @@ class CdeWin {
         // Só as relações que carregam propriedade útil. Puxar todas traria a
         // árvore espacial inteira junto, cara e sem valor aqui.
         relations:{ IsDefinedBy:{attributes:true,relations:false},
-                    IsTypedBy:{attributes:true,relations:false} },
+                    IsTypedBy:{attributes:true,relations:false},
+                    HasAssociations:{attributes:true,relations:true} },   // material / classificação
         relationsDefault:{attributes:false,relations:false}
       });
       this.bpConteudo.innerHTML = bimPropsHtml(dados && dados[0], melhor);
