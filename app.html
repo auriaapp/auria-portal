@@ -4159,9 +4159,14 @@ function f3dSelResumoTexto(data, m, cx){
   // Desce em QUALQUER aninhamento (Pset → HasProperties → IfcPropertySingleValue).
   // Um objeto com Name define o grupo dos seus filhos; um objeto com Name + valor
   // nominal É uma propriedade (chave = Name, valor = NominalValue).
-  const coletar=(obj, grupoHerdado)=>{
-    if(Array.isArray(obj)){ obj.forEach(o=> coletar(o, grupoHerdado)); return; }
+  // Proteção contra ciclos: o ItemData do Fragments tem referências circulares
+  // (objeto aponta de volta) — sem isto a recursão estoura a pilha.
+  const visto=new WeakSet();
+  const coletar=(obj, grupoHerdado, prof)=>{
+    if(prof>8) return;
+    if(Array.isArray(obj)){ obj.forEach(o=> coletar(o, grupoHerdado, prof+1)); return; }
     if(!obj || typeof obj!=='object') return;
+    if(visto.has(obj)) return; visto.add(obj);
     const meuNome = (obj.Name && escalar(obj.Name)) ? String(obj.Name.value) : null;
     const vn = obj.NominalValue||obj.Value||obj.LengthValue||obj.AreaValue||obj.VolumeValue||obj.CountValue||obj.BooleanValue;
     if(meuNome && vn && escalar(vn)){ add(grupoHerdado, meuNome, vn.value); return; }
@@ -4170,10 +4175,10 @@ function f3dSelResumoTexto(data, m, cx){
       if(k==='Name') continue;
       if(!v || typeof v!=='object') continue;
       if(escalar(v)) add(grupo, k, v.value);
-      else coletar(v, grupo);
+      else coletar(v, grupo, prof+1);
     }
   };
-  coletar(data, '');
+  coletar(data, '', 0);
   const linhas=[];
   const disc = m ? (m.disciplina||m.nome||'') : '';
   if(disc) linhas.push('Disciplina/Modelo: '+disc);
