@@ -262,6 +262,10 @@
   #regBox .rtxt small{color:#94a3b8}
   #regBox .rapt{flex:none;padding:2px 7px;font-size:12px;border-radius:8px}
   .bp-empty{color:#64748b;font-size:12px;padding:22px 14px;text-align:center;line-height:1.5}
+  .bp-ia{width:100%;margin:0 0 12px;padding:7px 10px;border:1px solid rgba(127,179,211,.45);
+    border-radius:7px;background:rgba(127,179,211,.12);color:#7FB3D3;font-weight:700;font-size:11.5px;
+    cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+  .bp-ia:hover{background:rgba(127,179,211,.22)}
   .bp-cat{margin:0 0 12px}
   .bp-cat > h6{margin:0 0 6px;padding:4px 8px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
     color:#7FB3D3;font-weight:800;background:rgba(127,179,211,.10);border-radius:5px}
@@ -2555,6 +2559,7 @@ function cotaToSvg(c, preview){
 // ═══ IA (W4): assistente Groq via Edge Function `groq-proxy` ═════════════════
 // A chave nunca vem ao browser; a função valida o login e injeta o secret.
 let IA_CONV=[];        // histórico do chat [{role, content}]
+let F3D_SEL_CTX='';    // resumo em texto do elemento 3D selecionado (contexto p/ a IA)
 let IA_SUGEST=[];      // sugestões da última análise [{titulo,descricao,prioridade,tipo,disciplina}]
 let IA_ANALISE_TXT=''; // parágrafo geral da última análise
 // slug REAL da Edge Function no Supabase (foi criada com nome "groq-proxy" mas
@@ -2575,7 +2580,10 @@ function iaContexto(){
   return 'Você é um coordenador BIM/CAD sênior brasileiro, especialista em compatibilização de projetos de engenharia e arquitetura.\n'
     +'Empreendimento: '+(EMP?EMP.nome:'—')+'. Disciplina da prancha ativa: '+(discAtiva()||'—')+'.\n'
     +'Apontamentos: '+n+' no total, '+ab+' em aberto, '+at+' atrasados.\n'
-    +'Responda de forma concisa e técnica, em português. Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.';
+    +'Responda de forma concisa e técnica, em português. Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.'
+    +(F3D_SEL_CTX
+      ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA ---\nQuando o usuário disser "este elemento", "esta peça", "isso" ou perguntar sobre o item selecionado, responda com base NESTES dados (não invente valores que não estão aqui):\n'+F3D_SEL_CTX
+      : '');
 }
 function _iaFmt(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>'); }
 function mapPrioIA(p){ p=(p||'').toLowerCase();
@@ -4023,6 +4031,7 @@ async function f3dProps(hit, m){
     });
     let cx=null;
     try{ const bs=await m.model.getBoxes([hit.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
+    F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // contexto p/ a IA
     el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
   }catch(e){
     el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
@@ -4085,7 +4094,7 @@ function f3dPropsHtml(data, m, cx){
   // com rótulos em PT. Todo atributo direto fora desta lista (códigos) some.
   const IDENT_ALLOW={ name:'Nome', objecttype:'Tipo', predefinedtype:'Tipo predefinido',
     description:'Descrição', _category:'Elemento IFC', ifcentity:'Elemento IFC', class:'Elemento IFC' };
-  let out='';
+  let out='<button class="bp-ia" onclick="f3dPerguntarIA()">✦ Perguntar à IA sobre este elemento</button>';
   const ident=[];
   if(m){ ident.push(['Disciplina', m.disciplina||m.nome||'—']); ident.push(['Revisão', m.revisao||'?']); }
   diretos.forEach(([k,v])=>{
@@ -4110,6 +4119,49 @@ function f3dPropsHtml(data, m, cx){
   out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
   out += cat('Propriedades', pG.map(pset).join(''));
   return out;
+}
+// Resumo em TEXTO do elemento selecionado, para a IA usar como contexto. Mesmo
+// dado do painel, condensado em linhas "chave: valor" (sem GUID/Tag/IDs).
+function f3dSelResumoTexto(data, m, cx){
+  if(!data) return '';
+  const RUIDO=/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash)$/i;
+  const val=(v)=> v==null?'':(typeof v==='object'?(('value' in v)?v.value:JSON.stringify(v)):v);
+  const linhas=[];
+  const disc = m ? (m.disciplina||m.nome||'') : '';
+  if(disc) linhas.push('Disciplina/Modelo: '+disc);
+  for(const [k,v] of Object.entries(data)){
+    if(Array.isArray(v)) continue;
+    if(v && typeof v==='object' && 'value' in v){
+      const vv=val(v);
+      if(vv!=='' && vv!=null && !RUIDO.test(String(k).trim())) linhas.push(k+': '+vv);
+    }
+  }
+  for(const [k,v] of Object.entries(data)){
+    if(!Array.isArray(v)) continue;
+    v.forEach(sub=>{
+      if(!sub || typeof sub!=='object') return;
+      const nome=(sub.Name&&sub.Name.value)||k;
+      const props=[];
+      for(const [k2,v2] of Object.entries(sub)){
+        if(k2==='Name' || Array.isArray(v2)) continue;
+        if(v2 && typeof v2==='object' && 'value' in v2){ const vv=val(v2); if(vv!=='' && vv!=null && !RUIDO.test(String(k2).trim())) props.push(k2+'='+vv); }
+      }
+      if(props.length) linhas.push('['+nome+'] '+props.join('; '));
+    });
+  }
+  if(cx && cx.max && cx.min && isFinite(cx.max.y)){
+    const dy=cx.max.y-cx.min.y, hd=[cx.max.x-cx.min.x, cx.max.z-cx.min.z].sort((a,b)=>b-a);
+    linhas.push('Dimensões calculadas da caixa 3D: altura '+dy.toFixed(2)+' m, comprimento '+hd[0].toFixed(2)+' m, largura '+hd[1].toFixed(2)+' m');
+  }
+  return linhas.join('\n');
+}
+// Abre o Assistente IA já com o elemento selecionado como contexto e sugere a
+// primeira pergunta (o usuário pode editar antes de enviar).
+function f3dPerguntarIA(){
+  if(!F3D_SEL_CTX){ f3dDica('Clique num elemento primeiro.'); return; }
+  const p=$('iaPanel'); if(p && p.style.display==='none') toggleIA();
+  const inp=$('iaInput');
+  if(inp){ if(!inp.value.trim()) inp.value='O que é este elemento? Explique as propriedades relevantes.'; inp.focus(); }
 }
 
 // Caixa de pavimentos: reusa o popover que o App já tem.
