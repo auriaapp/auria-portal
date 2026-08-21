@@ -4038,9 +4038,9 @@ async function f3dProps(hit, m){
       attributesDefault:true,
       // Só as relações que carregam propriedade útil. Puxar todas traria a
       // árvore espacial inteira junto, cara e sem valor aqui.
-      relations:{ IsDefinedBy:{attributes:true,relations:false},   // Pset: HasProperties já vem como atributo
-                  IsTypedBy:{attributes:true,relations:false},
-                  HasAssociations:{attributes:true,relations:true} },   // material / classificação
+      relations:{ IsDefinedBy:{attributes:true,relations:true},    // Pset + suas propriedades (só aqui relations:true)
+                  IsTypedBy:{attributes:true,relations:false},     // só o NOME do tipo (true puxaria TODAS as instâncias!)
+                  HasAssociations:{attributes:true,relations:false} },
       relationsDefault:{attributes:false,relations:false}
     });
     let cx=null;
@@ -4144,52 +4144,47 @@ function f3dPropsHtml(data, m, cx){
 // dado do painel, condensado em linhas "chave: valor" (sem GUID/Tag/IDs).
 function f3dSelResumoTexto(data, m, cx){
   if(!data) return '';
-  // Ruído: códigos/IDs e chaves estruturais que não interessam ao analista.
-  const RUIDO=/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash|type|nominalvalue|value)$/i;
-  const escalar=(o)=> o && typeof o==='object' && 'value' in o && (o.value==null || typeof o.value!=='object');
-  // Coleta agrupada, preservando ordem de aparição.
-  const grupos=[], idx={};
-  const add=(g,k,v)=>{
-    if(v==null || v==='' || typeof v==='object') return;
-    if(RUIDO.test(String(k).trim())) return;
-    const key=g||'_';
-    if(!(key in idx)){ idx[key]=grupos.length; grupos.push({g:g||'', ls:[]}); }
-    grupos[idx[key]].ls.push(k+'='+v);
-  };
-  // Desce em QUALQUER aninhamento (Pset → HasProperties → IfcPropertySingleValue).
-  // Um objeto com Name define o grupo dos seus filhos; um objeto com Name + valor
-  // nominal É uma propriedade (chave = Name, valor = NominalValue).
-  // Proteção contra ciclos: o ItemData do Fragments tem referências circulares
-  // (objeto aponta de volta) — sem isto a recursão estoura a pilha.
-  const visto=new WeakSet();
-  const coletar=(obj, grupoHerdado, prof)=>{
-    if(prof>8) return;
-    if(Array.isArray(obj)){ obj.forEach(o=> coletar(o, grupoHerdado, prof+1)); return; }
-    if(!obj || typeof obj!=='object') return;
-    if(visto.has(obj)) return; visto.add(obj);
-    const meuNome = (obj.Name && escalar(obj.Name)) ? String(obj.Name.value) : null;
-    const vn = obj.NominalValue||obj.Value||obj.LengthValue||obj.AreaValue||obj.VolumeValue||obj.CountValue||obj.BooleanValue;
-    if(meuNome && vn && escalar(vn)){ add(grupoHerdado, meuNome, vn.value); return; }
-    const grupo = meuNome || grupoHerdado;
-    for(const [k,v] of Object.entries(obj)){
-      if(k==='Name') continue;
-      if(!v || typeof v!=='object') continue;
-      if(escalar(v)) add(grupo, k, v.value);
-      else coletar(v, grupo, prof+1);
-    }
-  };
-  coletar(data, '', 0);
+  const RUIDO=/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash)$/i;
+  const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
   const linhas=[];
   const disc = m ? (m.disciplina||m.nome||'') : '';
   if(disc) linhas.push('Disciplina/Modelo: '+disc);
-  grupos.forEach(gr=>{ if(!gr.ls.length) return;
-    if(!gr.g) linhas.push(...gr.ls.map(s=>s.replace('=',': ')));
-    else linhas.push('['+gr.g+'] '+gr.ls.join('; ')); });
+  // 1) Atributos diretos escalares do elemento (Nome, Descrição, Tipo…), UMA vez.
+  for(const [k,v] of Object.entries(data)){
+    if(Array.isArray(v)) continue;
+    const vv=escal(v);
+    if(vv!=null && vv!=='' && !RUIDO.test(String(k).trim())) linhas.push(k+': '+vv);
+  }
+  // 2) Psets de IsDefinedBy e suas PROPRIEDADES — bounded, SEM recursão pelo grafo
+  //    (recursar em IsTypedBy puxaria todas as instâncias do tipo; isso explodia).
+  //    As propriedades vêm num sub-array (HasProperties/Quantities) OU como chaves.
+  (Array.isArray(data.IsDefinedBy)?data.IsDefinedBy:[]).forEach(ps=>{
+    if(!ps || typeof ps!=='object') return;
+    const nome=(ps.Name && ps.Name.value) || 'Pset';
+    const props=[];
+    Object.values(ps).forEach(sub=>{                    // 2a) props em sub-array
+      if(!Array.isArray(sub)) return;
+      sub.forEach(p=>{
+        if(!p || typeof p!=='object') return;
+        const pn=p.Name && p.Name.value;
+        const pv=escal(p.NominalValue)??escal(p.Value)??escal(p.LengthValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.CountValue)??escal(p.WeightValue)??escal(p.BooleanValue);
+        if(pn!=null && pv!=null && pv!=='') props.push(pn+'='+pv);
+      });
+    });
+    for(const [k,v] of Object.entries(ps)){             // 2b) props como chaves diretas
+      if(k==='Name' || Array.isArray(v)) continue;
+      const vv=escal(v);
+      if(vv!=null && vv!=='' && !RUIDO.test(String(k).trim())) props.push(k+'='+vv);
+    }
+    if(props.length) linhas.push('['+nome+'] '+props.join('; '));
+  });
   if(cx && cx.max && cx.min && isFinite(cx.max.y)){
     const dy=cx.max.y-cx.min.y, hd=[cx.max.x-cx.min.x, cx.max.z-cx.min.z].sort((a,b)=>b-a);
     linhas.push('Dimensões calculadas da caixa 3D: altura '+dy.toFixed(2)+' m, comprimento '+hd[0].toFixed(2)+' m, largura '+hd[1].toFixed(2)+' m');
   }
-  return linhas.join('\n');
+  let txt=linhas.join('\n');
+  if(txt.length>5000) txt=txt.slice(0,5000)+'…';   // trava de tamanho (evita Request Entity Too Large)
+  return txt;
 }
 // Abre o Assistente IA já com o elemento selecionado como contexto e sugere a
 // primeira pergunta (o usuário pode editar antes de enviar).
