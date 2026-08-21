@@ -168,8 +168,11 @@
   #f3dAndarBar button:disabled{opacity:.35;cursor:default}
   #f3dAndarBar .nv{font-size:12px;min-width:122px;text-align:center}
   #f3dAndarBar .nv .dica{display:block;font-size:10px;color:#94a3b8}
-  #f3dDica{position:absolute;left:12px;bottom:12px;z-index:4;display:none;font-size:11px;color:#cbd5e1;
+  #f3dDica{position:absolute;left:74px;bottom:12px;z-index:4;display:none;font-size:11px;color:#cbd5e1;
     background:rgba(15,23,42,.65);padding:5px 9px;border-radius:6px;pointer-events:none;max-width:70%}
+  /* Marca d'água da logo no canto inferior esquerdo do canvas 3D (igual ao CDE). */
+  #f3dLogo{position:absolute;left:12px;bottom:12px;z-index:4;height:52px;width:auto;
+    opacity:.55;pointer-events:none;user-select:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
   #f3dCanvas.mira{cursor:crosshair}
   /* Painel de configurações da visualização: popover ancorado ao botão ⚙
      da barra do 3D. Cabeça e "lin" seguem o padrão do painel do CDE para
@@ -187,7 +190,7 @@
   .f3d-cfg .seg button{flex:1;background:transparent;border:none;color:#cbd5e1;padding:4px 8px;
     border-radius:5px;font-size:11px;cursor:pointer;font-weight:600}
   .f3d-cfg .seg button.on{background:var(--accent);color:#231703}
-  .f3d-cfg input[type=range]{flex:0 0 92px;accent-color:var(--accent)}
+  .f3d-cfg input[type=range]{flex:0 1 92px;min-width:0;accent-color:var(--accent)}
   .f3d-cfg .val{flex:0 0 34px;text-align:right;color:#94a3b8;font-variant-numeric:tabular-nums;font-style:normal;font-size:11px}
   .f3d-cfg .f3d-reset{width:100%;margin-top:10px;background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#e2e8f0;padding:5px;cursor:pointer;font-size:12px}
@@ -590,6 +593,10 @@
                 <input type="checkbox" id="f3dCfgSnap" checked
                        onchange="f3dSetSnap(this.checked)">
               </div>
+              <div class="lin"><span>Dicas de navegação</span>
+                <input type="checkbox" id="f3dCfgDica" checked
+                       onchange="f3dSetDica(this.checked)">
+              </div>
               <div class="lin"><span>Sombra de contato</span>
                 <input type="checkbox" id="f3dCfgSao" onchange="f3dSetSombra(this.checked)">
               </div>
@@ -660,6 +667,7 @@
             <button onclick="f3dAndarNivelDelta(1)" title="Subir um pavimento">▲</button>
             <button onclick="f3dTool('andar',false)" title="Sair do modo caminhar">Sair</button>
           </div>
+          <img id="f3dLogo" src="logo_symbol.png" alt="Auria" draggable="false">
           <div id="f3dDica"></div>
           <div id="regBox" class="bim-props" style="left:12px;right:auto;width:330px">
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">Regras de verificação</b>
@@ -3035,7 +3043,13 @@ async function f3dCarregar(modelos, canvas, onMsg){
 }
 function f3dDica(t){
   const d=$('f3dDica'); if(!d) return;
-  d.textContent=t||''; d.style.display = t ? 'block' : 'none';
+  d.textContent=t||''; d.style.display = (t && F3D_DICA_ON) ? 'block' : 'none';
+}
+function f3dSetDica(on){
+  F3D_DICA_ON = !!on;
+  const d=$('f3dDica'); if(d && !F3D_DICA_ON) d.style.display='none';
+  const c=$('f3dCfgDica'); if(c) c.checked=!!on;
+  f3dCfgSalvar({ dica: !!on });
 }
 
 // ── Pavimentos por FILTRO (não por arquivo) ────────────────────────────────
@@ -3774,7 +3788,9 @@ const F3D_CFG_PAD = { fundo:'escuro', grade:false,
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
   ao:false, aoInt:6, aoRaio:50, aoAm:16,
   xrayProf:1,   // profundidade padrão do raio-X quando ligar
-  snap:true };  // trena com encaixe em vértice/aresta/face (default ligado)
+  snap:true,    // trena com encaixe em vértice/aresta/face (default ligado)
+  dica:true };  // barra de dica de navegação (default ligada)
+let F3D_DICA_ON = true;   // espelha cfg.dica; f3dDica() respeita este estado
 function f3dCfgLer(){
   try{
     const raw = localStorage.getItem('f3dCfg');
@@ -3850,6 +3866,8 @@ async function f3dCfgAplicar(c){
   B3.setFacesDuplas(F3D, c.faces);
   B3.setAltaQualidade(F3D, c.gq);
   B3.setSnap(F3D, c.snap!==false);   // default ligado quando ausente
+  F3D_DICA_ON = c.dica!==false;      // barra de dica (default ligada)
+  { const d=$('f3dDica'); if(d && !F3D_DICA_ON) d.style.display='none'; }
   // Reflete na UI do painel
   [...document.querySelectorAll('#f3dCfgPop .seg button')].forEach(b=> b.classList.toggle('on', b.dataset.f===c.fundo));
   const set = (id,val)=>{ const e=$(id); if(e) e.checked=val; };
@@ -3857,6 +3875,7 @@ async function f3dCfgAplicar(c){
   set('f3dCfgFaces', !!c.faces);
   set('f3dCfgGQ',    !!c.gq);
   set('f3dCfgSnap',  c.snap!==false);
+  set('f3dCfgDica',  c.dica!==false);
   set('f3dCfgSao',   !!c.ao);
   const upd = (chave,val,inteiro)=>{
     const s=document.querySelector('.f3d-cfg [data-c="'+chave+'"]');
