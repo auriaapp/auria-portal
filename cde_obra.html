@@ -196,6 +196,9 @@
   .cdeWin-bim .bimCfg .sub.off{opacity:.4;pointer-events:none}
   .cdeWin-bim .bimCfg .nota{color:#94a3b8;font-size:11px;line-height:1.35;margin:8px 0 0}
   .cdeWin-bim .bimCfg .val{flex:0 0 34px;text-align:right;color:#94a3b8;font-variant-numeric:tabular-nums}
+  .cdeWin-bim .bimCfg .segF{display:inline-flex;border:1px solid rgba(255,255,255,.18);border-radius:6px;overflow:hidden}
+  .cdeWin-bim .bimCfg .segF button{background:transparent;border:none;color:#cbd5e1;font-size:11px;padding:3px 8px;cursor:pointer;line-height:1.4}
+  .cdeWin-bim .bimCfg .segF button.on{background:var(--accent);color:#231703;font-weight:700}
   .cdeWin-bim .bimCfg .restaurar{width:100%;margin-top:9px;background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#e2e8f0;padding:5px;cursor:pointer;font-size:12px}
   .cdeWin-bim .bimCorte select{background:#1e293b;color:#e2e8f0;border:1px solid rgba(255,255,255,.18);
@@ -1140,6 +1143,12 @@ async function abrirBimFederado(){
 // errada. Aqui o eixo do three vira o nome que o usuário reconhece.
 const EIXO_IFC = { x:'X', y:'Z', z:'Y' };
 
+// Configuração de visualização do BIM do CDE — salva numa chave só do
+// localStorage (cdeBimCfg) e reaplicada ao abrir cada modelo, como no App.
+const CDE_BIM_CFG_PAD = { fundo:'escuro', grade:false,
+  expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
+  ao:false, aoInt:6, aoRaio:50, aoAm:16, snap:true };
+
 // Distância entre dois pontos do modelo. A geometria do Fragments vem em
 // METROS (o web-ifc normaliza a unidade do IFC na importação), então abaixo de
 // 1 m mostramos em centímetros, que é como se fala de folga e espessura em
@@ -1659,7 +1668,10 @@ class CdeWin {
       +       '</div>'
       +     '</div>'
       +     '<div class="bimCfg">'
-      +       '<h5>Visualização</h5>'
+      +       '<h5>Fundo &amp; piso</h5>'
+      +       '<div class="lin"><span>Fundo</span><span class="segF"><button data-bg="escuro" class="on">Escuro</button><button data-bg="claro">Claro</button></span></div>'
+      +       '<div class="lin"><span>Plano de piso</span><input type="checkbox" data-c="grade"></div>'
+      +       '<h5 style="margin-top:10px">Visualização</h5>'
       +       '<div class="lin"><span>Exposição</span><input type="range" data-c="expo" min="50" max="220" value="115"><i class="val">1,15</i></div>'
       +       '<div class="lin"><span>Luz ambiente</span><input type="range" data-c="amb" min="0" max="200" value="125"><i class="val">1,25</i></div>'
       +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
@@ -1723,22 +1735,31 @@ class CdeWin {
     });
     const cfg = (n)=> cfgEl.querySelector('[data-c='+n+']');
     const mostrar = (n, txt)=>{ const l=cfg(n).closest('.lin').querySelector('.val'); if(l) l.textContent=txt; };
+    // Fundo (Escuro/Claro) e Plano de piso — paridade com o App, persistidos.
+    cfgEl.querySelectorAll('.segF button').forEach(b=>{
+      b.addEventListener('click', ()=>{ this.bimVisualFundo(b.dataset.bg); this.bimCfgSalvar({ fundo:b.dataset.bg }); });
+    });
+    cfg('grade').addEventListener('change', (e)=>{ this.bimVisualGrade(e.target.checked); this.bimCfgSalvar({ grade:!!e.target.checked }); });
     cfg('expo').addEventListener('input', (e)=>{
       const v=(+e.target.value)/100; mostrar('expo', v.toFixed(2).replace('.',','));
       const B=this.B3; if(B) B.renderer.toneMappingExposure=v;
+      this.bimCfgSalvar({ expo:v });
     });
     cfg('amb').addEventListener('input', (e)=>{
       const v=(+e.target.value)/100; mostrar('amb', v.toFixed(2).replace('.',','));
       const B=this.B3; if(B) B.luzes.hemi.intensity=v;
+      this.bimCfgSalvar({ amb:v });
     });
     cfg('sol').addEventListener('input', (e)=>{
       const v=(+e.target.value)/100; mostrar('sol', v.toFixed(2).replace('.',','));
       const B=this.B3; if(B){ B.luzes.sol.intensity=v; B.luzes.fill.intensity=v*0.35; }
+      this.bimCfgSalvar({ sol:v });
     });
     cfg('faces').addEventListener('change', (e)=>{
       const B=this.B3; if(!B) return;
       B.facesDuplas = e.target.checked;
       this.bimAplicarFaces(true);
+      this.bimCfgSalvar({ faces:!!e.target.checked });
       this.bimMsgDica(e.target.checked
         ? 'Faces internas visíveis — tubo modelado como casca deixa de sumir pela metade.'
         : 'Só faces externas.');
@@ -1747,6 +1768,7 @@ class CdeWin {
       const B=this.B3; if(!B) return;
       B.medida.snapOn = e.target.checked;
       if(!e.target.checked) this.bimSnapEsconder();
+      this.bimCfgSalvar({ snap:!!e.target.checked });
       this.bimMsgDica(e.target.checked
         ? 'Trena com encaixe: gruda em vértices, arestas e faces.'
         : 'Trena sem encaixe: mede o ponto exato do clique na superfície.');
@@ -1755,13 +1777,16 @@ class CdeWin {
       const B=this.B3; if(!B) return;
       try{ B.fragments.settings.graphicsQuality = e.target.checked ? 1 : 0; }catch(_){}
       B.fragments.update(true).catch(()=>{});
+      this.bimCfgSalvar({ gq:!!e.target.checked });
       this.bimMsgDica(e.target.checked ? 'Modelo em alta qualidade.' : 'Modelo em qualidade normal.');
     });
     cfg('ao').addEventListener('change', (e)=>{
       cfgEl.querySelector('[data-c=aoSub]').classList.toggle('off', !e.target.checked);
+      this.bimCfgSalvar({ ao:!!e.target.checked });
       this.bimAO(e.target.checked).catch(err=>{
         console.warn('oclusão:', err); e.target.checked=false;
         cfgEl.querySelector('[data-c=aoSub]').classList.add('off');
+        this.bimCfgSalvar({ ao:false });
         this.bimMsgDica('Não consegui carregar a sombra de contato.');
       });
     });
@@ -1769,11 +1794,13 @@ class CdeWin {
       const B=this.B3; if(!B||!B.sao) return;
       B.sao.params.saoIntensity = (+cfg('aoInt').value)/100;
       B.sao.params.saoKernelRadius = +cfg('aoRaio').value;
+      this.bimCfgSalvar({ aoInt:+cfg('aoInt').value, aoRaio:+cfg('aoRaio').value });
     };
     cfg('aoInt') .addEventListener('input', (e)=>{ mostrar('aoInt', e.target.value); aoAplica(); });
     cfg('aoRaio').addEventListener('input', (e)=>{ mostrar('aoRaio', e.target.value); aoAplica(); });
     cfg('aoAm')  .addEventListener('input', (e)=>{
       mostrar('aoAm', e.target.value);
+      this.bimCfgSalvar({ aoAm:+e.target.value });
       const B=this.B3; if(!B||!B.sao) return;
       // Nº de amostras é um #define do shader: mudar exige recompilar.
       try{ B.sao.saoMaterial.defines.NUM_SAMPLES = +e.target.value; B.sao.saoMaterial.needsUpdate = true; }catch(_){}
@@ -1781,8 +1808,10 @@ class CdeWin {
     cfg('reset').addEventListener('click', ()=>{
       const p={ expo:115, amb:125, sol:155, aoInt:6, aoRaio:50, aoAm:16 };
       Object.entries(p).forEach(([k,v])=>{ const el=cfg(k); el.value=v; el.dispatchEvent(new Event('input')); });
-      const g=cfg('gq'); if(g.checked){ g.checked=false; g.dispatchEvent(new Event('change')); }
-      const a=cfg('ao'); if(a.checked){ a.checked=false; a.dispatchEvent(new Event('change')); }
+      const setChkDef=(n,def)=>{ const el=cfg(n); if(el && el.checked!==def){ el.checked=def; el.dispatchEvent(new Event('change')); } };
+      setChkDef('gq', false); setChkDef('ao', false);
+      setChkDef('faces', true); setChkDef('snap', true); setChkDef('grade', false);
+      this.bimVisualFundo('escuro'); this.bimCfgSalvar({ fundo:'escuro' });
     });
     tools.querySelector('[data-t=andar]').addEventListener('click', (e)=>{
       this.bimModoAndar(!e.currentTarget.classList.contains('on')).catch(err=>console.warn('caminhar:', err));
@@ -2210,6 +2239,7 @@ class CdeWin {
         andar:  { ativo:false, armado:false, nivel:0, yaw:0, pitch:0, pos:null, teclas:new Set(),
                   camPos:null, camRot:null, alvo:null, ultUpd:0 },
         niveis: null,   // alturas de piso, achadas sob demanda ao entrar no modo caminhar
+        fundo: 'escuro', grade: null,   // fundo da cena + plano de piso (GridHelper)
         unidade: 1 };   // raio/150 — escala do modelo, usada no contorno do corte
 
       // O Fragments transmite a geometria sob demanda, guiado pela câmera:
@@ -2364,6 +2394,7 @@ class CdeWin {
       this.bimResize();
       this.bimEnquadrar();
       this.bimRenderCamadas();
+      this.bimCfgAplicar(this.bimCfgLer());   // reaplica as preferências salvas
       await fragments.update(true);
 
       let tAnt = performance.now();
@@ -3059,6 +3090,79 @@ class CdeWin {
     };
     const up=()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
     document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+  }
+  // ── Config de visualização: salva no localStorage e reaplica ao abrir ────
+  bimCfgLer(){
+    try{ return Object.assign({}, CDE_BIM_CFG_PAD, JSON.parse(localStorage.getItem('cdeBimCfg')||'{}')); }
+    catch(_){ return Object.assign({}, CDE_BIM_CFG_PAD); }
+  }
+  bimCfgSalvar(patch){
+    try{
+      const cur=Object.assign({}, CDE_BIM_CFG_PAD, JSON.parse(localStorage.getItem('cdeBimCfg')||'{}'));
+      Object.assign(cur, patch);
+      localStorage.setItem('cdeBimCfg', JSON.stringify(cur));
+    }catch(_){}
+  }
+  // Fundo da cena: escuro (padrão) ou claro. Se a grade estiver ligada, recria
+  // (as cores dela dependem do fundo).
+  bimVisualFundo(qual){
+    const B=this.B3; if(!B) return;
+    B.fundo=qual;
+    B.scene.background=new B.THREE.Color(qual==='claro'?0xdfe6ee:0x2b3646);
+    const cfg=this.bimCfgEl;
+    if(cfg) cfg.querySelectorAll('.segF button').forEach(b=> b.classList.toggle('on', b.dataset.bg===qual));
+    if(B.grade) this.bimVisualGrade(true);
+  }
+  // Plano de piso: uma grade dimensionada pela caixa do modelo, no nível do
+  // piso (min Y). Recriada a cada liga/refit para acompanhar o modelo.
+  bimVisualGrade(lig){
+    const B=this.B3; if(!B) return;
+    if(B.grade){ try{ B.scene.remove(B.grade); B.grade.geometry.dispose(); B.grade.material.dispose(); }catch(_){} B.grade=null; }
+    const cfg=this.bimCfgEl, chk=cfg&&cfg.querySelector('[data-c=grade]'); if(chk) chk.checked=!!lig;
+    if(!lig) return;
+    const T=B.THREE, box=new T.Box3();
+    B.modelos.forEach(x=>{ try{ box.expandByObject(x.model.object); }catch(_){} });
+    if(box.isEmpty()) return;
+    const c=box.getCenter(new T.Vector3()), s=box.getSize(new T.Vector3());
+    const lado=(Math.max(s.x, s.z)||10)*1.5;
+    const div=Math.max(4, Math.min(120, Math.round(lado)));
+    const claro=B.fundo==='claro';
+    const g=new T.GridHelper(lado, div, claro?0x94a3b8:0x5b6b7f, claro?0xc2ccd6:0x3c4859);
+    g.position.set(c.x, box.min.y, c.z);
+    g.material.transparent=true; g.material.opacity=0.55; g.renderOrder=-1;
+    B.scene.add(g); B.grade=g;
+  }
+  // Aplica um objeto de config completo ao abrir o modelo. Aplica o runtime
+  // direto (sem disparar os handlers, p/ não soltar mensagens de dica) e
+  // reflete os controles do painel.
+  bimCfgAplicar(c){
+    const B=this.B3; if(!B) return; const cfg=this.bimCfgEl;
+    this.bimVisualFundo(c.fundo||'escuro');
+    this.bimVisualGrade(!!c.grade);
+    B.renderer.toneMappingExposure = c.expo;
+    B.luzes.hemi.intensity = c.amb;
+    B.luzes.sol.intensity = c.sol; B.luzes.fill.intensity = c.sol*0.35;
+    B.facesDuplas = c.faces!==false; this.bimAplicarFaces(true);
+    B.medida.snapOn = c.snap!==false; if(!B.medida.snapOn) this.bimSnapEsconder();
+    try{ B.fragments.settings.graphicsQuality = c.gq?1:0; B.fragments.update(true).catch(()=>{}); }catch(_){}
+    if(cfg){
+      const setV=(n,val,frac)=>{ const el=cfg.querySelector('[data-c='+n+']'); if(!el) return;
+        el.value= frac? Math.round(val*100): val;
+        const lab=el.closest('.lin').querySelector('.val'); if(lab) lab.textContent= frac? (+val).toFixed(2).replace('.',','): String(val); };
+      const setChk=(n,val)=>{ const el=cfg.querySelector('[data-c='+n+']'); if(el) el.checked=!!val; };
+      setV('expo', c.expo, true); setV('amb', c.amb, true); setV('sol', c.sol, true);
+      setV('aoInt', c.aoInt); setV('aoRaio', c.aoRaio); setV('aoAm', c.aoAm);
+      setChk('faces', c.faces!==false); setChk('snap', c.snap!==false);
+      setChk('gq', !!c.gq); setChk('grade', !!c.grade); setChk('ao', !!c.ao);
+      cfg.querySelector('[data-c=aoSub]').classList.toggle('off', !c.ao);
+    }
+    // Sombra de contato (pesada) — liga por último, só se salva ligada.
+    if(c.ao){
+      this.bimAO(true).then(()=>{
+        if(B.sao){ B.sao.params.saoIntensity=c.aoInt/100; B.sao.params.saoKernelRadius=c.aoRaio;
+          try{ B.sao.saoMaterial.defines.NUM_SAMPLES=c.aoAm; B.sao.saoMaterial.needsUpdate=true; }catch(_){} }
+      }).catch(()=>{ if(cfg){ const el=cfg.querySelector('[data-c=ao]'); if(el) el.checked=false; cfg.querySelector('[data-c=aoSub]').classList.add('off'); } });
+    }
   }
   // ── Camadas: cada modelo do federado acende/apaga como uma layer ─────────
   bimRenderCamadas(){
