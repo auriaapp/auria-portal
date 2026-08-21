@@ -4021,7 +4021,9 @@ async function f3dProps(hit, m){
                   HasAssociations:{attributes:true,relations:true} },   // material / classificação
       relationsDefault:{attributes:false,relations:false}
     });
-    el.innerHTML = f3dPropsHtml(dados && dados[0], m);
+    let cx=null;
+    try{ const bs=await m.model.getBoxes([hit.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
+    el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
   }catch(e){
     el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
   }
@@ -4031,7 +4033,8 @@ async function f3dProps(hit, m){
 // do IFC). Percorrer genericamente evita depender dos nomes exatos de relação,
 // que variam com o exportador — o que não for reconhecido simplesmente não
 // aparece, em vez de quebrar o painel.
-function f3dPropsHtml(data, m){
+function f3dPropsHtml(data, m, cx){
+  const fmtD=(d)=> !isFinite(d) ? '—' : (d<1 ? (d*100).toFixed(1).replace('.',',')+' cm' : d.toFixed(d<10?3:2).replace('.',',')+' m');
   const val=(v)=>{
     if(v===null||v===undefined||v==='') return '—';
     if(typeof v==='number') return String(Math.round(v*1e6)/1e6);
@@ -4069,7 +4072,7 @@ function f3dPropsHtml(data, m){
   const cat  =(titulo, corpo)=> corpo ? '<div class="bp-cat"><h6>'+esc(titulo)+'</h6>'+corpo+'</div>' : '';
   // Classifica cada grupo em categorias (estilo Solibri): Quantidades
   // (BaseQuantities/Qto_*), Material (associação), Propriedades (demais Psets).
-  const ehQuant=(n)=> /quantit|basequant|^qto/i.test(n);
+  const ehQuant=(n)=> /quantit|basequant|^qto|geometr/i.test(n);
   const qG=[], mG=[], pG=[];
   gruposL.forEach(g=>{
     const n=g.nome, assoc=(g.rel==='HasAssociations');
@@ -4094,6 +4097,16 @@ function f3dPropsHtml(data, m){
   if(mG.length){ const mn=mG[0].nome; if(mn && !/^(ifc|hasassociations)/i.test(mn)) ident.push(['Material', mn]); }
   out += cat('Identificação', linhas(ident));
   out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
+  // Reserva: modelo sem quantidades → calcula dimensões da caixa 3D (Altura =
+  // eixo vertical; horizontais maior→Comprimento, menor→Largura). Volume/área
+  // NÃO são deduzidos da geometria (regra do TQS nervurado).
+  if(!qG.length && cx && cx.max && cx.min && isFinite(cx.max.y)){
+    const dy=cx.max.y-cx.min.y;
+    const hd=[cx.max.x-cx.min.x, cx.max.z-cx.min.z].sort((a,b)=>b-a);
+    out += cat('Dimensões (calculado)', linhas([
+      ['Altura', fmtD(dy)], ['Comprimento', fmtD(hd[0])], ['Largura', fmtD(hd[1])]
+    ]));
+  }
   out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
   out += cat('Propriedades', pG.map(pset).join(''));
   return out;
