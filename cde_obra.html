@@ -132,6 +132,7 @@
   .cdeWin-bim canvas{display:block;width:100%;height:100%}
   .cdeWin-bim .bimDica{position:absolute;left:72px;bottom:10px;z-index:2;font-size:11px;
     color:#cbd5e1;background:rgba(15,23,42,.6);padding:5px 9px;border-radius:6px;pointer-events:none}
+  .cdeWin-bim.semDica .bimDica{display:none}
   /* Mensagem própria do 3D: a do .cdeWin-load vive dentro do stage, que fica
      escondido quando o 3D está em cena — ali ela nunca apareceria. */
   .cdeWin-bim .bimLoad{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;
@@ -1150,7 +1151,7 @@ const EIXO_IFC = { x:'X', y:'Z', z:'Y' };
 // localStorage (cdeBimCfg) e reaplicada ao abrir cada modelo, como no App.
 const CDE_BIM_CFG_PAD = { fundo:'escuro', grade:false,
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
-  ao:false, aoInt:6, aoRaio:50, aoAm:16, snap:true };
+  ao:false, aoInt:6, aoRaio:50, aoAm:16, snap:true, dica:true };
 
 // Distância entre dois pontos do modelo. A geometria do Fragments vem em
 // METROS (o web-ifc normaliza a unidade do IFC na importação), então abaixo de
@@ -1680,6 +1681,7 @@ class CdeWin {
       +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
       +       '<div class="lin"><span>Faces internas (tubos)</span><input type="checkbox" data-c="faces" checked></div>'
       +       '<div class="lin"><span>Trena com encaixe (snap)</span><input type="checkbox" data-c="snap" checked></div>'
+      +       '<div class="lin"><span>Dicas de navegação</span><input type="checkbox" data-c="dica" checked></div>'
       +       '<h5 style="margin-top:10px">Efeitos pesados</h5>'
       +       '<div class="lin"><span>Modelo em alta</span><input type="checkbox" data-c="gq"></div>'
       +       '<div class="lin"><span>Sombra de contato</span><input type="checkbox" data-c="ao"></div>'
@@ -1777,6 +1779,10 @@ class CdeWin {
         ? 'Trena com encaixe: gruda em vértices, arestas e faces.'
         : 'Trena sem encaixe: mede o ponto exato do clique na superfície.');
     });
+    cfg('dica').addEventListener('change', (e)=>{
+      this.bimWrap.classList.toggle('semDica', !e.target.checked);
+      this.bimCfgSalvar({ dica:!!e.target.checked });
+    });
     cfg('gq').addEventListener('change', (e)=>{
       const B=this.B3; if(!B) return;
       try{ B.fragments.settings.graphicsQuality = e.target.checked ? 1 : 0; }catch(_){}
@@ -1815,6 +1821,7 @@ class CdeWin {
       const setChkDef=(n,def)=>{ const el=cfg(n); if(el && el.checked!==def){ el.checked=def; el.dispatchEvent(new Event('change')); } };
       setChkDef('gq', false); setChkDef('ao', false);
       setChkDef('faces', true); setChkDef('snap', true); setChkDef('grade', false);
+      setChkDef('dica', true);
       this.bimVisualFundo('escuro'); this.bimCfgSalvar({ fundo:'escuro' });
     });
     tools.querySelector('[data-t=andar]').addEventListener('click', (e)=>{
@@ -3172,6 +3179,7 @@ class CdeWin {
     B.luzes.sol.intensity = c.sol; B.luzes.fill.intensity = c.sol*0.35;
     B.facesDuplas = c.faces!==false; this.bimAplicarFaces(true);
     B.medida.snapOn = c.snap!==false; if(!B.medida.snapOn) this.bimSnapEsconder();
+    this.bimWrap.classList.toggle('semDica', c.dica===false);
     try{ B.fragments.settings.graphicsQuality = c.gq?1:0; B.fragments.update(true).catch(()=>{}); }catch(_){}
     if(cfg){
       const setV=(n,val,frac)=>{ const el=cfg.querySelector('[data-c='+n+']'); if(!el) return;
@@ -3181,6 +3189,7 @@ class CdeWin {
       setV('expo', c.expo, true); setV('amb', c.amb, true); setV('sol', c.sol, true);
       setV('aoInt', c.aoInt); setV('aoRaio', c.aoRaio); setV('aoAm', c.aoAm);
       setChk('faces', c.faces!==false); setChk('snap', c.snap!==false);
+      setChk('dica', c.dica!==false);
       setChk('gq', !!c.gq); setChk('grade', !!c.grade); setChk('ao', !!c.ao);
       cfg.querySelector('[data-c=aoSub]').classList.toggle('off', !c.ao);
     }
