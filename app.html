@@ -173,6 +173,12 @@
   /* Marca d'água da logo no canto inferior esquerdo do canvas 3D (igual ao CDE). */
   #f3dLogo{position:absolute;left:12px;bottom:12px;z-index:4;height:52px;width:auto;
     opacity:.55;pointer-events:none;user-select:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+  /* No modo Só BIM, elementos da IA que só fazem sentido em prancha 2D somem. */
+  body.soBim .ia-2d{display:none !important}
+  /* "Pensando" — logo do Auria girando enquanto a IA processa. */
+  @keyframes iaSpin{to{transform:rotate(360deg)}}
+  .ia-pensando{display:flex;align-items:center;gap:8px;align-self:flex-start;color:var(--mut);font-size:12px}
+  .ia-pensando img{height:22px;width:auto;animation:iaSpin 1s linear infinite}
   #f3dCanvas.mira{cursor:crosshair}
   /* Painel de configurações da visualização: popover ancorado ao botão ⚙
      da barra do 3D. Cabeça e "lin" seguem o padrão do painel do CDE para
@@ -503,21 +509,21 @@
            filho do #stageRow (position:relative) p/ aparecer tanto na análise
            2D quanto no 3D. z-index alto p/ ficar acima do canvas/painéis do 3D. -->
       <div id="iaPanel" style="display:none;position:absolute;right:10px;top:10px;bottom:10px;z-index:40;width:330px;max-width:calc(100% - 20px);background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 44px rgba(0,0,0,.5);flex-direction:column">
-        <div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)">
-          <b style="flex:1;font-size:13px">✦ Assistente IA</b>
-          <button onclick="iaLimpar()" title="Limpar conversa" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">🧹</button>
-          <button onclick="toggleIA()" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:16px">✕</button>
+        <div id="iaHead" onmousedown="f3dIaDrag(event)" title="Arraste para mover o painel" style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:move;user-select:none">
+          <b style="flex:1;font-size:13px;pointer-events:none">⠿ ✦ Assistente IA</b>
+          <button onclick="iaLimpar()" onmousedown="event.stopPropagation()" title="Limpar conversa" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">🧹</button>
+          <button onclick="toggleIA()" onmousedown="event.stopPropagation()" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:16px">✕</button>
         </div>
         <div id="iaMsgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px"></div>
         <div style="border-top:1px solid var(--line);padding:9px">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <div class="ia-2d" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
             <span style="font-size:11px;color:var(--mut)">Prancha</span>
             <select id="iaPrancha" title="Prancha a analisar (padrão: a em foco)" style="flex:1;font-size:12px;padding:5px 7px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);color:var(--txt)"></select>
           </div>
-          <button class="btn" id="iaAnalisarBtn" onclick="iaAnalisar()" style="width:100%;font-size:12px;margin-bottom:8px">🔍 Analisar prancha (sugerir apontamentos)</button>
+          <button class="btn ia-2d" id="iaAnalisarBtn" onclick="iaAnalisar()" style="width:100%;font-size:12px;margin-bottom:8px">🔍 Analisar prancha (sugerir apontamentos)</button>
           <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--mut);margin-bottom:6px;cursor:pointer"><input type="checkbox" id="iaImg"> 🖼 Enviar imagem da vista atual (nas perguntas)</label>
           <div style="display:flex;gap:6px">
-            <textarea id="iaInput" rows="2" placeholder="Pergunte sobre o projeto, uma norma, a prancha…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();iaEnviar();}" style="flex:1;resize:none;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:12px;background:var(--bg2);color:var(--txt);font-family:inherit;outline:none"></textarea>
+            <textarea id="iaInput" rows="2" placeholder="Pergunte sobre o projeto, um elemento, uma norma…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();iaEnviar();}" style="flex:1;resize:none;border:1px solid var(--line);border-radius:8px;padding:7px;font-size:12px;background:var(--bg2);color:var(--txt);font-family:inherit;outline:none"></textarea>
             <button class="btn" id="iaSend" style="width:auto;padding:0 14px;font-size:15px" onclick="iaEnviar()">➤</button>
           </div>
         </div>
@@ -2562,6 +2568,22 @@ function cotaToSvg(c, preview){
 // ═══ IA (W4): assistente Groq via Edge Function `groq-proxy` ═════════════════
 // A chave nunca vem ao browser; a função valida o login e injeta o secret.
 let IA_CONV=[];        // histórico do chat [{role, content}]
+let IA_PENSANDO=false; // true enquanto a IA processa (mostra a logo girando)
+// Arrasta o painel de IA pelo cabeçalho (mesmo padrão do painel de cotas).
+function f3dIaDrag(ev){
+  const p=$('iaPanel'); if(!p) return; ev.preventDefault();
+  const parent=p.offsetParent||p.parentElement;
+  const pr=parent.getBoundingClientRect(), r=p.getBoundingClientRect();
+  const offx=ev.clientX-r.left, offy=ev.clientY-r.top;
+  const mv=(e)=>{
+    let x=e.clientX-pr.left-offx, y=e.clientY-pr.top-offy;
+    x=Math.max(0,Math.min(x, pr.width-p.offsetWidth));
+    y=Math.max(0,Math.min(y, pr.height-p.offsetHeight));
+    p.style.left=x+'px'; p.style.top=y+'px'; p.style.right='auto'; p.style.bottom='auto';
+  };
+  const up=()=>{ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); };
+  document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+}
 let F3D_SEL_CTX='';    // resumo em texto do elemento 3D selecionado (contexto p/ a IA)
 let F3D_CONTAGEM=null; // última contagem/agrupamento (grupos com ids p/ destacar ao clicar)
 let IA_SUGEST=[];      // sugestões da última análise [{titulo,descricao,prioridade,tipo,disciplina}]
@@ -2655,6 +2677,7 @@ function renderIA(startAt){   // startAt: 'top' | 'lastUser' | undefined (rola p
       return '<div data-role="'+m.role+'" style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+(m.html || _iaFmt(m.content))+'</div>';
     }).join('');
   }
+  if(IA_PENSANDO) html+='<div class="ia-pensando"><img src="logo_symbol.png" alt="">A IA está pensando…</div>';
   if(!html) html='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Clique em <b>🔍 Analisar prancha</b> para a IA sugerir apontamentos já classificados, ou faça uma pergunta abaixo.</div>';
   el.innerHTML=html;
   if(startAt==='top'){ el.scrollTop=0; }
@@ -2818,7 +2841,8 @@ async function iaEnviar(){
   const inp=$('iaInput'); const pergunta=(inp&&inp.value||'').trim(); if(!pergunta) return;
   const comImg=$('iaImg')&&$('iaImg').checked;
   const b64=comImg?capturarVista():null;
-  IA_CONV.push({role:'user',content:pergunta}); if(inp) inp.value=''; renderIA();
+  IA_CONV.push({role:'user',content:pergunta}); if(inp) inp.value='';
+  IA_PENSANDO=true; renderIA();
   const send=$('iaSend'); if(send){ send.disabled=true; send.textContent='…'; }
   const userContent = b64
     ? [{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:pergunta}]
@@ -2863,7 +2887,7 @@ async function iaEnviar(){
     }
     else IA_CONV.push({role:'assistant',content:'⚠ '+((data&&data.error)||'Não consegui responder agora.')});
   }catch(e){ IA_CONV.push({role:'assistant',content:'⚠ Erro ao consultar a IA: '+(e.message||e)}); }
-  finally{ if(send){ send.disabled=false; send.textContent='➤'; } renderIA(); }
+  finally{ IA_PENSANDO=false; if(send){ send.disabled=false; send.textContent='➤'; } renderIA(); }
 }
 
 // ═══ PAINÉIS EM POP-UP + BARRA DE COMANDO ═══════════════════════════════════
