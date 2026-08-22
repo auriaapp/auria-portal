@@ -748,8 +748,10 @@ export async function destacarCategoria(V, regexes, termos){
     // batem em algum termo (no nome/tipo/valores de propriedade).
     if(termosLc.length){
       let dados=[];
+      // ATRIBUTOS-ONLY (Nome/Tipo/Descrição): rápido e preciso. Ler os Psets de
+      // milhares de candidatos era lento E dava falso-positivo (termos batiam em
+      // valores de propriedade de itens que não eram do subconjunto).
       try{ dados=await x.model.getItemsData(ids, { attributesDefault:true,
-        relations:{ IsDefinedBy:{attributes:true,relations:true} },
         relationsDefault:{attributes:false,relations:false} }); }catch(_){}
       const okd=[];
       (dados||[]).forEach(d=>{
