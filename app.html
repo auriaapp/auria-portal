@@ -4071,6 +4071,7 @@ function f3dPropsHtml(data, m, cx){
     if(typeof v==='object'){ try{ return JSON.stringify(v); }catch(_){ return String(v); } }
     return String(v);
   };
+  const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
   const diretos=[], grupos=[];
   for(const [k,v] of Object.entries(data||{})){
     if(Array.isArray(v)){
@@ -4079,7 +4080,18 @@ function f3dPropsHtml(data, m, cx){
         const nome=(sub.Name&&sub.Name.value)||k;
         const ls=[];
         for(const [k2,v2] of Object.entries(sub)){
-          if(k2==='Name'||Array.isArray(v2)) continue;
+          if(k2==='Name') continue;
+          if(Array.isArray(v2)){
+            // Propriedades internas do Pset (HasProperties/Quantities): cada item
+            // é Name + valor nominal. Sem isto o Pset aparecia sem propriedades.
+            v2.forEach(p=>{
+              if(!p||typeof p!=='object') return;
+              const pn=p.Name&&p.Name.value;
+              const pv=escal(p.NominalValue)??escal(p.Value)??escal(p.LengthValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.CountValue)??escal(p.WeightValue)??escal(p.BooleanValue);
+              if(pn!=null && pv!=null && pv!=='') ls.push([pn, val(pv)]);
+            });
+            continue;
+          }
           if(v2&&typeof v2==='object'&&'value' in v2) ls.push([k2, val(v2.value)]);
         }
         if(ls.length) grupos.push({nome, ls, rel:k});
