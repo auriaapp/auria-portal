@@ -2883,9 +2883,16 @@ function f3dRegras(q){
   const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s);
   const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
-  // código de peça (P9, V1, VE3, L1A, C50…) → vira filtro de texto
+  const querTabela = /(tabela|planilha|quadro)/.test(s);
+  // código de peça (P9, V1, VE3, L1A, C50…) → filtro EXATO pelo Name ("=") → V1 ≠ V10
   const codeM = s.match(/\b([a-z]{1,3}\d+[a-z0-9]*)\b/);
-  const code = (codeM && !/^(m2|m3|mm|cm)$/i.test(codeM[1])) ? codeM[1] : null;
+  const code = (codeM && !/^(m2|m3|mm|cm)$/i.test(codeM[1]))
+    ? (/^c\d+$/i.test(codeM[1]) ? codeM[1] : '='+codeM[1])   // C50=classe concreto (substring); P9/V1=nome (exato)
+    : null;
+  // pavimento explícito ("do térreo", "no subsolo 2", "do tipo 3")
+  let pavim=null;
+  if(/t[ée]rreo/.test(s)) pavim='terreo';
+  else { const pm=s.match(/(subsolo\s*\d*|cobertura|mezanino|[áa]tico|tipo\s*\d+|pavimento\s*\d+)/); if(pm) pavim=pm[1].replace(/\s+/g,''); }
   // 1) agrupamento "X por Y" / "de cada Y"
   if(grpWord){
     let g=grpWord[1]; if(/piso|andar|n[íi]vel/.test(g)) g='pavimento';
@@ -2894,17 +2901,20 @@ function f3dRegras(q){
     if(propVal || psetGrp) return {tipo:'tabela', arg: cls+' | '+g+(propVal?(' | '+propVal):'')};
     return {tipo:'contar', arg: cls+' | '+g};
   }
+  // 1b) "tabela [com volume] dos X" sem agrupar → agrupa por pavimento (default útil)
+  if(querTabela) return {tipo:'tabela', arg: cls+' | pavimento'+(propVal?(' | '+propVal):'')};
   // 2) valor específico (medida) → isolar por valor
   if(medM && (querDestaca||querConta)){
     const prop = /(alt|height)/.test(s)?'altura' : /(esp|thick)/.test(s)?'espessura' : 'largura';
     return {tipo:'isolarvalor', arg: cls+' | '+prop+' | '+medM[1]+(medM[2]||'')};
   }
-  // 3) soma de quantitativo (com código = filtro pelo nome; senão todo o conjunto)
-  if(querSoma && propVal) return {tipo:'somar', arg: cls+' | '+(code||'')+' | '+propVal};
-  // 4) contar (com código = contagem filtrada por nome)
-  if(querConta) return code ? {tipo:'contarfiltro', arg: cls+' | '+code} : {tipo:'contar', arg: cls};
-  // 5) destacar/localizar (com código = filtro pelo nome)
-  if(querDestaca) return {tipo:'destacar', arg: cls+(code?(' | '+code):'')};
+  const cod = code||'';
+  // 3) soma de quantitativo (código = filtro exato pelo nome; senão todo o conjunto)
+  if(querSoma && propVal) return {tipo:'somar', arg: cls+' | '+cod+' | '+propVal};
+  // 4) contar (código e/ou pavimento = contagem filtrada)
+  if(querConta) return (code||pavim) ? {tipo:'contarfiltro', arg: cls+' | '+cod+' | '+(pavim||'')} : {tipo:'contar', arg: cls};
+  // 5) destacar/localizar (código = nome exato; pavimento = 3º campo)
+  if(querDestaca) return {tipo:'destacar', arg: cls+' | '+cod+' | '+(pavim||'')};
   return null;
 }
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
@@ -3183,7 +3193,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21o').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21p').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4402,17 +4412,20 @@ async function f3dExecDestaque(arg){
   if(!F3D || !B3){ return { erro:'3d' }; }
   const raw=(arg||'').trim();
   if(/^limpar/i.test(raw)){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dDica('Destaque removido.'); return { limpar:true }; }
-  // Formato: "CLASSE[,CLASSE] [| termo, termo, …]" — o depois do | filtra por texto.
-  const [classesRaw, termosRaw] = raw.split('|');
+  // Formato: "CLASSE[,CLASSE] [| termo, …] [| pavimento]" — 2º campo filtra por
+  // texto/código; 3º campo filtra por pavimento (lê Pset).
+  const [classesRaw, termosRaw, pavimRaw] = raw.split('|');
   const classes=(classesRaw||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
   if(!classes.length) return { n:0 };
   const termos=(termosRaw||'').split(',').map(t=> t.trim()).filter(Boolean);
+  const pavim=(pavimRaw||'').trim();
   const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
   try{
-    const n=await B3.destacarCategoria(F3D, regexes, termos);
+    if(pavim||termos.length) f3dDica('Filtrando…');
+    const n=await B3.destacarCategoria(F3D, regexes, termos, pavim);
     f3dDica(n ? (n+' elemento(s) destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.')
               : 'Não encontrei elementos com esse filtro no modelo.');
-    return { n, filtrado: termos.length>0 };
+    return { n, filtrado: (termos.length>0 || !!pavim) };
   }catch(e){ console.warn('destaque IA:', e); return { erro:String(e) }; }
 }
 // Normaliza um comprimento para CENTÍMETROS inteiros (para comparar "70cm",
@@ -4483,17 +4496,19 @@ async function f3dExecSomar(arg){
 // Contagem FILTRADA por nome/código (ex.: "quantos pilares P9").
 async function f3dExecContarFiltro(arg){
   if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu contar.' };
-  const [classesRaw, filtroRaw]=(arg||'').split('|');
+  const [classesRaw, filtroRaw, pavimRaw]=(arg||'').split('|');
   const classes=(classesRaw||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
   const termos=(filtroRaw||'').split(',').map(t=> t.trim()).filter(Boolean);
+  const pavim=(pavimRaw||'').trim();
   if(!classes.length) return { msg:'Não entendi o que contar.' };
   const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
   const rot=_rotuloClasse(classes[0]);
   f3dDica('Contando…');
   try{
-    const n=await B3.contarFiltrado(F3D, regexes, termos);
+    const n=await B3.contarFiltrado(F3D, regexes, termos, pavim);
     f3dDica('');
-    return { msg:'Há **'+n+'** '+rot+(termos.length?(' com "'+termos.join(', ')+'"'):'')+' no modelo.' };
+    const filtroTxt=[termos.length?('"'+termos.map(t=>t.replace(/^=/,'')).join(', ')+'"'):'', pavim?('no pavimento '+pavim):''].filter(Boolean).join(' ');
+    return { msg:'Há **'+n+'** '+rot+(filtroTxt?(' '+filtroTxt):'')+' no modelo.' };
   }catch(e){ f3dDica(''); console.warn('contar filtro:', e); return { msg:'Não consegui contar: '+(e.message||e) }; }
 }
 // Nível 3: TABELA agrupada ("X por Y") — agrupa por uma propriedade e soma/conta.

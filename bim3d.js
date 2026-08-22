@@ -782,9 +782,24 @@ function _textoBusca(d){
   return out.join(' ').toLowerCase();
 }
 
-export async function destacarCategoria(V, regexes, termos){
+// Minúsculas + sem acento (casa "térreo" com "TERREO").
+function _norm(s){ return String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+// Nome do elemento (atributo Name), normalizado.
+function _nomeEl(d){ return _norm(d && d.Name && d.Name.value!=null ? d.Name.value : ''); }
+// Casa termos de filtro contra 1 elemento. Termo iniciado por "=" exige
+// correspondência EXATA no Name (V1 ≠ V10); senão substring no texto todo.
+function _bateTermos(d, termosLc){
+  if(!termosLc || !termosLc.length) return true;
+  const nome=_nomeEl(d), txt=_norm(_textoBusca(d));
+  return termosLc.some(t=>{ t=_norm(t); return t[0]==='=' ? nome===t.slice(1) : txt.includes(t); });
+}
+// Pavimento do elemento (via Pset — precisa de getItemsData com IsDefinedBy).
+function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar/i); return v==null?'':_norm(v); }
+
+export async function destacarCategoria(V, regexes, termos, pavim){
   const T=V.THREE; let total=0; const porMod={};
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  const pavN = pavim ? _norm(pavim) : '';
   // ISOLAR: esconde TUDO de uma vez (global, barato — não estoura o motor) e
   //  depois reexibe só os selecionados. Mesmo padrão do filtro de pavimentos.
   for(const x of V.modelos){
@@ -798,19 +813,21 @@ export async function destacarCategoria(V, regexes, termos){
     if(!ids.length) continue;
     // Filtro por texto (ex.: "corta-fogo"): lê os candidatos e mantém só os que
     // batem em algum termo (no nome/tipo/valores de propriedade).
-    if(termosLc.length){
+    if(termosLc.length || pavN){
       let dados=[];
-      // ATRIBUTOS-ONLY (Nome/Tipo/Descrição): rápido e preciso. Ler os Psets de
-      // milhares de candidatos era lento E dava falso-positivo (termos batiam em
-      // valores de propriedade de itens que não eram do subconjunto).
-      try{ dados=await x.model.getItemsData(ids, { attributesDefault:true,
-        relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+      // Texto = ATRIBUTOS-ONLY (rápido e preciso). Pavimento vive em Pset, então
+      // aí precisamos ler IsDefinedBy (mais pesado, mas só para o subconjunto).
+      const opt = pavN
+        ? { attributesDefault:true, relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }
+        : { attributesDefault:true, relationsDefault:{attributes:false,relations:false} };
+      try{ dados=await x.model.getItemsData(ids, opt); }catch(_){}
       const okd=[];
       (dados||[]).forEach(d=>{
         const lid = d && d._localId && d._localId.value;
         if(lid==null) return;
-        const txt=_textoBusca(d);
-        if(termosLc.some(t=> txt.includes(t))) okd.push(lid);
+        if(termosLc.length && !_bateTermos(d, termosLc)) return;   // texto/código exato
+        if(pavN && !_pavimEl(d).includes(pavN)) return;            // pavimento
+        okd.push(lid);
       });
       ids=okd;
     }
@@ -870,15 +887,23 @@ function _rotuloValor(v, termo){
 }
 // Conta uma categoria FILTRADA por texto (nome/tipo/atributos). Sem termos =
 // total da categoria. Leve (atributos-only).
-export async function contarFiltrado(V, regexes, termos){
+export async function contarFiltrado(V, regexes, termos, pavim){
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  const pavN = pavim ? _norm(pavim) : '';
   let n=0;
   for(const x of V.modelos){
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
-    if(!termosLc.length){ n+=ids.length; continue; }
-    let da=[]; try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
-    (da||[]).forEach(d=>{ if(d && termosLc.some(t=>_textoBusca(d).includes(t))) n++; });
+    if(!termosLc.length && !pavN){ n+=ids.length; continue; }
+    const opt = pavN
+      ? { attributesDefault:true, relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }
+      : { attributesDefault:true, relationsDefault:{attributes:false,relations:false} };
+    let da=[]; try{ da=await x.model.getItemsData(ids, opt); }catch(_){}
+    (da||[]).forEach(d=>{ if(!d) return;
+      if(termosLc.length && !_bateTermos(d, termosLc)) return;
+      if(pavN && !_pavimEl(d).includes(pavN)) return;
+      n++;
+    });
   }
   return n;
 }
@@ -957,7 +982,7 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
     if(!ids.length) continue;
     if(termosLc.length){                          // filtro por texto (atributos, leve)
       let da=[]; try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
-      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; if(termosLc.some(t=>_textoBusca(d).includes(t))) ok.push(lid); });
+      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; if(_bateTermos(d, termosLc)) ok.push(lid); });
       ids=ok;
     }
     if(!ids.length) continue;
@@ -1009,7 +1034,7 @@ export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor){
     if(!ids.length) continue;
     if(termosLc.length){
       let da=[]; try{ da=await x.model.getItemsData(ids,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
-      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null)return; if(termosLc.some(t=>_textoBusca(d).includes(t))) ok.push(lid); }); ids=ok;
+      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null)return; if(_bateTermos(d, termosLc)) ok.push(lid); }); ids=ok;
     }
     if(!ids.length) continue;
     let dd=[]; try{ dd=await x.model.getItemsData(ids,{attributesDefault:true, relations:{IsDefinedBy:{attributes:true,relations:true}}, relationsDefault:{attributes:false,relations:false}}); }catch(_){}
