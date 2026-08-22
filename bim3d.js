@@ -912,7 +912,7 @@ async function _faixasPavimento(V){
   }
   const faixas=[];
   for(const [nome, mm] of votos){ let idx=0,mx=-1; for(const [k,c] of mm){ if(c>mx){mx=c;idx=k;} }
-    faixas.push({nome, idx, y:ns[idx], y0:ns[idx]-1.0, y1:(idx+1<ns.length)?ns[idx+1]-0.3:Infinity}); }
+    faixas.push({nome, idx, y:ns[idx], y0:ns[idx]-0.8, y1:(idx+1<ns.length)?ns[idx+1]-0.8:Infinity}); }
   faixas.sort((a,b)=>a.y-b.y);
   V._faixas=faixas;
   return faixas;
@@ -925,9 +925,10 @@ export async function diagFaixas(V){
   return 'Níveis (m): '+((V.niveis||[]).map(y=>y.toFixed(2)).join(', '))+'\n\n'+
     f.map(x=>x.nome+' → nível '+x.idx+' (y='+x.y.toFixed(2)+') · faixa ['+x.y0.toFixed(2)+', '+(x.y1===Infinity?'∞':x.y1.toFixed(2))+']').join('\n');
 }
-// A peça pertence ao pavimento se sua caixa SOBREPÕE a faixa (não só o centro) —
-//  pega paredes altas, baixas e rebaixadas que o teste de centro perdia.
-function _naFaixa(b, fx){ return b && b.min.y < fx.y1 && b.max.y > fx.y0; }
+// A peça pertence ao pavimento onde sua BASE (min.y) cai — igual à "Restrição
+//  da base" do Revit. Peça que sobe vários andares fica só no de origem (base);
+//  antes eu usava sobreposição e ela vazava p/ todos os andares que cruzava.
+function _naFaixa(b, fx){ return b && b.min.y >= fx.y0 && b.min.y < fx.y1; }
 // Categorias "visíveis" de construção (p/ isolar um andar inteiro sem puxar
 // espaços/tipos/relações).
 const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^IFCWINDOW/,/^IFCSTAIR/,
