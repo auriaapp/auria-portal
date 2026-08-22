@@ -2898,6 +2898,7 @@ function f3dRegras(q){
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
+  if(/^diag\b.*(pavim|faixa|n[íi]vel|andar)/.test(s)) return {tipo:'diagpav'};   // dump das faixas de pavimento
   // Classe: 1º regex exato (com fronteira de palavra — senão "de-STACA-r" casava
   //  "estaca"); se falhar, aproximação tolerante a typos.
   const CLS=[[/\b(pilar|pilares|coluna|colunas)\b/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
@@ -2949,7 +2950,11 @@ function f3dRegras(q){
      && !(pavim && (t===pavN0 || _lev(t,pavN0)<=1))
      && !/^\d+([.,]\d+)?$/.test(t) && !/^(cm|mm|m2|m3)$/.test(t)
      && !_algumPerto([t], clsAlvos));
-  const filtros = [ ...(code?[code]:[]), ...resid ];   // código exato + texto substring
+  let filtros = [ ...(code?[code]:[]), ...resid ];   // código exato + texto substring
+  // "corta-fogo"/"resistente ao fogo" → filtro por FireRating (Pset_DoorCommon),
+  //  não por texto no nome (o texto não existe; a resistência vive no Pset).
+  const querFire = /corta.?fogo|resist.*(fogo|fire)|fire.?rat|prote[çc][ãa]o.*fogo/.test(s) || (tok.includes('corta') && tok.includes('fogo'));
+  if(querFire) filtros = ['@fire'];
   const filtroArg = filtros.join(',');
   // monta o arg de @TABELA: CLASSE | grupo | valor | pavimento(filtro)
   const tabArg = (grp)=> cls+' | '+grp+' | '+(propVal||'')+(pavim?(' | '+pavim):'');
@@ -2994,7 +2999,8 @@ async function execDiretiva(tipo, arg){
   let out;
   f3dProcessando(true);
   try{
-    if(tipo==='diag'){
+    if(tipo==='diagpav'){ const txt=await B3.diagFaixas(F3D); out={content:'🔎 Faixas de pavimento:\n\n'+txt}; }
+    else if(tipo==='diag'){
       const classes=(arg||'').split(',').map(c=>c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
       const rx=classes.map(c=>new RegExp('^'+c+'$','i'));
       const txt=await B3.diagElemento(F3D, rx);
@@ -3282,7 +3288,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21x').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21y').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões

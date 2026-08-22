@@ -804,10 +804,14 @@ function _norm(s){ return String(s==null?'':s).toLowerCase().normalize('NFD').re
 function _nomeEl(d){ return _norm(d && d.Name && d.Name.value!=null ? d.Name.value : ''); }
 // Casa termos de filtro contra 1 elemento. Termo iniciado por "=" exige
 // correspondência EXATA no Name (V1 ≠ V10); senão substring no texto todo.
+const FIRE_RX=/fire.?rating|corta.?fogo|resist.*fogo|prote.*fogo/i;   // corta-fogo vive em Pset_DoorCommon.FireRating
 function _bateTermos(d, termosLc){
   if(!termosLc || !termosLc.length) return true;
   const nome=_nomeEl(d), txt=_norm(_textoBusca(d));
-  return termosLc.some(t=>{ t=_norm(t); return t[0]==='=' ? nome===t.slice(1) : txt.includes(t); });
+  return termosLc.some(t=>{ t=_norm(t);
+    if(t==='@fire'){ const v=_achaValorQualquer(d, FIRE_RX); return v!=null && !/^(0|0h|nao|n[aã]o|nenhum|none|n\/a|na|false|sem|-)$/i.test(_norm(String(v))); }
+    return t[0]==='=' ? nome===t.slice(1) : txt.includes(t);
+  });
 }
 // Pavimento do elemento (via Pset — precisa de getItemsData com IsDefinedBy).
 function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|eleva|restri[çc][aã]o da base|base ?constraint/i); return v==null?'':_norm(v); }
@@ -884,7 +888,12 @@ async function _pavimMapModelo(V, x, ids, rotulo){
 // vira um teste geométrico rápido nas caixas (sem ler Pset de milhares de peças).
 async function _faixasPavimento(V){
   if(V._faixas) return V._faixas;
-  const porNome=new Map();                 // nomeNorm -> [Ys de topo de laje]
+  const ns=await niveis(V);                 // Ys já CONSOLIDADOS (funde lajes < ~2,2m)
+  if(!ns || !ns.length) return (V._faixas=[]);
+  // Vota, por nome de pavimento, a qual NÍVEL consolidado as lajes daquele nome
+  //  mais se aproximam. Assim o teto da faixa é o próximo nível REAL, não um
+  //  patamar/rebaixo colado (que estreitava a faixa e excluía paredes).
+  const votos=new Map();                    // nome -> Map(idxNivel -> contagem)
   for(const x of V.modelos){
     let sids=[]; try{ sids=Object.values(await x.model.getItemsOfCategories([/^IFCSLAB$/])||{}).flat(); }catch(_){}
     if(!sids.length) continue;
@@ -892,16 +901,28 @@ async function _faixasPavimento(V){
     let boxes=[]; try{ boxes=await x.model.getBoxes(sids); }catch(_){}
     sids.forEach((id,i)=>{ const nm=cache.get(id); const b=(boxes||[])[i];
       if(!nm || !b || !isFinite(b.max.y)) return;
-      if(!porNome.has(nm)) porNome.set(nm, []); porNome.get(nm).push(b.max.y); });
+      let idx=0,best=Infinity; ns.forEach((y,j)=>{ const dd=Math.abs(y-b.max.y); if(dd<best){best=dd;idx=j;} });
+      if(!votos.has(nm)) votos.set(nm, new Map()); const mm=votos.get(nm); mm.set(idx,(mm.get(idx)||0)+1);
+    });
   }
   const faixas=[];
-  for(const [nome, ys] of porNome){ ys.sort((a,b)=>a-b); faixas.push({nome, y:ys[Math.floor(ys.length/2)]}); }
+  for(const [nome, mm] of votos){ let idx=0,mx=-1; for(const [k,c] of mm){ if(c>mx){mx=c;idx=k;} }
+    faixas.push({nome, idx, y:ns[idx], y0:ns[idx]-1.0, y1:(idx+1<ns.length)?ns[idx+1]-0.3:Infinity}); }
   faixas.sort((a,b)=>a.y-b.y);
-  faixas.forEach((f,i)=>{ f.y0=f.y-1.0; f.y1=(i+1<faixas.length)?faixas[i+1].y-0.3:Infinity; });  // do piso até o próximo nível
   V._faixas=faixas;
   return faixas;
 }
 function _faixaDe(faixas, pavN){ const f=(faixas||[]).find(f=> _batePavim(f.nome, pavN)); return f?{y0:f.y0,y1:f.y1}:null; }
+// DIAGNÓSTICO das faixas de pavimento (nome → nível/altura/faixa).
+export async function diagFaixas(V){
+  const f=await _faixasPavimento(V);
+  if(!f.length) return 'nenhuma faixa (as lajes não trazem nome de pavimento).';
+  return 'Níveis (m): '+((V.niveis||[]).map(y=>y.toFixed(2)).join(', '))+'\n\n'+
+    f.map(x=>x.nome+' → nível '+x.idx+' (y='+x.y.toFixed(2)+') · faixa ['+x.y0.toFixed(2)+', '+(x.y1===Infinity?'∞':x.y1.toFixed(2))+']').join('\n');
+}
+// A peça pertence ao pavimento se sua caixa SOBREPÕE a faixa (não só o centro) —
+//  pega paredes altas, baixas e rebaixadas que o teste de centro perdia.
+function _naFaixa(b, fx){ return b && b.min.y < fx.y1 && b.max.y > fx.y0; }
 export async function destacarCategoria(V, regexes, termos, pavim){
   V._cancelar=false;
   const T=V.THREE; let total=0; const porMod={};
@@ -927,16 +948,17 @@ export async function destacarCategoria(V, regexes, termos, pavim){
         const fx=_faixaDe(await _faixasPavimento(V), pavN);
         if(fx){
           let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-          ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return; const cy=(b.min.y+b.max.y)/2; if(cy>=fx.y0 && cy<fx.y1) okd.push(id); });
+          ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) okd.push(id); });
         } else {
           // lajes não nomearam esse pavimento → cai no Pset (cache)
           const cache=await _pavimMapModelo(V, x, ids, 'Filtrando');
           for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); }
         }
       } else {
-        // texto = ATRIBUTOS-ONLY (rápido). Com pavimento junto, lê Psets em lotes.
-        let dados=[];
-        if(pavN){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
+        // texto = ATRIBUTOS-ONLY (rápido). Pavimento ou @fire (FireRating) vivem
+        // em Pset → aí lê IsDefinedBy em lotes.
+        let dados=[]; const precisaPset = pavN || termosLc.includes('@fire');
+        if(precisaPset){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
         else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
         (dados||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
           if(termosLc.length && !_bateTermos(d, termosLc)) return;
@@ -1018,7 +1040,7 @@ export async function contarFiltrado(V, regexes, termos, pavim){
       const fx=_faixaDe(await _faixasPavimento(V), pavN);
       if(fx){
         let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-        ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return; const cy=(b.min.y+b.max.y)/2; if(cy>=fx.y0 && cy<fx.y1) n++; });
+        ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) n++; });
       } else {
         const cache=await _pavimMapModelo(V, x, ids, 'Contando');
         for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) n++; }
@@ -1026,7 +1048,7 @@ export async function contarFiltrado(V, regexes, termos, pavim){
       continue;
     }
     let da=[];
-    if(pavN){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
+    if(pavN || termosLc.includes('@fire')){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
     else { try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
     (da||[]).forEach(d=>{ if(!d) return;
       if(termosLc.length && !_bateTermos(d, termosLc)) return;
