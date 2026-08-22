@@ -710,8 +710,32 @@ export async function destacar(V, modelo, ids){
 //  Acende TODOS os elementos de uma ou mais categorias IFC (ex.: IFCCOLUMN) em
 //  todos os modelos federados e esmaece o resto, para a categoria "saltar".
 //  `regexes` = lista de RegExp de categoria (ex.: [/^IFCCOLUMN$/i]).
-export async function destacarCategoria(V, regexes){
+// Junta os VALORES pesquisáveis do elemento (atributos + valores de propriedade
+// dos Psets) numa string única, para filtro por texto. Inclui só VALORES (não
+// nomes de propriedade), senão "FireRating" faria toda porta bater em "fire".
+function _textoBusca(d){
+  if(!d) return '';
+  const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  const out=[];
+  for(const [k,v] of Object.entries(d)){
+    if(k[0]==='_') continue;                          // pula _guid/_localId/_category
+    if(Array.isArray(v)){
+      v.forEach(ps=>{ if(!ps||typeof ps!=='object') return;
+        Object.values(ps).forEach(sub=>{
+          if(Array.isArray(sub)){ sub.forEach(p=>{ if(!p||typeof p!=='object') return;
+            const pv=escal(p.NominalValue)??escal(p.Value)??escal(p.LengthValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.CountValue);
+            if(pv!=null) out.push(String(pv)); }); }
+          else { const vv=escal(sub); if(vv!=null) out.push(String(vv)); }
+        });
+      });
+    } else { const vv=escal(v); if(vv!=null) out.push(String(vv)); }
+  }
+  return out.join(' ').toLowerCase();
+}
+
+export async function destacarCategoria(V, regexes, termos){
   const T=V.THREE; let total=0;
+  const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.resetOpacity(undefined); }catch(_){}
@@ -719,6 +743,23 @@ export async function destacarCategoria(V, regexes){
   for(const x of V.modelos){
     let ids=[];
     try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    // Filtro por texto (ex.: "corta-fogo"): lê os candidatos e mantém só os que
+    // batem em algum termo (no nome/tipo/valores de propriedade).
+    if(termosLc.length){
+      let dados=[];
+      try{ dados=await x.model.getItemsData(ids, { attributesDefault:true,
+        relations:{ IsDefinedBy:{attributes:true,relations:true} },
+        relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+      const okd=[];
+      (dados||[]).forEach(d=>{
+        const lid = d && d._localId && d._localId.value;
+        if(lid==null) return;
+        const txt=_textoBusca(d);
+        if(termosLc.some(t=> txt.includes(t))) okd.push(lid);
+      });
+      ids=okd;
+    }
     if(!ids.length) continue;
     total+=ids.length;
     // Esmaece SÓ os NÃO-destacados (complemento), para os da categoria ficarem
