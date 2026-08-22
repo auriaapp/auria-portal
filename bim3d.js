@@ -856,16 +856,28 @@ export async function diagElemento(V, regexes){
 // Parar), mostra progresso e aborta se _cancelar. Ler tudo de uma vez travava
 // em modelos com milhares de elementos (ex.: paredes).
 async function _lerPsetsEmLotes(V, model, ids, rotulo){
-  const R=[]; const N=250;
+  const R=[]; const N=100;   // lotes menores → o Parar responde mais rápido
   for(let i=0;i<ids.length;i+=N){
     if(V._cancelar) throw new Error('CANCELADO');
     let da=[]; try{ da=await model.getItemsData(ids.slice(i,i+N), { attributesDefault:true,
       relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+    if(V._cancelar) throw new Error('CANCELADO');   // checa também DEPOIS da leitura
     for(const d of (da||[])) R.push(d);
     if(V.on && V.on.dica) V.on.dica((rotulo||'Processando')+'… '+Math.min(i+N,ids.length)+'/'+ids.length);
     await new Promise(r=>setTimeout(r,0));   // cede o thread p/ o clique em Parar rodar
   }
   return R;
+}
+// Mapa localId→pavimento de um modelo, com CACHE: a 1ª consulta de andar lê os
+// Psets (em lotes, cancelável); as próximas reusam o cache (instantâneas).
+async function _pavimMapModelo(V, x, ids, rotulo){
+  x._pavCache = x._pavCache || new Map();
+  const faltam = ids.filter(id=> !x._pavCache.has(id));
+  if(faltam.length){
+    const dd = await _lerPsetsEmLotes(V, x.model, faltam, rotulo);
+    dd.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) x._pavCache.set(lid, _pavimEl(d)); });
+  }
+  return x._pavCache;
 }
 export async function destacarCategoria(V, regexes, termos, pavim){
   V._cancelar=false;
@@ -886,19 +898,22 @@ export async function destacarCategoria(V, regexes, termos, pavim){
     // Filtro por texto (ex.: "corta-fogo"): lê os candidatos e mantém só os que
     // batem em algum termo (no nome/tipo/valores de propriedade).
     if(termosLc.length || pavN){
-      let dados=[];
-      // Texto = ATRIBUTOS-ONLY (rápido, uma chamada). Pavimento vive em Pset →
-      // lê IsDefinedBy EM LOTES (com Parar), senão trava em milhares de peças.
-      if(pavN){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
-      else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
       const okd=[];
-      (dados||[]).forEach(d=>{
-        const lid = d && d._localId && d._localId.value;
-        if(lid==null) return;
-        if(termosLc.length && !_bateTermos(d, termosLc)) return;   // texto/código exato
-        if(pavN && !_batePavim(_pavimEl(d), pavN)) return;         // pavimento
-        okd.push(lid);
-      });
+      if(pavN && !termosLc.length){
+        // só pavimento → usa o mapa em cache (rápido em consultas repetidas)
+        const cache=await _pavimMapModelo(V, x, ids, 'Filtrando');
+        for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); }
+      } else {
+        // texto = ATRIBUTOS-ONLY (rápido). Com pavimento junto, lê Psets em lotes.
+        let dados=[];
+        if(pavN){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
+        else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
+        (dados||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+          if(termosLc.length && !_bateTermos(d, termosLc)) return;
+          if(pavN && !_batePavim(_pavimEl(d), pavN)) return;
+          okd.push(lid);
+        });
+      }
       ids=okd;
     }
     if(!ids.length) continue;
@@ -969,6 +984,11 @@ export async function contarFiltrado(V, regexes, termos, pavim){
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
     if(!termosLc.length && !pavN){ n+=ids.length; continue; }
+    if(pavN && !termosLc.length){
+      const cache=await _pavimMapModelo(V, x, ids, 'Contando');
+      for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) n++; }
+      continue;
+    }
     let da=[];
     if(pavN){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
     else { try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
