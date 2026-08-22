@@ -2584,6 +2584,13 @@ function iaContexto(){
     +'Empreendimento: '+(EMP?EMP.nome:'—')+'. Disciplina da prancha ativa: '+(discAtiva()||'—')+'.\n'
     +'Apontamentos: '+n+' no total, '+ab+' em aberto, '+at+' atrasados.\n'
     +'Responda de forma concisa e técnica, em português. Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.'
+    +'\n\nAÇÃO NO MODELO 3D: se o usuário pedir para LOCALIZAR, DESTACAR, MOSTRAR, ACHAR ou ISOLAR elementos de um TIPO '
+    +'(ex.: "onde estão os pilares?", "destaque as vigas", "mostre as lajes"), inclua no FIM da resposta UMA linha exatamente '
+    +'no formato: @DESTACAR: <CLASSE_IFC>. Traduza o termo PT para a classe IFC: pilar/pilares→IFCCOLUMN; viga/vigas→IFCBEAM; '
+    +'laje/lajes→IFCSLAB; parede/paredes→IFCWALL,IFCWALLSTANDARDCASE; porta→IFCDOOR; janela→IFCWINDOW; escada→IFCSTAIR; '
+    +'rampa→IFCRAMP; fundação/sapata→IFCFOOTING; telhado→IFCROOF; tubo/tubulação→IFCPIPESEGMENT,IFCFLOWSEGMENT; duto→IFCDUCTSEGMENT; '
+    +'fundação/estaca→IFCPILE. Para LIMPAR o destaque use @DESTACAR: LIMPAR. Só use essa linha quando o usuário realmente pedir '
+    +'para localizar/destacar; caso contrário, NÃO a inclua. Além da linha, responda em uma frase curta o que destacou.'
     +(F3D_SEL_CTX
       ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
         +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
@@ -2803,7 +2810,13 @@ async function iaEnviar(){
   try{
     const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:!!b64 } });
     if(error) throw new Error(await _iaErr(error));
-    if(data && data.content) IA_CONV.push({role:'assistant',content:data.content});
+    if(data && data.content){
+      let txt=data.content;
+      // Diretiva de ação: @DESTACAR: <CLASSE> — executa e remove do texto exibido.
+      const mt=txt.match(/@DESTACAR:\s*([A-Za-z0-9_,\s]+)/i);
+      if(mt){ txt=txt.replace(/@DESTACAR:[^\n]*/i,'').trim(); f3dExecDestaque(mt[1]); }
+      IA_CONV.push({role:'assistant',content:txt||'Feito.'});
+    }
     else IA_CONV.push({role:'assistant',content:'⚠ '+((data&&data.error)||'Não consegui responder agora.')});
   }catch(e){ IA_CONV.push({role:'assistant',content:'⚠ Erro ao consultar a IA: '+(e.message||e)}); }
   finally{ if(send){ send.disabled=false; send.textContent='➤'; } renderIA(); }
@@ -2997,7 +3010,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-18b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4209,6 +4222,21 @@ function f3dPerguntarIA(){
   const p=$('iaPanel'); if(p && p.style.display!=='flex') toggleIA();
   const inp=$('iaInput');
   if(inp){ if(!inp.value.trim()) inp.value='O que é este elemento? Explique as propriedades relevantes.'; inp.focus(); }
+}
+// Nível 2: executa a diretiva @DESTACAR vinda da IA — acende no modelo os
+// elementos da(s) classe(s) IFC pedida(s), ou limpa o destaque.
+async function f3dExecDestaque(arg){
+  if(!F3D || !B3){ return; }
+  const s=(arg||'').trim();
+  if(/^limpar/i.test(s)){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dDica('Destaque removido.'); return; }
+  const classes=s.split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  if(!classes.length) return;
+  const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
+  try{
+    const n=await B3.destacarCategoria(F3D, regexes);
+    f3dDica(n ? (n+' elemento(s) destacado(s). Clique numa peça ou peça "limpar destaque" para voltar.')
+              : 'Não encontrei elementos desse tipo no(s) modelo(s) carregado(s).');
+  }catch(e){ console.warn('destaque IA:', e); }
 }
 
 // Caixa de pavimentos: reusa o popover que o App já tem.

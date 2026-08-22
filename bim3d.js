@@ -706,6 +706,37 @@ export async function destacar(V, modelo, ids){
   try{ await V.fragments.update(true); }catch(_){}
 }
 
+// ── Destaque por CATEGORIA (Nível 2 da IA: "onde estão os pilares?") ───────
+//  Acende TODOS os elementos de uma ou mais categorias IFC (ex.: IFCCOLUMN) em
+//  todos os modelos federados e esmaece o resto, para a categoria "saltar".
+//  `regexes` = lista de RegExp de categoria (ex.: [/^IFCCOLUMN$/i]).
+export async function destacarCategoria(V, regexes){
+  const T=V.THREE; let total=0;
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.resetOpacity(undefined); }catch(_){}
+  }
+  for(const x of V.modelos){
+    let ids=[];
+    try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    total+=ids.length;
+    // Esmaece tudo do modelo e reacende (opaco+laranja) só os da categoria.
+    try{ const todos=await x.model.getItemsOfCategories([/./]); const allIds=Object.values(todos||{}).flat();
+         if(allIds.length) await x.model.setOpacity(allIds, 0.10); }catch(_){}
+    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+  return total;
+}
+export async function limparDestaqueCategoria(V){
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.resetOpacity(undefined); }catch(_){}
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+
 // ── Raio-X (peça sob o cursor fica transparente) ──────────────────────────
 //  Modelo mental: como o médico "afasta" o tecido para ver o osso, aqui
 //  você "afasta" a peça sob o cursor para ver o que está atrás — parede
