@@ -842,7 +842,7 @@ function _termoRegex(t){
   if(/alt|height/.test(t))  return /height|alt/i;
   if(/esp|thick/.test(t))   return /thick|esp/i;
   if(/[áa]rea/.test(t))     return /area/i;
-  if(/vol/.test(t))         return /volume/i;
+  if(/vol/.test(t))         return /vol/i;    // pega volume, NetVolume, auria_vol…
   if(/per[íi]m/.test(t))    return /perim/i;
   if(/mat/.test(t))         return /material/i;
   return new RegExp((t.replace(/[^a-z0-9]/gi,'')||'.'),'i');
@@ -929,7 +929,9 @@ function _achaValorProfundo(d, rx){
 export async function somarPropriedade(V, regexes, termos, termoProp){
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const rx=_termoRegex(termoProp);
-  let n=0, comValor=0, soma=0; const nomes=new Set();
+  const tp=(termoProp||'').toLowerCase();
+  const ehArea=/[áa]rea/.test(tp), ehComp=/larg|width|alt|height|comp|length/.test(tp), ehVol=/vol/.test(tp);
+  let n=0, comValor=0, calculados=0, soma=0; const nomes=new Set();
   for(const x of V.modelos){
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
@@ -942,9 +944,23 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
     n+=ids.length;
     let dd=[]; try{ dd=await x.model.getItemsData(ids, { attributesDefault:true,
       relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
-    (dd||[]).forEach(d=>{ const r=_achaValorProfundo(d, rx); if(r && typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); } });
+    const faltam=[];
+    (dd||[]).forEach((d,i)=>{ const r=_achaValorProfundo(d, rx);
+      if(r && typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); }
+      else faltam.push(ids[i]);
+    });
+    // Reserva GEOMÉTRICA (só área/comprimento; volume NUNCA — regra do TQS
+    // nervurado). Área ≈ maior horizontal × altura (face de parede).
+    if(faltam.length && (ehArea||ehComp) && !ehVol){
+      let boxes=[]; try{ boxes=await x.model.getBoxes(faltam); }catch(_){}
+      (boxes||[]).forEach(b=>{ if(!b||!b.min||!b.max||!isFinite(b.max.y)) return;
+        const dy=b.max.y-b.min.y, hd=[b.max.x-b.min.x, b.max.z-b.min.z].sort((a,b)=>b-a);
+        const val = ehArea ? (hd[0]*dy) : hd[0];
+        if(isFinite(val)){ soma+=val; calculados++; nomes.add('geometria'); }
+      });
+    }
   }
-  return { n, comValor, soma, nomes:[...nomes] };
+  return { n, comValor, calculados, soma, nomes:[...nomes] };
 }
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
 // numa linha da tabela de contagem. ISOLA: esconde tudo, mostra só o alvo.

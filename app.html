@@ -2609,8 +2609,9 @@ function iaContexto(){
     +'\n\nSOMAR QUANTITATIVO: se o usuário pedir a SOMA/TOTAL de uma quantidade (área em m², volume em m³, comprimento) de um '
     +'conjunto — ex.: "some a área de todas as paredes ACM", "volume total de concreto dos pilares" — emita: '
     +'@SOMAR: <CLASSE_IFC> | <filtro de texto opcional> | <propriedade>. Ex.: "área total das paredes ACM" → '
-    +'@SOMAR: IFCWALL | ACM | area. "volume dos pilares" → @SOMAR: IFCCOLUMN | | volume. O sistema soma os valores reais '
-    +'do modelo (não invente) e informa a unidade e a fonte.'
+    +'@SOMAR: IFCWALL | ACM | area. "volume dos pilares" → @SOMAR: IFCCOLUMN | | volume. Para o valor de UM elemento '
+    +'específico pelo NOME (ex.: "volume do pilar P9"), use o NOME como filtro: @SOMAR: IFCCOLUMN | P9 | volume — o filtro '
+    +'isola o elemento e a soma vira o valor dele. O sistema soma os valores reais do modelo (não invente) e informa a unidade e a fonte.'
     +(F3D_SEL_CTX
       ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
         +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
@@ -3053,7 +3054,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21k').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21l').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4340,12 +4341,14 @@ async function f3dExecSomar(arg){
     const r=await B3.somarPropriedade(F3D, regexes, termos, prop);
     f3dDica('');
     if(!r.n) return { msg:'Não encontrei '+rot+(termos.length?(' com o filtro "'+termos.join(', ')+'"'):'')+' no modelo.' };
-    if(!r.comValor) return { msg:'Achei '+r.n+' '+rot+', mas nenhum traz a propriedade "'+prop+'" no modelo.' };
+    const usados=(r.comValor||0)+(r.calculados||0);
+    if(!usados) return { msg:'Achei '+r.n+' '+rot+', mas nenhum traz a propriedade "'+prop+'" (nem dá para calcular da geometria).' };
     const val=(Math.round(r.soma*100)/100).toLocaleString('pt-BR');
     const filtro = termos.length?(' ('+termos.join('/')+')'):'';
     const fonte = r.nomes.length?(' · fonte: '+r.nomes.slice(0,3).join(', ')):'';
-    const parcial = r.comValor<r.n?(' — só '+r.comValor+' de '+r.n+' tinham o valor'):'';
-    return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+'.' };
+    const parcial = usados<r.n?(' — '+usados+' de '+r.n+' com valor'):'';
+    const calc = r.calculados?(' · '+r.calculados+' calculado(s) da geometria (estimativa)'):'';
+    return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
 }
 // Nível 3: contar / agrupar por propriedade. O CÓDIGO calcula e monta a resposta.
