@@ -2563,6 +2563,7 @@ function cotaToSvg(c, preview){
 // A chave nunca vem ao browser; a função valida o login e injeta o secret.
 let IA_CONV=[];        // histórico do chat [{role, content}]
 let F3D_SEL_CTX='';    // resumo em texto do elemento 3D selecionado (contexto p/ a IA)
+let F3D_CONTAGEM=null; // última contagem/agrupamento (grupos com ids p/ destacar ao clicar)
 let IA_SUGEST=[];      // sugestões da última análise [{titulo,descricao,prioridade,tipo,disciplina}]
 let IA_ANALISE_TXT=''; // parágrafo geral da última análise
 // slug REAL da Edge Function no Supabase (foi criada com nome "groq-proxy" mas
@@ -2641,7 +2642,7 @@ function renderIA(startAt){   // startAt: 'top' | 'lastUser' | undefined (rola p
   }
   if(IA_CONV.length){
     html+=IA_CONV.map(m=>{ const me=m.role==='user';
-      return '<div data-role="'+m.role+'" style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+_iaFmt(m.content)+'</div>';
+      return '<div data-role="'+m.role+'" style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+(m.html || _iaFmt(m.content))+'</div>';
     }).join('');
   }
   if(!html) html='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Clique em <b>🔍 Analisar prancha</b> para a IA sugerir apontamentos já classificados, ou faça uma pergunta abaixo.</div>';
@@ -2828,7 +2829,7 @@ async function iaEnviar(){
       const mt=txt.match(/@DESTACAR:\s*([^\n]+)/i);
       if(mc){
         const res=await f3dExecContar(mc[1]);
-        IA_CONV.push({role:'assistant',content:res.msg});
+        IA_CONV.push({role:'assistant', content:res.msg||'', html:res.html});
       } else if(mt){
         const res=await f3dExecDestaque(mt[1]);
         const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(mt[1]);
@@ -3035,7 +3036,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21f').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21g').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4282,10 +4283,29 @@ async function f3dExecContar(arg){
     f3dDica('');
     if(!r.total) return { msg:'Não encontrei '+rot+' no(s) modelo(s) carregado(s).' };
     if(!prop) return { msg:'Há **'+r.total+'** '+rot+' no(s) modelo(s) carregado(s).' };
-    const linhas=r.dist.slice(0,25).map(([v,n])=> '• '+v+' → **'+n+'**').join('\n');
-    const resto = r.dist.length>25 ? ('\n…e mais '+(r.dist.length-25)+' valores') : '';
-    return { msg:'**'+rot+' por '+prop+'** (total '+r.total+'):\n'+linhas+resto };
+    // Tabela clicável: cada linha destaca aquele grupo no modelo (verificação).
+    F3D_CONTAGEM=r.grupos;
+    const linhas=r.grupos.map((g,i)=>
+      '<tr onclick="f3dDestacarGrupo('+i+')" style="cursor:pointer" '
+      +'onmouseenter="this.style.background=\'rgba(127,179,211,.15)\'" onmouseleave="this.style.background=\'\'">'
+      +'<td style="padding:3px 8px;border-top:1px solid var(--line)">'+esc(g.label)+'</td>'
+      +'<td style="padding:3px 8px;border-top:1px solid var(--line);text-align:right;font-weight:700">'+g.n+'</td></tr>').join('');
+    const html='<div style="font-size:12px"><b>'+esc(rot)+' por '+esc(prop)+'</b> — total '+r.total
+      +'<table style="width:100%;border-collapse:collapse;margin-top:5px">'
+      +'<tr style="color:var(--mut);font-size:11px"><td style="padding:2px 8px">'+esc(prop)+'</td>'
+      +'<td style="padding:2px 8px;text-align:right">qtd</td></tr>'+linhas+'</table>'
+      +'<div style="color:var(--mut);font-size:11px;margin-top:5px">👆 Clique numa linha para destacar o grupo no modelo. "limpar destaque" volta.</div></div>';
+    return { html };
   }catch(e){ f3dDica(''); console.warn('contar:', e); return { msg:'Não consegui contar agora: '+(e.message||e) }; }
+}
+// Clique numa linha da tabela de contagem → destaca aquele grupo no modelo.
+async function f3dDestacarGrupo(i){
+  if(!F3D || !B3 || !F3D_CONTAGEM || !F3D_CONTAGEM[i]) return;
+  f3dDica('Destacando…');
+  try{
+    const n=await B3.destacarIds(F3D, F3D_CONTAGEM[i].porMod);
+    f3dDica(n+' elemento(s) do grupo "'+F3D_CONTAGEM[i].label+'" destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.');
+  }catch(e){ f3dDica(''); console.warn('destacar grupo:', e); }
 }
 // Rótulo amigável a partir da classe IFC (para a mensagem do chat).
 function _rotuloClasse(cls){

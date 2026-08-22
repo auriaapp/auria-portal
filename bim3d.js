@@ -828,15 +828,25 @@ function _achaValor(d, rx){
   }
   return null;
 }
-function _rotuloValor(v){
-  if(typeof v==='number'){ return String(Math.round(v*1000)/1000).replace('.',','); }
+function _rotuloValor(v, termo){
+  if(typeof v==='number'){
+    // Comprimentos (largura/altura/espessura) vêm em METROS → mostra em cm,
+    // arredondado ao cm, que é como se fala de porta/janela.
+    if(/larg|width|alt|height|esp|thick/i.test(termo||'') && Math.abs(v)<10){
+      return String(Math.round(v*100))+' cm';
+    }
+    return String(Math.round(v*1000)/1000).replace('.',',');
+  }
   return String(v);
 }
+// Retorna { total, grupos:[{label, n, porMod:{modelIndex:[localIds]}}] } — os
+// ids por grupo permitem destacar aquele conjunto ao clicar na tabela.
 export async function contarPorPropriedade(V, regexes, termoProp){
   const termo=(termoProp||'').trim();
   const rx = termo ? _termoRegex(termo) : null;
-  let total=0; const dist=new Map();
-  for(const x of V.modelos){
+  let total=0; const dist=new Map();   // label -> {n, porMod:{mi:[ids]}}
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi];
     let ids=[];
     try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
@@ -844,13 +854,41 @@ export async function contarPorPropriedade(V, regexes, termoProp){
     let dados=[];
     try{ dados=await x.model.getItemsData(ids, { attributesDefault:true,
       relationsDefault:{attributes:false,relations:false} }); }catch(_){}
-    (dados||[]).forEach(d=>{ if(!d) return; total++;
+    (dados||[]).forEach(d=>{ if(!d) return; const lid=d._localId&&d._localId.value; if(lid==null) return; total++;
       const v=_achaValor(d, rx);
-      const chave = (v==null) ? '(sem valor)' : _rotuloValor(v);
-      dist.set(chave, (dist.get(chave)||0)+1);
+      const chave=(v==null)?'(sem valor)':_rotuloValor(v, termo);
+      let g=dist.get(chave); if(!g){ g={n:0, porMod:{}}; dist.set(chave,g); }
+      g.n++; (g.porMod[mi]=g.porMod[mi]||[]).push(lid);
     });
   }
-  return { total, dist:[...dist.entries()].sort((a,b)=> b[1]-a[1]) };
+  const grupos=[...dist.entries()].map(([label,g])=>({label, n:g.n, porMod:g.porMod})).sort((a,b)=> b.n-a.n);
+  return { total, grupos };
+}
+// Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
+// numa linha da tabela de contagem. Mesmo "fantasma leve" do destaque por tipo.
+export async function destacarIds(V, porMod){
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.resetOpacity(undefined); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}
+  }
+  let total=0;
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
+    if(!ids.length) continue; total+=ids.length;
+    try{
+      const alvo=new Set(ids.map(String));
+      const sil=Object.values(await x.model.getItemsOfCategories(SILHUETA)||{}).flat().filter(id=>!alvo.has(String(id)));
+      const silSet=new Set(sil.map(String));
+      const todos=Object.values(await x.model.getItemsOfCategories([/./])||{}).flat();
+      const esconder=todos.filter(id=> !alvo.has(String(id)) && !silSet.has(String(id)));
+      if(sil.length)      await x.model.setOpacity(sil, 0.10);
+      if(esconder.length) await x.model.setVisible(esconder, false);
+    }catch(_){}
+    try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+  return total;
 }
 
 // ── Raio-X (peça sob o cursor fica transparente) ──────────────────────────
