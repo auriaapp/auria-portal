@@ -2634,6 +2634,14 @@ function iaContexto(){
     +'@SOMAR: IFCWALL | ACM | area. "volume dos pilares" → @SOMAR: IFCCOLUMN | | volume. Para o valor de UM elemento '
     +'específico pelo NOME (ex.: "volume do pilar P9"), use o NOME como filtro: @SOMAR: IFCCOLUMN | P9 | volume — o filtro '
     +'isola o elemento e a soma vira o valor dele. O sistema soma os valores reais do modelo (não invente) e informa a unidade e a fonte.'
+    +'\n\nTABELA AGRUPADA ("X por Y"): para agrupar (ex.: "volume dos pilares por pavimento", "quantidade de portas por tipo", '
+    +'"pilares por pavimento"), emita @TABELA: <CLASSE_IFC> | <agrupar-por> | <valor-a-somar OPCIONAL>. Ex.: '
+    +'"volume dos pilares por pavimento" → @TABELA: IFCCOLUMN | pavimento | volume. "pilares por tipo" → @TABELA: IFCCOLUMN | tipo. '
+    +'O sistema monta a tabela com os números reais.'
+    +'\n\n⚠ REGRA ABSOLUTA — NÃO INVENTE DADOS: você NUNCA deve escrever você mesmo uma tabela, lista ou números do modelo '
+    +'(nomes de peças, volumes, áreas, cargas, dimensões). SEMPRE que o usuário pedir tabela/agrupamento/listagem/contagem/soma '
+    +'de dados do modelo, use UMA das diretivas @... e deixe o SISTEMA calcular. Se nenhuma diretiva servir, diga honestamente '
+    +'que ainda não consegue fazer isso — jamais fabrique valores de exemplo.'
     +(F3D_SEL_CTX
       ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
         +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
@@ -2879,11 +2887,15 @@ async function iaEnviar(){
       let txt=data.content;
       // Diretivas de ação: quando presentes, o CÓDIGO gera a resposta (números
       // reais) — a frase da IA costuma ser vaga/inventada.
+      const mtab=txt.match(/@TABELA:\s*([^\n]+)/i);
       const ms=txt.match(/@SOMAR:\s*([^\n]+)/i);
       const mv=txt.match(/@ISOLARVALOR:\s*([^\n]+)/i);
       const mc=txt.match(/@CONTAR:\s*([^\n]+)/i);
       const mt=txt.match(/@DESTACAR:\s*([^\n]+)/i);
-      if(ms){
+      if(mtab){
+        const res=await f3dExecTabela(mtab[1]);
+        IA_CONV.push({role:'assistant', content:res.msg||'', html:res.html});
+      } else if(ms){
         const res=await f3dExecSomar(ms[1]);
         IA_CONV.push({role:'assistant', content:res.msg});
       } else if(mv){
@@ -3098,7 +3110,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21m').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21n').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4394,6 +4406,36 @@ async function f3dExecSomar(arg){
     const calc = r.calculados?(' · '+r.calculados+' calculado(s) da geometria (estimativa)'):'';
     return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
+}
+// Nível 3: TABELA agrupada ("X por Y") — agrupa por uma propriedade e soma/conta.
+async function f3dExecTabela(arg){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu montar a tabela.' };
+  const parts=(arg||'').split('|');
+  const classes=(parts[0]||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  const propGrupo=(parts[1]||'').trim(), propValor=(parts[2]||'').trim();
+  if(!classes.length || !propGrupo) return { msg:'Não entendi a tabela pedida.' };
+  const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
+  const rot=_rotuloClasse(classes[0]);
+  const un = /[áa]rea/i.test(propValor)?'m²' : /vol/i.test(propValor)?'m³' : /larg|width|alt|height|comp|length/i.test(propValor)?'m' : '';
+  f3dDica('Montando tabela…');
+  try{
+    const rows=await B3.tabelaAgrupada(F3D, regexes, [], propGrupo, propValor);
+    f3dDica('');
+    if(!rows.length) return { msg:'Não encontrei '+rot+' no modelo.' };
+    F3D_CONTAGEM=rows.map(r=>({label:r.grupo, porMod:r.porMod}));
+    const temValor=!!propValor && rows.some(r=>r.comValor>0);
+    const th='<tr style="color:var(--mut);font-size:11px"><td style="padding:2px 8px">'+esc(propGrupo)+'</td>'
+      +'<td style="padding:2px 8px;text-align:right">qtd</td>'+(temValor?('<td style="padding:2px 8px;text-align:right">Σ '+esc(propValor)+(un?(' ('+un+')'):'')+'</td>'):'')+'</tr>';
+    const trs=rows.map((r,i)=> '<tr onclick="f3dDestacarGrupo('+i+')" style="cursor:pointer" onmouseenter="this.style.background=\'rgba(127,179,211,.15)\'" onmouseleave="this.style.background=\'\'">'
+      +'<td style="padding:3px 8px;border-top:1px solid var(--line)">'+esc(r.grupo)+'</td>'
+      +'<td style="padding:3px 8px;border-top:1px solid var(--line);text-align:right;font-weight:700">'+r.n+'</td>'
+      +(temValor?('<td style="padding:3px 8px;border-top:1px solid var(--line);text-align:right">'+(Math.round(r.soma*100)/100).toLocaleString('pt-BR')+'</td>'):'')+'</tr>').join('');
+    const total=rows.reduce((a,r)=>a+r.n,0);
+    const html='<div style="font-size:12px"><b>'+esc(rot)+' por '+esc(propGrupo)+(propValor?(' · Σ '+esc(propValor)):'')+'</b> — total '+total
+      +'<table style="width:100%;border-collapse:collapse;margin-top:5px">'+th+trs+'</table>'
+      +'<div style="color:var(--mut);font-size:11px;margin-top:5px">👆 Clique numa linha para isolar o grupo no modelo.</div></div>';
+    return { html };
+  }catch(e){ f3dDica(''); console.warn('tabela:', e); return { msg:'Não consegui montar a tabela: '+(e.message||e) }; }
 }
 // Nível 3: contar / agrupar por propriedade. O CÓDIGO calcula e monta a resposta.
 async function f3dExecContar(arg){

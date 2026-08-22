@@ -844,6 +844,8 @@ function _termoRegex(t){
   if(/[áa]rea/.test(t))     return /area/i;
   if(/vol/.test(t))         return /vol/i;    // pega volume, NetVolume, auria_vol…
   if(/per[íi]m/.test(t))    return /perim/i;
+  if(/pavim|piso|andar|n[íi]vel|storey|level/.test(t)) return /piso|planta|pavim|storey|level|andar/i;
+  if(/tipo|type|classif/.test(t)) return /tipo|type|classif/i;
   if(/mat/.test(t))         return /material/i;
   return new RegExp((t.replace(/[^a-z0-9]/gi,'')||'.'),'i');
 }
@@ -965,6 +967,48 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
     }
   }
   return { n, comValor, calculados, soma, nomes:[...nomes] };
+}
+// Acha o 1º valor (texto OU número) cuja chave/nome casa com rx — para chave de
+// AGRUPAMENTO (ex.: pavimento="TERREO", Piso=33).
+function _achaValorQualquer(d, rx){
+  const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||Array.isArray(v)) continue; if(rx.test(k)){ const vv=escal(v); if(vv!=null&&vv!=='') return vv; } }
+  for(const [k,v] of Object.entries(d)){ if(!Array.isArray(v)) continue;
+    for(const ps of v){ if(!ps||typeof ps!=='object') continue;
+      for(const sub of Object.values(ps)){ if(!Array.isArray(sub)) continue; for(const p of sub){ if(!p||typeof p!=='object') continue; const pn=p.Name&&p.Name.value; if(pn&&rx.test(String(pn))){ const pv=escal(p.NominalValue)??escal(p.Value); if(pv!=null&&pv!=='') return pv; } } }
+      for(const [k2,v2] of Object.entries(ps)){ if(k2==='Name'||Array.isArray(v2)) continue; if(rx.test(k2)){ const vv=escal(v2); if(vv!=null&&vv!=='') return vv; } }
+    }
+  }
+  return null;
+}
+// TABELA AGRUPADA: agrupa por `propGrupo` (ex.: pavimento) e, se `propValor`
+// (ex.: volume), soma-o por grupo; senão só conta. Retorna linhas com ids p/
+// permitir clicar e isolar o grupo.
+export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor){
+  const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  const rxG=_termoRegex(propGrupo);
+  const rxV=propValor?_termoRegex(propValor):null;
+  const map=new Map();   // label -> {n, soma, comValor, porMod:{mi:[ids]}}
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    if(termosLc.length){
+      let da=[]; try{ da=await x.model.getItemsData(ids,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null)return; if(termosLc.some(t=>_textoBusca(d).includes(t))) ok.push(lid); }); ids=ok;
+    }
+    if(!ids.length) continue;
+    let dd=[]; try{ dd=await x.model.getItemsData(ids,{attributesDefault:true, relations:{IsDefinedBy:{attributes:true,relations:true}}, relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      const gk=_achaValorQualquer(d, rxG);
+      const label = (gk==null||gk==='') ? '(sem valor)' : String(gk);
+      let g=map.get(label); if(!g){ g={n:0,soma:0,comValor:0,porMod:{}}; map.set(label,g); }
+      g.n++; (g.porMod[mi]=g.porMod[mi]||[]).push(lid);
+      if(rxV){ const vv=_achaValorProfundo(d, rxV); if(vv&&typeof vv.val==='number'){ g.soma+=vv.val; g.comValor++; } }
+    });
+  }
+  return [...map.entries()].map(([grupo,g])=>({grupo, n:g.n, soma:g.soma, comValor:g.comValor, porMod:g.porMod}))
+    .sort((a,b)=> b.n-a.n);
 }
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
 // numa linha da tabela de contagem. ISOLA: esconde tudo, mostra só o alvo.
