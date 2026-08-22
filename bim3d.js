@@ -771,7 +771,7 @@ export async function destacarCategoria(V, regexes, termos){
     if(!ids.length) continue;
     total+=ids.length;
     // Só realça o ALVO (leve). Nada de mexer no resto do modelo.
-    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false, depthTest:false }); }catch(_){}
+    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
@@ -849,7 +849,7 @@ export async function destacarIds(V, porMod){
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
     if(!ids.length) continue; total+=ids.length;
-    try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false, depthTest:false }); }catch(_){}
+    try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
