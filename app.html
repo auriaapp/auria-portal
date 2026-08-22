@@ -2812,10 +2812,20 @@ async function iaEnviar(){
     if(error) throw new Error(await _iaErr(error));
     if(data && data.content){
       let txt=data.content;
-      // Diretiva de ação: @DESTACAR: <CLASSE> — executa e remove do texto exibido.
+      // Diretiva de ação: @DESTACAR: <CLASSE>. Quando presente, o CÓDIGO gera a
+      // resposta (com a contagem real) — a frase da IA costuma ser vaga/inventada.
       const mt=txt.match(/@DESTACAR:\s*([A-Za-z0-9_,\s]+)/i);
-      if(mt){ txt=txt.replace(/@DESTACAR:[^\n]*/i,'').trim(); f3dExecDestaque(mt[1]); }
-      IA_CONV.push({role:'assistant',content:txt||'Feito.'});
+      if(mt){
+        const res=await f3dExecDestaque(mt[1]);
+        let msg;
+        if(res && res.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
+        else if(res && res.limpar) msg='✓ Destaque removido — o modelo voltou ao normal.';
+        else if(res && res.n>0) msg='✓ Destaquei '+res.n+' '+_rotuloClasse(mt[1])+' no modelo. Peça "limpar destaque" ou clique numa peça para voltar.';
+        else msg='Não encontrei '+_rotuloClasse(mt[1])+' no modelo carregado.';
+        IA_CONV.push({role:'assistant',content:msg});
+      } else {
+        IA_CONV.push({role:'assistant',content:txt||'Feito.'});
+      }
     }
     else IA_CONV.push({role:'assistant',content:'⚠ '+((data&&data.error)||'Não consegui responder agora.')});
   }catch(e){ IA_CONV.push({role:'assistant',content:'⚠ Erro ao consultar a IA: '+(e.message||e)}); }
@@ -3010,7 +3020,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4226,17 +4236,27 @@ function f3dPerguntarIA(){
 // Nível 2: executa a diretiva @DESTACAR vinda da IA — acende no modelo os
 // elementos da(s) classe(s) IFC pedida(s), ou limpa o destaque.
 async function f3dExecDestaque(arg){
-  if(!F3D || !B3){ return; }
+  if(!F3D || !B3){ return { erro:'3d' }; }
   const s=(arg||'').trim();
-  if(/^limpar/i.test(s)){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dDica('Destaque removido.'); return; }
+  if(/^limpar/i.test(s)){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dDica('Destaque removido.'); return { limpar:true }; }
   const classes=s.split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
-  if(!classes.length) return;
+  if(!classes.length) return { n:0 };
   const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
   try{
     const n=await B3.destacarCategoria(F3D, regexes);
-    f3dDica(n ? (n+' elemento(s) destacado(s). Clique numa peça ou peça "limpar destaque" para voltar.')
-              : 'Não encontrei elementos desse tipo no(s) modelo(s) carregado(s).');
-  }catch(e){ console.warn('destaque IA:', e); }
+    f3dDica(n ? (n+' elemento(s) destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.')
+              : 'Não encontrei elementos desse tipo no modelo.');
+    return { n };
+  }catch(e){ console.warn('destaque IA:', e); return { erro:String(e) }; }
+}
+// Rótulo amigável a partir da classe IFC (para a mensagem do chat).
+function _rotuloClasse(cls){
+  const m={ IFCCOLUMN:'pilares', IFCBEAM:'vigas', IFCSLAB:'lajes', IFCWALL:'paredes',
+    IFCWALLSTANDARDCASE:'paredes', IFCDOOR:'portas', IFCWINDOW:'janelas', IFCSTAIR:'escadas',
+    IFCRAMP:'rampas', IFCFOOTING:'fundações', IFCPILE:'estacas', IFCROOF:'telhados',
+    IFCPIPESEGMENT:'tubulações', IFCDUCTSEGMENT:'dutos' };
+  const c=(cls||'').split(',')[0].trim().toUpperCase().replace(/[^A-Z0-9_]/g,'');
+  return m[c] || 'elementos';
 }
 
 // Caixa de pavimentos: reusa o popover que o App já tem.

@@ -721,9 +721,16 @@ export async function destacarCategoria(V, regexes){
     try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
     if(!ids.length) continue;
     total+=ids.length;
-    // Esmaece tudo do modelo e reacende (opaco+laranja) só os da categoria.
-    try{ const todos=await x.model.getItemsOfCategories([/./]); const allIds=Object.values(todos||{}).flat();
-         if(allIds.length) await x.model.setOpacity(allIds, 0.10); }catch(_){}
+    // Esmaece SÓ os NÃO-destacados (complemento), para os da categoria ficarem
+    // 100% opacos e realmente saltarem. (Antes eu esmaecia tudo e os próprios
+    // destacados ficavam translúcidos.)
+    try{
+      const todos=await x.model.getItemsOfCategories([/./]);
+      const allIds=Object.values(todos||{}).flat();
+      const alvo=new Set(ids.map(String));
+      const outros=allIds.filter(id=> !alvo.has(String(id)));
+      if(outros.length) await x.model.setOpacity(outros, 0.08);
+    }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
