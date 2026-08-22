@@ -879,6 +879,29 @@ async function _pavimMapModelo(V, x, ids, rotulo){
   }
   return x._pavCache;
 }
+// FAIXAS de pavimento (cache): nomeia cada nível lendo o Pset só das LAJES
+// (poucas) e usa a altura da laje como piso do nível. Assim filtrar "do térreo"
+// vira um teste geométrico rápido nas caixas (sem ler Pset de milhares de peças).
+async function _faixasPavimento(V){
+  if(V._faixas) return V._faixas;
+  const porNome=new Map();                 // nomeNorm -> [Ys de topo de laje]
+  for(const x of V.modelos){
+    let sids=[]; try{ sids=Object.values(await x.model.getItemsOfCategories([/^IFCSLAB$/])||{}).flat(); }catch(_){}
+    if(!sids.length) continue;
+    const cache=await _pavimMapModelo(V, x, sids, 'Mapeando pavimentos');   // Pset só das lajes
+    let boxes=[]; try{ boxes=await x.model.getBoxes(sids); }catch(_){}
+    sids.forEach((id,i)=>{ const nm=cache.get(id); const b=(boxes||[])[i];
+      if(!nm || !b || !isFinite(b.max.y)) return;
+      if(!porNome.has(nm)) porNome.set(nm, []); porNome.get(nm).push(b.max.y); });
+  }
+  const faixas=[];
+  for(const [nome, ys] of porNome){ ys.sort((a,b)=>a-b); faixas.push({nome, y:ys[Math.floor(ys.length/2)]}); }
+  faixas.sort((a,b)=>a.y-b.y);
+  faixas.forEach((f,i)=>{ f.y0=f.y-1.0; f.y1=(i+1<faixas.length)?faixas[i+1].y-0.3:Infinity; });  // do piso até o próximo nível
+  V._faixas=faixas;
+  return faixas;
+}
+function _faixaDe(faixas, pavN){ const f=(faixas||[]).find(f=> _batePavim(f.nome, pavN)); return f?{y0:f.y0,y1:f.y1}:null; }
 export async function destacarCategoria(V, regexes, termos, pavim){
   V._cancelar=false;
   const T=V.THREE; let total=0; const porMod={};
@@ -900,9 +923,16 @@ export async function destacarCategoria(V, regexes, termos, pavim){
     if(termosLc.length || pavN){
       const okd=[];
       if(pavN && !termosLc.length){
-        // só pavimento → usa o mapa em cache (rápido em consultas repetidas)
-        const cache=await _pavimMapModelo(V, x, ids, 'Filtrando');
-        for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); }
+        // só pavimento → FAIXA GEOMÉTRICA (rápido: caixas, não Pset por peça).
+        const fx=_faixaDe(await _faixasPavimento(V), pavN);
+        if(fx){
+          let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+          ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return; const cy=(b.min.y+b.max.y)/2; if(cy>=fx.y0 && cy<fx.y1) okd.push(id); });
+        } else {
+          // lajes não nomearam esse pavimento → cai no Pset (cache)
+          const cache=await _pavimMapModelo(V, x, ids, 'Filtrando');
+          for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); }
+        }
       } else {
         // texto = ATRIBUTOS-ONLY (rápido). Com pavimento junto, lê Psets em lotes.
         let dados=[];
@@ -985,8 +1015,14 @@ export async function contarFiltrado(V, regexes, termos, pavim){
     if(!ids.length) continue;
     if(!termosLc.length && !pavN){ n+=ids.length; continue; }
     if(pavN && !termosLc.length){
-      const cache=await _pavimMapModelo(V, x, ids, 'Contando');
-      for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) n++; }
+      const fx=_faixaDe(await _faixasPavimento(V), pavN);
+      if(fx){
+        let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+        ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return; const cy=(b.min.y+b.max.y)/2; if(cy>=fx.y0 && cy<fx.y1) n++; });
+      } else {
+        const cache=await _pavimMapModelo(V, x, ids, 'Contando');
+        for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) n++; }
+      }
       continue;
     }
     let da=[];
