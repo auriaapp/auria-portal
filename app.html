@@ -2602,6 +2602,10 @@ function iaContexto(){
     +'@CONTAR: <CLASSE_IFC>  (total da categoria)  OU  @CONTAR: <CLASSE_IFC> | <propriedade>  (agrupar por, ex.: largura, '
     +'altura, material). Use os mesmos mapeamentos PT→IFC de cima. Ex.: "quantas portas de cada largura?" → @CONTAR: IFCDOOR | largura. '
     +'O sistema devolve os NÚMEROS REAIS — você só confirma em uma frase curta. NUNCA invente contagens.'
+    +'\n\nISOLAR POR VALOR: se o usuário pedir para destacar/mostrar/isolar um SUBCONJUNTO por um VALOR de propriedade '
+    +'(medida ou específico — ex.: "portas de 70 cm", "vigas de 40 cm de largura", "pilares de concreto C50"), emita: '
+    +'@ISOLARVALOR: <CLASSE_IFC> | <propriedade> | <valor>. Ex.: "portas de 70 cm" → @ISOLARVALOR: IFCDOOR | largura | 70cm. '
+    +'Use ISTO (não o @DESTACAR|termos) quando o filtro for por MEDIDA/valor de propriedade — o @DESTACAR só casa texto de nome/tipo.'
     +(F3D_SEL_CTX
       ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
         +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
@@ -2825,9 +2829,13 @@ async function iaEnviar(){
       let txt=data.content;
       // Diretivas de ação: quando presentes, o CÓDIGO gera a resposta (números
       // reais) — a frase da IA costuma ser vaga/inventada.
+      const mv=txt.match(/@ISOLARVALOR:\s*([^\n]+)/i);
       const mc=txt.match(/@CONTAR:\s*([^\n]+)/i);
       const mt=txt.match(/@DESTACAR:\s*([^\n]+)/i);
-      if(mc){
+      if(mv){
+        const res=await f3dExecIsolarValor(mv[1]);
+        IA_CONV.push({role:'assistant', content:res.msg});
+      } else if(mc){
         const res=await f3dExecContar(mc[1]);
         IA_CONV.push({role:'assistant', content:res.msg||'', html:res.html});
       } else if(mt){
@@ -4267,6 +4275,43 @@ async function f3dExecDestaque(arg){
               : 'Não encontrei elementos com esse filtro no modelo.');
     return { n, filtrado: termos.length>0 };
   }catch(e){ console.warn('destaque IA:', e); return { erro:String(e) }; }
+}
+// Normaliza um comprimento para CENTÍMETROS inteiros (para comparar "70cm",
+// "0,70 m", "70 cm", "700 mm"). Retorna null se não for número.
+function _cm(s){
+  if(s==null) return null;
+  s=String(s).toLowerCase().replace(',','.');
+  const m=s.match(/(-?[\d.]+)\s*(cm|mm|m)?/);
+  if(!m) return null; let v=parseFloat(m[1]); if(isNaN(v)) return null;
+  const u=m[2];
+  if(u==='m') v*=100; else if(u==='mm') v/=10; else if(!u && v<10) v*=100;  // bare<10 ~ metros
+  return Math.round(v);
+}
+// Isola um subconjunto por VALOR de propriedade (ex.: portas de 70cm). Reusa o
+// agrupamento da contagem: acha o grupo cujo valor bate e isola seus ids.
+async function f3dExecIsolarValor(arg){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu isolar os elementos.' };
+  const parts=(arg||'').split('|');
+  const classes=(parts[0]||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  const prop=(parts[1]||'').trim(), valor=(parts[2]||'').trim();
+  if(!classes.length || !prop || !valor) return { msg:'Não entendi o pedido de isolar por valor.' };
+  const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
+  const rot=_rotuloClasse(classes[0]);
+  f3dDica('Procurando…');
+  try{
+    const r=await B3.contarPorPropriedade(F3D, regexes, prop);
+    f3dDica('');
+    const cmAlvo=_cm(valor);
+    let g=null;
+    if(cmAlvo!=null) g=r.grupos.find(x=> _cm(x.label)===cmAlvo);
+    if(!g) g=r.grupos.find(x=> String(x.label).toLowerCase().includes(valor.toLowerCase()));
+    if(!g){
+      const disp=r.grupos.slice(0,10).map(x=>x.label).join(', ');
+      return { msg:'Não achei '+rot+' com '+prop+' = '+valor+'. Valores disponíveis: '+disp+(r.grupos.length>10?'…':'')+'.' };
+    }
+    const n=await B3.destacarIds(F3D, g.porMod);
+    return { msg:'✓ Isolei '+n+' '+rot+' com '+prop+' = '+g.label+'. "limpar destaque" ou clique numa peça para voltar.' };
+  }catch(e){ f3dDica(''); console.warn('isolar valor:', e); return { msg:'Não consegui isolar agora: '+(e.message||e) }; }
 }
 // Nível 3: contar / agrupar por propriedade. O CÓDIGO calcula e monta a resposta.
 async function f3dExecContar(arg){
