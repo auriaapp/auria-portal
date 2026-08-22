@@ -2865,11 +2865,80 @@ function capturarVista(){
     return t.toDataURL('image/jpeg',0.8).split(',')[1];
   }catch(e){ console.warn('capturarVista',e.message||e); return null; }
 }
+// ── Interpretador por REGRAS (nossa "IA" local, sem modelo externo) ─────────
+// Mapeia perguntas estruturadas em PT → uma diretiva. Retorna {tipo,arg} ou
+// null (aí a pergunta vai para a IA externa). Conservador de propósito: só
+// dispara quando reconhece uma CLASSE + uma INTENÇÃO clara.
+function f3dRegras(q){
+  const s=(q||'').toLowerCase().trim(); if(!s) return null;
+  if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
+  const CLS=[[/(pilar|pilares|coluna|colunas)/,'IFCCOLUMN'],[/(viga|vigas)/,'IFCBEAM'],[/(laje|lajes)/,'IFCSLAB'],
+    [/(parede|paredes|muro|muros)/,'IFCWALL,IFCWALLSTANDARDCASE'],[/(porta|portas)/,'IFCDOOR'],[/(janela|janelas)/,'IFCWINDOW'],
+    [/(escada|escadas)/,'IFCSTAIR'],[/(rampa|rampas)/,'IFCRAMP'],[/(funda[çc][ãa]o|sapata|sapatas)/,'IFCFOOTING'],[/(estaca|estacas)/,'IFCPILE']];
+  let cls=null; for(const [rx,c] of CLS){ if(rx.test(s)){ cls=c; break; } }
+  if(!cls) return null;                          // sem classe → deixa a IA
+  const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
+  const grpWord = s.match(/(?:por|de cada|por cada|agrupad[oa]s? por)\s+(pavimento|piso|andar|n[íi]vel|tipo|material|planta|se[çc][ãa]o|cobrimento|largura|width|altura|height|espessura)/);
+  const querSoma   = /(som(a|ar|e)|total|totaliz|quanto de|[áa]rea total|volume total|metragem)/.test(s);
+  const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s);
+  const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s);
+  const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
+  // 1) agrupamento "X por Y" / "de cada Y"
+  if(grpWord){
+    let g=grpWord[1]; if(/piso|andar|n[íi]vel/.test(g)) g='pavimento';
+    const psetGrp = /pavimento|tipo|material|planta|se[çc][ãa]o|cobrimento/.test(g);
+    // pset (pavimento/tipo…) → @TABELA (lê Psets); dimensão (largura/altura) → @CONTAR
+    if(propVal || psetGrp) return {tipo:'tabela', arg: cls+' | '+g+(propVal?(' | '+propVal):'')};
+    return {tipo:'contar', arg: cls+' | '+g};
+  }
+  // 2) valor específico (medida) → isolar por valor
+  if(medM && (querDestaca||querConta)){
+    const prop = /(alt|height)/.test(s)?'altura' : /(esp|thick)/.test(s)?'espessura' : 'largura';
+    return {tipo:'isolarvalor', arg: cls+' | '+prop+' | '+medM[1]+(medM[2]||'')};
+  }
+  // 3) soma de quantitativo (sem agrupamento)
+  if(querSoma && propVal) return {tipo:'somar', arg: cls+' |  | '+propVal};
+  // 4) contar
+  if(querConta) return {tipo:'contar', arg: cls};
+  // 5) destacar/localizar
+  if(querDestaca) return {tipo:'destacar', arg: cls};
+  return null;
+}
+// Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
+async function execDiretiva(tipo, arg){
+  if(tipo==='tabela'){      const r=await f3dExecTabela(arg);      return {content:r.msg||'', html:r.html}; }
+  if(tipo==='somar'){       const r=await f3dExecSomar(arg);       return {content:r.msg}; }
+  if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); return {content:r.msg}; }
+  if(tipo==='contar'){      const r=await f3dExecContar(arg);      return {content:r.msg||'', html:r.html}; }
+  if(tipo==='destacar'){
+    const res=await f3dExecDestaque(arg);
+    const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
+    let msg;
+    if(res && res.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
+    else if(res && res.limpar) msg='✓ Destaque removido — o modelo voltou ao normal.';
+    else if(res && res.n>0) msg='✓ Destaquei '+res.n+' '+rot+' no modelo. Peça "limpar destaque" ou clique numa peça para voltar.';
+    else msg=(res&&res.filtrado)?'Não encontrei elementos que batam com esse filtro no modelo.':'Não encontrei '+_rotuloClasse(arg)+' no modelo carregado.';
+    return {content:msg};
+  }
+  return {content:'Não entendi o pedido.'};
+}
 async function iaEnviar(){
   const inp=$('iaInput'); const pergunta=(inp&&inp.value||'').trim(); if(!pergunta) return;
   const comImg=$('iaImg')&&$('iaImg').checked;
   const b64=comImg?capturarVista():null;
   IA_CONV.push({role:'user',content:pergunta}); if(inp) inp.value='';
+  // ── REGRAS LOCAIS primeiro (sem IA externa) ──────────────────────────────
+  // Se a pergunta é uma consulta estruturada reconhecível (contar/somar/tabela/
+  // destacar), resolvemos NÓS, direto no modelo. Só cai na IA quando não bate.
+  const _reg = f3dRegras(pergunta);
+  if(_reg){
+    IA_PENSANDO=true; renderIA();
+    const sb2=$('iaSend'); if(sb2){ sb2.disabled=true; sb2.textContent='…'; }
+    try{ const r=await execDiretiva(_reg.tipo, _reg.arg); IA_CONV.push({role:'assistant', content:r.content||'', html:r.html}); }
+    catch(e){ IA_CONV.push({role:'assistant', content:'⚠ '+(e.message||e)}); }
+    finally{ IA_PENSANDO=false; if(sb2){ sb2.disabled=false; sb2.textContent='➤'; } renderIA(); }
+    return;
+  }
   IA_PENSANDO=true; renderIA();
   const send=$('iaSend'); if(send){ send.disabled=true; send.textContent='…'; }
   const userContent = b64
