@@ -810,7 +810,16 @@ function _bateTermos(d, termosLc){
   return termosLc.some(t=>{ t=_norm(t); return t[0]==='=' ? nome===t.slice(1) : txt.includes(t); });
 }
 // Pavimento do elemento (via Pset — precisa de getItemsData com IsDefinedBy).
-function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|eleva/i); return v==null?'':_norm(v); }
+function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|eleva|restri[çc][aã]o da base|base ?constraint/i); return v==null?'':_norm(v); }
+// Casa o pavimento pedido com o do elemento. Direto por substring; se o pedido
+// tem número ("pavimento 5"), casa também "TIPO 05"/"PAV 5" (0 à esquerda ok).
+function _batePavim(pavEl, pavN){
+  if(!pavEl||!pavN) return false;
+  if(pavEl.includes(pavN)) return true;
+  const num=(pavN.match(/\d+/)||[])[0];
+  if(num){ try{ return new RegExp('(^|[^0-9])0*'+num+'([^0-9]|$)').test(pavEl); }catch(_){} }
+  return false;
+}
 
 export async function destacarCategoria(V, regexes, termos, pavim){
   const T=V.THREE; let total=0; const porMod={};
@@ -842,7 +851,7 @@ export async function destacarCategoria(V, regexes, termos, pavim){
         const lid = d && d._localId && d._localId.value;
         if(lid==null) return;
         if(termosLc.length && !_bateTermos(d, termosLc)) return;   // texto/código exato
-        if(pavN && !_pavimEl(d).includes(pavN)) return;            // pavimento
+        if(pavN && !_batePavim(_pavimEl(d), pavN)) return;         // pavimento
         okd.push(lid);
       });
       ids=okd;
@@ -880,7 +889,7 @@ function _termoRegex(t){
   if(/[áa]rea/.test(t))     return /area/i;
   if(/vol/.test(t))         return /vol/i;    // pega volume, NetVolume, auria_vol…
   if(/per[íi]m/.test(t))    return /perim/i;
-  if(/pavim|piso|andar|n[íi]vel|storey|level/.test(t)) return /piso|planta|pavim|storey|level|andar/i;
+  if(/pavim|piso|andar|n[íi]vel|storey|level/.test(t)) return /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|restri[çc][aã]o da base|base ?constraint/i;
   if(/tipo|type|classif/.test(t)) return /tipo|type|classif/i;
   if(/mat/.test(t))         return /material/i;
   return new RegExp((t.replace(/[^a-z0-9]/gi,'')||'.'),'i');
@@ -920,7 +929,7 @@ export async function contarFiltrado(V, regexes, termos, pavim){
     let da=[]; try{ da=await x.model.getItemsData(ids, opt); }catch(_){}
     (da||[]).forEach(d=>{ if(!d) return;
       if(termosLc.length && !_bateTermos(d, termosLc)) return;
-      if(pavN && !_pavimEl(d).includes(pavN)) return;
+      if(pavN && !_batePavim(_pavimEl(d), pavN)) return;
       n++;
     });
   }
