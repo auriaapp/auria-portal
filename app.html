@@ -2883,6 +2883,9 @@ function f3dRegras(q){
   const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s);
   const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
+  // código de peça (P9, V1, VE3, L1A, C50…) → vira filtro de texto
+  const codeM = s.match(/\b([a-z]{1,3}\d+[a-z0-9]*)\b/);
+  const code = (codeM && !/^(m2|m3|mm|cm)$/i.test(codeM[1])) ? codeM[1] : null;
   // 1) agrupamento "X por Y" / "de cada Y"
   if(grpWord){
     let g=grpWord[1]; if(/piso|andar|n[íi]vel/.test(g)) g='pavimento';
@@ -2896,12 +2899,12 @@ function f3dRegras(q){
     const prop = /(alt|height)/.test(s)?'altura' : /(esp|thick)/.test(s)?'espessura' : 'largura';
     return {tipo:'isolarvalor', arg: cls+' | '+prop+' | '+medM[1]+(medM[2]||'')};
   }
-  // 3) soma de quantitativo (sem agrupamento)
-  if(querSoma && propVal) return {tipo:'somar', arg: cls+' |  | '+propVal};
-  // 4) contar
-  if(querConta) return {tipo:'contar', arg: cls};
-  // 5) destacar/localizar
-  if(querDestaca) return {tipo:'destacar', arg: cls};
+  // 3) soma de quantitativo (com código = filtro pelo nome; senão todo o conjunto)
+  if(querSoma && propVal) return {tipo:'somar', arg: cls+' | '+(code||'')+' | '+propVal};
+  // 4) contar (com código = contagem filtrada por nome)
+  if(querConta) return code ? {tipo:'contarfiltro', arg: cls+' | '+code} : {tipo:'contar', arg: cls};
+  // 5) destacar/localizar (com código = filtro pelo nome)
+  if(querDestaca) return {tipo:'destacar', arg: cls+(code?(' | '+code):'')};
   return null;
 }
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
@@ -2910,6 +2913,7 @@ async function execDiretiva(tipo, arg){
   if(tipo==='somar'){       const r=await f3dExecSomar(arg);       return {content:r.msg}; }
   if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); return {content:r.msg}; }
   if(tipo==='contar'){      const r=await f3dExecContar(arg);      return {content:r.msg||'', html:r.html}; }
+  if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); return {content:r.msg}; }
   if(tipo==='destacar'){
     const res=await f3dExecDestaque(arg);
     const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
@@ -3179,7 +3183,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21n').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21o').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4475,6 +4479,22 @@ async function f3dExecSomar(arg){
     const calc = r.calculados?(' · '+r.calculados+' calculado(s) da geometria (estimativa)'):'';
     return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
+}
+// Contagem FILTRADA por nome/código (ex.: "quantos pilares P9").
+async function f3dExecContarFiltro(arg){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu contar.' };
+  const [classesRaw, filtroRaw]=(arg||'').split('|');
+  const classes=(classesRaw||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  const termos=(filtroRaw||'').split(',').map(t=> t.trim()).filter(Boolean);
+  if(!classes.length) return { msg:'Não entendi o que contar.' };
+  const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
+  const rot=_rotuloClasse(classes[0]);
+  f3dDica('Contando…');
+  try{
+    const n=await B3.contarFiltrado(F3D, regexes, termos);
+    f3dDica('');
+    return { msg:'Há **'+n+'** '+rot+(termos.length?(' com "'+termos.join(', ')+'"'):'')+' no modelo.' };
+  }catch(e){ f3dDica(''); console.warn('contar filtro:', e); return { msg:'Não consegui contar: '+(e.message||e) }; }
 }
 // Nível 3: TABELA agrupada ("X por Y") — agrupa por uma propriedade e soma/conta.
 async function f3dExecTabela(arg){

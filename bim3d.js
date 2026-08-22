@@ -868,6 +868,20 @@ function _rotuloValor(v, termo){
   }
   return String(v);
 }
+// Conta uma categoria FILTRADA por texto (nome/tipo/atributos). Sem termos =
+// total da categoria. Leve (atributos-only).
+export async function contarFiltrado(V, regexes, termos){
+  const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  let n=0;
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    if(!termosLc.length){ n+=ids.length; continue; }
+    let da=[]; try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+    (da||[]).forEach(d=>{ if(d && termosLc.some(t=>_textoBusca(d).includes(t))) n++; });
+  }
+  return n;
+}
 // Retorna { total, grupos:[{label, n, porMod:{modelIndex:[localIds]}}] } — os
 // ids por grupo permitem destacar aquele conjunto ao clicar na tabela.
 export async function contarPorPropriedade(V, regexes, termoProp){
