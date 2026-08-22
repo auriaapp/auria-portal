@@ -698,13 +698,25 @@ export async function limparTransparencia(V){
 
 // ── Destaque ───────────────────────────────────────────────────────────────
 export async function destacar(V, modelo, ids){
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  // Reseta destaque E o estado de fantasma (opacidade/visibilidade) — assim
+  // clicar numa peça sempre volta o modelo ao normal antes de destacá-la.
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.resetOpacity(undefined); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}
+  }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
       color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
+
+// Classes que formam a SILHUETA do prédio — ficam translúcidas no "fantasma
+//  leve"; o que não é silhueta (MEP, mobiliário, ferragem, pinos…) é escondido.
+const SILHUETA=[/^IFCWALL/i,/^IFCSLAB/i,/^IFCROOF/i,/^IFCCOLUMN/i,/^IFCBEAM/i,
+  /^IFCCURTAINWALL/i,/^IFCPLATE/i,/^IFCMEMBER/i,/^IFCSTAIR/i,/^IFCRAMP/i,
+  /^IFCFOOTING/i,/^IFCPILE/i,/^IFCWINDOW/i,/^IFCDOOR/i];
 
 // ── Destaque por CATEGORIA (Nível 2 da IA: "onde estão os pilares?") ───────
 //  Acende TODOS os elementos de uma ou mais categorias IFC (ex.: IFCCOLUMN) em
@@ -739,6 +751,7 @@ export async function destacarCategoria(V, regexes, termos){
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.resetOpacity(undefined); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}   // parte de um estado limpo
   }
   for(const x of V.modelos){
     let ids=[];
@@ -764,15 +777,18 @@ export async function destacarCategoria(V, regexes, termos){
     }
     if(!ids.length) continue;
     total+=ids.length;
-    // Esmaece SÓ os NÃO-destacados (complemento), para os da categoria ficarem
-    // 100% opacos e realmente saltarem. (Antes eu esmaecia tudo e os próprios
-    // destacados ficavam translúcidos.)
+    // FANTASMA LEVE: só a SILHUETA do prédio (paredes, lajes, pilares, vigas,
+    // cortina de vidro) fica translúcida; os itens miúdos (MEP, mobiliário,
+    // ferragens) são ESCONDIDOS. Isso corta a maior parte da geometria
+    // transparente — que é o que pesa na navegação — mantendo o efeito.
     try{
-      const todos=await x.model.getItemsOfCategories([/./]);
-      const allIds=Object.values(todos||{}).flat();
       const alvo=new Set(ids.map(String));
-      const outros=allIds.filter(id=> !alvo.has(String(id)));
-      if(outros.length) await x.model.setOpacity(outros, 0.08);
+      const sil=Object.values(await x.model.getItemsOfCategories(SILHUETA)||{}).flat().filter(id=>!alvo.has(String(id)));
+      const silSet=new Set(sil.map(String));
+      const todos=Object.values(await x.model.getItemsOfCategories([/./])||{}).flat();
+      const esconder=todos.filter(id=> !alvo.has(String(id)) && !silSet.has(String(id)));
+      if(sil.length)      await x.model.setOpacity(sil, 0.10);
+      if(esconder.length) await x.model.setVisible(esconder, false);
     }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
@@ -783,6 +799,7 @@ export async function limparDestaqueCategoria(V){
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.resetOpacity(undefined); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe os escondidos
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
