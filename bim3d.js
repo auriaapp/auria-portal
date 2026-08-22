@@ -58,6 +58,7 @@ function libsLinha(){
 }
 
 const LARANJA = 0xE8960A;
+const SELECAO = 0x22D3EE;   // ciano — peça clicada DENTRO de um isolamento
 // Cor da HACHURA de corte. Deve ser DENSA e ESCURA — a hachura tem função de
 // leitura de projeto: mostra o "cheio" da peça atravessada pelo plano, então
 // a peça precisa parecer sólida, não translúcida. Azul-marinho profundo é a
@@ -736,15 +737,30 @@ export async function marcarIds(V, porMod){
 //  em opacidade/visibilidade do resto do modelo — isso estourava o "Memory
 //  overflow" do Fragments (config item-a-item em dezenas de milhares de peças).
 export async function destacar(V, modelo, ids){
-  // Reexibe tudo (sai de um isolamento anterior) e limpa o realce — assim
-  // clicar numa peça volta o modelo ao normal antes de selecioná-la.
+  const T=V.THREE;
+  // Se há um ISOLAMENTO ativo, clicar NÃO sai dele — só realça a peça clicada
+  //  em ciano por cima do conjunto isolado (que segue laranja). Assim dá pra
+  //  inspecionar as peças isoladas sem perder o contexto. Voltar = botão/limpar.
+  if(V._isolado){
+    for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+    for(const [mi, lids] of Object.entries(V._isoladoPorMod||{})){
+      const x=V.modelos[mi]; if(!x||!lids||!lids.length) continue;
+      try{ await x.model.highlight(lids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    }
+    if(modelo && ids && ids.length){
+      try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    }
+    try{ await V.fragments.update(true); }catch(_){}
+    return;
+  }
+  // Sem isolamento: reexibe tudo e realça só a peça clicada (comportamento normal).
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.setVisible(undefined, true); }catch(_){}
   }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
-      color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+      color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
@@ -837,10 +853,13 @@ export async function destacarCategoria(V, regexes, termos, pavim){
     try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }         // marca isolamento ativo
+  else { try{ for(const x of V.modelos) await x.model.setVisible(undefined, true); }catch(_){} }  // nada casou → reexibe tudo
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }
 export async function limparDestaqueCategoria(V){
+  V._isolado=false; V._isoladoPorMod=null;
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe tudo
@@ -1047,7 +1066,15 @@ export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor){
     });
   }
   return [...map.entries()].map(([grupo,g])=>({grupo, n:g.n, soma:g.soma, comValor:g.comValor, porMod:g.porMod}))
-    .sort((a,b)=> b.n-a.n);
+    // Ordena pela CHAVE do grupo (pavimento 1,2,3…; "(sem valor)" por último) —
+    // antes ordenava por quantidade, o que embaralhava os pavimentos.
+    .sort((a,b)=>{
+      if(a.grupo==='(sem valor)') return 1; if(b.grupo==='(sem valor)') return -1;
+      const na=parseFloat(String(a.grupo).replace(',','.')), nb=parseFloat(String(b.grupo).replace(',','.'));
+      const aNum=!isNaN(na)&&/^\s*-?[\d.,]+\s*$/.test(a.grupo), bNum=!isNaN(nb)&&/^\s*-?[\d.,]+\s*$/.test(b.grupo);
+      if(aNum&&bNum) return na-nb;
+      return String(a.grupo).localeCompare(String(b.grupo), 'pt', {numeric:true});
+    });
 }
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
 // numa linha da tabela de contagem. ISOLA: esconde tudo, mostra só o alvo.
@@ -1063,6 +1090,7 @@ export async function destacarIds(V, porMod){
     try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }

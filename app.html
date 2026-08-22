@@ -666,6 +666,10 @@
                fundo" que não fora selecionado. -->
           <canvas id="f3dCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <svg id="bimPinsSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+          <!-- Botão que aparece quando há um ISOLAMENTO ativo (destaque/filtro):
+               volta ao modelo completo. Enquanto isolado dá pra clicar as peças
+               (ficam em ciano) e inspecionar sem sair do isolamento. -->
+          <button id="f3dVoltar" onclick="f3dVoltarModelo()" style="display:none;position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:8;background:rgba(15,23,42,.92);backdrop-filter:blur(3px);border:1px solid #22D3EE;color:#22D3EE;padding:7px 15px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">↩ Voltar ao modelo completo</button>
           <!-- Painel de cotas (estilo Solibri): lista das medições, com olho
                para ligar/desligar a visualização de cada uma e × para apagar. -->
           <div id="f3dCotasPanel" style="position:absolute;top:58px;right:10px;z-index:6;width:210px;max-height:55%;overflow:auto;background:rgba(15,23,42,.88);backdrop-filter:blur(3px);border:1px solid rgba(255,255,255,.12);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none;color:#e2e8f0">
@@ -2917,24 +2921,33 @@ function f3dRegras(q){
   if(querDestaca) return {tipo:'destacar', arg: cls+' | '+cod+' | '+(pavim||'')};
   return null;
 }
+// Mostra/esconde o botão "voltar ao modelo completo" conforme haja isolamento.
+function f3dBotaoVoltar(mostrar){ const b=$('f3dVoltar'); if(b) b.style.display = mostrar ? 'block' : 'none'; }
+async function f3dVoltarModelo(){
+  if(F3D && B3){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} }
+  f3dBotaoVoltar(false); f3dDica('');
+}
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
 async function execDiretiva(tipo, arg){
-  if(tipo==='tabela'){      const r=await f3dExecTabela(arg);      return {content:r.msg||'', html:r.html}; }
-  if(tipo==='somar'){       const r=await f3dExecSomar(arg);       return {content:r.msg}; }
-  if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); return {content:r.msg}; }
-  if(tipo==='contar'){      const r=await f3dExecContar(arg);      return {content:r.msg||'', html:r.html}; }
-  if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); return {content:r.msg}; }
-  if(tipo==='destacar'){
+  let out;
+  if(tipo==='tabela'){      const r=await f3dExecTabela(arg);      out={content:r.msg||'', html:r.html}; }
+  else if(tipo==='somar'){       const r=await f3dExecSomar(arg);       out={content:r.msg}; }
+  else if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); out={content:r.msg}; }
+  else if(tipo==='contar'){      const r=await f3dExecContar(arg);      out={content:r.msg||'', html:r.html}; }
+  else if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); out={content:r.msg}; }
+  else if(tipo==='destacar'){
     const res=await f3dExecDestaque(arg);
     const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
     let msg;
     if(res && res.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
     else if(res && res.limpar) msg='✓ Destaque removido — o modelo voltou ao normal.';
-    else if(res && res.n>0) msg='✓ Destaquei '+res.n+' '+rot+' no modelo. Peça "limpar destaque" ou clique numa peça para voltar.';
+    else if(res && res.n>0) msg='✓ Isolei '+res.n+' '+rot+'. Clique numa peça para inspecionar (fica em ciano) — o botão **↩ Voltar ao modelo completo** no topo desfaz.';
     else msg=(res&&res.filtrado)?'Não encontrei elementos que batam com esse filtro no modelo.':'Não encontrei '+_rotuloClasse(arg)+' no modelo carregado.';
-    return {content:msg};
+    out={content:msg};
   }
-  return {content:'Não entendi o pedido.'};
+  else out={content:'Não entendi o pedido.'};
+  f3dBotaoVoltar(!!(F3D && F3D._isolado));   // sincroniza o botão com o estado real
+  return out;
 }
 async function iaEnviar(){
   const inp=$('iaInput'); const pergunta=(inp&&inp.value||'').trim(); if(!pergunta) return;
@@ -3193,7 +3206,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21p').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21q').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4577,7 +4590,8 @@ async function f3dDestacarGrupo(i){
   f3dDica('Destacando…');
   try{
     const n=await B3.destacarIds(F3D, F3D_CONTAGEM[i].porMod);
-    f3dDica(n+' elemento(s) do grupo "'+F3D_CONTAGEM[i].label+'" destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.');
+    f3dDica(n+' elemento(s) do grupo "'+F3D_CONTAGEM[i].label+'" isolado(s). Clique numa peça para inspecionar; o botão ↩ no topo volta ao modelo completo.');
+    f3dBotaoVoltar(!!(F3D && F3D._isolado));
   }catch(e){ f3dDica(''); console.warn('destacar grupo:', e); }
 }
 // Rótulo amigável a partir da classe IFC (para a mensagem do chat).
