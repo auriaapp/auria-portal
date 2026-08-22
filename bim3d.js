@@ -823,6 +823,35 @@ function _batePavim(pavEl, pavN){
 
 // Pede o cancelamento do processamento pesado em curso (botão Parar).
 export function cancelar(V){ if(V) V._cancelar=true; }
+// DIAGNÓSTICO: pega o 1º elemento da classe e devolve TODAS as propriedades que
+// o filtro enxerga (nome do Pset → propriedade = valor), + o que _pavimEl extrai.
+// Serve p/ descobrir onde o modelo guarda o pavimento sem ficar adivinhando.
+export async function diagElemento(V, regexes){
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    let da=[]; try{ da=await x.model.getItemsData([ids[0]], { attributesDefault:true,
+      relations:{ IsDefinedBy:{attributes:true,relations:true}, IsTypedBy:{attributes:true,relations:false}, HasAssociations:{attributes:true,relations:false} },
+      relationsDefault:{attributes:false,relations:false} }); }catch(e){ return 'erro lendo: '+(e.message||e); }
+    const d=(da||[])[0]; if(!d) continue;
+    const escal=(o)=> (o&&typeof o==='object'&&'value' in o&&typeof o.value!=='object')?o.value:undefined;
+    const linhas=[];
+    for(const [k,v] of Object.entries(d)){
+      if(Array.isArray(v)){
+        v.forEach(ps=>{ if(!ps||typeof ps!=='object') return; const nm=(ps.Name&&ps.Name.value)||k;
+          for(const [k2,v2] of Object.entries(ps)){
+            if(k2==='Name') continue;
+            if(Array.isArray(v2)){ v2.forEach(p=>{ if(!p||typeof p!=='object')return; const pn=p.Name&&p.Name.value; const pv=escal(p.NominalValue)??escal(p.Value); if(pn!=null&&pv!=null) linhas.push(nm+' → '+pn+' = '+pv); }); }
+            else { const vv=escal(v2); if(vv!=null&&vv!=='') linhas.push(nm+' → '+k2+' = '+vv); }
+          }
+        });
+      } else if(k[0]!=='_'){ const vv=escal(v); if(vv!=null&&vv!=='') linhas.push('(direto) '+k+' = '+vv); }
+    }
+    console.log('[DIAG '+(regexes[0])+'] elemento', d, '\n'+linhas.join('\n'));
+    return '_pavimEl → "'+_pavimEl(d)+'"\n\n'+linhas.join('\n');
+  }
+  return 'nenhum elemento dessa classe.';
+}
 // Lê Psets (IsDefinedBy) em LOTES: cede o thread entre lotes (a UI responde ao
 // Parar), mostra progresso e aborta se _cancelar. Ler tudo de uma vez travava
 // em modelos com milhares de elementos (ex.: paredes).
