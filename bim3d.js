@@ -697,14 +697,11 @@ export async function limparTransparencia(V){
 }
 
 // ── Destaque ───────────────────────────────────────────────────────────────
+// Destaque LEVE: só o conjunto alvo é realçado (laranja opaco). Nunca mexemos
+//  em opacidade/visibilidade do resto do modelo — isso estourava o "Memory
+//  overflow" do Fragments (config item-a-item em dezenas de milhares de peças).
 export async function destacar(V, modelo, ids){
-  // Reseta destaque E o estado de fantasma (opacidade/visibilidade) — assim
-  // clicar numa peça sempre volta o modelo ao normal antes de destacá-la.
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.resetOpacity(undefined); }catch(_){}
-    try{ await x.model.setVisible(undefined, true); }catch(_){}
-  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
       color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
@@ -748,11 +745,7 @@ function _textoBusca(d){
 export async function destacarCategoria(V, regexes, termos){
   const T=V.THREE; let total=0;
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.resetOpacity(undefined); }catch(_){}
-    try{ await x.model.setVisible(undefined, true); }catch(_){}   // parte de um estado limpo
-  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
   for(const x of V.modelos){
     let ids=[];
     try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
@@ -777,30 +770,14 @@ export async function destacarCategoria(V, regexes, termos){
     }
     if(!ids.length) continue;
     total+=ids.length;
-    // FANTASMA LEVE: só a SILHUETA do prédio (paredes, lajes, pilares, vigas,
-    // cortina de vidro) fica translúcida; os itens miúdos (MEP, mobiliário,
-    // ferragens) são ESCONDIDOS. Isso corta a maior parte da geometria
-    // transparente — que é o que pesa na navegação — mantendo o efeito.
-    try{
-      const alvo=new Set(ids.map(String));
-      const sil=Object.values(await x.model.getItemsOfCategories(SILHUETA)||{}).flat().filter(id=>!alvo.has(String(id)));
-      const silSet=new Set(sil.map(String));
-      const todos=Object.values(await x.model.getItemsOfCategories([/./])||{}).flat();
-      const esconder=todos.filter(id=> !alvo.has(String(id)) && !silSet.has(String(id)));
-      if(sil.length)      await x.model.setOpacity(sil, 0.10);
-      if(esconder.length) await x.model.setVisible(esconder, false);
-    }catch(_){}
-    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    // Só realça o ALVO (leve). Nada de mexer no resto do modelo.
+    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false, depthTest:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }
 export async function limparDestaqueCategoria(V){
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.resetOpacity(undefined); }catch(_){}
-    try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe os escondidos
-  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
   try{ await V.fragments.update(true); }catch(_){}
 }
 
@@ -865,27 +842,14 @@ export async function contarPorPropriedade(V, regexes, termoProp){
   return { total, grupos };
 }
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
-// numa linha da tabela de contagem. Mesmo "fantasma leve" do destaque por tipo.
+// numa linha da tabela de contagem. Leve: só realça o alvo.
 export async function destacarIds(V, porMod){
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.resetOpacity(undefined); }catch(_){}
-    try{ await x.model.setVisible(undefined, true); }catch(_){}
-  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
   let total=0;
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
     if(!ids.length) continue; total+=ids.length;
-    try{
-      const alvo=new Set(ids.map(String));
-      const sil=Object.values(await x.model.getItemsOfCategories(SILHUETA)||{}).flat().filter(id=>!alvo.has(String(id)));
-      const silSet=new Set(sil.map(String));
-      const todos=Object.values(await x.model.getItemsOfCategories([/./])||{}).flat();
-      const esconder=todos.filter(id=> !alvo.has(String(id)) && !silSet.has(String(id)));
-      if(sil.length)      await x.model.setOpacity(sil, 0.10);
-      if(esconder.length) await x.model.setVisible(esconder, false);
-    }catch(_){}
-    try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false, depthTest:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
