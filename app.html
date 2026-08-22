@@ -2869,23 +2869,44 @@ function capturarVista(){
     return t.toDataURL('image/jpeg',0.8).split(',')[1];
   }catch(e){ console.warn('capturarVista',e.message||e); return null; }
 }
+// Distância de edição (Levenshtein) — p/ tolerar erros de digitação.
+function _lev(a,b){ a=a||''; b=b||''; const m=a.length,n=b.length; if(!m)return n; if(!n)return m;
+  let prev=Array.from({length:n+1},(_,i)=>i), cur=new Array(n+1);
+  for(let i=1;i<=m;i++){ cur[0]=i;
+    for(let j=1;j<=n;j++){ const c=a[i-1]===b[j-1]?0:1; cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+c); }
+    const t=prev; prev=cur; cur=t;
+  }
+  return prev[n];
+}
+// Algum token da lista está "perto" (dentro da tolerância) de algum alvo?
+// Tolerância cresce com o tamanho da palavra (1 p/ curtas, 2 p/ longas).
+function _algumPerto(tokens, alvos){
+  return tokens.some(t=> t.length>=4 && alvos.some(a=>{ const tol=a.length<=5?1:2; return Math.abs(t.length-a.length)<=tol+1 && _lev(t,a)<=tol; }));
+}
 // ── Interpretador por REGRAS (nossa "IA" local, sem modelo externo) ─────────
 // Mapeia perguntas estruturadas em PT → uma diretiva. Retorna {tipo,arg} ou
 // null (aí a pergunta vai para a IA externa). Conservador de propósito: só
 // dispara quando reconhece uma CLASSE + uma INTENÇÃO clara.
 function f3dRegras(q){
   const s=(q||'').toLowerCase().trim(); if(!s) return null;
+  // tokens normalizados (sem acento) p/ a busca por aproximação
+  const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
-  const CLS=[[/(pilar|pilares|coluna|colunas)/,'IFCCOLUMN'],[/(viga|vigas)/,'IFCBEAM'],[/(laje|lajes)/,'IFCSLAB'],
-    [/(parede|paredes|muro|muros)/,'IFCWALL,IFCWALLSTANDARDCASE'],[/(porta|portas)/,'IFCDOOR'],[/(janela|janelas)/,'IFCWINDOW'],
-    [/(escada|escadas)/,'IFCSTAIR'],[/(rampa|rampas)/,'IFCRAMP'],[/(funda[çc][ãa]o|sapata|sapatas)/,'IFCFOOTING'],[/(estaca|estacas)/,'IFCPILE']];
+  // Classe: 1º regex exato (rápido); se falhar, aproximação tolerante a typos.
+  const CLS=[[/(pilar|pilares|coluna|colunas)/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
+    [/(viga|vigas)/,'IFCBEAM',['viga','vigas']],[/(laje|lajes)/,'IFCSLAB',['laje','lajes']],
+    [/(parede|paredes|muro|muros)/,'IFCWALL,IFCWALLSTANDARDCASE',['parede','paredes','muro']],
+    [/(porta|portas)/,'IFCDOOR',['porta','portas']],[/(janela|janelas)/,'IFCWINDOW',['janela','janelas']],
+    [/(escada|escadas)/,'IFCSTAIR',['escada','escadas']],[/(rampa|rampas)/,'IFCRAMP',['rampa','rampas']],
+    [/(funda[çc][ãa]o|sapata|sapatas)/,'IFCFOOTING',['fundacao','sapata','sapatas']],[/(estaca|estacas)/,'IFCPILE',['estaca','estacas']]];
   let cls=null; for(const [rx,c] of CLS){ if(rx.test(s)){ cls=c; break; } }
+  if(!cls){ for(const [,c,alvos] of CLS){ if(_algumPerto(tok, alvos)){ cls=c; break; } } }  // typo (piar→pilar)
   if(!cls) return null;                          // sem classe → deixa a IA
   const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
   const grpWord = s.match(/(?:por|de cada|por cada|agrupad[oa]s? por)\s+(pavimento|piso|andar|n[íi]vel|tipo|material|planta|se[çc][ãa]o|cobrimento|largura|width|altura|height|espessura)/);
-  const querSoma   = /(som(a|ar|e)|total|totaliz|quanto de|[áa]rea total|volume total|metragem)/.test(s);
-  const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s);
-  const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s);
+  const querSoma   = /(som(a|ar|e)|total|totaliz|quanto de|[áa]rea total|volume total|metragem)/.test(s) || _algumPerto(tok,['somar','soma','total','totalizar']);
+  const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s) || _algumPerto(tok,['quantos','quantas','contar','quantidade']);
+  const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s) || _algumPerto(tok,['destacar','destaque','mostrar','isolar','encontrar','localizar','exibir','selecionar']);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
   const querTabela = /(tabela|planilha|quadro)/.test(s);
   // código de peça (P9, V1, VE3, L1A, C50…) → filtro EXATO pelo Name ("=") → V1 ≠ V10
