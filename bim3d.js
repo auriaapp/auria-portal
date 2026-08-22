@@ -697,11 +697,51 @@ export async function limparTransparencia(V){
 }
 
 // ── Destaque ───────────────────────────────────────────────────────────────
+// ── Marcadores "raio-X" do destaque ────────────────────────────────────────
+//  Caixas laranja translúcidas na posição de cada elemento alvo, com material
+//  NOSSO (depthTest:false → atravessam parede). Uma única InstancedMesh guarda
+//  todas — leve mesmo com centenas. Não toca na config do Fragments, então não
+//  estoura memória. É o que dá o "ver onde estão" através do prédio.
+export function limparMarcas(V){
+  if(V._marcasDestaque){ try{ V.scene.remove(V._marcasDestaque);
+    V._marcasDestaque.geometry.dispose(); V._marcasDestaque.material.dispose(); }catch(_){}
+    V._marcasDestaque=null; }
+}
+export async function marcarIds(V, porMod){
+  limparMarcas(V);
+  const T=V.THREE; const caixas=[];
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
+    if(!ids.length) continue;
+    let bs=[]; try{ bs=await x.model.getBoxes(ids); }catch(_){}
+    (bs||[]).forEach(b=>{ if(b&&b.min&&b.max&&isFinite(b.max.x)) caixas.push(b); });
+  }
+  if(!caixas.length) return 0;
+  const geo=new T.BoxGeometry(1,1,1);
+  const mat=new T.MeshBasicMaterial({ color:LARANJA, transparent:true, opacity:0.5, depthTest:false, depthWrite:false });
+  const inst=new T.InstancedMesh(geo, mat, caixas.length);
+  inst.renderOrder=998; inst.frustumCulled=false;
+  const m4=new T.Matrix4(), pos=new T.Vector3(), q=new T.Quaternion(), sca=new T.Vector3();
+  caixas.forEach((b,i)=>{
+    pos.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
+    sca.set(Math.max(b.max.x-b.min.x,0.05), Math.max(b.max.y-b.min.y,0.05), Math.max(b.max.z-b.min.z,0.05));
+    m4.compose(pos,q,sca); inst.setMatrixAt(i,m4);
+  });
+  inst.instanceMatrix.needsUpdate=true;
+  V.scene.add(inst); V._marcasDestaque=inst;
+  return caixas.length;
+}
+
 // Destaque LEVE: só o conjunto alvo é realçado (laranja opaco). Nunca mexemos
 //  em opacidade/visibilidade do resto do modelo — isso estourava o "Memory
 //  overflow" do Fragments (config item-a-item em dezenas de milhares de peças).
 export async function destacar(V, modelo, ids){
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  // Reexibe tudo (sai de um isolamento anterior) e limpa o realce — assim
+  // clicar numa peça volta o modelo ao normal antes de selecioná-la.
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}
+  }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
       color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
@@ -743,10 +783,16 @@ function _textoBusca(d){
 }
 
 export async function destacarCategoria(V, regexes, termos){
-  const T=V.THREE; let total=0;
+  const T=V.THREE; let total=0; const porMod={};
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  // ISOLAR: esconde TUDO de uma vez (global, barato — não estoura o motor) e
+  //  depois reexibe só os selecionados. Mesmo padrão do filtro de pavimentos.
   for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.setVisible(undefined, false); }catch(_){}
+  }
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi];
     let ids=[];
     try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
     if(!ids.length) continue;
@@ -769,15 +815,19 @@ export async function destacarCategoria(V, regexes, termos){
       ids=okd;
     }
     if(!ids.length) continue;
-    total+=ids.length;
-    // Só realça o ALVO (leve). Nada de mexer no resto do modelo.
+    total+=ids.length; porMod[mi]=ids;
+    // Reexibe só os selecionados e os pinta de laranja.
+    try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }
 export async function limparDestaqueCategoria(V){
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe tudo
+  }
   try{ await V.fragments.update(true); }catch(_){}
 }
 
@@ -842,13 +892,17 @@ export async function contarPorPropriedade(V, regexes, termoProp){
   return { total, grupos };
 }
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
-// numa linha da tabela de contagem. Leve: só realça o alvo.
+// numa linha da tabela de contagem. ISOLA: esconde tudo, mostra só o alvo.
 export async function destacarIds(V, porMod){
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  for(const x of V.modelos){
+    try{ await x.model.resetHighlight(); }catch(_){}
+    try{ await x.model.setVisible(undefined, false); }catch(_){}
+  }
   let total=0;
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
     if(!ids.length) continue; total+=ids.length;
+    try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
