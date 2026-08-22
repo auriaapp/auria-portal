@@ -810,7 +810,7 @@ function _bateTermos(d, termosLc){
   return termosLc.some(t=>{ t=_norm(t); return t[0]==='=' ? nome===t.slice(1) : txt.includes(t); });
 }
 // Pavimento do elemento (via Pset — precisa de getItemsData com IsDefinedBy).
-function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar/i); return v==null?'':_norm(v); }
+function _pavimEl(d){ const v=_achaValorQualquer(d, /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|eleva/i); return v==null?'':_norm(v); }
 
 export async function destacarCategoria(V, regexes, termos, pavim){
   const T=V.THREE; let total=0; const porMod={};

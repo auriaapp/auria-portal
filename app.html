@@ -514,7 +514,7 @@
           <button onclick="iaLimpar()" onmousedown="event.stopPropagation()" title="Limpar conversa" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px">🧹</button>
           <button onclick="toggleIA()" onmousedown="event.stopPropagation()" style="background:none;border:none;color:var(--mut);cursor:pointer;font-size:16px">✕</button>
         </div>
-        <div id="iaMsgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px"></div>
+        <div id="iaMsgs" style="flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12.5px"></div>
         <div style="border-top:1px solid var(--line);padding:9px">
           <div class="ia-2d" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
             <span style="font-size:11px;color:var(--mut)">Prancha</span>
@@ -2578,6 +2578,9 @@ function f3dIaDrag(ev){
   const p=$('iaPanel'); if(!p) return; ev.preventDefault();
   const parent=p.offsetParent||p.parentElement;
   const pr=parent.getBoundingClientRect(), r=p.getBoundingClientRect();
+  // Fixa a altura ANTES de soltar a âncora `bottom` — senão o painel vira
+  //  altura-de-conteúdo, a lista para de rolar e vaza pra fora do canvas.
+  p.style.height=r.height+'px';
   const offx=ev.clientX-r.left, offy=ev.clientY-r.top;
   const mv=(e)=>{
     let x=e.clientX-pr.left-offx, y=e.clientY-pr.top-offy;
@@ -2892,15 +2895,22 @@ function f3dRegras(q){
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
-  // Classe: 1º regex exato (rápido); se falhar, aproximação tolerante a typos.
-  const CLS=[[/(pilar|pilares|coluna|colunas)/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
-    [/(viga|vigas)/,'IFCBEAM',['viga','vigas']],[/(laje|lajes)/,'IFCSLAB',['laje','lajes']],
-    [/(parede|paredes|muro|muros)/,'IFCWALL,IFCWALLSTANDARDCASE',['parede','paredes','muro']],
-    [/(porta|portas)/,'IFCDOOR',['porta','portas']],[/(janela|janelas)/,'IFCWINDOW',['janela','janelas']],
-    [/(escada|escadas)/,'IFCSTAIR',['escada','escadas']],[/(rampa|rampas)/,'IFCRAMP',['rampa','rampas']],
-    [/(funda[çc][ãa]o|sapata|sapatas)/,'IFCFOOTING',['fundacao','sapata','sapatas']],[/(estaca|estacas)/,'IFCPILE',['estaca','estacas']]];
+  // Classe: 1º regex exato (com fronteira de palavra — senão "de-STACA-r" casava
+  //  "estaca"); se falhar, aproximação tolerante a typos.
+  const CLS=[[/\b(pilar|pilares|coluna|colunas)\b/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
+    [/\b(viga|vigas)\b/,'IFCBEAM',['viga','vigas']],[/\b(laje|lajes)\b/,'IFCSLAB',['laje','lajes']],
+    [/\b(parede|paredes|muro|muros)\b/,'IFCWALL,IFCWALLSTANDARDCASE',['parede','paredes','muro']],
+    [/\b(porta|portas)\b/,'IFCDOOR',['porta','portas']],[/\b(janela|janelas)\b/,'IFCWINDOW',['janela','janelas']],
+    [/\b(escada|escadas)\b/,'IFCSTAIR',['escada','escadas']],[/\b(rampa|rampas)\b/,'IFCRAMP',['rampa','rampas']],
+    [/\b(funda[çc][ãa]o|sapata|sapatas)\b/,'IFCFOOTING',['fundacao','sapata','sapatas']],[/\b(estaca|estacas)\b/,'IFCPILE',['estaca','estacas']]];
   let cls=null; for(const [rx,c] of CLS){ if(rx.test(s)){ cls=c; break; } }
-  if(!cls){ for(const [,c,alvos] of CLS){ if(_algumPerto(tok, alvos)){ cls=c; break; } } }  // typo (piar→pilar)
+  if(!cls){
+    // fuzzy só nos tokens que NÃO são verbo de comando / palavra genérica —
+    //  senão "destacar" (perto de "estaca") viraria pilar/estaca por engano.
+    const STOP=['destacar','destaque','mostrar','mostre','contar','conte','somar','some','isolar','isole','exibir','exiba','selecionar','elementos','elemento','todos','todas','quantos','quantas','pintar','pinte','colorir','quero','preciso','favor','modelo','pavimento','terreo'];
+    const tokC = tok.filter(t=> !STOP.some(w=> _lev(t,w) <= (w.length<=5?1:2)));
+    for(const [,c,alvos] of CLS){ if(_algumPerto(tokC, alvos)){ cls=c; break; } }   // typo (piar→pilar)
+  }
   if(!cls) return null;                          // sem classe → deixa a IA
   const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
   const grpWord = s.match(/(?:por|de cada|por cada|agrupad[oa]s? por)\s+(pavimento|piso|andar|n[íi]vel|tipo|material|planta|se[çc][ãa]o|cobrimento|largura|width|altura|height|espessura)/);
@@ -3227,7 +3237,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21q').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21r').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
