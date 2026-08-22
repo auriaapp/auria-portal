@@ -743,9 +743,14 @@ export async function destacar(V, modelo, ids){
   //  inspecionar as peças isoladas sem perder o contexto. Voltar = botão/limpar.
   if(V._isolado){
     for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
-    for(const [mi, lids] of Object.entries(V._isoladoPorMod||{})){
-      const x=V.modelos[mi]; if(!x||!lids||!lids.length) continue;
-      try{ await x.model.highlight(lids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    // repinta o conjunto isolado de laranja — só se for pequeno; um andar inteiro
+    //  ficaria todo laranja, então aí mantém cores naturais e só a clicada acende.
+    const tot=Object.values(V._isoladoPorMod||{}).reduce((a,l)=>a+(l?l.length:0),0);
+    if(tot>0 && tot<=250){
+      for(const [mi, lids] of Object.entries(V._isoladoPorMod||{})){
+        const x=V.modelos[mi]; if(!x||!lids||!lids.length) continue;
+        try{ await x.model.highlight(lids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+      }
     }
     if(modelo && ids && ids.length){
       try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
@@ -923,6 +928,33 @@ export async function diagFaixas(V){
 // A peça pertence ao pavimento se sua caixa SOBREPÕE a faixa (não só o centro) —
 //  pega paredes altas, baixas e rebaixadas que o teste de centro perdia.
 function _naFaixa(b, fx){ return b && b.min.y < fx.y1 && b.max.y > fx.y0; }
+// Categorias "visíveis" de construção (p/ isolar um andar inteiro sem puxar
+// espaços/tipos/relações).
+const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^IFCWINDOW/,/^IFCSTAIR/,
+  /^IFCRAILING/,/^IFCROOF/,/^IFCCURTAINWALL/,/^IFCPLATE/,/^IFCMEMBER/,/^IFCCOVERING/,/^IFCFOOTING/,
+  /^IFCPILE/,/^IFCRAMP/,/^IFCBUILDINGELEMENTPROXY/,/^IFCFURNI/,/^IFCFLOWSEGMENT/,/^IFCFLOWTERMINAL/,/^IFCFLOWFITTING/];
+// Isola um PAVIMENTO INTEIRO (todas as categorias) pela faixa de altura — para
+// "destacar o pavimento térreo" sem citar classe. Sem realce (cores naturais).
+export async function isolarPavimento(V, pavim){
+  V._cancelar=false;
+  const fx=_faixaDe(await _faixasPavimento(V), _norm(pavim||''));
+  if(!fx) return { n:0, semFaixa:true };
+  const porMod={}; let total=0;
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+    const keep=[]; ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) keep.push(id); });
+    if(keep.length){ porMod[mi]=keep; total+=keep.length; }
+  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,keep] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(keep,true); }catch(_){} }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }
+  else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }
+  try{ await V.fragments.update(true); }catch(_){}
+  return { n:total };
+}
 export async function destacarCategoria(V, regexes, termos, pavim){
   V._cancelar=false;
   const T=V.THREE; let total=0; const porMod={};

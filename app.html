@@ -2915,7 +2915,14 @@ function f3dRegras(q){
     const tokC = tok.filter(t=> !STOP.some(w=> _lev(t,w) <= (w.length<=5?1:2)));
     for(const [,c,alvos] of CLS){ if(_algumPerto(tokC, alvos)){ cls=c; clsAlvos=alvos; break; } }   // typo (piar→pilar)
   }
-  if(!cls) return null;                          // sem classe → deixa a IA
+  if(!cls){
+    // "destacar/isolar/mostrar pavimento X" SEM classe → isola o ANDAR INTEIRO.
+    const pm0=s.match(/(?:pavimento|piso|andar|n[íi]vel|pav\.?)\s+(?:d[oae]s?\s+)?([^\s,.;]{2,})/);
+    let pav0 = pm0 ? pm0[1] : (/\bt[ée]rreo\b/.test(s) ? 'terreo' : null);
+    if(!pav0){ const m=s.match(/\b(subsolo\s*\d*|cobertura|mezanino|[áa]tico|pilotis|garagem|lazer)\b/); if(m) pav0=m[1].replace(/\s+/g,''); }
+    if(pav0 && (/(destac|mostr|isol|selecion|exib|ver\b)/.test(s) || /pavimento|andar|piso|n[íi]vel/.test(s))) return {tipo:'isolarpav', arg:pav0};
+    return null;                                 // sem classe nem pavimento → deixa a IA
+  }
   const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
   const grpWord = s.match(/(?:por|de cada|por cada|agrupad[oa]s? por)\s+(pavimento|piso|andar|n[íi]vel|tipo|material|planta|se[çc][ãa]o|cobrimento|largura|width|altura|height|espessura)/);
   // Intenção: regex por radical (já tolera plural/conjugação). Sem fuzzy aqui —
@@ -2999,7 +3006,14 @@ async function execDiretiva(tipo, arg){
   let out;
   f3dProcessando(true);
   try{
-    if(tipo==='diagpav'){ const txt=await B3.diagFaixas(F3D); out={content:'🔎 Faixas de pavimento:\n\n'+txt}; }
+    if(tipo==='isolarpav'){
+      if(!F3D||!B3) out={content:'Abra o modelo 3D primeiro.'};
+      else { const r=await B3.isolarPavimento(F3D, arg);
+        out={content: r.semFaixa ? ('Não identifiquei o pavimento "'+arg+'" pelas lajes. Rode "diag pavimentos" que eu calibro.')
+          : r.n>0 ? ('✓ Isolei o pavimento '+arg+' ('+r.n+' elementos). Clique numa peça para inspecionar; ↩ no topo volta ao modelo completo.')
+          : ('Não achei elementos no pavimento "'+arg+'".') }; }
+    }
+    else if(tipo==='diagpav'){ const txt=await B3.diagFaixas(F3D); out={content:'🔎 Faixas de pavimento:\n\n'+txt}; }
     else if(tipo==='diag'){
       const classes=(arg||'').split(',').map(c=>c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
       const rx=classes.map(c=>new RegExp('^'+c+'$','i'));
@@ -3288,7 +3302,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21y').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21z').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
