@@ -670,6 +670,9 @@
                volta ao modelo completo. Enquanto isolado dá pra clicar as peças
                (ficam em ciano) e inspecionar sem sair do isolamento. -->
           <button id="f3dVoltar" onclick="f3dVoltarModelo()" style="display:none;position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:8;background:rgba(15,23,42,.92);backdrop-filter:blur(3px);border:1px solid #22D3EE;color:#22D3EE;padding:7px 15px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">↩ Voltar ao modelo completo</button>
+          <!-- Botão Parar: aparece enquanto a IA/consulta processa (lê Psets em
+               lotes) e cancela na hora. -->
+          <button id="f3dStop" onclick="f3dPararProc()" style="display:none;position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:9;background:rgba(127,29,29,.95);backdrop-filter:blur(3px);border:1px solid #f87171;color:#fff;padding:7px 16px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">⏹ Parar</button>
           <!-- Painel de cotas (estilo Solibri): lista das medições, com olho
                para ligar/desligar a visualização de cada uma e × para apagar. -->
           <div id="f3dCotasPanel" style="position:absolute;top:58px;right:10px;z-index:6;width:210px;max-height:55%;overflow:auto;background:rgba(15,23,42,.88);backdrop-filter:blur(3px);border:1px solid rgba(255,255,255,.12);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.4);display:none;color:#e2e8f0">
@@ -2903,20 +2906,22 @@ function f3dRegras(q){
     [/\b(porta|portas)\b/,'IFCDOOR',['porta','portas']],[/\b(janela|janelas)\b/,'IFCWINDOW',['janela','janelas']],
     [/\b(escada|escadas)\b/,'IFCSTAIR',['escada','escadas']],[/\b(rampa|rampas)\b/,'IFCRAMP',['rampa','rampas']],
     [/\b(funda[çc][ãa]o|sapata|sapatas)\b/,'IFCFOOTING',['fundacao','sapata','sapatas']],[/\b(estaca|estacas)\b/,'IFCPILE',['estaca','estacas']]];
-  let cls=null; for(const [rx,c] of CLS){ if(rx.test(s)){ cls=c; break; } }
+  let cls=null, clsAlvos=[]; for(const [rx,c,alvos] of CLS){ if(rx.test(s)){ cls=c; clsAlvos=alvos; break; } }
   if(!cls){
     // fuzzy só nos tokens que NÃO são verbo de comando / palavra genérica —
     //  senão "destacar" (perto de "estaca") viraria pilar/estaca por engano.
     const STOP=['destacar','destaque','mostrar','mostre','contar','conte','somar','some','isolar','isole','exibir','exiba','selecionar','elementos','elemento','todos','todas','quantos','quantas','pintar','pinte','colorir','quero','preciso','favor','modelo','pavimento','terreo'];
     const tokC = tok.filter(t=> !STOP.some(w=> _lev(t,w) <= (w.length<=5?1:2)));
-    for(const [,c,alvos] of CLS){ if(_algumPerto(tokC, alvos)){ cls=c; break; } }   // typo (piar→pilar)
+    for(const [,c,alvos] of CLS){ if(_algumPerto(tokC, alvos)){ cls=c; clsAlvos=alvos; break; } }   // typo (piar→pilar)
   }
   if(!cls) return null;                          // sem classe → deixa a IA
   const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
   const grpWord = s.match(/(?:por|de cada|por cada|agrupad[oa]s? por)\s+(pavimento|piso|andar|n[íi]vel|tipo|material|planta|se[çc][ãa]o|cobrimento|largura|width|altura|height|espessura)/);
-  const querSoma   = /(som(a|ar|e)|total|totaliz|quanto de|[áa]rea total|volume total|metragem)/.test(s) || _algumPerto(tok,['somar','soma','total','totalizar']);
-  const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar)/.test(s) || _algumPerto(tok,['quantos','quantas','contar','quantidade']);
-  const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion)/.test(s) || _algumPerto(tok,['destacar','destaque','mostrar','isolar','encontrar','localizar','exibir','selecionar']);
+  // Intenção: regex por radical (já tolera plural/conjugação). Sem fuzzy aqui —
+  //  fuzzy na intenção fazia "corta" (de corta-fogo) casar "contar" e contar tudo.
+  const querSoma   = /(som(a|ar|e)|total|totaliz|quanto de|[áa]rea total|volume total|metragem)/.test(s);
+  const querConta  = /(quant[oa]s|n[úu]mero de|quantidade de|contar|contagem)/.test(s);
+  const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion|pint|color)/.test(s);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
   const querTabela = /(tabela|planilha|quadro)/.test(s);
   // código de peça (P9, V1, VE3, L1A, C50…) → filtro EXATO pelo Name ("=") → V1 ≠ V10
@@ -2924,36 +2929,58 @@ function f3dRegras(q){
   const code = (codeM && !/^(m2|m3|mm|cm)$/i.test(codeM[1]))
     ? (/^c\d+$/i.test(codeM[1]) ? codeM[1] : '='+codeM[1])   // C50=classe concreto (substring); P9/V1=nome (exato)
     : null;
-  // pavimento explícito ("do térreo", "no subsolo 2", "do tipo 3")
+  // pavimento: captura o NOME/nº que vem após "pavimento/piso/andar/nível"
+  //  (qualquer nome real: LAZER, TÉRREO, TIPO 3, 5…), ou nomes soltos comuns.
   let pavim=null;
-  if(/t[ée]rreo/.test(s)) pavim='terreo';
-  else { const pm=s.match(/(subsolo\s*\d*|cobertura|mezanino|[áa]tico|tipo\s*\d+|pavimento\s*\d+)/); if(pm) pavim=pm[1].replace(/\s+/g,''); }
+  const pm=s.match(/(?:pavimento|piso|andar|n[íi]vel|pav\.?)\s+(?:d[oae]s?\s+)?([^\s,.;]{2,})/);
+  if(pm) pavim=pm[1];
+  if(!pavim){
+    if(/\bt[ée]rreo\b/.test(s)) pavim='terreo';
+    else { const m=s.match(/\b(subsolo\s*\d*|cobertura|mezanino|[áa]tico|pilotis|garagem|lazer)\b/); if(m) pavim=m[1].replace(/\s+/g,''); }
+  }
+  // Filtro de TEXTO residual (ex.: "corta-fogo", "acm"): o que sobra depois de
+  //  remover verbos/artigos, a classe, o pavimento, o código e números. Vira
+  //  filtro substring — assim "portas corta-fogo"/"paredes acm" funcionam local.
+  const GEN=['destacar','destaque','mostrar','mostre','contar','conte','somar','some','isolar','isole','exibir','exiba','selecionar','selecione','pintar','pinte','colorir','elementos','elemento','todos','todas','todo','toda','quero','preciso','favor','modelo','pavimento','piso','andar','nivel','pav','tabela','planilha','quadro','por','de','do','da','dos','das','no','na','nos','nas','em','os','as','um','uma','com','me','que'];
+  const codeBare = code ? code.replace(/^=/,'') : '';
+  const pavN0 = pavim ? pavim.replace(/\s+/g,'') : '';
+  const resid = tok.filter(t=> t.length>=3 && !GEN.includes(t) && t!==codeBare
+     && !(pavim && (t===pavN0 || _lev(t,pavN0)<=1))
+     && !/^\d+([.,]\d+)?$/.test(t) && !/^(cm|mm|m2|m3)$/.test(t)
+     && !_algumPerto([t], clsAlvos));
+  const filtros = [ ...(code?[code]:[]), ...resid ];   // código exato + texto substring
+  const filtroArg = filtros.join(',');
+  // monta o arg de @TABELA: CLASSE | grupo | valor | pavimento(filtro)
+  const tabArg = (grp)=> cls+' | '+grp+' | '+(propVal||'')+(pavim?(' | '+pavim):'');
   // 1) agrupamento "X por Y" / "de cada Y"
   if(grpWord){
     let g=grpWord[1]; if(/piso|andar|n[íi]vel/.test(g)) g='pavimento';
     const psetGrp = /pavimento|tipo|material|planta|se[çc][ãa]o|cobrimento/.test(g);
     // pset (pavimento/tipo…) → @TABELA (lê Psets); dimensão (largura/altura) → @CONTAR
-    if(propVal || psetGrp) return {tipo:'tabela', arg: cls+' | '+g+(propVal?(' | '+propVal):'')};
+    if(propVal || psetGrp || pavim) return {tipo:'tabela', arg: tabArg(g)};
     return {tipo:'contar', arg: cls+' | '+g};
   }
-  // 1b) "tabela [com volume] dos X" sem agrupar → agrupa por pavimento (default útil)
-  if(querTabela) return {tipo:'tabela', arg: cls+' | pavimento'+(propVal?(' | '+propVal):'')};
+  // 1b) "tabela [com volume] dos X" sem agrupar → se pediu pavimento, filtra por
+  //     ele e agrupa por TIPO (mais útil que 1 linha só); senão agrupa por pavimento.
+  if(querTabela) return {tipo:'tabela', arg: tabArg(pavim?'tipo':'pavimento')};
   // 2) valor específico (medida) → isolar por valor
   if(medM && (querDestaca||querConta)){
     const prop = /(alt|height)/.test(s)?'altura' : /(esp|thick)/.test(s)?'espessura' : 'largura';
     return {tipo:'isolarvalor', arg: cls+' | '+prop+' | '+medM[1]+(medM[2]||'')};
   }
-  const cod = code||'';
-  // 3) soma de quantitativo (código = filtro exato pelo nome; senão todo o conjunto)
-  if(querSoma && propVal) return {tipo:'somar', arg: cls+' | '+cod+' | '+propVal};
-  // 4) contar (código e/ou pavimento = contagem filtrada)
-  if(querConta) return (code||pavim) ? {tipo:'contarfiltro', arg: cls+' | '+cod+' | '+(pavim||'')} : {tipo:'contar', arg: cls};
-  // 5) destacar/localizar (código = nome exato; pavimento = 3º campo)
-  if(querDestaca) return {tipo:'destacar', arg: cls+' | '+cod+' | '+(pavim||'')};
+  // 3) soma de quantitativo (filtro = código exato + texto residual)
+  if(querSoma && propVal) return {tipo:'somar', arg: cls+' | '+filtroArg+' | '+propVal};
+  // 4) contar (com filtro e/ou pavimento = contagem filtrada)
+  if(querConta) return (filtros.length||pavim) ? {tipo:'contarfiltro', arg: cls+' | '+filtroArg+' | '+(pavim||'')} : {tipo:'contar', arg: cls};
+  // 5) destacar/localizar (filtro = código exato + texto; pavimento = 3º campo)
+  if(querDestaca) return {tipo:'destacar', arg: cls+' | '+filtroArg+' | '+(pavim||'')};
   return null;
 }
 // Mostra/esconde o botão "voltar ao modelo completo" conforme haja isolamento.
 function f3dBotaoVoltar(mostrar){ const b=$('f3dVoltar'); if(b) b.style.display = mostrar ? 'block' : 'none'; }
+// Botão Parar durante processamento pesado.
+function f3dProcessando(b){ const el=$('f3dStop'); if(el) el.style.display = b ? 'block' : 'none'; if(b) f3dBotaoVoltar(false); }
+function f3dPararProc(){ if(F3D && B3 && B3.cancelar) B3.cancelar(F3D); f3dDica('Interrompendo…'); }
 async function f3dVoltarModelo(){
   if(F3D && B3){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} }
   f3dBotaoVoltar(false); f3dDica('');
@@ -2961,22 +2988,30 @@ async function f3dVoltarModelo(){
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
 async function execDiretiva(tipo, arg){
   let out;
-  if(tipo==='tabela'){      const r=await f3dExecTabela(arg);      out={content:r.msg||'', html:r.html}; }
-  else if(tipo==='somar'){       const r=await f3dExecSomar(arg);       out={content:r.msg}; }
-  else if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); out={content:r.msg}; }
-  else if(tipo==='contar'){      const r=await f3dExecContar(arg);      out={content:r.msg||'', html:r.html}; }
-  else if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); out={content:r.msg}; }
-  else if(tipo==='destacar'){
-    const res=await f3dExecDestaque(arg);
-    const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
-    let msg;
-    if(res && res.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
-    else if(res && res.limpar) msg='✓ Destaque removido — o modelo voltou ao normal.';
-    else if(res && res.n>0) msg='✓ Isolei '+res.n+' '+rot+'. Clique numa peça para inspecionar (fica em ciano) — o botão **↩ Voltar ao modelo completo** no topo desfaz.';
-    else msg=(res&&res.filtrado)?'Não encontrei elementos que batam com esse filtro no modelo.':'Não encontrei '+_rotuloClasse(arg)+' no modelo carregado.';
-    out={content:msg};
+  f3dProcessando(true);
+  try{
+    if(tipo==='tabela'){      const r=await f3dExecTabela(arg);      out={content:r.msg||'', html:r.html}; }
+    else if(tipo==='somar'){       const r=await f3dExecSomar(arg);       out={content:r.msg}; }
+    else if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); out={content:r.msg}; }
+    else if(tipo==='contar'){      const r=await f3dExecContar(arg);      out={content:r.msg||'', html:r.html}; }
+    else if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); out={content:r.msg}; }
+    else if(tipo==='destacar'){
+      const res=await f3dExecDestaque(arg);
+      const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
+      let msg;
+      if(res && res.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
+      else if(res && res.limpar) msg='✓ Destaque removido — o modelo voltou ao normal.';
+      else if(res && res.n>0) msg='✓ Isolei '+res.n+' '+rot+'. Clique numa peça para inspecionar (fica em ciano) — o botão **↩ Voltar ao modelo completo** no topo desfaz.';
+      else msg=(res&&res.filtrado)?'Não encontrei elementos que batam com esse filtro no modelo.':'Não encontrei '+_rotuloClasse(arg)+' no modelo carregado.';
+      out={content:msg};
+    }
+    else out={content:'Não entendi o pedido.'};
+  }catch(e){
+    if(String(e&&e.message).includes('CANCELADO')) out={content:'⏹ Processamento interrompido.'};
+    else out={content:'⚠ '+(e&&e.message||e)};
+  }finally{
+    f3dProcessando(false); f3dDica('');
   }
-  else out={content:'Não entendi o pedido.'};
   f3dBotaoVoltar(!!(F3D && F3D._isolado));   // sincroniza o botão com o estado real
   return out;
 }
@@ -3237,7 +3272,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21s').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21t').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4470,7 +4505,7 @@ async function f3dExecDestaque(arg){
     f3dDica(n ? (n+' elemento(s) destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.')
               : 'Não encontrei elementos com esse filtro no modelo.');
     return { n, filtrado: (termos.length>0 || !!pavim) };
-  }catch(e){ console.warn('destaque IA:', e); return { erro:String(e) }; }
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; console.warn('destaque IA:', e); return { erro:String(e) }; }
 }
 // Normaliza um comprimento para CENTÍMETROS inteiros (para comparar "70cm",
 // "0,70 m", "70 cm", "700 mm"). Retorna null se não for número.
@@ -4553,23 +4588,23 @@ async function f3dExecContarFiltro(arg){
     f3dDica('');
     const filtroTxt=[termos.length?('"'+termos.map(t=>t.replace(/^=/,'')).join(', ')+'"'):'', pavim?('no pavimento '+pavim):''].filter(Boolean).join(' ');
     return { msg:'Há **'+n+'** '+rot+(filtroTxt?(' '+filtroTxt):'')+' no modelo.' };
-  }catch(e){ f3dDica(''); console.warn('contar filtro:', e); return { msg:'Não consegui contar: '+(e.message||e) }; }
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('contar filtro:', e); return { msg:'Não consegui contar: '+(e.message||e) }; }
 }
 // Nível 3: TABELA agrupada ("X por Y") — agrupa por uma propriedade e soma/conta.
 async function f3dExecTabela(arg){
   if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu montar a tabela.' };
   const parts=(arg||'').split('|');
   const classes=(parts[0]||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
-  const propGrupo=(parts[1]||'').trim(), propValor=(parts[2]||'').trim();
+  const propGrupo=(parts[1]||'').trim(), propValor=(parts[2]||'').trim(), pavim=(parts[3]||'').trim();
   if(!classes.length || !propGrupo) return { msg:'Não entendi a tabela pedida.' };
   const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
   const rot=_rotuloClasse(classes[0]);
   const un = /[áa]rea/i.test(propValor)?'m²' : /vol/i.test(propValor)?'m³' : /larg|width|alt|height|comp|length/i.test(propValor)?'m' : '';
   f3dDica('Montando tabela…');
   try{
-    const rows=await B3.tabelaAgrupada(F3D, regexes, [], propGrupo, propValor);
+    const rows=await B3.tabelaAgrupada(F3D, regexes, [], propGrupo, propValor, pavim);
     f3dDica('');
-    if(!rows.length) return { msg:'Não encontrei '+rot+' no modelo.' };
+    if(!rows.length) return { msg:'Não encontrei '+rot+(pavim?(' no pavimento '+pavim):'')+' no modelo.' };
     F3D_CONTAGEM=rows.map(r=>({label:r.grupo, porMod:r.porMod}));
     const temValor=!!propValor && rows.some(r=>r.comValor>0);
     const th='<tr style="color:var(--mut);font-size:11px"><td style="padding:2px 8px">'+esc(propGrupo)+'</td>'
@@ -4579,11 +4614,13 @@ async function f3dExecTabela(arg){
       +'<td style="padding:3px 8px;border-top:1px solid var(--line);text-align:right;font-weight:700">'+r.n+'</td>'
       +(temValor?('<td style="padding:3px 8px;border-top:1px solid var(--line);text-align:right">'+(Math.round(r.soma*100)/100).toLocaleString('pt-BR')+'</td>'):'')+'</tr>').join('');
     const total=rows.reduce((a,r)=>a+r.n,0);
-    const html='<div style="font-size:12px"><b>'+esc(rot)+' por '+esc(propGrupo)+(propValor?(' · Σ '+esc(propValor)):'')+'</b> — total '+total
-      +'<table style="width:100%;border-collapse:collapse;margin-top:5px">'+th+trs+'</table>'
+    // Aviso honesto quando pediram valor mas o modelo não traz aquela quantidade.
+    const semValor = (!!propValor && !temValor) ? '<div style="color:#f59e0b;font-size:11px;margin-top:5px">⚠ Este modelo não traz "'+esc(propValor)+'" nos elementos — mostro só a contagem.</div>' : '';
+    const html='<div style="font-size:12px"><b>'+esc(rot)+(pavim?(' — '+esc(pavim)):'')+' por '+esc(propGrupo)+(temValor?(' · Σ '+esc(propValor)):'')+'</b> — total '+total
+      +'<table style="width:100%;border-collapse:collapse;margin-top:5px">'+th+trs+'</table>'+semValor
       +'<div style="color:var(--mut);font-size:11px;margin-top:5px">👆 Clique numa linha para isolar o grupo no modelo.</div></div>';
     return { html };
-  }catch(e){ f3dDica(''); console.warn('tabela:', e); return { msg:'Não consegui montar a tabela: '+(e.message||e) }; }
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('tabela:', e); return { msg:'Não consegui montar a tabela: '+(e.message||e) }; }
 }
 // Nível 3: contar / agrupar por propriedade. O CÓDIGO calcula e monta a resposta.
 async function f3dExecContar(arg){

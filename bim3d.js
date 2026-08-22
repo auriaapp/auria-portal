@@ -821,7 +821,25 @@ function _batePavim(pavEl, pavN){
   return false;
 }
 
+// Pede o cancelamento do processamento pesado em curso (botão Parar).
+export function cancelar(V){ if(V) V._cancelar=true; }
+// Lê Psets (IsDefinedBy) em LOTES: cede o thread entre lotes (a UI responde ao
+// Parar), mostra progresso e aborta se _cancelar. Ler tudo de uma vez travava
+// em modelos com milhares de elementos (ex.: paredes).
+async function _lerPsetsEmLotes(V, model, ids, rotulo){
+  const R=[]; const N=250;
+  for(let i=0;i<ids.length;i+=N){
+    if(V._cancelar) throw new Error('CANCELADO');
+    let da=[]; try{ da=await model.getItemsData(ids.slice(i,i+N), { attributesDefault:true,
+      relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+    for(const d of (da||[])) R.push(d);
+    if(V.on && V.on.dica) V.on.dica((rotulo||'Processando')+'… '+Math.min(i+N,ids.length)+'/'+ids.length);
+    await new Promise(r=>setTimeout(r,0));   // cede o thread p/ o clique em Parar rodar
+  }
+  return R;
+}
 export async function destacarCategoria(V, regexes, termos, pavim){
+  V._cancelar=false;
   const T=V.THREE; let total=0; const porMod={};
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const pavN = pavim ? _norm(pavim) : '';
@@ -840,12 +858,10 @@ export async function destacarCategoria(V, regexes, termos, pavim){
     // batem em algum termo (no nome/tipo/valores de propriedade).
     if(termosLc.length || pavN){
       let dados=[];
-      // Texto = ATRIBUTOS-ONLY (rápido e preciso). Pavimento vive em Pset, então
-      // aí precisamos ler IsDefinedBy (mais pesado, mas só para o subconjunto).
-      const opt = pavN
-        ? { attributesDefault:true, relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }
-        : { attributesDefault:true, relationsDefault:{attributes:false,relations:false} };
-      try{ dados=await x.model.getItemsData(ids, opt); }catch(_){}
+      // Texto = ATRIBUTOS-ONLY (rápido, uma chamada). Pavimento vive em Pset →
+      // lê IsDefinedBy EM LOTES (com Parar), senão trava em milhares de peças.
+      if(pavN){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
+      else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
       const okd=[];
       (dados||[]).forEach(d=>{
         const lid = d && d._localId && d._localId.value;
@@ -916,6 +932,7 @@ function _rotuloValor(v, termo){
 // Conta uma categoria FILTRADA por texto (nome/tipo/atributos). Sem termos =
 // total da categoria. Leve (atributos-only).
 export async function contarFiltrado(V, regexes, termos, pavim){
+  V._cancelar=false;
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const pavN = pavim ? _norm(pavim) : '';
   let n=0;
@@ -923,10 +940,9 @@ export async function contarFiltrado(V, regexes, termos, pavim){
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
     if(!termosLc.length && !pavN){ n+=ids.length; continue; }
-    const opt = pavN
-      ? { attributesDefault:true, relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }
-      : { attributesDefault:true, relationsDefault:{attributes:false,relations:false} };
-    let da=[]; try{ da=await x.model.getItemsData(ids, opt); }catch(_){}
+    let da=[];
+    if(pavN){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
+    else { try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
     (da||[]).forEach(d=>{ if(!d) return;
       if(termosLc.length && !_bateTermos(d, termosLc)) return;
       if(pavN && !_batePavim(_pavimEl(d), pavN)) return;
@@ -1051,8 +1067,10 @@ function _achaValorQualquer(d, rx){
 // TABELA AGRUPADA: agrupa por `propGrupo` (ex.: pavimento) e, se `propValor`
 // (ex.: volume), soma-o por grupo; senão só conta. Retorna linhas com ids p/
 // permitir clicar e isolar o grupo.
-export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor){
+export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor, pavim){
+  V._cancelar=false;
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  const pavN = pavim ? _norm(pavim) : '';
   const rxG=_termoRegex(propGrupo);
   const rxV=propValor?_termoRegex(propValor):null;
   const map=new Map();   // label -> {n, soma, comValor, porMod:{mi:[ids]}}
@@ -1065,8 +1083,9 @@ export async function tabelaAgrupada(V, regexes, termos, propGrupo, propValor){
       const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null)return; if(_bateTermos(d, termosLc)) ok.push(lid); }); ids=ok;
     }
     if(!ids.length) continue;
-    let dd=[]; try{ dd=await x.model.getItemsData(ids,{attributesDefault:true, relations:{IsDefinedBy:{attributes:true,relations:true}}, relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    const dd=await _lerPsetsEmLotes(V, x.model, ids, 'Montando tabela');   // lotes + Parar
     (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      if(pavN && !_batePavim(_pavimEl(d), pavN)) return;   // filtra pelo pavimento pedido
       const gk=_achaValorQualquer(d, rxG);
       const label = (gk==null||gk==='') ? '(sem valor)' : String(gk);
       let g=map.get(label); if(!g){ g={n:0,soma:0,comValor:0,porMod:{}}; map.set(label,g); }
