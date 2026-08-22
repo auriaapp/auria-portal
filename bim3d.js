@@ -896,9 +896,10 @@ export async function contarPorPropriedade(V, regexes, termoProp){
 function _achaValorProfundo(d, rx){
   if(!d) return null;
   const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  const cands=[];   // coleta TODOS os matches p/ escolher o melhor (evita misturar Net/Gross)
   for(const [k,v] of Object.entries(d)){          // 1) atributos diretos
     if(k[0]==='_'||Array.isArray(v)) continue;
-    if(rx.test(k)){ const vv=escal(v); if(typeof vv==='number') return {val:vv, nome:k}; }
+    if(rx.test(k)){ const vv=escal(v); if(typeof vv==='number') cands.push({val:vv, nome:k}); }
   }
   for(const [k,v] of Object.entries(d)){          // 2) dentro dos Psets
     if(!Array.isArray(v)) continue;
@@ -911,17 +912,20 @@ function _achaValorProfundo(d, rx){
           const pn=p.Name && p.Name.value;
           if(pn && rx.test(String(pn))){
             const pv=escal(p.NominalValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.LengthValue)??escal(p.Value);
-            if(typeof pv==='number') return {val:pv, nome:String(pn)};
+            if(typeof pv==='number') cands.push({val:pv, nome:String(pn)});
           }
         }
       }
       for(const [k2,v2] of Object.entries(ps)){
         if(k2==='Name'||Array.isArray(v2)) continue;
-        if(rx.test(k2)){ const vv=escal(v2); if(typeof vv==='number') return {val:vv, nome:k2}; }
+        if(rx.test(k2)){ const vv=escal(v2); if(typeof vv==='number') cands.push({val:vv, nome:k2}); }
       }
     }
   }
-  return null;
+  if(!cands.length) return null;
+  // Preferência p/ somar CONSISTENTE: Net > (não-Gross) > primeiro. Assim não
+  // mistura NetVolume de uns com GrossVolume de outros.
+  return cands.find(c=>/net/i.test(c.nome)) || cands.find(c=>!/gross/i.test(c.nome)) || cands[0];
 }
 // SOMA uma quantidade (área/volume/comprimento) sobre um subconjunto filtrado.
 // `termos` (opcional) filtra por texto nos atributos (ex.: "ACM"); `termoProp` é

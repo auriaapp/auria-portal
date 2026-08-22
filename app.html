@@ -2653,7 +2653,27 @@ function iaContexto(){
         +'e vãos/pé-direito estão em METROS.\nDADOS DO ELEMENTO:\n'+F3D_SEL_CTX
       : '');
 }
-function _iaFmt(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>'); }
+function _iaInline(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>'); }
+function _iaTabela(linhas){
+  const cel=(l)=> l.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>c.trim());
+  const head=cel(linhas[0]), body=linhas.slice(2).map(cel);
+  let h='<table style="border-collapse:collapse;width:100%;margin:5px 0;font-size:11.5px">';
+  h+='<tr>'+head.map(c=>'<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);color:var(--mut);font-weight:700">'+_iaInline(c)+'</th>').join('')+'</tr>';
+  body.forEach(r=>{ h+='<tr>'+r.map(c=>'<td style="padding:3px 8px;border-bottom:1px solid var(--line);vertical-align:top">'+_iaInline(c)+'</td>').join('')+'</tr>'; });
+  return h+'</table>';
+}
+// Renderiza a resposta: trata **negrito**, quebras e TABELAS markdown (| a | b |).
+function _iaFmt(s){
+  const L=String(s).split('\n'); const out=[]; let i=0;
+  while(i<L.length){
+    if(/\|/.test(L[i]) && i+1<L.length && /-/.test(L[i+1]) && /^[\s|:\-]+$/.test(L[i+1])){
+      const bloco=[L[i], L[i+1]]; let j=i+2;
+      while(j<L.length && /\|/.test(L[j]) && L[j].trim()!==''){ bloco.push(L[j]); j++; }
+      out.push(_iaTabela(bloco)); i=j;
+    } else { out.push(_iaInline(L[i])); i++; }
+  }
+  return out.join('<br>').replace(/<br>\s*(<table)/g,'$1').replace(/(<\/table>)\s*<br>/g,'$1');
+}
 function mapPrioIA(p){ p=(p||'').toLowerCase();
   if(p.indexOf('crít')>=0||p.indexOf('crit')>=0||p.indexOf('sever')>=0) return 'Severa / Imediata';
   if(p.indexOf('méd')>=0||p.indexOf('med')>=0||p.indexOf('import')>=0) return 'Importante / Programada';
@@ -2677,7 +2697,7 @@ function renderIA(startAt){   // startAt: 'top' | 'lastUser' | undefined (rola p
       return '<div data-role="'+m.role+'" style="align-self:'+(me?'flex-end':'flex-start')+';max-width:88%;background:'+(me?'var(--accent)':'var(--panel2)')+';color:'+(me?'#fff':'var(--txt)')+';border:1px solid '+(me?'transparent':'var(--line)')+';border-radius:10px;padding:7px 10px;line-height:1.5;word-break:break-word">'+(m.html || _iaFmt(m.content))+'</div>';
     }).join('');
   }
-  if(IA_PENSANDO) html+='<div class="ia-pensando"><img src="logo_symbol.png" alt="">A IA está pensando…</div>';
+  if(IA_PENSANDO) html+='<div class="ia-pensando"><img src="logo_symbol.png" alt="">Auria pensando…</div>';
   if(!html) html='<div style="color:var(--mut);font-size:11.5px;line-height:1.5">Clique em <b>🔍 Analisar prancha</b> para a IA sugerir apontamentos já classificados, ou faça uma pergunta abaixo.</div>';
   el.innerHTML=html;
   if(startAt==='top'){ el.scrollTop=0; }
@@ -3078,7 +3098,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21l').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21m').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
