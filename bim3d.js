@@ -891,6 +891,61 @@ export async function contarPorPropriedade(V, regexes, termoProp){
   const grupos=[...dist.entries()].map(([label,g])=>({label, n:g.n, porMod:g.porMod})).sort((a,b)=> b.n-a.n);
   return { total, grupos };
 }
+// Busca PROFUNDA (atributo direto OU propriedade de Pset) o 1º valor NUMÉRICO
+// cuja chave/nome casa com rx. Retorna {val, nome} ou null.
+function _achaValorProfundo(d, rx){
+  if(!d) return null;
+  const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  for(const [k,v] of Object.entries(d)){          // 1) atributos diretos
+    if(k[0]==='_'||Array.isArray(v)) continue;
+    if(rx.test(k)){ const vv=escal(v); if(typeof vv==='number') return {val:vv, nome:k}; }
+  }
+  for(const [k,v] of Object.entries(d)){          // 2) dentro dos Psets
+    if(!Array.isArray(v)) continue;
+    for(const ps of v){
+      if(!ps || typeof ps!=='object') continue;
+      for(const sub of Object.values(ps)){
+        if(!Array.isArray(sub)) continue;
+        for(const p of sub){
+          if(!p || typeof p!=='object') continue;
+          const pn=p.Name && p.Name.value;
+          if(pn && rx.test(String(pn))){
+            const pv=escal(p.NominalValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.LengthValue)??escal(p.Value);
+            if(typeof pv==='number') return {val:pv, nome:String(pn)};
+          }
+        }
+      }
+      for(const [k2,v2] of Object.entries(ps)){
+        if(k2==='Name'||Array.isArray(v2)) continue;
+        if(rx.test(k2)){ const vv=escal(v2); if(typeof vv==='number') return {val:vv, nome:k2}; }
+      }
+    }
+  }
+  return null;
+}
+// SOMA uma quantidade (área/volume/comprimento) sobre um subconjunto filtrado.
+// `termos` (opcional) filtra por texto nos atributos (ex.: "ACM"); `termoProp` é
+// o que somar. Lê Psets só do subconjunto filtrado (bounded).
+export async function somarPropriedade(V, regexes, termos, termoProp){
+  const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  const rx=_termoRegex(termoProp);
+  let n=0, comValor=0, soma=0; const nomes=new Set();
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    if(termosLc.length){                          // filtro por texto (atributos, leve)
+      let da=[]; try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+      const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; if(termosLc.some(t=>_textoBusca(d).includes(t))) ok.push(lid); });
+      ids=ok;
+    }
+    if(!ids.length) continue;
+    n+=ids.length;
+    let dd=[]; try{ dd=await x.model.getItemsData(ids, { attributesDefault:true,
+      relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+    (dd||[]).forEach(d=>{ const r=_achaValorProfundo(d, rx); if(r && typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); } });
+  }
+  return { n, comValor, soma, nomes:[...nomes] };
+}
 // Destaca um conjunto explícito de ids (por índice de modelo) — usado ao clicar
 // numa linha da tabela de contagem. ISOLA: esconde tudo, mostra só o alvo.
 export async function destacarIds(V, porMod){
