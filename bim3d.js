@@ -804,6 +804,55 @@ export async function limparDestaqueCategoria(V){
   try{ await V.fragments.update(true); }catch(_){}
 }
 
+// ── CONTAR / AGRUPAR por propriedade (Nível 3 da IA) ───────────────────────
+//  Sem `termoProp`: conta o total da(s) categoria(s) (rápido, só a lista de ids).
+//  Com `termoProp` (ex.: "largura"): agrupa pela propriedade e conta cada valor.
+//  Lê ATRIBUTOS-ONLY (ex.: IfcDoor.OverallWidth, OverallHeight) — rápido; para
+//  propriedades que vivem em Pset/quantidade a busca não acha (refinar depois).
+function _termoRegex(t){
+  t=(t||'').toLowerCase();
+  if(/larg|width/.test(t))  return /width|larg/i;
+  if(/alt|height/.test(t))  return /height|alt/i;
+  if(/esp|thick/.test(t))   return /thick|esp/i;
+  if(/[áa]rea/.test(t))     return /area/i;
+  if(/vol/.test(t))         return /volume/i;
+  if(/per[íi]m/.test(t))    return /perim/i;
+  if(/mat/.test(t))         return /material/i;
+  return new RegExp((t.replace(/[^a-z0-9]/gi,'')||'.'),'i');
+}
+function _achaValor(d, rx){
+  const escal=(o)=> (o&&typeof o==='object'&&'value' in o&&typeof o.value!=='object')?o.value:undefined;
+  for(const [k,v] of Object.entries(d)){
+    if(k[0]==='_'||k==='Name') continue;
+    if(rx.test(k)){ const vv=escal(v); if(vv!=null && vv!=='') return vv; }
+  }
+  return null;
+}
+function _rotuloValor(v){
+  if(typeof v==='number'){ return String(Math.round(v*1000)/1000).replace('.',','); }
+  return String(v);
+}
+export async function contarPorPropriedade(V, regexes, termoProp){
+  const termo=(termoProp||'').trim();
+  const rx = termo ? _termoRegex(termo) : null;
+  let total=0; const dist=new Map();
+  for(const x of V.modelos){
+    let ids=[];
+    try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    if(!rx){ total+=ids.length; continue; }
+    let dados=[];
+    try{ dados=await x.model.getItemsData(ids, { attributesDefault:true,
+      relationsDefault:{attributes:false,relations:false} }); }catch(_){}
+    (dados||[]).forEach(d=>{ if(!d) return; total++;
+      const v=_achaValor(d, rx);
+      const chave = (v==null) ? '(sem valor)' : _rotuloValor(v);
+      dist.set(chave, (dist.get(chave)||0)+1);
+    });
+  }
+  return { total, dist:[...dist.entries()].sort((a,b)=> b[1]-a[1]) };
+}
+
 // ── Raio-X (peça sob o cursor fica transparente) ──────────────────────────
 //  Modelo mental: como o médico "afasta" o tecido para ver o osso, aqui
 //  você "afasta" a peça sob o cursor para ver o que está atrás — parede

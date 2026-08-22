@@ -2596,6 +2596,11 @@ function iaContexto(){
     +'Ex.: portas corta-fogo → @DESTACAR: IFCDOOR | corta-fogo, corta fogo, CF, PCF, fire, firerating, resistência ao fogo. '
     +'Sem "|", destaca a categoria inteira. Para LIMPAR o destaque use @DESTACAR: LIMPAR. Só use essa linha quando o usuário '
     +'realmente pedir para localizar/destacar; caso contrário, NÃO a inclua.'
+    +'\n\nCONTAGEM/QUANTITATIVO: se o usuário perguntar QUANTOS/QUANTAS, ou pedir uma DISTRIBUIÇÃO por uma propriedade '
+    +'(ex.: "quantas portas?", "quantas portas de cada largura?", "quantos pilares?"), inclua no FIM UMA linha: '
+    +'@CONTAR: <CLASSE_IFC>  (total da categoria)  OU  @CONTAR: <CLASSE_IFC> | <propriedade>  (agrupar por, ex.: largura, '
+    +'altura, material). Use os mesmos mapeamentos PT→IFC de cima. Ex.: "quantas portas de cada largura?" → @CONTAR: IFCDOOR | largura. '
+    +'O sistema devolve os NÚMEROS REAIS — você só confirma em uma frase curta. NUNCA invente contagens.'
     +(F3D_SEL_CTX
       ? '\n\n--- ELEMENTO 3D SELECIONADO AGORA (USE ISTO) ---\n'
         +'O usuário tem UM elemento do modelo selecionado, com os dados abaixo. '
@@ -2817,10 +2822,14 @@ async function iaEnviar(){
     if(error) throw new Error(await _iaErr(error));
     if(data && data.content){
       let txt=data.content;
-      // Diretiva de ação: @DESTACAR: <CLASSE>. Quando presente, o CÓDIGO gera a
-      // resposta (com a contagem real) — a frase da IA costuma ser vaga/inventada.
+      // Diretivas de ação: quando presentes, o CÓDIGO gera a resposta (números
+      // reais) — a frase da IA costuma ser vaga/inventada.
+      const mc=txt.match(/@CONTAR:\s*([^\n]+)/i);
       const mt=txt.match(/@DESTACAR:\s*([^\n]+)/i);
-      if(mt){
+      if(mc){
+        const res=await f3dExecContar(mc[1]);
+        IA_CONV.push({role:'assistant',content:res.msg});
+      } else if(mt){
         const res=await f3dExecDestaque(mt[1]);
         const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(mt[1]);
         let msg;
@@ -3026,7 +3035,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21e').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-21f').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4257,6 +4266,26 @@ async function f3dExecDestaque(arg){
               : 'Não encontrei elementos com esse filtro no modelo.');
     return { n, filtrado: termos.length>0 };
   }catch(e){ console.warn('destaque IA:', e); return { erro:String(e) }; }
+}
+// Nível 3: contar / agrupar por propriedade. O CÓDIGO calcula e monta a resposta.
+async function f3dExecContar(arg){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu contar os elementos.' };
+  const [classesRaw, propRaw]=(arg||'').split('|');
+  const classes=(classesRaw||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  if(!classes.length) return { msg:'Não entendi o que contar.' };
+  const prop=(propRaw||'').trim();
+  const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
+  const rot=_rotuloClasse(classes[0]);
+  f3dDica('Contando…');
+  try{
+    const r=await B3.contarPorPropriedade(F3D, regexes, prop);
+    f3dDica('');
+    if(!r.total) return { msg:'Não encontrei '+rot+' no(s) modelo(s) carregado(s).' };
+    if(!prop) return { msg:'Há **'+r.total+'** '+rot+' no(s) modelo(s) carregado(s).' };
+    const linhas=r.dist.slice(0,25).map(([v,n])=> '• '+v+' → **'+n+'**').join('\n');
+    const resto = r.dist.length>25 ? ('\n…e mais '+(r.dist.length-25)+' valores') : '';
+    return { msg:'**'+rot+' por '+prop+'** (total '+r.total+'):\n'+linhas+resto };
+  }catch(e){ f3dDica(''); console.warn('contar:', e); return { msg:'Não consegui contar agora: '+(e.message||e) }; }
 }
 // Rótulo amigável a partir da classe IFC (para a mensagem do chat).
 function _rotuloClasse(cls){
