@@ -1013,7 +1013,7 @@ function _achaValorProfundo(d, rx){
   const cands=[];   // coleta TODOS os matches p/ escolher o melhor (evita misturar Net/Gross)
   for(const [k,v] of Object.entries(d)){          // 1) atributos diretos
     if(k[0]==='_'||Array.isArray(v)) continue;
-    if(rx.test(k)){ const vv=escal(v); if(typeof vv==='number') cands.push({val:vv, nome:k}); }
+    if(rx.test(_norm(k))){ const vv=escal(v); if(typeof vv==='number') cands.push({val:vv, nome:k}); }
   }
   for(const [k,v] of Object.entries(d)){          // 2) dentro dos Psets
     if(!Array.isArray(v)) continue;
@@ -1024,7 +1024,7 @@ function _achaValorProfundo(d, rx){
         for(const p of sub){
           if(!p || typeof p!=='object') continue;
           const pn=p.Name && p.Name.value;
-          if(pn && rx.test(String(pn))){
+          if(pn && rx.test(_norm(pn))){          // insensível a acento ("Área"→area)
             const pv=escal(p.NominalValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.LengthValue)??escal(p.Value);
             if(typeof pv==='number') cands.push({val:pv, nome:String(pn)});
           }
@@ -1032,7 +1032,7 @@ function _achaValorProfundo(d, rx){
       }
       for(const [k2,v2] of Object.entries(ps)){
         if(k2==='Name'||Array.isArray(v2)) continue;
-        if(rx.test(k2)){ const vv=escal(v2); if(typeof vv==='number') cands.push({val:vv, nome:k2}); }
+        if(rx.test(_norm(k2))){ const vv=escal(v2); if(typeof vv==='number') cands.push({val:vv, nome:k2}); }
       }
     }
   }
@@ -1084,11 +1084,11 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
 // AGRUPAMENTO (ex.: pavimento="TERREO", Piso=33).
 function _achaValorQualquer(d, rx){
   const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
-  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||Array.isArray(v)) continue; if(rx.test(k)){ const vv=escal(v); if(vv!=null&&vv!=='') return vv; } }
+  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||Array.isArray(v)) continue; if(rx.test(_norm(k))){ const vv=escal(v); if(vv!=null&&vv!=='') return vv; } }
   for(const [k,v] of Object.entries(d)){ if(!Array.isArray(v)) continue;
     for(const ps of v){ if(!ps||typeof ps!=='object') continue;
-      for(const sub of Object.values(ps)){ if(!Array.isArray(sub)) continue; for(const p of sub){ if(!p||typeof p!=='object') continue; const pn=p.Name&&p.Name.value; if(pn&&rx.test(String(pn))){ const pv=escal(p.NominalValue)??escal(p.Value); if(pv!=null&&pv!=='') return pv; } } }
-      for(const [k2,v2] of Object.entries(ps)){ if(k2==='Name'||Array.isArray(v2)) continue; if(rx.test(k2)){ const vv=escal(v2); if(vv!=null&&vv!=='') return vv; } }
+      for(const sub of Object.values(ps)){ if(!Array.isArray(sub)) continue; for(const p of sub){ if(!p||typeof p!=='object') continue; const pn=p.Name&&p.Name.value; if(pn&&rx.test(_norm(pn))){ const pv=escal(p.NominalValue)??escal(p.Value); if(pv!=null&&pv!=='') return pv; } } }
+      for(const [k2,v2] of Object.entries(ps)){ if(k2==='Name'||Array.isArray(v2)) continue; if(rx.test(_norm(k2))){ const vv=escal(v2); if(vv!=null&&vv!=='') return vv; } }
     }
   }
   return null;
