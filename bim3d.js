@@ -918,6 +918,19 @@ async function _faixasPavimento(V){
   return faixas;
 }
 function _faixaDe(faixas, pavN){ const f=(faixas||[]).find(f=> _batePavim(f.nome, pavN)); return f?{y0:f.y0,y1:f.y1}:null; }
+// DIAGNÓSTICO: lista as FAMÍLIAS/tipos de uma classe (nome antes do ":") com
+// contagem — p/ achar o código do corta-fogo (PCF/CF…) sem adivinhar.
+export async function diagTipos(V, regexes){
+  const cont=new Map();
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    let da=[]; try{ da=await x.model.getItemsData(ids,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ let t=(d&&d.ObjectType&&d.ObjectType.value)||(d&&d.Name&&d.Name.value)||'?'; t=String(t).split(':')[0].trim(); cont.set(t,(cont.get(t)||0)+1); });
+  }
+  const arr=[...cont.entries()].sort((a,b)=>b[1]-a[1]);
+  return arr.length? arr.map(([t,n])=>n+' × '+t).join('\n') : 'nenhum elemento.';
+}
 // DIAGNÓSTICO das faixas de pavimento (nome → nível/altura/faixa).
 export async function diagFaixas(V){
   const f=await _faixasPavimento(V);
