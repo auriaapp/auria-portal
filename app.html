@@ -2902,6 +2902,8 @@ function f3dRegras(q){
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
   if(/^diag\b.*(pavim|faixa|n[íi]vel|andar)/.test(s)) return {tipo:'diagpav'};   // dump das faixas de pavimento
+  // "colorir por tipo/classificação/disciplina" (sem classe específica) → legenda de cores
+  if(/\b(colorir|pintar|colora)/.test(s) && /(por (tipo|categoria|classifica|disciplina)|classifica[çc]|colorir o modelo|modelo (todo|inteiro))/.test(s)) return {tipo:'colorirtipo'};
   // Classe: 1º regex exato (com fronteira de palavra — senão "de-STACA-r" casava
   //  "estaca"); se falhar, aproximação tolerante a typos.
   const CLS=[[/\b(pilar|pilares|coluna|colunas)\b/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
@@ -2935,6 +2937,10 @@ function f3dRegras(q){
   const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion|pint|color)/.test(s);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
   const querTabela = /(tabela|planilha|quadro)/.test(s);
+  // cor pedida ("pintar … de vermelho") → hex
+  const CORES={vermelho:0xEF4444,vermelha:0xEF4444,azul:0x3B82F6,verde:0x10B981,amarelo:0xF59E0B,amarela:0xF59E0B,laranja:0xF97316,roxo:0x8B5CF6,roxa:0x8B5CF6,rosa:0xEC4899,ciano:0x22D3EE,cinza:0x64748B,branco:0xE5E7EB,branca:0xE5E7EB,preto:0x111827,preta:0x111827,marrom:0x92400E,dourado:0xD4AF37,dourada:0xD4AF37,magenta:0xEC4899};
+  const corM = s.match(/\b(vermelh[oa]|azul|verde|amarel[oa]|laranja|rox[oa]|rosa|ciano|cinza|branc[oa]|pret[oa]|marrom|dourad[oa]|magenta)\b/);
+  const cor = corM ? CORES[corM[1]] : null;
   if(/^diag\b.*(tipo|fam[íi]lia|familia)/.test(s)) return {tipo:'diagtipos', arg: cls};   // lista as famílias
   if(/^diag\b|diagn[óo]stic/.test(s)) return {tipo:'diag', arg: cls};   // dump de propriedades (debug)
   // código de peça (P9, V1, VE3, L1A, C50…) → filtro EXATO pelo Name ("=") → V1 ≠ V10
@@ -2957,7 +2963,8 @@ function f3dRegras(q){
   const GEN=['destacar','destaque','mostrar','mostre','contar','conte','somar','some','isolar','isole','exibir','exiba','selecionar','selecione','pintar','pinte','colorir','elementos','elemento','todos','todas','todo','toda','quero','preciso','favor','modelo','pavimento','piso','andar','nivel','pav','tabela','planilha','quadro','por','de','do','da','dos','das','no','na','nos','nas','em','os','as','um','uma','com','me','que'];
   const codeBare = code ? code.replace(/^=/,'') : '';
   const pavN0 = pavim ? pavim.replace(/\s+/g,'') : '';
-  const resid = tok.filter(t=> t.length>=3 && !GEN.includes(t) && t!==codeBare
+  const corW = corM ? corM[1] : '';
+  const resid = tok.filter(t=> t.length>=3 && !GEN.includes(t) && t!==codeBare && t!==corW
      && !(pavim && (t===pavN0 || _lev(t,pavN0)<=1))
      && !/^\d+([.,]\d+)?$/.test(t) && !/^(cm|mm|m2|m3)$/.test(t)
      && !_algumPerto([t], clsAlvos));
@@ -2987,6 +2994,8 @@ function f3dRegras(q){
   // 1b) "tabela [com volume] dos X" sem agrupar → se pediu pavimento, filtra por
   //     ele e agrupa por TIPO (mais útil que 1 linha só); senão agrupa por pavimento.
   if(querTabela) return {tipo:'tabela', arg: tabArg(pavim?'tipo':'pavimento')};
+  // colorir um GRUPO de uma cor ("pintar os P9 de vermelho", "paredes de azul")
+  if(cor) return {tipo:'colorir', arg: cls+' | '+filtroArg+' | '+(pavim||''), cor};
   // 2) valor específico (medida) → isolar por valor
   if(medM && (querDestaca||querConta)){
     const prop = /(alt|height)/.test(s)?'altura' : /(esp|thick)/.test(s)?'espessura' : 'largura';
@@ -3013,11 +3022,13 @@ async function f3dVoltarModelo(){
   f3dBotaoVoltar(false); f3dDica('');
 }
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
-async function execDiretiva(tipo, arg){
+async function execDiretiva(tipo, arg, cor){
   let out;
   f3dProcessando(true);
   try{
-    if(tipo==='isolarpav'){
+    if(tipo==='colorir'){ const r=await f3dExecColorir(arg, cor); out={content:r.msg}; }
+    else if(tipo==='colorirtipo'){ const r=await f3dExecColorirTipo(); out={content:r.msg||'', html:r.html}; }
+    else if(tipo==='isolarpav'){
       if(!F3D||!B3) out={content:'Abra o modelo 3D primeiro.'};
       else { const r=await B3.isolarPavimento(F3D, arg);
         out={content: r.semFaixa ? ('Não identifiquei o pavimento "'+arg+'" pelas lajes. Rode "diag pavimentos" que eu calibro.')
@@ -3060,7 +3071,7 @@ async function execDiretiva(tipo, arg){
   }finally{
     f3dProcessando(false); f3dDica('');
   }
-  f3dBotaoVoltar(!!(F3D && F3D._isolado));   // sincroniza o botão com o estado real
+  f3dBotaoVoltar(!!(F3D && (F3D._isolado || F3D._colorido)));   // sincroniza o botão com o estado real
   return out;
 }
 async function iaEnviar(){
@@ -3075,7 +3086,7 @@ async function iaEnviar(){
   if(_reg){
     IA_PENSANDO=true; renderIA();
     const sb2=$('iaSend'); if(sb2){ sb2.disabled=true; sb2.textContent='…'; }
-    try{ const r=await execDiretiva(_reg.tipo, _reg.arg); IA_CONV.push({role:'assistant', content:r.content||'', html:r.html}); }
+    try{ const r=await execDiretiva(_reg.tipo, _reg.arg, _reg.cor); IA_CONV.push({role:'assistant', content:r.content||'', html:r.html}); }
     catch(e){ IA_CONV.push({role:'assistant', content:'⚠ '+(e.message||e)}); }
     finally{ IA_PENSANDO=false; if(sb2){ sb2.disabled=false; sb2.textContent='➤'; } renderIA(); }
     return;
@@ -3320,7 +3331,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-22b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-22c').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4619,6 +4630,48 @@ async function f3dExecSomar(arg){
     const calc = r.calculados?(' · '+r.calculados+' calculado(s) da geometria (estimativa)'):'';
     return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
+}
+// Round 3: COLORIR um grupo de uma cor (sem esconder o resto).
+function _hex(n){ return '#'+('000000'+((n>>>0).toString(16))).slice(-6); }
+async function f3dExecColorir(arg, cor){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu colorir.' };
+  const [classesRaw, filtroRaw, pavimRaw]=(arg||'').split('|');
+  const classes=(classesRaw||'').split(',').map(c=>c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
+  if(!classes.length) return { msg:'Não entendi o que colorir.' };
+  const termos=(filtroRaw||'').split(',').map(t=>t.trim()).filter(Boolean);
+  const pavim=(pavimRaw||'').trim();
+  const regexes=classes.map(c=>new RegExp('^'+c+'$','i'));
+  const rot=_rotuloClasse(classes[0]);
+  f3dDica('Colorindo…');
+  try{
+    const porMod=await B3.acharElementos(F3D, regexes, termos, pavim);
+    let n=0; for(const ids of Object.values(porMod)) n+=ids.length;
+    if(!n){ f3dDica(''); return { msg:'Não encontrei '+rot+' com esse filtro para colorir.' }; }
+    await B3.colorirGrupo(F3D, porMod, cor||0xE8960A);
+    f3dDica('');
+    return { msg:'✓ Pintei '+n+' '+rot+'. As cores ficam no modelo (o resto continua visível). O botão ↩ no topo limpa.' };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
+}
+// Round 3: COLORIR o modelo inteiro por CATEGORIA IFC, com legenda de cores.
+async function f3dExecColorirTipo(){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu colorir por tipo.' };
+  const cats=[
+    {regex:/^IFCWALL/i,label:'Paredes'},{regex:/^IFCSLAB/i,label:'Lajes'},{regex:/^IFCCOLUMN/i,label:'Pilares'},
+    {regex:/^IFCBEAM/i,label:'Vigas'},{regex:/^IFCDOOR/i,label:'Portas'},{regex:/^IFCWINDOW/i,label:'Janelas'},
+    {regex:/^IFCSTAIR/i,label:'Escadas'},{regex:/^IFCRAILING/i,label:'Guarda-corpos'},{regex:/^IFCROOF/i,label:'Coberturas'},
+    {regex:/^IFCCURTAINWALL/i,label:'Cortinas'},{regex:/^IFCCOVERING/i,label:'Revestimentos'},{regex:/^IFCRAMP/i,label:'Rampas'},
+    {regex:/^IFCFOOTING/i,label:'Fundações'},{regex:/^IFCPILE/i,label:'Estacas'},{regex:/^IFCFURNI/i,label:'Mobiliário'},
+    {regex:/^IFCFLOW/i,label:'Instalações (MEP)'},{regex:/^IFCBUILDINGELEMENTPROXY/i,label:'Genéricos'}
+  ];
+  f3dDica('Colorindo por tipo…');
+  try{
+    const leg=await B3.colorirPorCategoria(F3D, cats);
+    f3dDica('');
+    if(!leg.length) return { msg:'Não encontrei categorias para colorir.' };
+    const itens=leg.map(l=>'<div style="display:flex;align-items:center;gap:7px;padding:2px 0"><span style="width:13px;height:13px;border-radius:3px;background:'+_hex(l.cor)+';display:inline-block;flex:none"></span><span style="flex:1">'+esc(l.label)+'</span><b>'+l.n+'</b></div>').join('');
+    const html='<div style="font-size:12px"><b>Colorido por tipo</b> — '+leg.length+' categorias<div style="margin-top:5px">'+itens+'</div><div style="color:var(--mut);font-size:11px;margin-top:5px">Clique numa peça para inspecionar; ↩ no topo limpa as cores.</div></div>';
+    return { html };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir tipo:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
 }
 // Contagem FILTRADA por nome/código (ex.: "quantos pilares P9").
 async function f3dExecContarFiltro(arg){

@@ -738,6 +738,14 @@ export async function marcarIds(V, porMod){
 //  overflow" do Fragments (config item-a-item em dezenas de milhares de peças).
 export async function destacar(V, modelo, ids){
   const T=V.THREE;
+  // Se o modelo está COLORIDO (por tipo/grupo), clicar mantém as cores e só
+  //  acende a peça clicada em ciano — sem esconder nada nem perder a legenda.
+  if(V._colorido){
+    await _reaplicarCores(V);
+    if(modelo && ids && ids.length){ try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){} }
+    try{ await V.fragments.update(true); }catch(_){}
+    return;
+  }
   // Se há um ISOLAMENTO ativo, clicar NÃO sai dele — só realça a peça clicada
   //  em ciano por cima do conjunto isolado (que segue laranja). Assim dá pra
   //  inspecionar as peças isoladas sem perder o contexto. Voltar = botão/limpar.
@@ -969,40 +977,24 @@ export async function isolarPavimento(V, pavim){
   try{ await V.fragments.update(true); }catch(_){}
   return { n:total };
 }
-export async function destacarCategoria(V, regexes, termos, pavim){
+// FINDER: acha os ids que casam (classe + texto/@fire + pavimento), SEM tocar no
+// visual. Reusado por isolar (destacarCategoria) e por colorir.
+export async function acharElementos(V, regexes, termos, pavim){
   V._cancelar=false;
-  const T=V.THREE; let total=0; const porMod={};
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const pavN = pavim ? _norm(pavim) : '';
-  // ISOLAR: esconde TUDO de uma vez (global, barato — não estoura o motor) e
-  //  depois reexibe só os selecionados. Mesmo padrão do filtro de pavimentos.
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.setVisible(undefined, false); }catch(_){}
-  }
+  const porMod={};
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi];
-    let ids=[];
-    try{ const cats=await x.model.getItemsOfCategories(regexes); ids=Object.values(cats||{}).flat(); }catch(_){}
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
-    // Filtro por texto (ex.: "corta-fogo"): lê os candidatos e mantém só os que
-    // batem em algum termo (no nome/tipo/valores de propriedade).
     if(termosLc.length || pavN){
       const okd=[];
       if(pavN && !termosLc.length){
-        // só pavimento → FAIXA GEOMÉTRICA (rápido: caixas, não Pset por peça).
         const fx=_faixaDe(await _faixasPavimento(V), pavN);
-        if(fx){
-          let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-          ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) okd.push(id); });
-        } else {
-          // lajes não nomearam esse pavimento → cai no Pset (cache)
-          const cache=await _pavimMapModelo(V, x, ids, 'Filtrando');
-          for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); }
-        }
+        if(fx){ let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){} ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) okd.push(id); }); }
+        else { const cache=await _pavimMapModelo(V, x, ids, 'Filtrando'); for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); } }
       } else {
-        // texto = ATRIBUTOS-ONLY (rápido). Pavimento ou @fire (FireRating) vivem
-        // em Pset → aí lê IsDefinedBy em lotes.
         let dados=[]; const precisaPset = pavN || termosLc.includes('@fire');
         if(precisaPset){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
         else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
@@ -1014,19 +1006,61 @@ export async function destacarCategoria(V, regexes, termos, pavim){
       }
       ids=okd;
     }
-    if(!ids.length) continue;
-    total+=ids.length; porMod[mi]=ids;
-    // Reexibe só os selecionados e os pinta de laranja.
+    if(ids.length) porMod[mi]=ids;
+  }
+  return porMod;
+}
+// ISOLA (esconde o resto) e realça de laranja o conjunto que casa.
+export async function destacarCategoria(V, regexes, termos, pavim){
+  const porMod = await acharElementos(V, regexes, termos, pavim);
+  const T=V.THREE; let total=0;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi]; if(!ids||!ids.length) continue; total+=ids.length;
     try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
-  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }         // marca isolamento ativo
-  else { try{ for(const x of V.modelos) await x.model.setVisible(undefined, true); }catch(_){} }  // nada casou → reexibe tudo
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._colorido=false; V._cores=null; }
+  else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined, true); }catch(_){} } }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }
+// ── COLORIR (Round 3): recolore subconjuntos SEM esconder o resto ──────────
+export const PALETA=[0xE8960A,0x22D3EE,0x8B5CF6,0x10B981,0xEF4444,0xF59E0B,0x3B82F6,0xEC4899,0x84CC16,0x14B8A6,0xA855F7,0xF97316,0x0EA5E9,0x64748B];
+async function _reaplicarCores(V){
+  const T=V.THREE;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
+  for(const g of (V._cores||[])){
+    for(const [mi,ids] of Object.entries(g.porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+      try{ await x.model.highlight(ids, { color:new T.Color(g.cor), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+    }
+  }
+}
+// Pinta UM grupo de uma cor (acumula sobre o que já estiver pintado).
+export async function colorirGrupo(V, porMod, cor){
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=true;
+  V._cores = V._cores || [];
+  V._cores.push({ porMod, cor });
+  await _reaplicarCores(V);
+  try{ await V.fragments.update(true); }catch(_){}
+  let n=0; for(const ids of Object.values(porMod||{})) n+=(ids?ids.length:0); return n;
+}
+// Colore o modelo inteiro por CATEGORIA (uma cor por tipo). Retorna a legenda.
+export async function colorirPorCategoria(V, cats){
+  V._isolado=false; V._isoladoPorMod=null; V._cores=[];
+  const legenda=[];
+  for(let i=0;i<cats.length;i++){
+    if(V._cancelar) break;
+    const porMod=await acharElementos(V, [cats[i].regex], [], null);
+    let n=0; for(const ids of Object.values(porMod)) n+=ids.length;
+    if(n>0){ const cor=PALETA[legenda.length%PALETA.length]; V._cores.push({porMod, cor}); legenda.push({label:cats[i].label, cor, n}); }
+  }
+  V._colorido=true;
+  await _reaplicarCores(V);
+  try{ await V.fragments.update(true); }catch(_){}
+  return legenda;
+}
 export async function limparDestaqueCategoria(V){
-  V._isolado=false; V._isoladoPorMod=null;
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
     try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe tudo
