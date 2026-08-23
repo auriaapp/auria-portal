@@ -1197,15 +1197,36 @@ export async function mostrarClashModeloTodo(V, aMi, aId, bMi, bId){
   V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
   try{ await V.fragments.update(true); }catch(_){}
 }
-// Botão de CONTEXTO FANTASMA (🗺️): resto do modelo TRANSLÚCIDO + par OPACO em
-// vermelho/ciano. setOpacity(undefined,…) é global/barato (como setVisible),
-// diferente de passar lista grande (que estourava a memória).
+// Restaura a opacidade do fantasma anterior (só nos ids que mexemos — preciso).
+async function _limparFantasma(V){
+  if(V._fantasmaIds){ for(const [mi,ids] of Object.entries(V._fantasmaIds)){ const x=V.modelos[mi]; if(x&&ids&&ids.length){ try{ await x.model.setOpacity(ids,1); }catch(_){} try{ await x.model.resetOpacity(ids); }catch(_){} } } }
+  V._fantasmaIds=null; V._fantasma=false;
+}
+// Botão de CONTEXTO FANTASMA (🗺️): deixa translúcido só a VIZINHANÇA do clash
+// (conjunto pequeno → setOpacity seguro, sem o estouro do global) e mantém o par
+// OPACO em vermelho/ciano. Como é um zoom local, a vizinhança já basta de contexto.
 export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
   const T=V.THREE;
-  for(const x of V.modelos){
-    try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.setVisible(undefined,true); }catch(_){}
-    try{ await x.model.setOpacity(undefined, 0.12); }catch(_){}     // tudo translúcido
+  await _limparFantasma(V);
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
+  // caixa do par + margem de 6 m → região de contexto
+  const cx=new T.Box3();
+  const addB=async (mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) cx.union(new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z))); }catch(_){} };
+  await addB(aMi,aId); await addB(bMi,bId);
+  if(!cx.isEmpty()){
+    const reg=cx.clone().expandByScalar(6);
+    const fant={};
+    for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+      let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
+      if(!ids.length) continue;
+      let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+      const near=[]; ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return;
+        if(b.min.x<reg.max.x&&b.max.x>reg.min.x&&b.min.y<reg.max.y&&b.max.y>reg.min.y&&b.min.z<reg.max.z&&b.max.z>reg.min.z
+           && !(mi===aMi&&id===aId) && !(mi===bMi&&id===bId)) near.push(id);
+      });
+      if(near.length){ fant[mi]=near; try{ await x.model.setOpacity(near, 0.12); }catch(_){} }
+    }
+    V._fantasmaIds=fant;
   }
   // par: opaco + cor
   try{ await V.modelos[aMi].model.setOpacity([aId],1); await V.modelos[aMi].model.highlight([aId],{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){}
@@ -1216,7 +1237,7 @@ export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
   const T=V.THREE;
-  if(V._fantasma){ for(const x of V.modelos){ try{ await x.model.resetOpacity(undefined); }catch(_){} } V._fantasma=false; }
+  if(V._fantasma) await _limparFantasma(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
   for(const [mi,ids] of Object.entries(porModA||{})){ const x=V.modelos[mi]; if(!x||!ids.length) continue; try{ await x.model.setVisible(ids,true); }catch(_){} try{ await x.model.highlight(ids,{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
   for(const [mi,ids] of Object.entries(porModB||{})){ const x=V.modelos[mi]; if(!x||!ids.length) continue; try{ await x.model.setVisible(ids,true); }catch(_){} try{ await x.model.highlight(ids,{color:new T.Color(0x22D3EE),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
@@ -1226,10 +1247,10 @@ export async function mostrarClash(V, porModA, porModB){
   await enquadrarIds(V, uni);   // zoom-extend nos conflitos
 }
 export async function limparDestaqueCategoria(V){
-  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null; V._fantasma=false;
+  await _limparFantasma(V);
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.resetOpacity(undefined); }catch(_){}       // tira o fantasma
     try{ await x.model.setVisible(undefined, true); }catch(_){}   // reexibe tudo
   }
   try{ await V.fragments.update(true); }catch(_){}
