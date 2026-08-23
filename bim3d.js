@@ -1328,6 +1328,7 @@ export async function verificarPeDireito(V, opts){
   let altMax=(opts&&opts.altMax!=null)?+opts.altMax:2.30;
   if(altMin>altMax){ const t=altMin; altMin=altMax; altMax=t; }   // tolera inverter
   const modelIdx=(opts&&opts.modelIdx)||null;   // índices de V.modelos a varrer; null = todos
+  const pav=(opts&&opts.pav)||null;             // nome do pavimento; null = todos
   const faixas=await _faixasPavimento(V);
   if(!faixas.length) return { erroFaixas:true, achados:[], total:0 };
   const achados=[];
@@ -1345,6 +1346,7 @@ export async function verificarPeDireito(V, opts){
         lote.forEach((id,i)=>{
           const b=(boxes||[])[i]; if(!b||!isFinite(b.min.y)) return;
           const cy=(b.min.y+b.max.y)/2; const fx=_faixaNoY(faixas,cy); if(!fx) return;
+          if(pav && fx.nome!==pav) return;   // varredura só do pavimento escolhido
           const clear=b.min.y-fx.y;   // fundo do elemento − topo da laje (piso do nível)
           if(clear>=altMin && clear<altMax){
             achados.push({ mi, id, cat:catU, catLbl:PD_ROT[catU]||catU, disc,
@@ -1408,6 +1410,8 @@ export async function mostrarPeDireito(V, achados){
   if(Object.keys(porMod).length) await enquadrarIds(V, porMod);
 }
 export async function zoomPeDireito(V, mi, id){ try{ await enquadrarIds(V, {[mi]:[id]}); }catch(_){} }
+// Lista de pavimentos (nome + altura), p/ o seletor da varredura por andar.
+export async function listaPavimentos(V){ const f=await _faixasPavimento(V); return (f||[]).map(x=>({ nome:x.nome, y:x.y })); }
 
 // ── CONTAR / AGRUPAR por propriedade (Nível 3 da IA) ───────────────────────
 //  Sem `termoProp`: conta o total da(s) categoria(s) (rápido, só a lista de ids).
