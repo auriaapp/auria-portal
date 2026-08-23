@@ -1010,6 +1010,8 @@ export async function acharElementos(V, regexes, termos, pavim){
   }
   return porMod;
 }
+// Busca em TODAS as categorias visíveis (p/ "colorir o modelo" / "elementos de vidro").
+export async function acharTudo(V, termos, pavim){ return acharElementos(V, CAT_VISIVEIS, termos, pavim); }
 // ISOLA (esconde o resto) e realça de laranja o conjunto que casa.
 export async function destacarCategoria(V, regexes, termos, pavim){
   const porMod = await acharElementos(V, regexes, termos, pavim);

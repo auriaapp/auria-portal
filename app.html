@@ -2900,10 +2900,17 @@ function f3dRegras(q){
   const s=(q||'').toLowerCase().trim(); if(!s) return null;
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
-  if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
+  if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque|limpar (as )?cores|tirar (as )?cores|retornar( [àa]s)? cores|cores originais|remover (as )?cores|sem cores|modelo normal|resetar (as )?cores/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
   if(/^diag\b.*(pavim|faixa|n[íi]vel|andar)/.test(s)) return {tipo:'diagpav'};   // dump das faixas de pavimento
-  // "colorir por tipo/classificação/disciplina" (sem classe específica) → legenda de cores
-  if(/\b(colorir|pintar|colora)/.test(s) && /(por (tipo|categoria|classifica|disciplina)|classifica[çc]|colorir o modelo|modelo (todo|inteiro))/.test(s)) return {tipo:'colorirtipo'};
+  // cor pedida ("… de vermelho") — pode vir SEM classe ("colorir o modelo de branco")
+  const CORES={vermelho:0xEF4444,vermelha:0xEF4444,azul:0x3B82F6,verde:0x10B981,amarelo:0xF59E0B,amarela:0xF59E0B,laranja:0xF97316,roxo:0x8B5CF6,roxa:0x8B5CF6,rosa:0xEC4899,ciano:0x22D3EE,cinza:0x64748B,branco:0xE5E7EB,branca:0xE5E7EB,preto:0x111827,preta:0x111827,marrom:0x92400E,dourado:0xD4AF37,dourada:0xD4AF37,magenta:0xEC4899};
+  const corM = s.match(/\b(vermelh[oa]|azul|verde|amarel[oa]|laranja|rox[oa]|rosa|ciano|cinza|branc[oa]|pret[oa]|marrom|dourad[oa]|magenta)\b/);
+  const cor = corM ? CORES[corM[1]] : null;
+  const querColor = /\b(colorir|pintar|colora)/.test(s);
+  // colorir o MODELO INTEIRO de uma cor só
+  if(querColor && cor && /\b(modelo|tudo|todo|toda|geral|inteir)/.test(s)) return {tipo:'colorirtudo', cor};
+  // colorir POR TIPO/classificação (legenda de cores) — sem cor específica
+  if(querColor && /(por (tipo|categoria|classifica|disciplina)|classifica[çc]|colorir (o )?modelo|colorir tudo|modelo (todo|inteiro))/.test(s)) return {tipo:'colorirtipo'};
   // Classe: 1º regex exato (com fronteira de palavra — senão "de-STACA-r" casava
   //  "estaca"); se falhar, aproximação tolerante a typos.
   const CLS=[[/\b(pilar|pilares|coluna|colunas)\b/,'IFCCOLUMN',['pilar','pilares','coluna','colunas']],
@@ -2926,6 +2933,16 @@ function f3dRegras(q){
     let pav0 = pm0 ? pm0[1] : (/\bt[ée]rreo\b/.test(s) ? 'terreo' : null);
     if(!pav0){ const m=s.match(/\b(subsolo\s*\d*|cobertura|mezanino|[áa]tico|pilotis|garagem|lazer)\b/); if(m) pav0=m[1].replace(/\s+/g,''); }
     if(pav0 && (/(destac|mostr|isol|selecion|exib|ver\b)/.test(s) || /pavimento|andar|piso|n[íi]vel/.test(s))) return {tipo:'isolarpav', arg:pav0};
+    // "colorir elementos de vidro de branco" (material, sem citar a classe) →
+    //  colore em TODAS as categorias filtrando pelo material.
+    if(querColor && cor){
+      const MAT2={madeira:'mad',aluminio:'alu',vidro:'vid',ferro:'fer',metal:'met',aco:'aco',veneziana:'ven',alvenaria:'alv',concreto:'conc',pvc:'pvc',gesso:'ges',acm:'acm'};
+      const STOP2=['colorir','pintar','colora','elementos','elemento','pecas','peca','de','do','da','dos','das','os','as','todos','todas','todo','toda','o','a','em','no','na','modelo','tudo','cor','com','pelo','pela'];
+      const corW2 = corM ? corM[1] : '';
+      const filt=[];
+      for(const t of tok){ if(STOP2.includes(t) || t===corW2 || CORES[t]) continue; if(MAT2[t]) filt.push(MAT2[t]); else if(t.length>=3) filt.push(t); }
+      if(filt.length) return {tipo:'colorirtudo', arg: filt.join(','), cor};
+    }
     return null;                                 // sem classe nem pavimento → deixa a IA
   }
   const propVal = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico|m³|m3)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|metro linear)/.test(s)?'length':null));
@@ -2937,10 +2954,6 @@ function f3dRegras(q){
   const querDestaca= /(destac|mostr|onde (est|fic)|ache|acha|encontr|isol|localiz|exib|selecion|pint|color)/.test(s);
   const medM = s.match(/de\s+([\d.,]+)\s*(cm|mm|m)\b/);
   const querTabela = /(tabela|planilha|quadro)/.test(s);
-  // cor pedida ("pintar … de vermelho") → hex
-  const CORES={vermelho:0xEF4444,vermelha:0xEF4444,azul:0x3B82F6,verde:0x10B981,amarelo:0xF59E0B,amarela:0xF59E0B,laranja:0xF97316,roxo:0x8B5CF6,roxa:0x8B5CF6,rosa:0xEC4899,ciano:0x22D3EE,cinza:0x64748B,branco:0xE5E7EB,branca:0xE5E7EB,preto:0x111827,preta:0x111827,marrom:0x92400E,dourado:0xD4AF37,dourada:0xD4AF37,magenta:0xEC4899};
-  const corM = s.match(/\b(vermelh[oa]|azul|verde|amarel[oa]|laranja|rox[oa]|rosa|ciano|cinza|branc[oa]|pret[oa]|marrom|dourad[oa]|magenta)\b/);
-  const cor = corM ? CORES[corM[1]] : null;
   if(/^diag\b.*(tipo|fam[íi]lia|familia)/.test(s)) return {tipo:'diagtipos', arg: cls};   // lista as famílias
   if(/^diag\b|diagn[óo]stic/.test(s)) return {tipo:'diag', arg: cls};   // dump de propriedades (debug)
   // código de peça (P9, V1, VE3, L1A, C50…) → filtro EXATO pelo Name ("=") → V1 ≠ V10
@@ -3027,6 +3040,7 @@ async function execDiretiva(tipo, arg, cor){
   f3dProcessando(true);
   try{
     if(tipo==='colorir'){ const r=await f3dExecColorir(arg, cor); out={content:r.msg}; }
+    else if(tipo==='colorirtudo'){ const r=await f3dExecColorirTudo(arg, cor); out={content:r.msg}; }
     else if(tipo==='colorirtipo'){ const r=await f3dExecColorirTipo(); out={content:r.msg||'', html:r.html}; }
     else if(tipo==='isolarpav'){
       if(!F3D||!B3) out={content:'Abra o modelo 3D primeiro.'};
@@ -3331,7 +3345,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-22c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4651,6 +4665,20 @@ async function f3dExecColorir(arg, cor){
     f3dDica('');
     return { msg:'✓ Pintei '+n+' '+rot+'. As cores ficam no modelo (o resto continua visível). O botão ↩ no topo limpa.' };
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
+}
+// Round 3: COLORIR o modelo inteiro (ou tudo que casa um material) de UMA cor.
+async function f3dExecColorirTudo(arg, cor){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D para eu colorir.' };
+  const termos=(arg||'').split(',').map(t=>t.trim()).filter(Boolean);
+  f3dDica('Colorindo…');
+  try{
+    const porMod=await B3.acharTudo(F3D, termos, '');
+    let n=0; for(const ids of Object.values(porMod)) n+=ids.length;
+    if(!n){ f3dDica(''); return { msg: termos.length ? ('Não encontrei elementos com "'+termos.join(', ')+'" para colorir.') : 'Não encontrei elementos para colorir.' }; }
+    await B3.colorirGrupo(F3D, porMod, cor||0xE5E7EB);
+    f3dDica('');
+    return { msg:'✓ Pintei '+n+' elemento(s)'+(termos.length?(' ('+termos.join(', ')+')'):' do modelo')+'. O botão ↩ no topo limpa as cores.' };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir tudo:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
 }
 // Round 3: COLORIR o modelo inteiro por CATEGORIA IFC, com legenda de cores.
 async function f3dExecColorirTipo(){
