@@ -957,6 +957,8 @@ async function _faixasPavimento(V){
   return faixas;
 }
 function _faixaDe(faixas, pavN){ const f=(faixas||[]).find(f=> _batePavim(f.nome, pavN)); return f?{y0:f.y0,y1:f.y1}:null; }
+function _faixaNoY(faixas, y){ for(const f of (faixas||[])){ if(y>=f.y0 && y<f.y1) return f; } return null; }
+function _nomePav(nome){ return String(nome||'').replace(/_\(.*/,'').replace(/_/g,' ').trim().toUpperCase(); }
 // DIAGNÓSTICO: lista as FAMÍLIAS/tipos de uma classe (nome antes do ":") com
 // contagem — p/ achar o código do corta-fogo (PCF/CF…) sem adivinhar.
 export async function diagTipos(V, regexes){
@@ -1166,7 +1168,8 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       if(inter(it.b, jb.b)){ nPares++;
         const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
         const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
-        if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id });
+        if(pares.length<CAP){ const cy=(Math.max(it.b.min.y,jb.b.min.y)+Math.min(it.b.max.y,jb.b.max.y))/2;
+          pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id, y:cy }); }
       }
     }
     if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
@@ -1183,7 +1186,33 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       nomeMap[mi+':'+lid]=String(nm).split(':')[0]; });
   }
   pares.forEach(p=>{ p.aNome=nomeMap[p.aMi+':'+p.aId]||('#'+p.aId); p.bNome=nomeMap[p.bMi+':'+p.bId]||('#'+p.bId); });
+  // pavimento de cada conflito (geométrico, pela altura do encontro)
+  try{ const faixas=await _faixasPavimento(V); pares.forEach(p=>{ const f=_faixaNoY(faixas, p.y); p.pav=f?_nomePav(f.nome):''; }); }catch(_){}
   return { nPares, nA:vA.size, nB:vB.size, porModA, porModB, pares };
+}
+// Mostra UM conflito no CONTEXTO do seu pavimento: isola o andar (referência),
+// acende o par (A vermelho, B ciano) e dá zoom nele. Assim dá pra LOCALIZAR.
+export async function mostrarClashLocal(V, aMi, aId, bMi, bId, pavName){
+  const T=V.THREE;
+  let fx=null; try{ if(pavName) fx=_faixaDe(await _faixasPavimento(V), _norm(pavName)); }catch(_){}
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  if(fx){
+    for(const x of V.modelos){ try{ await x.model.setVisible(undefined,false); }catch(_){} }
+    for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+      let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
+      if(!ids.length) continue;
+      let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+      const keep=[]; ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) keep.push(id); });
+      if(keep.length) try{ await x.model.setVisible(keep,true); }catch(_){}
+    }
+  } else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }  // sem faixa → modelo todo
+  // acende o par e garante que aparece (o tubo pode nascer noutro andar)
+  try{ await V.modelos[aMi].model.setVisible([aId],true); await V.modelos[aMi].model.highlight([aId],{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){}
+  try{ await V.modelos[bMi].model.setVisible([bId],true); await V.modelos[bMi].model.highlight([bId],{color:new T.Color(0x22D3EE),renderedFaces:1,opacity:1,transparent:false}); }catch(_){}
+  const par={}; (par[aMi]=par[aMi]||[]).push(aId); (par[bMi]=par[bMi]||[]).push(bId);
+  V._isolado=true; V._isoladoPorMod=par; V._ultimaSelecao=par; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+  await enquadrarIds(V, par);   // zoom no par
 }
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
