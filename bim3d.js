@@ -1234,6 +1234,14 @@ export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
   V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null; V._fantasma=true;
   try{ await V.fragments.update(true); }catch(_){}
 }
+// Ponto (centro) de um conflito, em coordenadas de mundo — p/ ancorar o pino do apontamento.
+export async function pontoClash(V, aMi, aId, bMi, bId){
+  const T=V.THREE; const cx=new T.Box3();
+  const add=async(mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) cx.union(new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z))); }catch(_){} };
+  await add(aMi,aId); await add(bMi,bId);
+  if(cx.isEmpty()) return null;
+  const c=cx.getCenter(new T.Vector3()); return { x:c.x, y:c.y, z:c.z };
+}
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
   const T=V.THREE;

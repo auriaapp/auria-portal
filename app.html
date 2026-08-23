@@ -3398,7 +3398,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23j').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23k').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4952,6 +4952,34 @@ async function f3dClashContexto(ev, i){
   f3dBotaoVoltar(true);
   document.querySelectorAll('#clashLista .clash-row').forEach((el,j)=> el.classList.toggle('ativo', j===i));
 }
+// Botão ➕ = vira APONTAMENTO (pino 3D no ponto do conflito, reusa o editor do App).
+async function f3dClashApontar(ev, i){
+  if(ev){ ev.stopPropagation(); }
+  const p=CLASH_PARES[i]; if(!p||!F3D||!B3) return;
+  const m=F3D.modelos[p.aMi]; if(!m){ return; }
+  const c=await B3.pontoClash(F3D, p.aMi, p.aId, p.bMi, p.bId); if(!c) return;
+  try{ await B3.mostrarClash(F3D, {[p.aMi]:[p.aId]}, {[p.bMi]:[p.bId]}); }catch(_){}   // print nasce com o conflito
+  f3dBotaoVoltar(true);
+  const pt={ k3d:1, x:c.x, y:c.y, z:c.z, cde_arquivo_id:m.arquivoId, cde_doc:m.documentoId, cde_rev:m.revisaoId, localId:p.aId, mdisc:m.disciplina||m.nome||'' };
+  f3dNovoApontamento(pt, m);
+  APT_EDIT.titulo='Conflito: '+p.aNome+' × '+p.bNome;
+  APT_EDIT.descricao='Interferência entre "'+p.aNome+'" e "'+p.bNome+'" (verificação de conflitos — caixa envolvente).';
+  const t=$('apTitulo'); if(t) t.value=APT_EDIT.titulo;
+  const d=$('apDesc'); if(d) d.value=APT_EDIT.descricao;
+}
+// Exporta a lista de conflitos como CSV (abre no Excel).
+function f3dClashExportar(){
+  if(!CLASH_PARES.length) return;
+  const A=(typeof CLASH_SEL!=='undefined')?CLASH_SEL.A.map(i=>CLASH_PRES[i].lbl).join('+'):'';
+  const B=(typeof CLASH_SEL!=='undefined')?CLASH_SEL.B.map(i=>CLASH_PRES[i].lbl).join('+'):'';
+  const rows=[['#','Grupo A ('+A+')','Grupo B ('+B+')']];
+  CLASH_PARES.forEach((p,i)=> rows.push([i+1, p.aNome, p.bNome]));
+  const csv=rows.map(r=> r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const blob=new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download='conflitos_'+(A||'A')+'_x_'+(B||'B')+'.csv'; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 600);
+}
 function f3dClashToggle(){
   const el=$('clashBox'); if(!el) return;
   const abrir = el.style.display==='none' || !el.style.display;
@@ -4998,11 +5026,12 @@ async function f3dClashVerificar(){
     await B3.mostrarClash(F3D, r.porModA, r.porModB);
     f3dBotaoVoltar(true);
     CLASH_PARES = r.pares||[];
-    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashContexto(event,'+i+')" title="Ver o modelo ao redor (contexto)" style="float:right;cursor:pointer;padding:0 2px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span></div>').join('');
+    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashApontar(event,'+i+')" title="Virar apontamento (pino 3D)" style="float:right;cursor:pointer;padding:0 3px">➕</span><span onclick="f3dClashContexto(event,'+i+')" title="Ver o entorno translúcido (contexto)" style="float:right;cursor:pointer;padding:0 3px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span></div>').join('');
     const cap = r.nPares>CLASH_PARES.length ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os primeiros '+CLASH_PARES.length+' de '+r.nPares+'.</div>') : '';
+    const btnExp = '<button onclick="f3dClashExportar()" class="btn" style="width:100%;font-size:11px;margin-top:7px;background:#334155;border-color:#475569">📥 Exportar lista (CSV)</button>';
     $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.'
       +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>Candidatos por caixa envolvente — clique num item para dar zoom; ↩ no topo volta.</i></div>'
-      +'<div id="clashLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+'</div>';
+      +'<div id="clashLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+btnExp+'</div>';
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('clashRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('clash:',e); $('clashRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
   finally{ f3dProcessando(false); f3dDica(''); }
 }
