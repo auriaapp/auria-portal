@@ -500,16 +500,23 @@ function laco(V){
     // Se a sombra está ligada, o composer renderiza (RenderPass + SAO + Output);
     // senão o render direto do renderer é mais barato por quadro.
     //
-    // resetState() antes do composer: o SAO faz várias passadas por quadro com
-    // programas/framebuffers próprios. Se QUALQUER render "direto" tiver rodado
-    // no meio (transição do load, print do apontamento, toggle da sombra), o
-    // estado do WebGL fica num programa que o composer não espera e todo frame
-    // dispara "location is not from the associated program" — o contexto só
-    // sara com reload. Limpar o estado a cada quadro do composer força o three
-    // a religar programa/uniforms do zero. Custo desprezível perto das passadas
-    // do próprio SAO; e blinda contra qualquer render fora do laço.
-    if(V.ao && V.composer){ V.renderer.resetState?.(); V.composer.render(); }
-    else                    V.renderer.render(V.scene, V.camera);
+    // resetState() SÓ NA TRANSIÇÃO: o problema é ALTERNAR render direto com o
+    // composer no mesmo contexto — o direto deixa o estado do WebGL num programa
+    // que o composer não espera e todo frame passa a dar "location is not from
+    // the associated program" (contexto só sara com reload). Limpar o estado
+    // religa programa/uniforms do zero. MAS chamar isso TODO quadro re-sobe os
+    // programas de todos os modelos federados → frames de 300ms+, tela preta.
+    // Então só reseta quando o modo muda (direto→composer) ou após um render
+    // fora do laço (print marca V._forcaReset). Em regime estável (sempre
+    // composer) não reseta = rápido.
+    const usaComp = !!(V.ao && V.composer);
+    if(usaComp){
+      if(V._ultModoComp !== true || V._forcaReset){ V.renderer.resetState?.(); V._forcaReset=false; }
+      V.composer.render();
+    } else {
+      V.renderer.render(V.scene, V.camera);
+    }
+    V._ultModoComp = usaComp;
     atualizarCotas(V);
     if(V.on.pinos) V.on.pinos(V);
   };
