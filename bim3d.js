@@ -475,16 +475,22 @@ export function aplicarFaces(V, forcar){
   V._ultFaces=agora;
   const lado = (V.facesDuplas!==false) ? V.THREE.DoubleSide : V.THREE.FrontSide;
   const vistos=new Set();
+  let mudou=false;
   V.modelos.forEach(x=>{ try{
     x.model.object.traverse(o=>{
       const m=o.material; if(!m) return;
       (Array.isArray(m)?m:[m]).forEach(mm=>{
         if(!mm||vistos.has(mm.uuid)) return;
         vistos.add(mm.uuid);
-        if(mm.side!==lado){ mm.side=lado; mm.needsUpdate=true; }
+        if(mm.side!==lado){ mm.side=lado; mm.needsUpdate=true; mudou=true; }
       });
     });
   }catch(_){} });
+  // needsUpdate = o three vai RECOMPILAR o material neste quadro. É justamente
+  // isso que corrompe o composer (SAO) → uniform vai pro programa errado. Marca
+  // pro laço dar UM resetState neste quadro. Só nos quadros com tile novo (raro
+  // depois que assenta), não a cada frame — mantém rápido e sem o INVALID_OPERATION.
+  if(mudou) V._forcaReset=true;
 }
 
 function laco(V){
