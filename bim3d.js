@@ -972,7 +972,7 @@ export async function isolarPavimento(V, pavim){
   }
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
   for(const [mi,keep] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(keep,true); }catch(_){} }
-  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; }
   else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }
   try{ await V.fragments.update(true); }catch(_){}
   return { n:total };
@@ -1021,7 +1021,7 @@ export async function destacarCategoria(V, regexes, termos, pavim){
     try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
-  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._colorido=false; V._cores=null; }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
   else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined, true); }catch(_){} } }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
@@ -1045,6 +1045,13 @@ export async function colorirGrupo(V, porMod, cor){
   await _reaplicarCores(V);
   try{ await V.fragments.update(true); }catch(_){}
   let n=0; for(const ids of Object.values(porMod||{})) n+=(ids?ids.length:0); return n;
+}
+// Colore a ÚLTIMA SELEÇÃO (o que foi isolado/achado por último) de uma cor, e
+// volta a mostrar o modelo inteiro. "selecionar X → colorir seleção de azul".
+export async function colorirSelecao(V, cor){
+  if(!V._ultimaSelecao) return { n:0, semSel:true };
+  const n=await colorirGrupo(V, V._ultimaSelecao, cor);
+  return { n };
 }
 // Colore o modelo inteiro por CATEGORIA (uma cor por tipo). Retorna a legenda.
 export async function colorirPorCategoria(V, cats){
@@ -1307,7 +1314,7 @@ export async function destacarIds(V, porMod){
     try{ await x.model.setVisible(ids, true); }catch(_){}
     try{ await x.model.highlight(ids, { color:new V.THREE.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
-  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; }
   try{ await V.fragments.update(true); }catch(_){}
   return total;
 }

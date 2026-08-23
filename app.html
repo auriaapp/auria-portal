@@ -2907,6 +2907,8 @@ function f3dRegras(q){
   const corM = s.match(/\b(vermelh[oa]|azul|verde|amarel[oa]|laranja|rox[oa]|rosa|ciano|cinza|branc[oa]|pret[oa]|marrom|dourad[oa]|magenta)\b/);
   const cor = corM ? CORES[corM[1]] : null;
   const querColor = /\b(colorir|pintar|colora)/.test(s);
+  // colorir a ÚLTIMA SELEÇÃO ("selecionar X … depois: colorir seleção de azul")
+  if(querColor && /(sele[çc][ãa]o|selecionad|selecao|os selecionados|as selecionadas)/.test(s)) return {tipo:'colorirsel', cor: cor||0xE8960A};
   // colorir o MODELO INTEIRO de uma cor só
   if(querColor && cor && /\b(modelo|tudo|todo|toda|geral|inteir)/.test(s)) return {tipo:'colorirtudo', cor};
   // colorir POR TIPO/classificação (legenda de cores) — sem cor específica
@@ -3040,6 +3042,7 @@ async function execDiretiva(tipo, arg, cor){
   f3dProcessando(true);
   try{
     if(tipo==='colorir'){ const r=await f3dExecColorir(arg, cor); out={content:r.msg}; }
+    else if(tipo==='colorirsel'){ const r=await f3dExecColorirSel(cor); out={content:r.msg}; }
     else if(tipo==='colorirtudo'){ const r=await f3dExecColorirTudo(arg, cor); out={content:r.msg}; }
     else if(tipo==='colorirtipo'){ const r=await f3dExecColorirTipo(); out={content:r.msg||'', html:r.html}; }
     else if(tipo==='isolarpav'){
@@ -3345,7 +3348,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4665,6 +4668,18 @@ async function f3dExecColorir(arg, cor){
     f3dDica('');
     return { msg:'✓ Pintei '+n+' '+rot+'. As cores ficam no modelo (o resto continua visível). O botão ↩ no topo limpa.' };
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
+}
+// Round 3: COLORIR a última seleção (isolada/achada) e voltar o modelo completo.
+async function f3dExecColorirSel(cor){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D primeiro.' };
+  f3dDica('Colorindo seleção…');
+  try{
+    const r=await B3.colorirSelecao(F3D, cor||0xE8960A);
+    f3dDica('');
+    if(r.semSel) return { msg:'Você ainda não selecionou nada. Peça algo como "selecionar portas corta-fogo" e depois "colorir seleção de azul".' };
+    if(!r.n) return { msg:'A seleção está vazia.' };
+    return { msg:'✓ Pintei a seleção ('+r.n+' elemento(s)) e voltei o modelo completo. O botão ↩ no topo limpa as cores.' };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir seleção:', e); return { msg:'Não consegui colorir a seleção: '+(e.message||e) }; }
 }
 // Round 3: COLORIR o modelo inteiro (ou tudo que casa um material) de UMA cor.
 async function f3dExecColorirTudo(arg, cor){
