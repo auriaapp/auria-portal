@@ -1320,9 +1320,14 @@ const PD_ROT = { IFCBEAM:'Viga', IFCSLAB:'Laje', IFCCOVERING:'Forro', IFCDUCTSEG
   IFCAIRTERMINAL:'Difusor', IFCMEMBER:'Elemento' };
 export async function verificarPeDireito(V, opts){
   V._cancelar=false;
-  const alturaMin=(opts&&+opts.alturaMin)||2.30;
+  // INTERVALO de altura livre [altMin, altMax): foca o pé-direito quase-no-limite
+  // (2,00–2,30) e não afoga o analista com tubo/encaminhamento rente ao chão
+  // (0,9 m), que também importa mas é outra fatia. O piso do intervalo substitui
+  // o antigo corte fixo.
+  let altMin=(opts&&opts.altMin!=null)?+opts.altMin:2.00;
+  let altMax=(opts&&opts.altMax!=null)?+opts.altMax:2.30;
+  if(altMin>altMax){ const t=altMin; altMin=altMax; altMax=t; }   // tolera inverter
   const modelIdx=(opts&&opts.modelIdx)||null;   // índices de V.modelos a varrer; null = todos
-  const PISO_IGN=0.9;   // abaixo disso do piso não é pé-direito (tubo/equip. rente ao chão)
   const faixas=await _faixasPavimento(V);
   if(!faixas.length) return { erroFaixas:true, achados:[], total:0 };
   const achados=[];
@@ -1341,7 +1346,7 @@ export async function verificarPeDireito(V, opts){
           const b=(boxes||[])[i]; if(!b||!isFinite(b.min.y)) return;
           const cy=(b.min.y+b.max.y)/2; const fx=_faixaNoY(faixas,cy); if(!fx) return;
           const clear=b.min.y-fx.y;   // fundo do elemento − topo da laje (piso do nível)
-          if(clear>=PISO_IGN && clear<alturaMin){
+          if(clear>=altMin && clear<altMax){
             achados.push({ mi, id, cat:catU, catLbl:PD_ROT[catU]||catU, disc,
               clear, piso:fx.y, botY:b.min.y, x:(b.min.x+b.max.x)/2, z:(b.min.z+b.max.z)/2, pav:fx.nome||'' });
           }
@@ -1362,7 +1367,7 @@ export async function verificarPeDireito(V, opts){
       nm[lid]=String((d.Name&&d.Name.value)||(d.ObjectType&&d.ObjectType.value)||('#'+lid)).split(':')[0]; });
     lista.forEach(a=>{ if(a.mi==mi) a.nome=nm[a.id]||('#'+a.id); });
   }
-  return { achados:lista, total:achados.length, cortou, alturaMin };
+  return { achados:lista, total:achados.length, cortou, altMin, altMax };
 }
 // Cota VERTICAL (90°) gerada por código: linha yA→yB no (x,z), rótulo com o texto.
 // Vira uma "medida" normal (some/reaparece na tela junto com as outras); marcada

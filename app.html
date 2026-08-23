@@ -751,8 +751,10 @@
               <div style="font-size:11px;color:#94a3b8;margin-bottom:7px">Marque as disciplinas a verificar e a altura mínima. O sistema acha os trechos abaixo dela e cota cada um.</div>
               <div style="font-size:11px;color:#cbd5e1;font-weight:600;margin-bottom:4px">Disciplinas</div>
               <div id="pdDiscs" style="display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:10px"></div>
-              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin:0 0 8px">Altura mínima (m)
-                <input type="number" id="pdAltura" value="2.30" step="0.05" min="0" style="width:70px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px"></label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin:0 0 8px;flex-wrap:wrap">Altura livre entre
+                <input type="number" id="pdMin" value="2.00" step="0.05" min="0" style="width:64px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px"> e
+                <input type="number" id="pdMax" value="2.30" step="0.05" min="0" style="width:64px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px"> m
+                <span style="color:#64748b;font-size:10px;flex-basis:100%">Ex.: 2,00–2,30 pega o que está quase no limite. Alargue p/ ver encaminhamentos mais baixos.</span></label>
               <button class="btn" onclick="f3dPdVerificar()" style="width:100%;font-size:12px;margin:2px 0;background:#0891b2;border-color:#0891b2">Verificar pé-direito</button>
               <div id="pdRes" style="font-size:12px;margin-top:6px"></div>
             </div>
@@ -3418,7 +3420,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23r').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23s').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5093,15 +5095,17 @@ async function f3dPdVerificar(){
   if(!F3D||!B3){ $('pdRes').innerHTML='<span style="color:#f59e0b">Abra o modelo 3D.</span>'; return; }
   const marc=[...document.querySelectorAll('#pdDiscs .pdDisc:checked')].map(c=>c.value);
   if(!marc.length){ $('pdRes').innerHTML='<span style="color:#f59e0b">Marque ao menos uma disciplina.</span>'; return; }
-  const alt=parseFloat($('pdAltura').value)||2.30;
+  let aMin=parseFloat($('pdMin').value), aMax=parseFloat($('pdMax').value);
+  if(isNaN(aMin)) aMin=2.00; if(isNaN(aMax)) aMax=2.30; if(aMin>aMax){ const t=aMin; aMin=aMax; aMax=t; }
   const modelIdx=[]; F3D.modelos.forEach((m,i)=>{ if(marc.includes(m.disciplina||m.nome||'—')) modelIdx.push(i); });
   $('pdRes').innerHTML='<span style="color:#94a3b8">Verificando pé-direito…</span>';
   f3dProcessando(true);
   try{
-    const r=await B3.verificarPeDireito(F3D, { alturaMin:alt, modelIdx });
+    const r=await B3.verificarPeDireito(F3D, { altMin:aMin, altMax:aMax, modelIdx });
     if(r.erroFaixas){ $('pdRes').innerHTML='<span style="color:#f59e0b">Não identifiquei os pavimentos (as lajes não trazem nível). Federe a Arquitetura/Estrutura.</span>'; return; }
     PD_ACHADOS = r.achados||[];
-    if(!PD_ACHADOS.length){ $('pdRes').innerHTML='<span style="color:#10b981">✓ Nenhum trecho abaixo de '+fmtM(alt)+'.</span>'; return; }
+    const faixaTxt = fmtM(aMin)+' e '+fmtM(aMax);
+    if(!PD_ACHADOS.length){ $('pdRes').innerHTML='<span style="color:#10b981">✓ Nenhum trecho com altura livre entre '+faixaTxt+'.</span>'; return; }
     await B3.mostrarPeDireito(F3D, PD_ACHADOS);
     f3dBotaoVoltar(true);
     const linhas = PD_ACHADOS.map((a,i)=>
@@ -5114,7 +5118,7 @@ async function f3dPdVerificar(){
     const cap = r.cortou ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os '+PD_ACHADOS.length+' menores de '+r.total+'.</div>') : '';
     const btnExp='<button onclick="f3dPdExportar()" class="btn" style="width:100%;font-size:11px;margin-top:7px;background:#334155;border-color:#475569">📥 Exportar (CSV)</button>';
     const btnLimpar='<button onclick="f3dPdLimpar()" class="btn" style="width:100%;font-size:11px;margin-top:5px;background:#334155;border-color:#475569">Limpar marcações e cotas</button>';
-    $('pdRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.total+' trecho(s)</b> abaixo de '+fmtM(alt)+'.'
+    $('pdRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.total+' trecho(s)</b> com altura livre entre '+faixaTxt+'.'
       +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>Medido do topo da laje estrutural (sem contrapiso/revestimento). Clique num item para dar zoom.</i></div>'
       +'<div id="pdLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+btnExp+btnLimpar+'</div>';
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('pdRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('pé-direito:',e); $('pdRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
