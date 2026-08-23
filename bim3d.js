@@ -1156,6 +1156,7 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
     && (Math.min(a.max.y,b.max.y)-Math.max(a.min.y,b.min.y))>tol
     && (Math.min(a.max.z,b.max.z)-Math.max(a.min.z,b.min.z))>tol; };
   const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0;
+  const pares=[]; const CAP=400;   // lista individual (limitada p/ não travar a UI)
   for(let ai=0; ai<A.length; ai++){
     if(V._cancelar) throw new Error('CANCELADO');
     const it=A[ai]; const cand=new Set();
@@ -1165,11 +1166,24 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       if(inter(it.b, jb.b)){ nPares++;
         const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
         const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
+        if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id });
       }
     }
     if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
   }
-  return { nPares, nA:vA.size, nB:vB.size, porModA, porModB };
+  // Nomes dos envolvidos (limitado aos que estão na lista) p/ rotular cada conflito.
+  const idsPorMod={};
+  pares.forEach(p=>{ (idsPorMod[p.aMi]=idsPorMod[p.aMi]||new Set()).add(p.aId); (idsPorMod[p.bMi]=idsPorMod[p.bMi]||new Set()).add(p.bId); });
+  const nomeMap={};
+  for(const [mi,set] of Object.entries(idsPorMod)){
+    const x=V.modelos[mi]; if(!x) continue; const ids=[...set];
+    let da=[]; try{ da=await x.model.getItemsData(ids,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      const nm=(d.Name&&d.Name.value)||(d.ObjectType&&d.ObjectType.value)||('#'+lid);
+      nomeMap[mi+':'+lid]=String(nm).split(':')[0]; });
+  }
+  pares.forEach(p=>{ p.aNome=nomeMap[p.aMi+':'+p.aId]||('#'+p.aId); p.bNome=nomeMap[p.bMi+':'+p.bId]||('#'+p.bId); });
+  return { nPares, nA:vA.size, nB:vB.size, porModA, porModB, pares };
 }
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){

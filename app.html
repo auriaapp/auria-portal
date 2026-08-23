@@ -718,6 +718,10 @@
             .clash-drop{flex:1;min-height:52px;border:2px dashed rgba(255,255,255,.2);border-radius:12px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:center;padding:6px;font-size:10px;color:#64748b;transition:.15s}
             .clash-drop.over{border-color:#7c3aed;background:rgba(124,58,237,.12)}
             .clash-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(124,58,237,.28);border:1px solid #7c3aed;border-radius:20px;padding:3px 8px;font-size:11px;color:#e2e8f0;cursor:pointer}
+            .clash-row{padding:5px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)}
+            .clash-row:last-child{border-bottom:none}
+            .clash-row:hover{background:rgba(124,58,237,.16)}
+            .clash-row.ativo{background:rgba(124,58,237,.32)}
           </style>
           <div id="clashBox" class="bim-props" style="left:12px;right:auto;width:372px;display:none">
             <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">⚔ Conflitos (clashes)</b>
@@ -3394,7 +3398,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23e').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23f').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4930,6 +4934,14 @@ const CLASH_CATS=[
 ];
 let CLASH_PRES=[];             // categorias presentes no modelo (com contagem)
 let CLASH_SEL={A:[], B:[]};    // índices (em CLASH_PRES) arrastados a cada campo
+let CLASH_PARES=[];            // pares individuais do último clash (p/ zoom por item)
+async function f3dClashZoom(i){
+  const p=CLASH_PARES[i]; if(!p||!F3D||!B3) return;
+  const A={}; A[p.aMi]=[p.aId]; const B={}; B[p.bMi]=[p.bId];
+  await B3.mostrarClash(F3D, A, B);   // isola só esse par (A vermelho, B ciano) + zoom
+  f3dBotaoVoltar(true);
+  document.querySelectorAll('#clashLista .clash-row').forEach((el,j)=> el.classList.toggle('ativo', j===i));
+}
 function f3dClashToggle(){
   const el=$('clashBox'); if(!el) return;
   const abrir = el.style.display==='none' || !el.style.display;
@@ -4975,7 +4987,12 @@ async function f3dClashVerificar(){
     if(!r.nPares){ $('clashRes').innerHTML='<span style="color:#10b981">✓ Nenhum conflito entre '+esc(rot(CLASH_SEL.A))+' e '+esc(rot(CLASH_SEL.B))+'.</span>'; return; }
     await B3.mostrarClash(F3D, r.porModA, r.porModB);
     f3dBotaoVoltar(true);
-    $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.<div style="color:#94a3b8;font-size:11px;margin-top:4px">Isolei os envolvidos (A em vermelho, B em ciano); ↩ no topo volta. <i>Candidatos por caixa envolvente — confirme no 3D; nem todo cruzamento é conflito real.</i></div></div>';
+    CLASH_PARES = r.pares||[];
+    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span><span style="float:right">🔍</span></div>').join('');
+    const cap = r.nPares>CLASH_PARES.length ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os primeiros '+CLASH_PARES.length+' de '+r.nPares+'.</div>') : '';
+    $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.'
+      +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>Candidatos por caixa envolvente — clique num item para dar zoom; ↩ no topo volta.</i></div>'
+      +'<div id="clashLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+'</div>';
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('clashRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('clash:',e); $('clashRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
   finally{ f3dProcessando(false); f3dDica(''); }
 }
