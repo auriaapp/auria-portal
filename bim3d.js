@@ -1265,11 +1265,18 @@ export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
 }
 // Ponto (centro) de um conflito, em coordenadas de mundo — p/ ancorar o pino do apontamento.
 export async function pontoClash(V, aMi, aId, bMi, bId){
-  const T=V.THREE; const cx=new T.Box3();
-  const add=async(mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) cx.union(new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z))); }catch(_){} };
-  await add(aMi,aId); await add(bMi,bId);
-  if(cx.isEmpty()) return null;
-  const c=cx.getCenter(new T.Vector3()); return { x:c.x, y:c.y, z:c.z };
+  const T=V.THREE;
+  const caixa=async(mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) return new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z)); }catch(_){} return null; };
+  const bA=await caixa(aMi,aId), bB=await caixa(bMi,bId);
+  if(!bA || !bB) return (bA||bB)?.getCenter(new T.Vector3()) || null;
+  // Centro da INTERSEÇÃO = onde as duas peças de fato se cruzam (o clash).
+  // O centro da UNIÃO (antigo) dava o meio-termo entre elas — pino fora do
+  // ponto do conflito, ex.: tubo longo cruzando porta.
+  const inter=bA.clone().intersect(bB);
+  if(!inter.isEmpty()){ const c=inter.getCenter(new T.Vector3()); return { x:c.x, y:c.y, z:c.z }; }
+  // Sem sobreposição real (caso da tolerância): meio-termo entre os centros.
+  const ca=bA.getCenter(new T.Vector3()), cb=bB.getCenter(new T.Vector3());
+  return { x:(ca.x+cb.x)/2, y:(ca.y+cb.y)/2, z:(ca.z+cb.z)/2 };
 }
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
