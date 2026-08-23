@@ -1300,6 +1300,110 @@ export async function limparDestaqueCategoria(V){
   try{ await V.fragments.update(true); }catch(_){}
 }
 
+// ── PÉ-DIREITO MÍNIMO (regra de conformidade) ──────────────────────────────
+//  Altura livre em cada trecho = fundo do obstáculo suspenso − topo da laje do
+//  pavimento. Onde < mínimo (padrão 2,30 m), sinaliza. É por ELEMENTO (viga,
+//  duto, tubo, forro, laje) — a varredura em grade (qualquer ponto) fica p/ fase 2.
+//
+//  A seleção de disciplina vira seleção de MODELOS (cada disciplina federada é um
+//  modelo); as categorias "suspensas" são UNIVERSAIS (cada modelo só devolve as
+//  que tem). Paredes/pilares/portas/mobiliário ficam de fora — vão do piso ao teto
+//  e dariam falso positivo.
+const PD_CATS = [/^IFCBEAM$/,/^IFCSLAB$/,/^IFCCOVERING$/,/^IFCDUCTSEGMENT$/,/^IFCDUCTFITTING$/,
+  /^IFCPIPESEGMENT$/,/^IFCPIPEFITTING$/,/^IFCFLOWSEGMENT$/,/^IFCFLOWFITTING$/,
+  /^IFCCABLECARRIERSEGMENT$/,/^IFCCABLESEGMENT$/,/^IFCLIGHTFIXTURE$/,
+  /^IFCFLOWTERMINAL$/,/^IFCAIRTERMINAL$/,/^IFCMEMBER$/];
+const PD_ROT = { IFCBEAM:'Viga', IFCSLAB:'Laje', IFCCOVERING:'Forro', IFCDUCTSEGMENT:'Duto',
+  IFCDUCTFITTING:'Conexão de duto', IFCPIPESEGMENT:'Tubo', IFCPIPEFITTING:'Conexão',
+  IFCFLOWSEGMENT:'Tubo', IFCFLOWFITTING:'Conexão', IFCCABLECARRIERSEGMENT:'Eletrocalha',
+  IFCCABLESEGMENT:'Cabo', IFCLIGHTFIXTURE:'Luminária', IFCFLOWTERMINAL:'Terminal',
+  IFCAIRTERMINAL:'Difusor', IFCMEMBER:'Elemento' };
+export async function verificarPeDireito(V, opts){
+  V._cancelar=false;
+  const alturaMin=(opts&&+opts.alturaMin)||2.30;
+  const modelIdx=(opts&&opts.modelIdx)||null;   // índices de V.modelos a varrer; null = todos
+  const PISO_IGN=0.9;   // abaixo disso do piso não é pé-direito (tubo/equip. rente ao chão)
+  const faixas=await _faixasPavimento(V);
+  if(!faixas.length) return { erroFaixas:true, achados:[], total:0 };
+  const achados=[];
+  for(let mi=0; mi<V.modelos.length; mi++){
+    if(modelIdx && !modelIdx.includes(mi)) continue;
+    const x=V.modelos[mi]; const disc=x.disciplina||x.nome||'';
+    let porCat={}; try{ porCat=await x.model.getItemsOfCategories(PD_CATS)||{}; }catch(_){}
+    for(const [cat, ids] of Object.entries(porCat)){
+      if(!ids||!ids.length) continue;
+      const catU=String(cat).toUpperCase();
+      for(let s=0; s<ids.length; s+=400){
+        if(V._cancelar) throw new Error('CANCELADO');
+        const lote=ids.slice(s,s+400);
+        let boxes=[]; try{ boxes=await x.model.getBoxes(lote); }catch(_){}
+        lote.forEach((id,i)=>{
+          const b=(boxes||[])[i]; if(!b||!isFinite(b.min.y)) return;
+          const cy=(b.min.y+b.max.y)/2; const fx=_faixaNoY(faixas,cy); if(!fx) return;
+          const clear=b.min.y-fx.y;   // fundo do elemento − topo da laje (piso do nível)
+          if(clear>=PISO_IGN && clear<alturaMin){
+            achados.push({ mi, id, cat:catU, catLbl:PD_ROT[catU]||catU, disc,
+              clear, piso:fx.y, botY:b.min.y, x:(b.min.x+b.max.x)/2, z:(b.min.z+b.max.z)/2, pav:fx.nome||'' });
+          }
+        });
+        if(V.on&&V.on.dica) V.on.dica('Verificando pé-direito… '+(s+lote.length));
+        await new Promise(r=>setTimeout(r,0));
+      }
+    }
+  }
+  achados.sort((a,b)=>a.clear-b.clear);
+  const CAP=300; const cortou=achados.length>CAP; const lista=achados.slice(0,CAP);
+  // nomes só dos infratores (bloco por modelo)
+  const idsPorMod={}; lista.forEach(a=>{ (idsPorMod[a.mi]=idsPorMod[a.mi]||new Set()).add(a.id); });
+  for(const [mi,set] of Object.entries(idsPorMod)){
+    const x=V.modelos[mi]; if(!x) continue; const ids=[...set]; const nm={};
+    let da=[]; try{ da=await x.model.getItemsData(ids,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      nm[lid]=String((d.Name&&d.Name.value)||(d.ObjectType&&d.ObjectType.value)||('#'+lid)).split(':')[0]; });
+    lista.forEach(a=>{ if(a.mi==mi) a.nome=nm[a.id]||('#'+a.id); });
+  }
+  return { achados:lista, total:achados.length, cortou, alturaMin };
+}
+// Cota VERTICAL (90°) gerada por código: linha yA→yB no (x,z), rótulo com o texto.
+// Vira uma "medida" normal (some/reaparece na tela junto com as outras); marcada
+// com _peDireito p/ o limparPeDireito remover só essas.
+export function cotaVertical(V, x, yA, yB, z, texto, tag){
+  const T=V.THREE, M=V.medida;
+  const a=new T.Vector3(x,yA,z), b=new T.Vector3(x,yB,z);
+  const mk=(p)=>{ const e=new T.Mesh(new T.SphereGeometry(1,10,10), new T.MeshBasicMaterial({color:LARANJA,depthTest:false})); e.position.copy(p); e.renderOrder=999; V.scene.add(e); return e; };
+  const m1=mk(a), m2=mk(b);
+  const linha=new T.Line(new T.BufferGeometry().setFromPoints([a,b]), new T.LineBasicMaterial({color:LARANJA,depthTest:false})); linha.renderOrder=999; V.scene.add(linha);
+  const el=document.createElement('div'); el.className='bim3dCota';
+  el.style.cssText='position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:none;'
+    +'background:rgba(239,68,68,.95);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;'
+    +'border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)';
+  el.textContent=texto; V.cont.appendChild(el);
+  const medida={ id:(++M._seq), marks:[m1,m2], line:linha, el, meio:a.clone().add(b).multiplyScalar(0.5), dist:Math.abs(yB-yA), texto, visivel:true, _peDireito:!!tag };
+  M.medidas.push(medida);
+  return medida;
+}
+export async function limparPeDireito(V){
+  (V.medida.medidas||[]).slice().forEach(md=>{ if(md._peDireito) removerMedida(V, md); });
+  if(V.on.medidas) V.on.medidas(V);
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+}
+// Mostra os infratores em VERMELHO sobre o modelo completo (contexto ajuda no
+// pé-direito) + uma cota vertical em cada + zoom-extend no conjunto.
+export async function mostrarPeDireito(V, achados){
+  const T=V.THREE;
+  await limparPeDireito(V);
+  const porMod={}; (achados||[]).forEach(a=>{ (porMod[a.mi]=porMod[a.mi]||[]).push(a.id); });
+  for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi]; if(!x||!ids.length) continue;
+    try{ await x.model.highlight(ids,{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  (achados||[]).forEach(a=>{ try{ cotaVertical(V, a.x, a.piso, a.botY, a.z, fmtDist(a.clear), true); }catch(_){} });
+  if(V.on.medidas) V.on.medidas(V);
+  try{ await V.fragments.update(true); }catch(_){}
+  if(Object.keys(porMod).length) await enquadrarIds(V, porMod);
+}
+export async function zoomPeDireito(V, mi, id){ try{ await enquadrarIds(V, {[mi]:[id]}); }catch(_){} }
+
 // ── CONTAR / AGRUPAR por propriedade (Nível 3 da IA) ───────────────────────
 //  Sem `termoProp`: conta o total da(s) categoria(s) (rápido, só a lista de ids).
 //  Com `termoProp` (ex.: "largura"): agrupa pela propriedade e conta cada valor.

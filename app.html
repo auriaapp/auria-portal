@@ -706,6 +706,7 @@
                 <span><b>Entidade genérica</b><i>Exportadas como IfcBuildingElementProxy em vez da classe própria.</i></span></label>
               <button class="btn" id="regRodar" onclick="f3dRegrasRodar()" style="width:100%;font-size:12px;margin:9px 0 4px">Verificar modelo</button>
               <button class="btn" id="clashBtn" onclick="f3dClashToggle()" style="width:100%;font-size:12px;margin:0 0 4px;background:#7c3aed;border-color:#7c3aed">⚔ Verificar conflitos (clashes)</button>
+              <button class="btn" id="pdBtn" onclick="f3dPdToggle()" style="width:100%;font-size:12px;margin:0 0 4px;background:#0891b2;border-color:#0891b2">📏 Pé-direito mínimo</button>
               <div id="regRes"></div>
             </div>
           </div>
@@ -738,6 +739,22 @@
                 <input type="range" id="clashTol" min="0" max="10" value="1" style="flex:0 1 120px;min-width:0"><span id="clashTolV" style="color:#cbd5e1">1 cm</span></label>
               <button class="btn" onclick="f3dClashVerificar()" style="width:100%;font-size:12px;margin:4px 0">Verificar conflitos</button>
               <div id="clashRes" style="font-size:12px"></div>
+            </div>
+          </div>
+          <!-- Menu de PÉ-DIREITO MÍNIMO: escolhe disciplinas (=modelos) e a altura
+               mínima; acha vigas/dutos/tubos/forros/lajes com altura livre abaixo,
+               marca em vermelho e coloca uma cota vertical com o valor. -->
+          <div id="pdBox" class="bim-props" style="left:12px;right:auto;width:372px;display:none">
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">📏 Pé-direito mínimo</b>
+              <button class="bim-x" onclick="f3dPdToggle()" title="Fechar">✕</button></div>
+            <div class="bp-body">
+              <div style="font-size:11px;color:#94a3b8;margin-bottom:7px">Marque as disciplinas a verificar e a altura mínima. O sistema acha os trechos abaixo dela e cota cada um.</div>
+              <div style="font-size:11px;color:#cbd5e1;font-weight:600;margin-bottom:4px">Disciplinas</div>
+              <div id="pdDiscs" style="display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:10px"></div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin:0 0 8px">Altura mínima (m)
+                <input type="number" id="pdAltura" value="2.30" step="0.05" min="0" style="width:70px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px"></label>
+              <button class="btn" onclick="f3dPdVerificar()" style="width:100%;font-size:12px;margin:2px 0;background:#0891b2;border-color:#0891b2">Verificar pé-direito</button>
+              <div id="pdRes" style="font-size:12px;margin-top:6px"></div>
             </div>
           </div>
           <div id="bimProps" class="bim-props">
@@ -3077,7 +3094,10 @@ function f3dBotaoVoltar(mostrar){ const b=$('f3dVoltar'); if(b) b.style.display 
 function f3dProcessando(b){ const el=$('f3dStop'); if(el) el.style.display = b ? 'block' : 'none'; if(b) f3dBotaoVoltar(false); }
 function f3dPararProc(){ if(F3D && B3 && B3.cancelar) B3.cancelar(F3D); f3dDica('Interrompendo…'); }
 async function f3dVoltarModelo(){
-  if(F3D && B3){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} }
+  if(F3D && B3){
+    try{ await B3.limparDestaqueCategoria(F3D); }catch(_){}
+    try{ await B3.limparPeDireito(F3D); }catch(_){}   // remove tb. as cotas do pé-direito
+  }
   f3dBotaoVoltar(false); f3dDica('');
 }
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
@@ -3398,7 +3418,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23q').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23r').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5049,6 +5069,85 @@ async function f3dClashVerificar(){
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('clashRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('clash:',e); $('clashRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
   finally{ f3dProcessando(false); f3dDica(''); }
 }
+
+// ── PÉ-DIREITO MÍNIMO (UI) ─────────────────────────────────────────────────
+let PD_ACHADOS=[];
+function fmtM(n){ return (Math.round(n*100)/100).toFixed(2).replace('.',',')+' m'; }
+function f3dPdToggle(){
+  const el=$('pdBox'); if(!el) return;
+  const abrir = el.style.display==='none' || !el.style.display;
+  el.style.display = abrir ? 'block' : 'none';
+  if(abrir) f3dPdInit();
+}
+function f3dPdInit(){
+  const box=$('pdDiscs'); if(!box) return;
+  if(!F3D||!B3||!F3D.modelos||!F3D.modelos.length){ box.innerHTML='<span style="color:#64748b;font-size:11px">Abra o modelo 3D primeiro.</span>'; return; }
+  const porDisc={};   // uma disciplina por modelo federado (agrupa modelos da mesma)
+  F3D.modelos.forEach((m,i)=>{ const d=(m.disciplina||m.nome||'—'); (porDisc[d]=porDisc[d]||[]).push(i); });
+  box.innerHTML = Object.keys(porDisc).map(d=>
+    '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#e2e8f0;cursor:pointer">'
+    +'<input type="checkbox" class="pdDisc" value="'+esc(d)+'" checked> '+esc(d)+'</label>').join('');
+  $('pdRes').innerHTML='';
+}
+async function f3dPdVerificar(){
+  if(!F3D||!B3){ $('pdRes').innerHTML='<span style="color:#f59e0b">Abra o modelo 3D.</span>'; return; }
+  const marc=[...document.querySelectorAll('#pdDiscs .pdDisc:checked')].map(c=>c.value);
+  if(!marc.length){ $('pdRes').innerHTML='<span style="color:#f59e0b">Marque ao menos uma disciplina.</span>'; return; }
+  const alt=parseFloat($('pdAltura').value)||2.30;
+  const modelIdx=[]; F3D.modelos.forEach((m,i)=>{ if(marc.includes(m.disciplina||m.nome||'—')) modelIdx.push(i); });
+  $('pdRes').innerHTML='<span style="color:#94a3b8">Verificando pé-direito…</span>';
+  f3dProcessando(true);
+  try{
+    const r=await B3.verificarPeDireito(F3D, { alturaMin:alt, modelIdx });
+    if(r.erroFaixas){ $('pdRes').innerHTML='<span style="color:#f59e0b">Não identifiquei os pavimentos (as lajes não trazem nível). Federe a Arquitetura/Estrutura.</span>'; return; }
+    PD_ACHADOS = r.achados||[];
+    if(!PD_ACHADOS.length){ $('pdRes').innerHTML='<span style="color:#10b981">✓ Nenhum trecho abaixo de '+fmtM(alt)+'.</span>'; return; }
+    await B3.mostrarPeDireito(F3D, PD_ACHADOS);
+    f3dBotaoVoltar(true);
+    const linhas = PD_ACHADOS.map((a,i)=>
+      '<div class="clash-row" onclick="f3dPdZoom('+i+')" title="Clique para dar zoom neste trecho">'
+      +'<span onclick="f3dPdApontar(event,'+i+')" title="Virar apontamento (pino 3D + cota)" style="float:right;cursor:pointer;padding:0 3px">➕</span>'
+      +'<span style="color:#f87171;font-weight:700">'+fmtM(a.clear)+'</span> '
+      +'<span style="color:#94a3b8">'+esc(a.catLbl)+'</span> '
+      +'<span style="color:#cbd5e1">'+esc(a.nome||'')+'</span>'
+      +'<div style="color:#64748b;font-size:10px">'+esc(a.disc||'')+(a.pav?' · '+esc(a.pav):'')+'</div></div>').join('');
+    const cap = r.cortou ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os '+PD_ACHADOS.length+' menores de '+r.total+'.</div>') : '';
+    const btnExp='<button onclick="f3dPdExportar()" class="btn" style="width:100%;font-size:11px;margin-top:7px;background:#334155;border-color:#475569">📥 Exportar (CSV)</button>';
+    const btnLimpar='<button onclick="f3dPdLimpar()" class="btn" style="width:100%;font-size:11px;margin-top:5px;background:#334155;border-color:#475569">Limpar marcações e cotas</button>';
+    $('pdRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.total+' trecho(s)</b> abaixo de '+fmtM(alt)+'.'
+      +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>Medido do topo da laje estrutural (sem contrapiso/revestimento). Clique num item para dar zoom.</i></div>'
+      +'<div id="pdLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+btnExp+btnLimpar+'</div>';
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('pdRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('pé-direito:',e); $('pdRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
+  finally{ f3dProcessando(false); f3dDica(''); }
+}
+async function f3dPdZoom(i){
+  const a=PD_ACHADOS[i]; if(!a||!F3D||!B3) return;
+  await B3.zoomPeDireito(F3D, a.mi, a.id);
+  document.querySelectorAll('#pdLista .clash-row').forEach((el,j)=> el.classList.toggle('ativo', j===i));
+}
+async function f3dPdApontar(ev, i){
+  if(ev){ ev.stopPropagation(); }
+  const a=PD_ACHADOS[i]; if(!a||!F3D||!B3) return;
+  const m=F3D.modelos[a.mi]; if(!m) return;
+  await B3.zoomPeDireito(F3D, a.mi, a.id);
+  const pt={ k3d:1, x:a.x, y:(a.piso+a.botY)/2, z:a.z, cde_arquivo_id:m.arquivoId, cde_doc:m.documentoId, cde_rev:m.revisaoId, localId:a.id, mdisc:m.disciplina||m.nome||'' };
+  f3dNovoApontamento(pt, m);
+  APT_EDIT.titulo='Pé-direito baixo: '+fmtM(a.clear);
+  APT_EDIT.descricao='Altura livre de '+fmtM(a.clear)+' abaixo do mínimo (obstáculo: '+(a.catLbl||'')+' "'+(a.nome||'')+'"'+(a.pav?', '+a.pav:'')+'). Medido do topo da laje estrutural.';
+  const t=$('apTitulo'); if(t) t.value=APT_EDIT.titulo;
+  const d=$('apDesc'); if(d) d.value=APT_EDIT.descricao;
+}
+function f3dPdExportar(){
+  if(!PD_ACHADOS.length) return;
+  const rows=[['#','Altura livre (m)','Tipo','Elemento','Disciplina','Pavimento']];
+  PD_ACHADOS.forEach((a,i)=> rows.push([i+1, a.clear.toFixed(2).replace('.',','), a.catLbl, a.nome||'', a.disc||'', a.pav||'']));
+  const csv=rows.map(r=> r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const blob=new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download='pe_direito_baixo.csv'; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 600);
+}
+async function f3dPdLimpar(){ if(F3D&&B3){ try{ await B3.limparPeDireito(F3D); }catch(_){} } f3dBotaoVoltar(false); const r=$('pdRes'); if(r) r.innerHTML='<span style="color:#94a3b8">Marcações e cotas removidas.</span>'; }
 
 async function f3dRegrasRodar(){
   const E=F3D;
