@@ -1209,21 +1209,28 @@ export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
   const T=V.THREE;
   await _limparFantasma(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
-  // caixa do par + margem de 6 m → região de contexto
-  const cx=new T.Box3();
-  const addB=async (mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) cx.union(new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z))); }catch(_){} };
-  await addB(aMi,aId); await addB(bMi,bId);
-  if(!cx.isEmpty()){
-    const reg=cx.clone().expandByScalar(6);
-    const fant={};
-    for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+  // Região centrada no PONTO do conflito (interseção das caixas), tamanho FIXO.
+  //  Antes eu expandia a UNIÃO das caixas: um tubo longo tinha caixa enorme e a
+  //  vizinhança capturava milhares de peças → setOpacity estourava a memória e
+  //  travava os cliques seguintes. Agora é uma caixa pequena e com TETO.
+  let bA=null,bB=null;
+  try{ bA=((await V.modelos[aMi].model.getBoxes([aId]))||[])[0]; }catch(_){}
+  try{ bB=((await V.modelos[bMi].model.getBoxes([bId]))||[])[0]; }catch(_){}
+  const ctr=(a,b,ax)=> (a&&b)? (Math.max(a.min[ax],b.min[ax])+Math.min(a.max[ax],b.max[ax]))/2 : (a?(a.min[ax]+a.max[ax])/2 : (b?(b.min[ax]+b.max[ax])/2 : null));
+  const px=ctr(bA,bB,'x'), py=ctr(bA,bB,'y'), pz=ctr(bA,bB,'z');
+  if(px!=null){
+    const R=7, TETO=1500;   // 7 m ao redor do conflito; no máx. 1500 peças
+    const reg={minx:px-R,maxx:px+R,miny:py-R,maxy:py+R,minz:pz-R,maxz:pz+R};
+    const fant={}; let total=0;
+    for(let mi=0; mi<V.modelos.length && total<TETO; mi++){ const x=V.modelos[mi];
       let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
       if(!ids.length) continue;
       let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-      const near=[]; ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(!b) return;
-        if(b.min.x<reg.max.x&&b.max.x>reg.min.x&&b.min.y<reg.max.y&&b.max.y>reg.min.y&&b.min.z<reg.max.z&&b.max.z>reg.min.z
-           && !(mi===aMi&&id===aId) && !(mi===bMi&&id===bId)) near.push(id);
-      });
+      const near=[];
+      for(let i=0;i<ids.length && total<TETO;i++){ const b=(boxes||[])[i]; if(!b) continue; const id=ids[i];
+        if(b.min.x<reg.maxx&&b.max.x>reg.minx&&b.min.y<reg.maxy&&b.max.y>reg.miny&&b.min.z<reg.maxz&&b.max.z>reg.minz
+           && !(mi===aMi&&id===aId) && !(mi===bMi&&id===bId)){ near.push(id); total++; }
+      }
       if(near.length){ fant[mi]=near; try{ await x.model.setOpacity(near, 0.12); }catch(_){} }
     }
     V._fantasmaIds=fant;
