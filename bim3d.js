@@ -253,6 +253,37 @@ export function enquadrar(V){
   if(V.sao && V.sao.__razao) V.sao.params.saoScale = V.camera.far * V.sao.__razao;
 }
 
+// Enquadra a câmera numa CAIXA qualquer (zoom-extend de uma seleção). Mais leve
+// que enquadrar(): não mexe em V.caixa/grade/sombra — só reposiciona a câmera.
+function _fitBox(V, cx){
+  const T=V.THREE;
+  if(!cx || cx.isEmpty()) return;
+  const centro=cx.getCenter(new T.Vector3());
+  const tam=cx.getSize(new T.Vector3());
+  const raio=Math.max(tam.x,tam.y,tam.z)*0.5||0.5;
+  const dist=(raio/Math.sin((V.camera.fov*Math.PI/180)/2))*1.4;
+  V.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
+  const modeloDiag = V.caixa ? V.caixa.getSize(new T.Vector3()).length() : dist*4;
+  V.camera.near=Math.max(raio/1000, 0.02);
+  V.camera.far =Math.max(raio*50, dist*4, modeloDiag*1.2);   // não clipa o resto se visível
+  V.camera.updateProjectionMatrix();
+  V.controls.target.copy(centro);
+  V.controls.minDistance=Math.max(raio/5000, 0.02);
+  V.controls.update();
+  V.fragments.update(true).catch(()=>{});
+}
+// Zoom-extend nos ids dados (por modelo). Poucos → perto; muitos/espalhados →
+// mostra todos. Chamado automaticamente ao isolar.
+export async function enquadrarIds(V, porMod){
+  const T=V.THREE; const cx=new T.Box3();
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+    (boxes||[]).forEach(b=>{ if(b&&isFinite(b.min.x)) cx.union(new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z))); });
+  }
+  if(!cx.isEmpty()) _fitBox(V, cx);
+}
+export async function enquadrarSelecao(V){ if(V._ultimaSelecao) await enquadrarIds(V, V._ultimaSelecao); }
 // FUNDO e GRADE são configurações INDEPENDENTES agora. Antes ligar a grade
 // exigia trocar o fundo — os dois eram um par. Ficou artificial: quem quer
 // ver o piso pode preferir o modo escuro; quem quer o modo claro pode
@@ -975,6 +1006,7 @@ export async function isolarPavimento(V, pavim){
   if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; }
   else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }
   try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);   // zoom-extend no andar
   return { n:total };
 }
 // FINDER: acha os ids que casam (classe + texto/@fire + pavimento), SEM tocar no
@@ -1037,6 +1069,7 @@ export async function destacarCategoria(V, regexes, termos, pavim){
   if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
   else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined, true); }catch(_){} } }
   try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);   // zoom-extend na seleção
   return total;
 }
 // ── COLORIR (Round 3): recolore subconjuntos SEM esconder o resto ──────────
@@ -1147,6 +1180,7 @@ export async function mostrarClash(V, porModA, porModB){
   const uni={}; for(const [mi,ids] of Object.entries(porModA||{})){ (uni[mi]=uni[mi]||[]).push(...ids); } for(const [mi,ids] of Object.entries(porModB||{})){ (uni[mi]=uni[mi]||[]).push(...ids); }
   V._isolado=true; V._isoladoPorMod=uni; V._ultimaSelecao=uni; V._colorido=false; V._cores=null;
   try{ await V.fragments.update(true); }catch(_){}
+  await enquadrarIds(V, uni);   // zoom-extend nos conflitos
 }
 export async function limparDestaqueCategoria(V){
   V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
@@ -1396,6 +1430,7 @@ export async function destacarIds(V, porMod){
   }
   if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; }
   try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);   // zoom-extend na seleção
   return total;
 }
 
