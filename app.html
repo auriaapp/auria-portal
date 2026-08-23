@@ -2931,6 +2931,13 @@ function f3dRegras(q){
     for(const [,c,alvos] of CLS){ if(_algumPerto(tokC, alvos)){ cls=c; clsAlvos=alvos; break; } }   // typo (piar→pilar)
   }
   if(!cls){
+    // operações sobre a ÚLTIMA SELEÇÃO/coloração ("área desses elementos",
+    //  "volume da seleção", "quantos são esses").
+    if(/\b(dess[ae]s|ess[ae]s|sele[çc][ãa]o|selecionad)\b/.test(s)){
+      const pv = /[áa]rea/.test(s)?'area' : (/(volume|volumetria|c[úu]bico)/.test(s)?'volume' : (/(comprimento|extens[ãa]o|per[íi]metro)/.test(s)?'length':null));
+      if(pv) return {tipo:'somarsel', arg:pv};
+      if(/(quant[oa]s|contar|n[úu]mero|quantidade)/.test(s)) return {tipo:'contarsel'};
+    }
     // "destacar/isolar/mostrar pavimento X" SEM classe → isola o ANDAR INTEIRO.
     const pm0=s.match(/(?:pavimento|piso|andar|n[íi]vel|pav\.?)\s+(?:d[oae]s?\s+)?([^\s,.;]{2,})/);
     let pav0 = pm0 ? pm0[1] : (/\bt[ée]rreo\b/.test(s) ? 'terreo' : null);
@@ -3047,6 +3054,11 @@ async function execDiretiva(tipo, arg, cor){
   f3dProcessando(true);
   try{
     if(tipo==='aviso'){ out={content: arg}; }
+    else if(tipo==='somarsel'){ const r=await f3dExecSomarSel(arg); out={content:r.msg}; }
+    else if(tipo==='contarsel'){
+      const sel=F3D&&F3D._ultimaSelecao; let n=0; if(sel) for(const ids of Object.values(sel)) n+=ids.length;
+      out={content: sel ? ('A seleção tem **'+n+'** elemento(s).') : 'Você ainda não selecionou nada.'};
+    }
     else if(tipo==='colorir'){ const r=await f3dExecColorir(arg, cor); out={content:r.msg}; }
     else if(tipo==='colorirsel'){ const r=await f3dExecColorirSel(cor); out={content:r.msg}; }
     else if(tipo==='colorirtudo'){ const r=await f3dExecColorirTudo(arg, cor); out={content:r.msg}; }
@@ -3354,7 +3366,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23c').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4674,6 +4686,21 @@ async function f3dExecColorir(arg, cor){
     f3dDica('');
     return { msg:'✓ Pintei '+n+' '+rot+'. As cores ficam no modelo (o resto continua visível). O botão ↩ no topo limpa.' };
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('colorir:', e); return { msg:'Não consegui colorir: '+(e.message||e) }; }
+}
+// Soma uma quantidade sobre a ÚLTIMA SELEÇÃO ("calcule a área desses elementos").
+async function f3dExecSomarSel(prop){
+  if(!F3D || !B3) return { msg:'Abra o modelo 3D primeiro.' };
+  if(!F3D._ultimaSelecao) return { msg:'Você ainda não selecionou/coloriu nada. Faça uma seleção primeiro (ex.: "selecionar portas corta-fogo").' };
+  const un = /[áa]rea/i.test(prop)?'m²' : /vol/i.test(prop)?'m³' : /(comp|larg|alt|length|per[íi]m)/i.test(prop)?'m' : '';
+  f3dDica('Somando…');
+  try{
+    const r=await B3.somarIds(F3D, F3D._ultimaSelecao, prop);
+    f3dDica('');
+    if(!r.comValor) return { msg:'A seleção ('+r.n+' elementos) não traz "'+prop+'" no modelo.' };
+    const val=(Math.round(r.soma*100)/100).toLocaleString('pt-BR');
+    const parcial = r.comValor<r.n ? (' — '+r.comValor+' de '+r.n+' com valor') : (' ('+r.n+' elementos)');
+    return { msg:'**Σ '+prop+' da seleção = '+val+' '+un+'**'+parcial+(r.nomes.length?(' · fonte: '+r.nomes.slice(0,2).join(', ')):'')+'.' };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; f3dDica(''); console.warn('somar seleção:', e); return { msg:'Não consegui somar: '+(e.message||e) }; }
 }
 // Round 3: COLORIR a última seleção (isolada/achada) e voltar o modelo completo.
 async function f3dExecColorirSel(cor){

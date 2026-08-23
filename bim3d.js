@@ -1012,6 +1012,19 @@ export async function acharElementos(V, regexes, termos, pavim){
 }
 // Busca em TODAS as categorias visíveis (p/ "colorir o modelo" / "elementos de vidro").
 export async function acharTudo(V, termos, pavim){ return acharElementos(V, CAT_VISIVEIS, termos, pavim); }
+// Soma uma quantidade sobre um conjunto EXPLÍCITO de ids (a última seleção) —
+// p/ "calcule a área desses elementos".
+export async function somarIds(V, porMod, termoProp){
+  V._cancelar=false;
+  const rx=_termoRegex(termoProp);
+  let n=0, comValor=0, soma=0; const nomes=new Set();
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue; n+=ids.length;
+    const dd=await _lerPsetsEmLotes(V, x.model, ids, 'Somando');
+    (dd||[]).forEach(d=>{ const r=_achaValorProfundo(d, rx); if(r&&typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); } });
+  }
+  return { n, comValor, soma, nomes:[...nomes] };
+}
 // ISOLA (esconde o resto) e realça de laranja o conjunto que casa.
 export async function destacarCategoria(V, regexes, termos, pavim){
   const porMod = await acharElementos(V, regexes, termos, pavim);
@@ -1039,7 +1052,7 @@ async function _reaplicarCores(V){
 }
 // Pinta UM grupo de uma cor (acumula sobre o que já estiver pintado).
 export async function colorirGrupo(V, porMod, cor){
-  V._isolado=false; V._isoladoPorMod=null; V._colorido=true;
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=true; V._ultimaSelecao=porMod;
   V._cores = V._cores || [];
   V._cores.push({ porMod, cor });
   await _reaplicarCores(V);
