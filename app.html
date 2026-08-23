@@ -705,7 +705,35 @@
               <label class="rlin"><input type="checkbox" id="regProxy" checked>
                 <span><b>Entidade genérica</b><i>Exportadas como IfcBuildingElementProxy em vez da classe própria.</i></span></label>
               <button class="btn" id="regRodar" onclick="f3dRegrasRodar()" style="width:100%;font-size:12px;margin:9px 0 4px">Verificar modelo</button>
+              <button class="btn" id="clashBtn" onclick="f3dClashToggle()" style="width:100%;font-size:12px;margin:0 0 4px;background:#7c3aed;border-color:#7c3aed">⚔ Verificar conflitos (clashes)</button>
               <div id="regRes"></div>
+            </div>
+          </div>
+          <!-- Menu de CLASHES (fase ampla): arraste dois tipos IFC para os campos
+               e o sistema acha onde as CAIXAS deles se cruzam (candidatos). -->
+          <style>
+            .clash-ic{display:flex;flex-direction:column;align-items:center;gap:2px;width:58px;padding:5px 3px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);cursor:grab;user-select:none;font-size:9px;color:#cbd5e1;text-align:center}
+            .clash-ic:hover{background:rgba(124,58,237,.25);border-color:#7c3aed}
+            .clash-ic .em{font-size:19px;line-height:1}
+            .clash-drop{flex:1;min-height:52px;border:2px dashed rgba(255,255,255,.2);border-radius:12px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:center;padding:6px;font-size:10px;color:#64748b;transition:.15s}
+            .clash-drop.over{border-color:#7c3aed;background:rgba(124,58,237,.12)}
+            .clash-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(124,58,237,.28);border:1px solid #7c3aed;border-radius:20px;padding:3px 8px;font-size:11px;color:#e2e8f0;cursor:pointer}
+          </style>
+          <div id="clashBox" class="bim-props" style="left:12px;right:auto;width:372px;display:none">
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">⚔ Conflitos (clashes)</b>
+              <button class="bim-x" onclick="f3dClashToggle()" title="Fechar">✕</button></div>
+            <div class="bp-body">
+              <div style="font-size:11px;color:#94a3b8;margin-bottom:7px">Arraste dois tipos para os campos e verifique onde eles se cruzam.</div>
+              <div id="clashIcons" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:11px"></div>
+              <div style="display:flex;align-items:center;gap:9px;justify-content:center">
+                <div id="clashA" class="clash-drop" ondragover="f3dClashOver(event,true)" ondragleave="f3dClashOver(event,false)" ondrop="f3dClashDrop(event,'A')">arraste aqui</div>
+                <b style="font-size:18px;color:#ef4444">✕</b>
+                <div id="clashB" class="clash-drop" ondragover="f3dClashOver(event,true)" ondragleave="f3dClashOver(event,false)" ondrop="f3dClashDrop(event,'B')">arraste aqui</div>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;margin:9px 0 4px">Tolerância
+                <input type="range" id="clashTol" min="0" max="10" value="1" style="flex:0 1 120px;min-width:0"><span id="clashTolV" style="color:#cbd5e1">1 cm</span></label>
+              <button class="btn" onclick="f3dClashVerificar()" style="width:100%;font-size:12px;margin:4px 0">Verificar conflitos</button>
+              <div id="clashRes" style="font-size:12px"></div>
             </div>
           </div>
           <div id="bimProps" class="bim-props">
@@ -3366,7 +3394,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23d').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -4886,6 +4914,70 @@ function f3dRegrasToggle(){
   const box=$('regBox'); if(!box) return;
   const abriu=box.classList.toggle('on');
   const b=$('btnRegras'); if(b) b.classList.toggle('on', abriu);
+}
+// ── Menu de CLASHES (fase ampla: caixa envolvente) ─────────────────────────
+const CLASH_CATS=[
+  {ic:'🧱',lbl:'Paredes',rx:'IFCWALL,IFCWALLSTANDARDCASE'},{ic:'🟪',lbl:'Pilares',rx:'IFCCOLUMN'},
+  {ic:'➖',lbl:'Vigas',rx:'IFCBEAM'},{ic:'🟫',lbl:'Lajes',rx:'IFCSLAB'},
+  {ic:'🚪',lbl:'Portas',rx:'IFCDOOR'},{ic:'🪟',lbl:'Janelas',rx:'IFCWINDOW'},
+  {ic:'🪜',lbl:'Escadas',rx:'IFCSTAIR'},{ic:'🛗',lbl:'Rampas',rx:'IFCRAMP'},
+  {ic:'🚿',lbl:'Tubulação',rx:'IFCPIPESEGMENT,IFCPIPEFITTING,IFCFLOWSEGMENT,IFCFLOWFITTING'},
+  {ic:'💨',lbl:'Dutos',rx:'IFCDUCTSEGMENT,IFCDUCTFITTING'},
+  {ic:'💡',lbl:'Elétrica',rx:'IFCCABLECARRIERSEGMENT,IFCCABLESEGMENT,IFCLIGHTFIXTURE'},
+  {ic:'🚰',lbl:'Louças/Equip.',rx:'IFCFLOWTERMINAL,IFCSANITARYTERMINAL'},
+  {ic:'🔲',lbl:'Forros/Rev.',rx:'IFCCOVERING'},{ic:'🪑',lbl:'Mobiliário',rx:'IFCFURNISHINGELEMENT,IFCFURNITURE'},
+  {ic:'🏗️',lbl:'Fundações',rx:'IFCFOOTING,IFCPILE'},{ic:'📦',lbl:'Genéricos',rx:'IFCBUILDINGELEMENTPROXY'},
+];
+let CLASH_PRES=[];             // categorias presentes no modelo (com contagem)
+let CLASH_SEL={A:[], B:[]};    // índices (em CLASH_PRES) arrastados a cada campo
+function f3dClashToggle(){
+  const el=$('clashBox'); if(!el) return;
+  const abrir = el.style.display==='none' || !el.style.display;
+  el.style.display = abrir ? 'block' : 'none';
+  if(abrir) f3dClashInit();
+}
+async function f3dClashInit(){
+  const ic=$('clashIcons'); if(!ic) return;
+  if(!F3D||!B3){ ic.innerHTML='<span style="color:#64748b;font-size:11px">Abra o modelo 3D primeiro.</span>'; return; }
+  ic.innerHTML='<span style="color:#64748b;font-size:11px">Lendo categorias…</span>';
+  CLASH_SEL={A:[],B:[]};
+  try{ CLASH_PRES=await B3.categoriasPresentes(F3D, CLASH_CATS); }catch(e){ CLASH_PRES=[]; console.warn('clash init:',e); }
+  ic.innerHTML = CLASH_PRES.length ? CLASH_PRES.map((c,i)=>
+    '<div class="clash-ic" draggable="true" ondragstart="event.dataTransfer.setData(\'text/plain\',\''+i+'\')" title="'+esc(c.lbl)+' — '+c.n+' no modelo"><span class="em">'+c.ic+'</span>'+esc(c.lbl)+'</div>').join('')
+    : '<span style="color:#64748b;font-size:11px">Nenhuma categoria reconhecida no modelo.</span>';
+  f3dClashRenderZona('A'); f3dClashRenderZona('B'); $('clashRes').innerHTML='';
+  const tol=$('clashTol'); if(tol){ tol.oninput=()=>{ $('clashTolV').textContent=tol.value+' cm'; }; $('clashTolV').textContent=tol.value+' cm'; }
+}
+function f3dClashOver(ev,on){ ev.preventDefault(); ev.currentTarget.classList.toggle('over', on); }
+function f3dClashDrop(ev, zona){
+  ev.preventDefault(); ev.currentTarget.classList.remove('over');
+  const i=parseInt(ev.dataTransfer.getData('text/plain')); if(isNaN(i)) return;
+  if(!CLASH_SEL[zona].includes(i)) CLASH_SEL[zona].push(i);
+  f3dClashRenderZona(zona);
+}
+function f3dClashRenderZona(zona){
+  const el=$('clash'+zona); if(!el) return;
+  const sel=CLASH_SEL[zona];
+  el.innerHTML = sel.length ? sel.map(i=>{ const c=CLASH_PRES[i]; return '<span class="clash-chip" onclick="f3dClashTira(\''+zona+'\','+i+')" title="remover">'+c.ic+' '+esc(c.lbl)+' ✕</span>'; }).join('') : 'arraste aqui';
+}
+function f3dClashTira(zona,i){ CLASH_SEL[zona]=CLASH_SEL[zona].filter(x=>x!==i); f3dClashRenderZona(zona); }
+async function f3dClashVerificar(){
+  if(!F3D||!B3){ $('clashRes').innerHTML='<span style="color:#f59e0b">Abra o modelo 3D.</span>'; return; }
+  if(!CLASH_SEL.A.length || !CLASH_SEL.B.length){ $('clashRes').innerHTML='<span style="color:#f59e0b">Arraste um tipo para cada campo.</span>'; return; }
+  const rxs=(sel)=> sel.flatMap(i=>CLASH_PRES[i].rx.split(',')).map(c=>new RegExp('^'+c.trim()+'$','i'));
+  const rot=(sel)=> sel.map(i=>CLASH_PRES[i].lbl).join('+');
+  const tol=(parseFloat(($('clashTol')&&$('clashTol').value)||'1'))/100;   // cm → m
+  $('clashRes').innerHTML='<span style="color:#94a3b8">Verificando conflitos…</span>';
+  f3dProcessando(true);
+  try{
+    const r=await B3.clashCandidatos(F3D, rxs(CLASH_SEL.A), rxs(CLASH_SEL.B), tol);
+    if(r.vazioA||r.vazioB){ $('clashRes').innerHTML='<span style="color:#f59e0b">Um dos campos não tem elementos no modelo.</span>'; return; }
+    if(!r.nPares){ $('clashRes').innerHTML='<span style="color:#10b981">✓ Nenhum conflito entre '+esc(rot(CLASH_SEL.A))+' e '+esc(rot(CLASH_SEL.B))+'.</span>'; return; }
+    await B3.mostrarClash(F3D, r.porModA, r.porModB);
+    f3dBotaoVoltar(true);
+    $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.<div style="color:#94a3b8;font-size:11px;margin-top:4px">Isolei os envolvidos (A em vermelho, B em ciano); ↩ no topo volta. <i>Candidatos por caixa envolvente — confirme no 3D; nem todo cruzamento é conflito real.</i></div></div>';
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('clashRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('clash:',e); $('clashRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
+  finally{ f3dProcessando(false); f3dDica(''); }
 }
 
 async function f3dRegrasRodar(){

@@ -1081,6 +1081,73 @@ export async function colorirPorCategoria(V, cats){
   try{ await V.fragments.update(true); }catch(_){}
   return legenda;
 }
+// ── CLASH (fase ampla / broad-phase por caixa envolvente AABB) ─────────────
+// Quais das categorias têm elementos no modelo (p/ montar o menu só com o que existe).
+export async function categoriasPresentes(V, lista){
+  const out=[];
+  for(const item of lista){
+    const rx=item.rx.split(',').map(c=>new RegExp('^'+c.trim()+'$','i'));
+    let n=0;
+    for(const x of V.modelos){ try{ n+=Object.values(await x.model.getItemsOfCategories(rx)||{}).flat().length; }catch(_){} }
+    if(n>0) out.push({ ...item, n });
+  }
+  return out;
+}
+// Coleta {mi,id,caixa} de um conjunto de categorias.
+async function _caixasDe(V, regexes){
+  const arr=[];
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+    ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(b&&isFinite(b.min.x)) arr.push({mi,id,b}); });
+  }
+  return arr;
+}
+// Candidatos de conflito entre A e B: pares cujas CAIXAS se interpenetram além
+// da tolerância `tol` (m). Broad-phase com grade uniforme (rápido). Retorna os
+// elementos envolvidos por modelo, p/ destacar. NÃO é clash geométrico confirmado.
+export async function clashCandidatos(V, regexesA, regexesB, tol){
+  V._cancelar=false; tol = (tol==null?0.01:tol);
+  const A=await _caixasDe(V, regexesA), B=await _caixasDe(V, regexesB);
+  if(!A.length || !B.length) return { nPares:0, nA:0, nB:0, vazioA:!A.length, vazioB:!B.length, porModA:{}, porModB:{} };
+  const cell=2.0, grid=new Map();
+  const cellsOf=(b)=>{ const out=[];
+    for(let cx=Math.floor(b.min.x/cell);cx<=Math.floor(b.max.x/cell);cx++)
+    for(let cy=Math.floor(b.min.y/cell);cy<=Math.floor(b.max.y/cell);cy++)
+    for(let cz=Math.floor(b.min.z/cell);cz<=Math.floor(b.max.z/cell);cz++) out.push(cx+'|'+cy+'|'+cz);
+    return out; };
+  B.forEach((it,bi)=>{ for(const k of cellsOf(it.b)){ let a=grid.get(k); if(!a){a=[];grid.set(k,a);} a.push(bi); } });
+  const inter=(a,b)=>{ return (Math.min(a.max.x,b.max.x)-Math.max(a.min.x,b.min.x))>tol
+    && (Math.min(a.max.y,b.max.y)-Math.max(a.min.y,b.min.y))>tol
+    && (Math.min(a.max.z,b.max.z)-Math.max(a.min.z,b.min.z))>tol; };
+  const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0;
+  for(let ai=0; ai<A.length; ai++){
+    if(V._cancelar) throw new Error('CANCELADO');
+    const it=A[ai]; const cand=new Set();
+    for(const k of cellsOf(it.b)){ const arr=grid.get(k); if(arr) for(const bi of arr) cand.add(bi); }
+    for(const bi of cand){ const jb=B[bi];
+      if(jb.mi===it.mi && jb.id===it.id) continue;              // não conflita consigo mesmo
+      if(inter(it.b, jb.b)){ nPares++;
+        const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
+        const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
+      }
+    }
+    if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
+  }
+  return { nPares, nA:vA.size, nB:vB.size, porModA, porModB };
+}
+// Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
+export async function mostrarClash(V, porModA, porModB){
+  const T=V.THREE;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porModA||{})){ const x=V.modelos[mi]; if(!x||!ids.length) continue; try{ await x.model.setVisible(ids,true); }catch(_){} try{ await x.model.highlight(ids,{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porModB||{})){ const x=V.modelos[mi]; if(!x||!ids.length) continue; try{ await x.model.setVisible(ids,true); }catch(_){} try{ await x.model.highlight(ids,{color:new T.Color(0x22D3EE),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  const uni={}; for(const [mi,ids] of Object.entries(porModA||{})){ (uni[mi]=uni[mi]||[]).push(...ids); } for(const [mi,ids] of Object.entries(porModB||{})){ (uni[mi]=uni[mi]||[]).push(...ids); }
+  V._isolado=true; V._isoladoPorMod=uni; V._ultimaSelecao=uni; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+}
 export async function limparDestaqueCategoria(V){
   V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
   for(const x of V.modelos){
