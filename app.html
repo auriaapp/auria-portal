@@ -98,6 +98,10 @@
      ao lado — não um segundo viewer "por baixo". Só re-mostra o #stage. */
   body.soBim.split #stage{display:block}
   body.soBim.split #bimPane{border-left:2px solid var(--line)}
+  /* Ordem no split: quem foi aberto PRIMEIRO fica à esquerda. Se o 3D veio antes
+     (split-3dleft), o #bimPane vai pra esquerda e o #stage (2D) pra direita. */
+  body.soBim.split.split-3dleft #bimPane{order:1;border-left:none;border-right:2px solid var(--line)}
+  body.soBim.split.split-3dleft #stage{order:2}
   /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
      têm o que operar. Ficam apagadas em vez de sumir, para a barra não dançar
      ao trocar de modo. Sair do 3D e Pins seguem ativos. */
@@ -567,6 +571,7 @@
               <path d="M19.6 9.1a2 2 0 1 1 1.7-2"/>
             </svg></button>
           <select id="f3dPavSel" class="f3donly f3dpavsel" onchange="f3dPavSelChange(this.value)" title="Isolar um pavimento (federe os modelos na coluna)"><option value="">Pavimento…</option></select>
+          <button id="f3dBtn2D" class="bim-tb ico f3donly" onclick="f3dSplitToggle()" title="Mostrar/ocultar a prancha 2D ao lado">◫</button>
           <button class="bim-tb ico f3donly" onclick="f3dEnquadrar()" title="Enquadrar tudo">⤢</button>
           <button id="f3dBtnMedir" class="bim-tb ico f3donly" onclick="f3dTool('medir')" title="Medir distância entre dois pontos">📏</button>
           <span id="f3dMedeOpc" class="f3dsub">
@@ -690,7 +695,7 @@
           <!-- Botão que aparece quando há um ISOLAMENTO ativo (destaque/filtro):
                volta ao modelo completo. Enquanto isolado dá pra clicar as peças
                (ficam em ciano) e inspecionar sem sair do isolamento. -->
-          <button id="f3dVoltar" onclick="f3dVoltarModelo()" style="display:none;position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:8;background:rgba(15,23,42,.92);backdrop-filter:blur(3px);border:1px solid #22D3EE;color:#22D3EE;padding:7px 15px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">↩ Voltar ao modelo completo</button>
+          <button id="f3dVoltar" onclick="f3dVoltarModelo()" style="display:none;position:absolute;top:56px;left:50%;transform:translateX(-50%);z-index:8;background:rgba(15,23,42,.92);backdrop-filter:blur(3px);border:1px solid #22D3EE;color:#22D3EE;padding:7px 15px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">↩ Voltar ao modelo completo</button>
           <!-- Botão Parar: aparece enquanto a IA/consulta processa (lê Psets em
                lotes) e cancela na hora. -->
           <button id="f3dStop" onclick="f3dPararProc()" style="display:none;position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:9;background:rgba(127,29,29,.95);backdrop-filter:blur(3px);border:1px solid #f87171;color:#fff;padding:7px 16px;border-radius:20px;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)">⏹ Parar</button>
@@ -3496,7 +3501,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ae').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24af').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3799,7 +3804,7 @@ async function f3dModo(lig, preSel){
   if(bS) bS.style.display = F3D_MODO ? '' : 'none';
   $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
   if(!F3D_MODO){
-    document.body.classList.remove('split');   // saiu do 3D → sem split
+    document.body.classList.remove('split','split-3dleft');   // saiu do 3D → sem split
     f3dDescartar();
     // Fecha os painéis do 3D ao sair: reabrir o App em 2D com o painel de
     // propriedades de um elemento que já não está em cena confunde.
@@ -3821,19 +3826,29 @@ async function f3dModo(lig, preSel){
   if(F3D_SEL.size) await f3dAbrirSelecionados();
 }
 // "＋2D/3D": divide a tela com o MESMO ambiente 3D (fragments) em meia tela + o
-// 2D ao lado. No 2D → entra no 3D já em split; no Só BIM → liga/desliga o 2D.
+// 2D ao lado. Quem foi aberto PRIMEIRO fica à esquerda (SPLIT_PRIM). Sair do split
+// volta ao primário em tela cheia.
+let SPLIT_PRIM='2d';
+function _splitBtns(on){ const a=$('btnBim'), b=$('f3dBtn2D'); if(a){ a.style.display=''; a.classList.toggle('on',on); } if(b) b.classList.toggle('on',on); }
+function _splitResize(){ setTimeout(()=>{ try{ if(F3D && B3 && B3.redimensionar) B3.redimensionar(F3D); }catch(_){} try{ window.dispatchEvent(new Event('resize')); }catch(_){} }, 80); }
 async function f3dSplitToggle(){
-  if(!F3D_MODO){
-    document.body.classList.add('split');   // entra no 3D já dividido (2D continua ao lado)
-    await f3dModo(true);
-  } else {
-    const on=document.body.classList.toggle('split');
-    const bB=$('btnBim'); if(bB) bB.classList.toggle('on', on);
-    // sem prancha 2D aberta → oferece escolher uma do CDE para o lado
-    if(on && !(typeof LAYERS!=='undefined' && LAYERS && LAYERS.length)) abrirSeletorCDE(false);
+  if(document.body.classList.contains('split')){
+    // SAIR do split → volta ao primário em tela cheia
+    document.body.classList.remove('split','split-3dleft');
+    if(SPLIT_PRIM==='2d'){ await f3dModo(false); }   // 2D era o primário → fecha o 3D
+    _splitBtns(false); _splitResize(); return;
   }
-  // o layout mudou → reajusta o canvas do 3D (senão fica esticado/cortado)
-  setTimeout(()=>{ try{ if(F3D && B3 && B3.redimensionar) B3.redimensionar(F3D); }catch(_){} try{ window.dispatchEvent(new Event('resize')); }catch(_){} }, 70);
+  // ENTRAR no split
+  if(F3D_MODO){                                        // já no 3D → 3D é o primário (esquerda)
+    SPLIT_PRIM='3d';
+    document.body.classList.add('split','split-3dleft');
+    if(!(typeof LAYERS!=='undefined' && LAYERS && LAYERS.length)) abrirSeletorCDE(false);   // sem 2D → escolher
+  } else {                                             // no 2D → 2D é o primário (esquerda)
+    SPLIT_PRIM='2d';
+    document.body.classList.add('split');
+    await f3dModo(true);
+  }
+  _splitBtns(true); _splitResize();
 }
 // Seletor de pavimento na barra do 3D: popular (nomes reais dos storeys) + isolar.
 async function f3dPavSelPop(){
