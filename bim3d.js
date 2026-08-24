@@ -184,7 +184,7 @@ export async function adicionarModelo(V, m, msg){
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null;   // novo modelo → recalcula níveis/pavimentos
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null;   //novo modelo → recalcula níveis/pavimentos
   try{ await V.fragments.update(true); }catch(_){}
   return wrapper;
 }
@@ -201,7 +201,7 @@ export async function descarregarUm(V, idBusca){
   // Se estava escondendo peça deste modelo, esquece.
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null;   // conjunto de lajes mudou → recalcula pavimentos
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null;   //conjunto de lajes mudou → recalcula pavimentos
   try{ await V.fragments.update(true); }catch(_){}
 }
 
@@ -1007,6 +1007,42 @@ export async function diagFaixas(V){
 //  da base" do Revit. Peça que sobe vários andares fica só no de origem (base);
 //  antes eu usava sobreposição e ela vazava p/ todos os andares que cruzava.
 function _naFaixa(b, fx){ return b && b.min.y >= fx.y0 && b.min.y < fx.y1; }
+// PAVIMENTO PELA ESTRUTURA ESPACIAL (IfcBuildingStorey) — autoritativo e funciona
+// mesmo quando o Pset das lajes vem VAZIO (caso PINI-EST). Mapa por modelo:
+// {mi, id, nome, nomeNorm, ids:[elementos descendentes]}. Cache em V._storeys.
+async function _storeysMapa(V){
+  if(V._storeys) return V._storeys;
+  const out=[];
+  for(let mi=0; mi<V.modelos.length; mi++){
+    let t=null; try{ t=await arvoreEspacial(V, mi); }catch(_){}
+    if(!t||!t.arvore) continue;
+    const walk=(n)=>{
+      if(String(n.tipo).toUpperCase()==='IFCBUILDINGSTOREY' && n.id!=null){
+        const ids=[]; const col=c=>{ if(c.filhos&&c.filhos.length) c.filhos.forEach(col); else if(c.id!=null && !_ESPACIAL.has(String(c.tipo).toUpperCase())) ids.push(c.id); };
+        col(n);
+        const nome=String((t.nomes||{})[n.id]||'').trim()||('Pavimento '+n.id);
+        out.push({ mi, id:n.id, nome, nomeNorm:_norm(nome), ids });
+      }
+      (n.filhos||[]).forEach(walk);
+    };
+    t.arvore.forEach(walk);
+  }
+  V._storeys=out;
+  return out;
+}
+// Casa o texto do usuário com o nome do pavimento: substring completo ("terreo"),
+// ou só número ("pavimento 2" → casa o dígito), ou palavra+número ("subsolo 2").
+// "sobressolo 2" (palavra errada) NÃO casa tudo com 2 — devolve os disponíveis.
+function _casaPav(nomeNorm, alvo){
+  if(!alvo) return false;
+  if(nomeNorm.includes(alvo)) return true;
+  const temLetra=/[a-z]/.test(alvo);
+  const nAlvo=(alvo.match(/\d+/)||[])[0]||'';
+  const sd=(nomeNorm.match(/\d+/)||[])[0]||'';
+  if(!temLetra && nAlvo) return sd!=='' && parseInt(sd,10)===parseInt(nAlvo,10);
+  if(temLetra && nAlvo){ const pal=alvo.replace(/\d+/g,'').trim(); return !!pal && nomeNorm.includes(pal) && sd!=='' && parseInt(sd,10)===parseInt(nAlvo,10); }
+  return false;
+}
 // Categorias "visíveis" de construção (p/ isolar um andar inteiro sem puxar
 // espaços/tipos/relações).
 const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^IFCWINDOW/,/^IFCSTAIR/,
@@ -1016,7 +1052,24 @@ const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^I
 // "destacar o pavimento térreo" sem citar classe. Sem realce (cores naturais).
 export async function isolarPavimento(V, pavim){
   V._cancelar=false;
-  const fx=_faixaDe(await _faixasPavimento(V), _norm(pavim||''));
+  const alvo=_norm(pavim||'');
+  // 1) ESTRUTURA ESPACIAL primeiro (autoritativa; funciona com Pset das lajes vazio)
+  const st=await _storeysMapa(V);
+  if(st.length){
+    const sel=st.filter(s=>_casaPav(s.nomeNorm, alvo));
+    if(!sel.length) return { n:0, naoAchou:true, disponiveis:[...new Set(st.map(s=>s.nome))] };
+    const porMod={}; let total=0;
+    sel.forEach(s=>{ if(!s.ids.length) return; (porMod[s.mi]=porMod[s.mi]||[]).push(...s.ids); total+=s.ids.length; });
+    for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+    for(const [mi,keep] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(keep,true); }catch(_){} }
+    if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
+    else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }
+    try{ await V.fragments.update(true); }catch(_){}
+    if(total>0) await enquadrarIds(V, porMod);
+    return { n:total, nomes:[...new Set(sel.map(s=>s.nome))] };
+  }
+  // 2) fallback GEOMÉTRICO (modelos sem estrutura espacial): faixa por altura de laje
+  const fx=_faixaDe(await _faixasPavimento(V), alvo);
   if(!fx) return { n:0, semFaixa:true };
   const porMod={}; let total=0;
   for(let mi=0; mi<V.modelos.length; mi++){
@@ -1049,9 +1102,15 @@ export async function acharElementos(V, regexes, termos, pavim){
     if(termosLc.length || pavN){
       const okd=[];
       if(pavN && !termosLc.length){
-        const fx=_faixaDe(await _faixasPavimento(V), pavN);
-        if(fx){ let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){} ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) okd.push(id); }); }
-        else { const cache=await _pavimMapModelo(V, x, ids, 'Filtrando'); for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); } }
+        const st=await _storeysMapa(V);
+        if(st.length){   // estrutura espacial (membership) — precisa e sem depender de Pset
+          const set=new Set(); st.filter(s=>s.mi===mi && _casaPav(s.nomeNorm, pavN)).forEach(s=> s.ids.forEach(id=>set.add(id)));
+          for(const id of ids){ if(set.has(id)) okd.push(id); }
+        } else {
+          const fx=_faixaDe(await _faixasPavimento(V), pavN);
+          if(fx){ let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){} ids.forEach((id,i)=>{ if(_naFaixa((boxes||[])[i], fx)) okd.push(id); }); }
+          else { const cache=await _pavimMapModelo(V, x, ids, 'Filtrando'); for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); } }
+        }
       } else {
         let dados=[]; const precisaPset = pavN || termosLc.includes('@fire');
         if(precisaPset){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
