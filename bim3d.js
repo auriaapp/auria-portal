@@ -1088,6 +1088,23 @@ export async function isolarPavimento(V, pavim){
   if(total>0) await enquadrarIds(V, porMod);   // zoom-extend no andar
   return { n:total };
 }
+// Isola uma DISCIPLINA inteira (o modelo federado daquela disciplina) — para
+// "isolar a estrutura/arquitetura/hidráulica…". Estrutura ≠ paredes ACM (ARQ):
+// isolar por disciplina resolve sem depender de classe/LoadBearing.
+export async function isolarDisciplina(V, codesCsv){
+  const alvo=new Set(String(codesCsv||'').split(',').map(c=>c.trim().toUpperCase()).filter(Boolean));
+  const sel=[];
+  for(let mi=0; mi<V.modelos.length; mi++){ const d=String(V.modelos[mi].disciplina||'').toUpperCase(); if(alvo.has(d)) sel.push(mi); }
+  if(!sel.length) return { n:0, naoFederado:true, disponiveis:[...new Set(V.modelos.map(m=>m.disciplina).filter(Boolean))] };
+  const porMod={}; let total=0;
+  for(const mi of sel){ const x=V.modelos[mi]; let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){} if(ids.length){ porMod[mi]=ids; total+=ids.length; } }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(ids,true); }catch(_){} }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
+  try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);
+  return { n:total, modelos:[...new Set(sel.map(mi=>V.modelos[mi].disciplina||V.modelos[mi].nome))] };
+}
 // FINDER: acha os ids que casam (classe + texto/@fire + pavimento), SEM tocar no
 // visual. Reusado por isolar (destacarCategoria) e por colorir.
 export async function acharElementos(V, regexes, termos, pavim){

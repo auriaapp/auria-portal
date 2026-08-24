@@ -3039,6 +3039,19 @@ function f3dRegras(q){
     let pav0 = pm0 ? pm0[1] : (/\bt[ée]rreo\b/.test(s) ? 'terreo' : null);
     if(!pav0){ const m=s.match(/\b(subsolo\s*\d*|cobertura|mezanino|[áa]tico|pilotis|garagem|lazer)\b/); if(m) pav0=m[1].replace(/\s+/g,''); }
     if(pav0 && (/(destac|mostr|isol|selecion|exib|ver\b)/.test(s) || /pavimento|andar|piso|n[íi]vel/.test(s))) return {tipo:'isolarpav', arg:pav0};
+    // "isolar/mostrar a ESTRUTURA/ARQUITETURA/HIDRÁULICA…" → isola a DISCIPLINA
+    //  (o modelo federado). Estrutura ≠ paredes ACM (que são ARQ).
+    const DISC_CONC=[
+      [/estrutur/, 'EST,MET,FUN,CON'], [/arquitet/, 'ARQ'],
+      [/hidr[oáa]|hidrossanit|sanit[áa]ri|\b[áa]gua\b|esgoto|pluvial/, 'HID'],
+      [/el[ée]tric|el[ée]trico/, 'ELE'],
+      [/inc[êe]ndio|spda|\bpci\b|\bg[áa]s\b|combate/, 'INC'],
+      [/climatiz|ar.?condicionado|\bavac\b|\bhvac\b|exaust|pressuriz/, 'CLI'],
+      [/fachada|\bacm\b|revestimento externo/, 'FAC,MLD'],
+      [/paisag/, 'PAI'] ];
+    if(/(destac|mostr|isol|selecion|exib|ver\b|s[óo]\s|apenas|somente)/.test(s)){
+      for(const [rx,codes] of DISC_CONC){ if(rx.test(s)) return {tipo:'isolardisc', arg:codes}; }
+    }
     // "colorir elementos de vidro de branco" (material, sem citar a classe) →
     //  colore em TODAS as categorias filtrando pelo material.
     if(querColor && cor){
@@ -3174,6 +3187,14 @@ async function execDiretiva(tipo, arg, cor){
           : r.naoAchou ? ('Não achei o pavimento "'+arg+'". Pavimentos disponíveis: '+((r.disponiveis||[]).join(' · ')||'—')+'.')
           : r.semFaixa ? ('Não identifiquei os pavimentos deste modelo (sem estrutura espacial nem nome nas lajes). Rode "diag pavimentos".')
           : ('Não achei elementos no pavimento "'+arg+'".') }; }
+    }
+    else if(tipo==='isolardisc'){
+      if(!F3D||!B3) out={content:'Abra o modelo 3D primeiro.'};
+      else { const r=await B3.isolarDisciplina(F3D, arg);
+        out={content:
+            r.n>0 ? ('✓ Isolei a disciplina — '+(r.modelos||[]).join(', ')+' ('+r.n+' elementos). ↩ no topo volta ao modelo completo.')
+          : r.naoFederado ? ('Essa disciplina não está federada. Marque o modelo dela na coluna (olho) e tente de novo. Federados agora: '+((r.disponiveis||[]).join(', ')||'nenhum')+'.')
+          : ('Não achei elementos dessa disciplina.') }; }
     }
     else if(tipo==='diagpav'){ const txt=await B3.diagFaixas(F3D); out={content:'🔎 Faixas de pavimento:\n\n'+txt}; }
     else if(tipo==='diagtipos'){
@@ -3471,7 +3492,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ac').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ad').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
