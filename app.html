@@ -764,6 +764,31 @@
               <div id="pdRes" style="font-size:12px;margin-top:6px"></div>
             </div>
           </div>
+          <!-- Árvore espacial do modelo (Projeto→Edifício→Pavimento→categoria→
+               elemento), estilo Solibri/BIMcollab. Abre ao clicar no card do
+               modelo. Preguiçosa: cada nível constrói os filhos ao expandir. -->
+          <style>
+            #treeBox .tnode{margin:0}
+            #treeBox .trow{display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:6px;font-size:11px;color:#e2e8f0;white-space:nowrap}
+            #treeBox .trow:hover{background:rgba(124,58,237,.14)}
+            #treeBox .ttog{width:13px;text-align:center;cursor:pointer;color:#94a3b8;flex:none;font-size:10px}
+            #treeBox .tlbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+            #treeBox .tcnt{color:#64748b;font-size:10px;flex:none}
+            #treeBox .tiso{cursor:pointer;color:#7FB3D3;flex:none;padding:0 2px}
+            #treeBox .tiso:hover{color:#22D3EE}
+            #treeBox .tkids{margin-left:13px;border-left:1px solid rgba(255,255,255,.08);padding-left:4px}
+            #treeBox .telem{padding:3px 4px 3px 18px;font-size:11px;color:#cbd5e1;cursor:pointer;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+            #treeBox .telem:hover{background:rgba(34,211,238,.14);color:#fff}
+            #treeBox .tvazio{color:#64748b;font-size:10px;padding:3px 6px}
+          </style>
+          <div id="treeBox" class="bim-props" style="left:12px;right:auto;width:372px;display:none">
+            <div class="bp-head"><b style="flex:1;font-size:12px;color:#e2e8f0">🌳 <span id="treeTitulo">Árvore do modelo</span></b>
+              <button class="bim-x" onclick="f3dTreeToggle()" title="Fechar">✕</button></div>
+            <div class="bp-body">
+              <div style="font-size:11px;color:#94a3b8;margin-bottom:6px">Clique num nível para expandir · <b>◎</b> isola o nível · clique num elemento para isolá-lo.</div>
+              <div id="treeBody" style="max-height:420px;overflow:auto"></div>
+            </div>
+          </div>
           <div id="bimProps" class="bim-props">
             <!-- Cabeçalho SEM o botão ✕: a aba lateral (◂/▸) fecha o painel,
                  então um segundo botão de fechar era redundância. -->
@@ -3429,7 +3454,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23w').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23x').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3767,7 +3792,7 @@ function f3dRenderLista(){
     const meta=[cod, nome].filter(Boolean).join(' · ') + (m.revisao?' · rev '+esc(m.revisao):'');
     return `<div class="mitem${on?' on':''}">`
       + `<button class="molho" onclick="f3dTogglSel(${i},${!on})" title="${on?'Ocultar (descarrega da vista)':'Mostrar (carrega o modelo)'}">${on?olhoOn:olhoOff}</button>`
-      + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
+      + `<span class="mn" onclick="f3dTreeOpen(${i})" style="cursor:pointer" title="Abrir a árvore do modelo"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
       + `<small>${esc(meta)}</small></span></div>`;
   }).join('');
 }
@@ -5195,6 +5220,92 @@ function f3dPdExportar(){
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 600);
 }
 async function f3dPdLimpar(){ if(F3D&&B3){ try{ await B3.limparPeDireito(F3D); }catch(_){} } f3dBotaoVoltar(false); const r=$('pdRes'); if(r) r.innerHTML='<span style="color:#94a3b8">Marcações e cotas removidas.</span>'; }
+
+// ── ÁRVORE ESPACIAL DO MODELO (UI, preguiçosa) ─────────────────────────────
+let TREE=null, TREE_NODES={}, TREE_GRP={}, TREE_SEQ=0;
+const _ESP_UI=['IFCPROJECT','IFCSITE','IFCBUILDING','IFCBUILDINGSTOREY','IFCSPACE'];
+const IFC_ROT={IFCPROJECT:'Projeto',IFCSITE:'Terreno',IFCBUILDING:'Edifício',IFCBUILDINGSTOREY:'Pavimento',IFCSPACE:'Ambiente',
+  IFCWALL:'Paredes',IFCWALLSTANDARDCASE:'Paredes',IFCCOLUMN:'Pilares',IFCBEAM:'Vigas',IFCSLAB:'Lajes',IFCDOOR:'Portas',
+  IFCWINDOW:'Janelas',IFCSTAIR:'Escadas',IFCSTAIRFLIGHT:'Lances de escada',IFCRAMP:'Rampas',IFCRAILING:'Guarda-corpos',
+  IFCCOVERING:'Forros/Revestimentos',IFCFURNISHINGELEMENT:'Mobiliário',IFCFURNITURE:'Mobiliário',IFCPLATE:'Placas',
+  IFCMEMBER:'Elementos',IFCPIPESEGMENT:'Tubos',IFCPIPEFITTING:'Conexões',IFCDUCTSEGMENT:'Dutos',IFCDUCTFITTING:'Conexões de duto',
+  IFCCABLECARRIERSEGMENT:'Eletrocalhas',IFCLIGHTFIXTURE:'Luminárias',IFCFLOWTERMINAL:'Terminais',IFCFOOTING:'Fundações',
+  IFCPILE:'Estacas',IFCBUILDINGELEMENTPROXY:'Genéricos',IFCSPACEHEATER:'Aquecedores',IFCSANITARYTERMINAL:'Louças'};
+function ifcRot(t){ const u=String(t||'').toUpperCase(); return IFC_ROT[u] || (u.replace(/^IFC/,'').toLowerCase().replace(/^./,c=>c.toUpperCase())||u); }
+function _ehEsp(t){ return _ESP_UI.includes(String(t).toUpperCase()); }
+function treeLeafIds(node){ const out=[]; const w=n=>{ if(!n.filhos||!n.filhos.length){ if(n.id!=null && !_ehEsp(n.tipo)) out.push(n.id); } else n.filhos.forEach(w); }; w(node); return out; }
+function f3dTreeToggle(){ const el=$('treeBox'); if(el) el.style.display=(el.style.display==='none'||!el.style.display)?'block':'none'; }
+// Clique no card → garante o modelo carregado e abre a árvore dele.
+async function f3dTreeOpen(i){
+  if(!F3D_LISTA[i]||!B3){ return; }
+  if(!F3D_SEL.has(i)) f3dTogglSel(i,true);   // acende o olho / carrega
+  const alvo=F3D_LISTA[i].arquivoId||F3D_LISTA[i].id||F3D_LISTA[i].nome;
+  let mi=-1;
+  for(let k=0;k<50;k++){
+    if(F3D&&F3D.modelos){ mi=F3D.modelos.findIndex(m=>(m.arquivoId||m.id||m.nome)===alvo); if(mi>=0) break; }
+    await new Promise(r=>setTimeout(r,150));
+  }
+  if(mi<0){ return; }
+  await f3dTreeCarregar(mi, F3D_LISTA[i].nome);
+}
+async function f3dTreeCarregar(mi, nome){
+  const box=$('treeBox'); if(!box) return;
+  box.style.display='block';
+  const t=$('treeTitulo'); if(t) t.textContent=nome||'Modelo';
+  const body=$('treeBody'); if(body) body.innerHTML='<div class="tvazio">Lendo estrutura…</div>';
+  TREE_NODES={}; TREE_GRP={}; TREE_SEQ=0; TREE=null;
+  let dados=null; try{ dados=await B3.arvoreEspacial(F3D, mi); }catch(e){ console.warn('árvore:',e); }
+  if(!dados||!dados.arvore||!dados.arvore.length){ if(body) body.innerHTML='<div class="tvazio" style="color:#f59e0b">Este modelo não expôs estrutura espacial.</div>'; return; }
+  TREE={ mi, arvore:dados.arvore, nomes:dados.nomes||{} };
+  // Se a raiz é só o Projeto, começa já dentro dele (menos cliques).
+  let raizes=TREE.arvore;
+  if(body) body.innerHTML = raizes.map(treeEspRow).join('');
+}
+function treeEspRow(node){
+  const key='n'+(++TREE_SEQ); TREE_NODES[key]=node;
+  const nome=(TREE.nomes[node.id]||'').trim();
+  const rot = ifcRot(node.tipo)+(nome?': '+esc(nome):(node.id!=null?' '+node.id:''));
+  const nEl=treeLeafIds(node).length;
+  return `<div class="tnode" data-kind="esp" data-key="${key}">`
+    + `<div class="trow"><span class="ttog" onclick="treeToggle('${key}',this)">▸</span>`
+    + `<span class="tlbl" onclick="treeToggle('${key}',this)" title="${esc(rot)}">${rot}</span>`
+    + (nEl?`<span class="tcnt">${nEl}</span><span class="tiso" title="Isolar tudo deste nível" onclick="treeIsolarNode('${key}')">◎</span>`:'')
+    + `</div><div class="tkids" style="display:none"></div></div>`;
+}
+function treeGrpRow(tipo, ids){
+  const key='g'+(++TREE_SEQ); TREE_GRP[key]={ids};
+  return `<div class="tnode" data-kind="grp" data-key="${key}">`
+    + `<div class="trow"><span class="ttog" onclick="treeToggle('${key}',this)">▸</span>`
+    + `<span class="tlbl" onclick="treeToggle('${key}',this)">${esc(ifcRot(tipo))}</span>`
+    + `<span class="tcnt">${ids.length}</span><span class="tiso" title="Isolar este grupo" onclick="treeIsolarIds('${key}')">◎</span>`
+    + `</div><div class="tkids" style="display:none"></div></div>`;
+}
+function treeToggle(key, el){
+  const wrap=el.closest('.tnode'); if(!wrap) return;
+  const kids=wrap.querySelector('.tkids'), tog=wrap.querySelector('.ttog');
+  if(wrap.classList.contains('open')){ wrap.classList.remove('open'); if(kids) kids.style.display='none'; if(tog) tog.textContent='▸'; return; }
+  wrap.classList.add('open'); if(kids) kids.style.display='block'; if(tog) tog.textContent='▾';
+  if(!kids || kids.dataset.built) return; kids.dataset.built='1';
+  if(wrap.dataset.kind==='esp'){
+    const node=TREE_NODES[key]; const filhos=(node&&node.filhos)||[];
+    const subEsp=filhos.filter(f=>_ehEsp(f.tipo));
+    const elems=filhos.filter(f=>!_ehEsp(f.tipo));
+    const porTipo={}; elems.forEach(e=>{ (porTipo[e.tipo]=porTipo[e.tipo]||[]).push(e.id); });
+    let html=subEsp.map(treeEspRow).join('');
+    html+=Object.keys(porTipo).sort((a,b)=>ifcRot(a).localeCompare(ifcRot(b))).map(t=>treeGrpRow(t,porTipo[t])).join('');
+    kids.innerHTML = html || '<div class="tvazio">sem filhos</div>';
+  } else if(wrap.dataset.kind==='grp'){
+    const g=TREE_GRP[key]; if(!g){ return; }
+    kids.innerHTML='<div class="tvazio">carregando nomes…</div>';
+    B3.nomesElementos(F3D, TREE.mi, g.ids).then(nm=>{
+      kids.innerHTML = g.ids.map(id=>`<div class="telem" onclick="treeIsolarUm(${id})" title="Isolar este elemento">${esc(nm[id]||('#'+id))}</div>`).join('');
+    }).catch(()=>{ kids.innerHTML='<div class="tvazio" style="color:#ef4444">erro ao ler nomes</div>'; });
+  }
+}
+function treeIsolarNode(key){ const n=TREE_NODES[key]; if(n) treeIsolar(treeLeafIds(n)); }
+function treeIsolarIds(key){ const g=TREE_GRP[key]; if(g) treeIsolar(g.ids); }
+function treeIsolarUm(id){ treeIsolar([id]); }
+async function treeIsolar(ids){ if(!F3D||!B3||!TREE||!ids||!ids.length) return; try{ await B3.isolarElementos(F3D, TREE.mi, ids); f3dBotaoVoltar(true); }catch(e){ console.warn('isolar árvore:',e); } }
 
 async function f3dRegrasRodar(){
   const E=F3D;

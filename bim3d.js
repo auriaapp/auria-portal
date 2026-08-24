@@ -1415,6 +1415,67 @@ export async function zoomPeDireito(V, mi, id){ try{ await enquadrarIds(V, {[mi]
 // Lista de pavimentos (nome + altura), p/ o seletor da varredura por andar.
 export async function listaPavimentos(V){ const f=await _faixasPavimento(V); return (f||[]).map(x=>({ nome:x.nome, y:x.y })); }
 
+// ── ÁRVORE ESPACIAL do modelo (Projeto→Terreno→Edifício→Pavimento→…→Elemento) ─
+//  O Fragments entrega isso pronto em getSpatialStructure(), mas num formato que
+//  ALTERNA nó-categoria (category!=null, localId=null) com nó-instância
+//  (category=null, localId=N). A instância é o objeto REAL; o tipo dela é a
+//  categoria do nó-pai. Aqui achato para instâncias {id, tipo, filhos} e
+//  resolvo o NOME só dos nós espaciais (poucos); nomes de elemento vêm sob
+//  demanda (nomesElementos) porque podem ser milhares.
+const _ESPACIAL = new Set(['IFCPROJECT','IFCSITE','IFCBUILDING','IFCBUILDINGSTOREY','IFCSPACE']);
+export async function arvoreEspacial(V, mi){
+  const x=V.modelos[mi]; if(!x||!x.model) return null;
+  let raw=null; try{ raw=await x.model.getSpatialStructure(); }catch(_){}
+  if(!raw) return null;
+  const limpar=(inst, tipo)=>{
+    const filhos=[];
+    for(const catNode of (inst.children||[])){
+      const cat=catNode.category||tipo;
+      for(const ch of (catNode.children||[])) filhos.push(limpar(ch, cat));
+    }
+    return { id:inst.localId, tipo, filhos };
+  };
+  // raw é o nó-categoria raiz (IFCPROJECT) com children = [instância do projeto]
+  const arvore = (raw.children||[]).map(pi=> limpar(pi, raw.category));
+  // nomes só dos nós ESPACIAIS (projeto/terreno/edifício/pavimento/ambiente)
+  const espIds=[]; const col=(n)=>{ if(_ESPACIAL.has(String(n.tipo).toUpperCase()) && n.id!=null) espIds.push(n.id); (n.filhos||[]).forEach(col); };
+  arvore.forEach(col);
+  const nomes={};
+  for(let s=0;s<espIds.length;s+=400){
+    const lote=espIds.slice(s,s+400); let da=[];
+    try{ da=await x.model.getItemsData(lote,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      nomes[lid]=String((d.Name&&d.Name.value)||(d.LongName&&d.LongName.value)||(d.ObjectType&&d.ObjectType.value)||'').trim(); });
+  }
+  return { arvore, nomes };
+}
+// Nomes de um lote de elementos (sob demanda, ao expandir um grupo).
+export async function nomesElementos(V, mi, ids){
+  const x=V.modelos[mi]; if(!x||!ids||!ids.length) return {};
+  const out={};
+  for(let s=0;s<ids.length;s+=400){
+    const lote=ids.slice(s,s+400); let da=[];
+    try{ da=await x.model.getItemsData(lote,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      out[lid]=String((d.Name&&d.Name.value)||(d.ObjectType&&d.ObjectType.value)||('#'+lid)).split(':')[0]; });
+  }
+  return out;
+}
+// Isola um conjunto de elementos de UM modelo (esconde o resto), realça e enquadra.
+export async function isolarElementos(V, mi, ids){
+  const T=V.THREE;
+  if(V._fantasma) await _limparFantasma(V);
+  for(const y of V.modelos){ try{ await y.model.setVisible(undefined,false); }catch(_){} try{ await y.model.resetHighlight(); }catch(_){} }
+  const x=V.modelos[mi];
+  if(x && ids && ids.length){
+    try{ await x.model.setVisible(ids,true); }catch(_){}
+    if(ids.length<=250){ try{ await x.model.highlight(ids,{color:new T.Color(0x22D3EE),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  }
+  V._isolado=true; V._isoladoPorMod={[mi]:ids}; V._ultimaSelecao={[mi]:ids}; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+  if(ids && ids.length) await enquadrarIds(V, {[mi]:ids});
+}
+
 // ── CONTAR / AGRUPAR por propriedade (Nível 3 da IA) ───────────────────────
 //  Sem `termoProp`: conta o total da(s) categoria(s) (rápido, só a lista de ids).
 //  Com `termoProp` (ex.: "largura"): agrupa pela propriedade e conta cada valor.
