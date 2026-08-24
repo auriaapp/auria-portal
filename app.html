@@ -3202,13 +3202,23 @@ async function execDiretiva(tipo, arg, cor){
           : ('Não achei elementos no pavimento "'+arg+'".') }; }
     }
     else if(tipo==='isolardisc'){
-      if(!F3D||!B3) out={content:'Abra o modelo 3D primeiro.'};
-      else { const r=await B3.isolarDisciplina(F3D, arg);
-        out={content:
-            (r.n>0 && r.modo==='classes') ? ('✓ Isolei a estrutura por classes (pilar/viga/laje/fundação + paredes estruturais) — '+r.n+' elementos. Não há modelo EST separado; usei o LoadBearing p/ excluir as de fechamento. ↩ no topo volta.')
-          : r.n>0 ? ('✓ Isolei a disciplina — '+(r.modelos||[]).join(', ')+' ('+r.n+' elementos). ↩ no topo volta ao modelo completo.')
-          : r.naoFederado ? ('Essa disciplina não está federada. Marque o modelo dela na coluna (olho) e tente de novo. Federados agora: '+((r.disponiveis||[]).join(', ')||'nenhum')+'.')
-          : ('Não achei elementos dessa disciplina.') }; }
+      if(!F3D||!B3){ out={content:'Abra o modelo 3D primeiro.'}; }
+      else {
+        const r=await B3.isolarDisciplina(F3D, arg);
+        if(r.n>0){ out={content:'✓ Isolei a disciplina — '+(r.modelos||[]).join(', ')+' ('+r.n+' elementos). ↩ no topo volta ao modelo completo.'}; }
+        else {
+          const codes=String(arg||'').split(',').map(c=>c.trim().toUpperCase());
+          const existeNoCde=(typeof F3D_LISTA!=='undefined') && F3D_LISTA.some(m=>codes.includes(String(m.disciplina||'').toUpperCase()));
+          if(existeNoCde){ out={content:'Essa disciplina existe no CDE mas não está federada. Marque o olho do modelo dela na coluna e tente de novo.'}; }
+          else if(codes.includes('EST')){
+            const r2=await B3.isolarEstrutural(F3D, false);   // rápido: só classes, sem varrer Pset de parede
+            out={content: r2.n>0
+              ? ('✓ Isolei a estrutura por classes (pilar/viga/laje/fundação) — '+r2.n+' elementos. Não há modelo EST federado; paredes não entram neste modo rápido. ↩ no topo volta.')
+              : ('Não achei elementos estruturais (pilar/viga/laje) nos modelos federados. Federe o modelo de Estrutura (EST) na coluna.') };
+          }
+          else { out={content:'Essa disciplina não está no CDE. Federados agora: '+((r.disponiveis||[]).join(', ')||'nenhum')+'.'}; }
+        }
+      }
     }
     else if(tipo==='diagpav'){ const txt=await B3.diagFaixas(F3D); out={content:'🔎 Faixas de pavimento:\n\n'+txt}; }
     else if(tipo==='diagtipos'){
@@ -3506,7 +3516,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ag').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ah').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
