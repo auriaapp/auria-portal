@@ -1092,10 +1092,16 @@ export async function isolarPavimento(V, pavim){
 // "isolar a estrutura/arquitetura/hidráulica…". Estrutura ≠ paredes ACM (ARQ):
 // isolar por disciplina resolve sem depender de classe/LoadBearing.
 export async function isolarDisciplina(V, codesCsv){
+  V._cancelar=false;
   const alvo=new Set(String(codesCsv||'').split(',').map(c=>c.trim().toUpperCase()).filter(Boolean));
   const sel=[];
   for(let mi=0; mi<V.modelos.length; mi++){ const d=String(V.modelos[mi].disciplina||'').toUpperCase(); if(alvo.has(d)) sel.push(mi); }
-  if(!sel.length) return { n:0, naoFederado:true, disponiveis:[...new Set(V.modelos.map(m=>m.disciplina).filter(Boolean))] };
+  if(!sel.length){
+    // Sem modelo EST federado, mas pediram estrutura → cai p/ as CLASSES
+    // estruturais (pilar/viga/laje/fundação) + paredes LoadBearing (exclui ACM).
+    if(alvo.has('EST')){ const r=await _isolarEstrutural(V); if(r&&r.n>0) return { n:r.n, modo:'classes' }; }
+    return { n:0, naoFederado:true, disponiveis:[...new Set(V.modelos.map(m=>m.disciplina).filter(Boolean))] };
+  }
   const porMod={}; let total=0;
   for(const mi of sel){ const x=V.modelos[mi]; let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){} if(ids.length){ porMod[mi]=ids; total+=ids.length; } }
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
@@ -1104,6 +1110,35 @@ export async function isolarDisciplina(V, codesCsv){
   try{ await V.fragments.update(true); }catch(_){}
   if(total>0) await enquadrarIds(V, porMod);
   return { n:total, modelos:[...new Set(sel.map(mi=>V.modelos[mi].disciplina||V.modelos[mi].nome))] };
+}
+// Fallback quando NÃO há modelo EST separado (estrutura dentro do ARQ): isola as
+// CLASSES estruturais + paredes LoadBearing (Pset), deixando de fora as de
+// fechamento/ACM (LoadBearing=false). Lê Pset só das paredes (lotes, cancelável).
+const _EST_CLS=[/^IFCCOLUMN$/,/^IFCBEAM$/,/^IFCSLAB$/,/^IFCFOOTING$/,/^IFCPILE$/,/^IFCMEMBER$/,/^IFCPLATE$/];
+function _ehLoadBearing(d){
+  const v=_achaValorQualquer(d, /loadbearing|load.?bearing|porta.?carga|portante|estrutural/i);
+  if(v===true) return true;
+  return v!=null && /^(1|true|sim|yes|verdadeiro|s)$/i.test(_norm(String(v)));
+}
+async function _isolarEstrutural(V){
+  const porMod={}; let total=0;
+  for(let mi=0; mi<V.modelos.length; mi++){
+    if(V._cancelar) throw new Error('CANCELADO');
+    const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(_EST_CLS)||{}).flat(); }catch(_){}
+    let wids=[]; try{ wids=Object.values(await x.model.getItemsOfCategories([/^IFCWALL/])||{}).flat(); }catch(_){}
+    if(wids.length){
+      const dd=await _lerPsetsEmLotes(V, x.model, wids, 'Separando estrutura');
+      (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null && _ehLoadBearing(d)) ids.push(lid); });
+    }
+    if(ids.length){ porMod[mi]=ids; total+=ids.length; }
+  }
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(ids,true); }catch(_){} }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
+  try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);
+  return { n:total };
 }
 // FINDER: acha os ids que casam (classe + texto/@fire + pavimento), SEM tocar no
 // visual. Reusado por isolar (destacarCategoria) e por colorir.
