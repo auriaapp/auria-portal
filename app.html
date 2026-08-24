@@ -3422,7 +3422,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23t').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23u').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3808,6 +3808,7 @@ async function f3dSincronizarSelecao(){
     const mel=$('bimMsg'); if(mel) mel.style.display='none';
   }
   f3dAbrirBotaoSync();
+  f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
 }
 // Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
 // que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
@@ -5083,23 +5084,39 @@ function f3dPdToggle(){
   el.style.display = abrir ? 'block' : 'none';
   if(abrir) f3dPdInit();
 }
+// Disciplina de um modelo CARREGADO: usa a do wrapper; se faltar, acha no
+// F3D_LISTA por arquivoId (mesma fonte da coluna da esquerda). Bulletproof.
+function pdDiscDe(m){
+  if(m && m.disciplina) return m.disciplina;
+  const li = (typeof F3D_LISTA!=='undefined' && F3D_LISTA) ? F3D_LISTA.find(x=> (x.arquivoId||x.id||x.nome)===(m&&(m.arquivoId||m.id||m.nome))) : null;
+  return (li && li.disciplina) || (m&&m.nome) || '—';
+}
 async function f3dPdInit(){
   const box=$('pdDiscs'); if(!box) return;
-  if(!F3D||!B3||!F3D.modelos||!F3D.modelos.length){ box.innerHTML='<span style="color:#64748b;font-size:11px">Abra o modelo 3D primeiro.</span>'; return; }
-  const porDisc={};   // uma disciplina por modelo federado (agrupa modelos da mesma)
-  F3D.modelos.forEach((m,i)=>{ const d=(m.disciplina||m.nome||'—'); (porDisc[d]=porDisc[d]||[]).push(i); });
-  box.innerHTML = Object.keys(porDisc).map(d=>
-    '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#e2e8f0;cursor:pointer">'
-    +'<input type="checkbox" class="pdDisc" value="'+esc(d)+'" checked> '+esc(d)+'</label>').join('');
-  $('pdRes').innerHTML='';
-  // Pavimentos (assíncrono — lê as lajes; cacheado). Preenche o seletor.
+  const sel0=$('pdPav');
+  if(!F3D||!B3||!F3D.modelos||!F3D.modelos.length){ box.innerHTML='<span style="color:#64748b;font-size:11px">Abra o modelo 3D primeiro.</span>'; if(sel0) sel0.innerHTML='<option value="">Todos os pavimentos</option>'; return; }
+  // preserva o que já estava marcado (refresh não deve desmarcar a escolha);
+  // na 1ª montagem marca tudo.
+  const primeira = !document.querySelector('#pdDiscs .pdDisc');
+  const antes = new Set([...document.querySelectorAll('#pdDiscs .pdDisc')].filter(c=>c.checked).map(c=>c.value));
+  const discs=[...new Set(F3D.modelos.map(pdDiscDe))];
+  box.innerHTML = discs.map(d=>{
+    const chk = (primeira || antes.has(d)) ? 'checked' : '';
+    return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#e2e8f0;cursor:pointer">'
+      +'<input type="checkbox" class="pdDisc" value="'+esc(d)+'" '+chk+'> '+esc(d)+'</label>';
+  }).join('');
+  // Pavimentos (assíncrono — lê as lajes; cacheado, invalidado ao federar).
   const sel=$('pdPav'); if(sel){
+    const antesPav=sel.value;
     sel.innerHTML='<option value="">Carregando pavimentos…</option>';
     let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
     sel.innerHTML='<option value="">Todos os pavimentos</option>'
       + (pavs||[]).map(p=>'<option value="'+esc(p.nome)+'">'+esc(p.nome)+'</option>').join('');
+    if(antesPav && [...sel.options].some(o=>o.value===antesPav)) sel.value=antesPav;
   }
 }
+// Se o painel do pé-direito estiver aberto, reflete mudança de federação.
+function f3dPdRefreshSeAberto(){ const el=$('pdBox'); if(el && el.style.display!=='none' && el.style.display) f3dPdInit(); }
 async function f3dPdVerificar(){
   if(!F3D||!B3){ $('pdRes').innerHTML='<span style="color:#f59e0b">Abra o modelo 3D.</span>'; return; }
   const marc=[...document.querySelectorAll('#pdDiscs .pdDisc:checked')].map(c=>c.value);
@@ -5107,7 +5124,7 @@ async function f3dPdVerificar(){
   let aMin=parseFloat($('pdMin').value), aMax=parseFloat($('pdMax').value);
   if(isNaN(aMin)) aMin=2.00; if(isNaN(aMax)) aMax=2.30; if(aMin>aMax){ const t=aMin; aMin=aMax; aMax=t; }
   const pav=($('pdPav')&&$('pdPav').value)||'';
-  const modelIdx=[]; F3D.modelos.forEach((m,i)=>{ if(marc.includes(m.disciplina||m.nome||'—')) modelIdx.push(i); });
+  const modelIdx=[]; F3D.modelos.forEach((m,i)=>{ if(marc.includes(pdDiscDe(m))) modelIdx.push(i); });
   $('pdRes').innerHTML='<span style="color:#94a3b8">Verificando pé-direito…</span>';
   f3dProcessando(true);
   try{

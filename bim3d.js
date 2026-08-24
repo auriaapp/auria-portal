@@ -184,6 +184,7 @@ export async function adicionarModelo(V, m, msg){
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
+  V.niveis=null; V._faixas=null; V.porNivel=null;   // novo modelo → recalcula níveis/pavimentos
   try{ await V.fragments.update(true); }catch(_){}
   return wrapper;
 }
@@ -200,6 +201,7 @@ export async function descarregarUm(V, idBusca){
   // Se estava escondendo peça deste modelo, esquece.
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
+  V.niveis=null; V._faixas=null; V.porNivel=null;   // conjunto de lajes mudou → recalcula pavimentos
   try{ await V.fragments.update(true); }catch(_){}
 }
 
