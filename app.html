@@ -113,6 +113,9 @@
   #modList .mitem .mn{flex:1;min-width:0}
   #modList .mitem .mn b{display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #modList .mitem .mn small{color:var(--mut);font-size:10.5px}
+  /* Olho (mesmo padrão da lista de cotas): acende = modelo carregado. */
+  #modList .mitem.on{border-color:var(--accent);background:rgba(34,211,238,.06)}
+  #modList .mitem .molho{background:none;border:none;cursor:pointer;padding:0;flex:none;display:flex;align-items:center}
   #bimPane{flex:1;min-width:0;display:none;flex-direction:column;background:#0f1117;border-left:2px solid var(--line)}
   #bimPane.on{display:flex}
   #bimPane iframe{flex:1;border:none;width:100%;background:#0f1117}
@@ -660,7 +663,7 @@
           <img src="logo_symbol.png" alt="Auria"><span>▷</span>
         </button>
         <div id="bimBody" style="flex:1;position:relative;overflow:hidden">
-          <div class="bim-msg" id="bimMsg">Carregando modelos…</div>
+          <div class="bim-msg" id="bimMsg"><span style="font-size:24px;line-height:1;margin-right:8px">◂</span>Carregar modelo(s)</div>
           <canvas id="bimCanvas" style="position:absolute;inset:0;width:100%;height:100%;display:none;outline:none"></canvas>
           <!-- Canvas PRÓPRIO do visualizador do CDE. Não pode dividir o
                #bimCanvas com o xeokit: um canvas só aceita um contexto WebGL,
@@ -1083,12 +1086,12 @@ function abrirEscolhaOrigem(ev){
   const pop=document.createElement('div');
   pop.className='origPop'; pop.id='origPop';
   pop.innerHTML =
-    `<button onclick="fecharEscolhaOrigem();abrirDialogo(${overlay})"><span class="ic">💻</span>Do meu computador</button>`
-    +`<button onclick="fecharEscolhaOrigem();abrirSeletorCDE(${overlay})"><span class="ic">🗂</span>Do CDE</button>`
+    `<button onclick="fecharEscolhaOrigem();abrirDialogo(${overlay})"><span class="ic">💻</span>Computador</button>`
+    +`<button onclick="fecharEscolhaOrigem();abrirSeletorCDE(${overlay})"><span class="ic">🗂</span>2D/Prancha do CDE</button>`
     // Entrada da análise de MODELO estando já no App. Fica aqui, junto das
     // outras origens, porque a pergunta é a mesma: de onde vem o que vou
     // analisar. Sem isto, só se entraria em 3D vindo do CDE.
-    +`<button onclick="fecharEscolhaOrigem();f3dModo(true)"><span class="ic">🧊</span>Modelo 3D do CDE</button>`;
+    +`<button onclick="fecharEscolhaOrigem();f3dModo(true)"><span class="ic">🧊</span>3D/Modelo do CDE</button>`;
   document.body.appendChild(pop);
   const r=ev.currentTarget.getBoundingClientRect(), w=220, h=pop.offsetHeight;
   let left=r.left, top=r.bottom+6;
@@ -3422,7 +3425,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23u').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23v').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3751,10 +3754,18 @@ function f3dRenderLista(){
     el.innerHTML='<div class="hint">Nenhum modelo com 3D pronto. No CDE, aba BIM, use “Converter para 3D”.</div>';
     return;
   }
-  el.innerHTML = F3D_LISTA.map((m,i)=>
-    `<label class="mitem"><input type="checkbox" ${F3D_SEL.has(i)?'checked':''} onchange="f3dTogglSel(${i},this.checked)">`
-    + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
-    + `<small>${esc(m.disciplina||'—')} · rev ${esc(m.revisao||'?')}</small></span></label>`).join('');
+  const olhoOn='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const olhoOff='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  el.innerHTML = F3D_LISTA.map((m,i)=>{
+    const on=F3D_SEL.has(i);
+    const cod=m.disciplina||'';                         // código (ex.: HID)
+    const nome=COD_DISC[cod]||deduzDisc(m.nome)||'';    // nome completo (ex.: Instalações Hidrossanitárias)
+    const meta=[cod, nome].filter(Boolean).join(' · ') + (m.revisao?' · rev '+esc(m.revisao):'');
+    return `<div class="mitem${on?' on':''}">`
+      + `<button class="molho" onclick="f3dTogglSel(${i},${!on})" title="${on?'Ocultar (descarrega da vista)':'Mostrar (carrega o modelo)'}">${on?olhoOn:olhoOff}</button>`
+      + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
+      + `<small>${esc(meta)}</small></span></div>`;
+  }).join('');
 }
 // Marcar/desmarcar checkbox carrega/descarrega o modelo automaticamente.
 // Debounce de 200ms para o caso de o usuário clicar em vários rapidamente
@@ -3762,6 +3773,7 @@ function f3dRenderLista(){
 let _selTimer=null;
 function f3dTogglSel(i, on){
   if(on) F3D_SEL.add(i); else F3D_SEL.delete(i);
+  f3dRenderLista();   // acende/apaga o olho na hora
   if(_selTimer) clearTimeout(_selTimer);
   // Sincroniza incrementalmente: só o que MUDOU é baixado/removido, o
   // resto da cena permanece intocado (e a câmera preserva a vista). O
@@ -3782,7 +3794,7 @@ async function f3dSincronizarSelecao(){
     f3dDescartar();
     const cv=$('f3dCanvas'); if(cv) cv.style.display='none';
     const m=$('bimMsg');
-    if(m){ m.textContent='Marque um modelo na coluna para carregar.'; m.style.display='flex'; }
+    if(m){ m.innerHTML='<span style="font-size:24px;line-height:1;margin-right:8px">◂</span>Carregar modelo(s)'; m.style.display='flex'; }
     return;
   }
   const key = m => m.arquivoId || m.id || m.nome;
