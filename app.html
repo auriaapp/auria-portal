@@ -94,6 +94,10 @@
      no body para não duplicar estado — quem manda é uma variável só. */
   body.soBim #stage{display:none}
   body.soBim #bimPane{display:flex;border-left:none}
+  /* Split "+2D/3D": é o PRÓPRIO ambiente 3D (fragments) em meia tela, com o 2D
+     ao lado — não um segundo viewer "por baixo". Só re-mostra o #stage. */
+  body.soBim.split #stage{display:block}
+  body.soBim.split #bimPane{border-left:2px solid var(--line)}
   /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
      têm o que operar. Ficam apagadas em vez de sumir, para a barra não dançar
      ao trocar de modo. Sair do 3D e Pins seguem ativos. */
@@ -101,7 +105,7 @@
      (que ganhou duplo papel: 2D e 3D) e o Sair/Pins. Sem o btnApontar
      nesta exceção, ele aceitava clique visualmente mas o pointer-events
      matava o handler — bug reportado em produção. */
-  body.soBim .toolbar .tb:not(#btnSairBim):not(#btnVerPins):not(#btnApontar){opacity:.35;pointer-events:none}
+  body.soBim .toolbar .tb:not(#btnSairBim):not(#btnVerPins):not(#btnApontar):not(#btnBim){opacity:.35;pointer-events:none}
   /* Os itens são <label>, e `.side label` os deixaria em maiúsculas de 10px
      (é o estilo dos TÍTULOS da coluna). Aqui voltam a ser texto normal. */
   #modList .mcard{margin-bottom:5px}
@@ -141,6 +145,10 @@
   /* O seletor de disciplina é do caminho antigo (xeokit) e fica vazio aqui —
      quem escolhe o modelo é a coluna da esquerda. */
   body.soBim #bimDisc, body.soBim .bim-head>span:first-child{display:none}
+  /* Seletor de pavimento na barra do 3D (fragments). */
+  .f3dpavsel{display:none}
+  body.soBim select.f3dpavsel{display:inline-block;background:rgba(255,255,255,.08);color:#e2e8f0;border:1px solid rgba(255,255,255,.18);border-radius:6px;font-size:11px;padding:3px 6px;max-width:150px;outline:none}
+  body.soBim select.f3dpavsel option{background:#0f1117;color:#e2e8f0}
   /* Trava: se o 🧊 BIM (xeokit) foi usado antes nesta sessão, o canvas dele
      continuaria visível atrás do modelo do CDE. São motores e canvas
      distintos, e no modo Só BIM só o do CDE aparece. */
@@ -498,7 +506,7 @@
         <button class="tb" id="btnIA" onclick="toggleIA()" title="Assistente de IA (Groq · Llama 4, com visão)">✦ IA</button>
         <button class="tb" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span class="sep"></span>
-        <button class="tb" id="btnBim" onclick="bimToggle()" title="Dividir a tela com o modelo 3D (Auria BIM) do pavimento e disciplina">🧊 BIM</button>
+        <button class="tb" id="btnBim" onclick="f3dSplitToggle()" title="Dividir a tela: 2D e o modelo 3D (fragments) lado a lado">＋2D/3D</button>
         <button class="tb" id="btnSairBim" onclick="f3dModo(false)" style="display:none" title="Voltar para a análise de pranchas 2D">✕ Sair do 3D</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
       </div>
@@ -558,6 +566,7 @@
               <path d="M8.4 8.6h3.4v1.9H8.4z"/>
               <path d="M19.6 9.1a2 2 0 1 1 1.7-2"/>
             </svg></button>
+          <select id="f3dPavSel" class="f3donly f3dpavsel" onchange="f3dPavSelChange(this.value)" title="Isolar um pavimento (federe os modelos na coluna)"><option value="">Pavimento…</option></select>
           <button class="bim-tb ico f3donly" onclick="f3dEnquadrar()" title="Enquadrar tudo">⤢</button>
           <button id="f3dBtnMedir" class="bim-tb ico f3donly" onclick="f3dTool('medir')" title="Medir distância entre dois pontos">📏</button>
           <span id="f3dMedeOpc" class="f3dsub">
@@ -3462,7 +3471,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23ab').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ac').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3758,13 +3767,14 @@ async function f3dModo(lig, preSel){
   } else document.body.classList.remove('bimBarraFora');
   $('secPranchas').style.display   = F3D_MODO ? 'none' : '';
   $('secModelosBim').style.display = F3D_MODO ? '' : 'none';
-  // Em análise de MODELO o botão 🧊 não faz sentido — ele existe para trazer o
-  // 3D ao lado da prancha, e aqui já se está no 3D. No lugar dele, a saída.
+  // "＋2D/3D" fica visível NOS DOIS modos: no 2D abre o 3D ao lado; no Só BIM
+  // liga/desliga o 2D ao lado (classe .split). "Sair do 3D" só no 3D.
   const bB=$('btnBim'), bS=$('btnSairBim');
-  if(bB) bB.style.display = F3D_MODO ? 'none' : '';
+  if(bB){ bB.style.display=''; bB.classList.toggle('on', F3D_MODO && document.body.classList.contains('split')); }
   if(bS) bS.style.display = F3D_MODO ? '' : 'none';
   $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
   if(!F3D_MODO){
+    document.body.classList.remove('split');   // saiu do 3D → sem split
     f3dDescartar();
     // Fecha os painéis do 3D ao sair: reabrir o App em 2D com o painel de
     // propriedades de um elemento que já não está em cena confunde.
@@ -3784,6 +3794,39 @@ async function f3dModo(lig, preSel){
   }
   f3dRenderLista();
   if(F3D_SEL.size) await f3dAbrirSelecionados();
+}
+// "＋2D/3D": divide a tela com o MESMO ambiente 3D (fragments) em meia tela + o
+// 2D ao lado. No 2D → entra no 3D já em split; no Só BIM → liga/desliga o 2D.
+async function f3dSplitToggle(){
+  if(!F3D_MODO){
+    document.body.classList.add('split');   // entra no 3D já dividido (2D continua ao lado)
+    await f3dModo(true);
+  } else {
+    const on=document.body.classList.toggle('split');
+    const bB=$('btnBim'); if(bB) bB.classList.toggle('on', on);
+    // sem prancha 2D aberta → oferece escolher uma do CDE para o lado
+    if(on && !(typeof LAYERS!=='undefined' && LAYERS && LAYERS.length)) abrirSeletorCDE(false);
+  }
+  // o layout mudou → reajusta o canvas do 3D (senão fica esticado/cortado)
+  setTimeout(()=>{ try{ if(F3D && B3 && B3.redimensionar) B3.redimensionar(F3D); }catch(_){} try{ window.dispatchEvent(new Event('resize')); }catch(_){} }, 70);
+}
+// Seletor de pavimento na barra do 3D: popular (nomes reais dos storeys) + isolar.
+async function f3dPavSelPop(){
+  const sel=$('f3dPavSel'); if(!sel||!F3D||!B3) return;
+  let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
+  const atual=sel.value;
+  sel.innerHTML='<option value="">Pavimento…</option>'+(pavs||[]).map(p=>'<option value="'+esc(p.nome)+'">'+esc(p.nome)+'</option>').join('');
+  if(atual && [...sel.options].some(o=>o.value===atual)) sel.value=atual;
+}
+async function f3dPavSelChange(nome){
+  if(!F3D||!B3) return;
+  if(!nome){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dBotaoVoltar(false); return; }
+  f3dProcessando(true);
+  try{ const r=await B3.isolarPavimento(F3D, nome);
+    if(r&&r.n>0){ f3dBotaoVoltar(true); f3dDica('✓ Pavimento '+((r.nomes&&r.nomes[0])||nome)+' isolado ('+r.n+').'); }
+    else f3dDica('Não achei elementos nesse pavimento.'); }
+  catch(e){ console.warn('pav sel:',e); }
+  finally{ f3dProcessando(false); }
 }
 function f3dRenderLista(){
   const el=$('modList'); if(!el) return;
@@ -3891,6 +3934,7 @@ async function f3dSincronizarSelecao(){
   }
   f3dAbrirBotaoSync();
   f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
+  f3dPavSelPop();           // seletor de pavimento reflete os modelos federados
 }
 // Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
 // que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
@@ -3959,6 +4003,7 @@ async function f3dAbrirSelecionados(){
   // de modelo já vem assim, sem precisar refazer no painel.
   f3dCfgAplicar(f3dCfgLer()).catch(e=>console.warn('f3dCfg:', e));
   f3dDica(DICA_NAV);
+  f3dPavSelPop();   // popula o seletor de pavimento da barra
 }
 const DICA_NAV='Arraste para girar · roda para zoom · clique da roda para deslocar';
 function f3dDescartar(){

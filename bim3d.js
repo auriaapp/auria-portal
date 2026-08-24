@@ -1471,8 +1471,13 @@ export async function mostrarPeDireito(V, achados){
   if(Object.keys(porMod).length) await enquadrarIds(V, porMod);
 }
 export async function zoomPeDireito(V, mi, id){ try{ await enquadrarIds(V, {[mi]:[id]}); }catch(_){} }
-// Lista de pavimentos (nome + altura), p/ o seletor da varredura por andar.
-export async function listaPavimentos(V){ const f=await _faixasPavimento(V); return (f||[]).map(x=>({ nome:x.nome, y:x.y })); }
+// Lista de pavimentos (nomes únicos), p/ os seletores. Prefere a ESTRUTURA
+// ESPACIAL (storeys — nomes reais); só cai nas faixas de laje se não houver.
+export async function listaPavimentos(V){
+  const st=await _storeysMapa(V);
+  if(st.length){ const seen=new Set(); const out=[]; st.forEach(s=>{ if(!seen.has(s.nome)){ seen.add(s.nome); out.push({ nome:s.nome }); } }); return out; }
+  const f=await _faixasPavimento(V); return (f||[]).map(x=>({ nome:x.nome, y:x.y }));
+}
 
 // ── ÁRVORE ESPACIAL do modelo (Projeto→Terreno→Edifício→Pavimento→…→Elemento) ─
 //  O Fragments entrega isso pronto em getSpatialStructure(), mas num formato que
