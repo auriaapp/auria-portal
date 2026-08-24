@@ -48,6 +48,9 @@
 
   /* Sidebar */
   .side{width:258px;min-width:258px;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px;gap:11px;overflow-y:auto}
+  /* Alça para alargar a coluna esquerda (cards + apontamentos). */
+  .side-resize{width:6px;flex:none;cursor:col-resize;background:transparent;transition:background .12s}
+  .side-resize:hover,.side-resize.ativo{background:var(--accent)}
   .side label{font-size:10px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
   .side select,.side input{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px;font-family:inherit;outline:none;background:var(--panel);color:var(--txt)}
   .side select:focus,.side input:focus{border-color:var(--accent)}
@@ -3453,7 +3456,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23y').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-23z').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3789,11 +3792,11 @@ function f3dRenderLista(){
     const meta=[cod, nome].filter(Boolean).join(' · ') + (m.revisao?' · rev '+esc(m.revisao):'');
     const aberto=(F3D_TREE_OPEN===i);
     return `<div class="mcard" data-i="${i}">`
-      + `<div class="mitem${on?' on':''}${aberto?' aberto':''}">`
-      + `<button class="molho" onclick="f3dTogglSel(${i},${!on})" title="${on?'Ocultar (descarrega da vista)':'Mostrar (carrega o modelo)'}">${on?OLHO_ON:OLHO_OFF}</button>`
-      + `<span class="mn" onclick="f3dTreeOpen(${i})" style="cursor:pointer" title="${aberto?'Fechar a árvore':'Abrir a árvore do modelo'}"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
+      + `<div class="mitem${on?' on':''}${aberto?' aberto':''}" onclick="f3dCardClick(${i})" title="${on?'Clique para descarregar':'Clique para carregar o modelo'}">`
+      + `<span class="molho">${on?OLHO_ON:OLHO_OFF}</span>`
+      + `<span class="mn"><b title="${esc(m.titulo||m.nome)}">${esc(m.nome)}</b>`
       + `<small>${esc(meta)}</small></span>`
-      + `<span class="mcaret" onclick="f3dTreeOpen(${i})" style="cursor:pointer;color:#94a3b8;flex:none">${aberto?'▾':'▸'}</span>`
+      + `<span class="mcaret" onclick="event.stopPropagation();f3dTreeOpen(${i})" title="${aberto?'Fechar a árvore':'Ver a árvore do modelo'}" style="cursor:pointer;color:#94a3b8;flex:none;padding:2px 5px">${aberto?'▾':'▸'}</span>`
       + `</div>`
       + (aberto?`<div class="mtree" id="mtreeInline"><div class="tvazio">Carregando…</div></div>`:'')
       + `</div>`;
@@ -3806,18 +3809,18 @@ const OLHO_OFF='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stro
 // Debounce de 200ms para o caso de o usuário clicar em vários rapidamente
 // (ex: marcar 4 disciplinas de uma vez) — assim tudo entra numa carga só.
 let _selTimer=null;
+// Clique no CARD = liga/desliga o modelo (lê o estado vivo, sem valor "chumbado").
+function f3dCardClick(i){ f3dTogglSel(i, !F3D_SEL.has(i)); }
 function f3dTogglSel(i, on){
   if(on) F3D_SEL.add(i); else F3D_SEL.delete(i);
-  // Atualiza SÓ o olho daquele card (sem re-renderizar a lista) — assim uma
-  // árvore aberta em outro card não é destruída ao acender/apagar este.
+  // Atualiza SÓ o card (olho indicador + estado) sem re-renderizar a lista —
+  // assim uma árvore aberta em outro card não é destruída.
   const card=document.querySelector('#modList .mcard[data-i="'+i+'"]');
   const item=card&&card.querySelector('.mitem');
   if(item){
     item.classList.toggle('on', on);
-    const b=item.querySelector('.molho');
-    if(b){ b.innerHTML = on?OLHO_ON:OLHO_OFF;
-      b.setAttribute('onclick','f3dTogglSel('+i+','+(!on)+')');
-      b.setAttribute('title', on?'Ocultar (descarrega da vista)':'Mostrar (carrega o modelo)'); }
+    item.setAttribute('title', on?'Clique para descarregar':'Clique para carregar o modelo');
+    const b=item.querySelector('.molho'); if(b) b.innerHTML = on?OLHO_ON:OLHO_OFF;
   } else { f3dRenderLista(); }
   if(!on && F3D_TREE_OPEN===i){ F3D_TREE_OPEN=-1; f3dRenderLista(); }   // saiu da vista → fecha a árvore
   if(_selTimer) clearTimeout(_selTimer);
@@ -3826,6 +3829,21 @@ function f3dTogglSel(i, on){
   // botão "Recarregar" continua para força bruta em caso de travamento.
   _selTimer = setTimeout(()=>{ _selTimer=null; f3dSincronizarSelecao().catch(()=>{}); }, 200);
 }
+// Coluna esquerda redimensionável: alça arrastável na borda direita da .side.
+// Largura persiste em localStorage. Alarga cards E apontamentos (é a coluna toda).
+function initSideResize(){
+  const side=document.querySelector('.main > aside.side'); if(!side || side._resize) return;
+  side._resize=true;
+  try{ const w=parseInt(localStorage.getItem('auria_side_w')||'',10); if(w>=210 && w<=680){ side.style.width=w+'px'; side.style.minWidth=w+'px'; } }catch(_){}
+  const h=document.createElement('div'); h.className='side-resize'; h.title='Arraste para alargar/estreitar a coluna';
+  side.parentNode.insertBefore(h, side.nextSibling);
+  let drag=false;
+  h.addEventListener('pointerdown', e=>{ drag=true; h.classList.add('ativo'); try{h.setPointerCapture(e.pointerId);}catch(_){}; document.body.style.userSelect='none'; e.preventDefault(); });
+  h.addEventListener('pointermove', e=>{ if(!drag) return; const r=side.getBoundingClientRect(); let w=Math.round(e.clientX-r.left); w=Math.max(210, Math.min(680, w)); side.style.width=w+'px'; side.style.minWidth=w+'px'; });
+  const fim=e=>{ if(!drag) return; drag=false; h.classList.remove('ativo'); document.body.style.userSelect=''; try{h.releasePointerCapture(e.pointerId);}catch(_){}; try{ localStorage.setItem('auria_side_w', String(parseInt(side.style.width,10)||258)); }catch(_){} };
+  h.addEventListener('pointerup', fim); h.addEventListener('pointercancel', fim);
+}
+window.addEventListener('load', initSideResize);
 // Padrão Solibri: marcar/desmarcar disciplina não reprocessa a cena inteira.
 // Faz diff entre o que já está carregado e o que o usuário escolheu, adiciona
 // só os novos, remove só os que saíram. Preserva a posição da câmera.
