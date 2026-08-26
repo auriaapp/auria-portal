@@ -482,22 +482,31 @@ export function setSombraAmostras(V, n){      // 4..32 (é #define no shader →
 // Identificado por CLASSE (rápido, sem ler Pset) — mais confiável que "VID" no
 // nome. Guarda em V._vidroOpac p/ reaplicar (ex.: após federar outro modelo).
 const _VIDRO_CLS=[/^IFCWINDOW$/,/^IFCCURTAINWALL$/,/^IFCPLATE$/];
+// Descobre (uma vez) os ids do vidro de UM modelo e cacheia em x._vidroIds. Usa
+// uma PROMISE compartilhada (x._vidroIdsP) p/ que arrastar o slider — que dispara
+// várias chamadas concorrentes — não recompute nem estoure em corrida: todas
+// esperam o MESMO cálculo.
+async function _idsVidro(x){
+  if(x._vidroIds) return x._vidroIds;
+  if(!x._vidroIdsP){
+    x._vidroIdsP = x.model.getItemsOfCategories(_VIDRO_CLS)
+      .then(o=>Object.values(o||{}).flat()).catch(()=>[]);
+  }
+  x._vidroIds = await x._vidroIdsP;
+  return x._vidroIds;
+}
 export async function setVidroOpacidade(V, opac){
   V._vidroOpac = opac;
   for(const x of V.modelos){
-    // Cacheia os ids do vidro no próprio modelo (x._vidroIds) — assim reaplicar
-    // depois de um clique/isolamento é barato (setOpacity direto, sem varrer
-    // categorias de novo).
-    if(!x._vidroIds){
-      try{ x._vidroIds = Object.values(await x.model.getItemsOfCategories(_VIDRO_CLS)||{}).flat(); }catch(_){ x._vidroIds=[]; }
-    }
-    const ids=x._vidroIds; if(!ids || !ids.length) continue;
+    const ids = await _idsVidro(x); if(!ids || !ids.length) continue;
     try{ if(opac>=1) await x.model.resetOpacity(ids); else await x.model.setOpacity(ids, opac); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
 // Reaplica a opacidade do vidro que estava setada (chamar após federar/carregar).
-export async function reaplicarVidro(V){ if(V._vidroOpac!=null && V._vidroOpac<1){ for(const x of V.modelos){ x._vidroIds=null; } await setVidroOpacidade(V, V._vidroOpac); } }
+// Modelos novos ainda não têm _vidroIds → _idsVidro os computa; os já cacheados
+// só reaplicam o setOpacity.
+export async function reaplicarVidro(V){ if(V._vidroOpac!=null && V._vidroOpac<1) await setVidroOpacidade(V, V._vidroOpac); }
 // Reaplicação RÁPIDA (sem varrer categorias): usa os ids já cacheados. Chamada
 // ao fim de operações que resetam a opacidade global (destacar/isolar/reexibir).
 // NÃO chama fragments.update — quem chamou já vai atualizar. No-op se o vidro
@@ -840,7 +849,6 @@ export async function destacar(V, modelo, ids){
   if(V._colorido){
     await _reaplicarCores(V);
     if(modelo && ids && ids.length){ try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){} }
-    try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
     try{ await V.fragments.update(true); }catch(_){}
     return;
   }
@@ -861,20 +869,24 @@ export async function destacar(V, modelo, ids){
     if(modelo && ids && ids.length){
       try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
     }
-    try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
     try{ await V.fragments.update(true); }catch(_){}
     return;
   }
-  // Sem isolamento: reexibe tudo e realça só a peça clicada (comportamento normal).
+  // Sem isolamento: realça só a peça clicada (comportamento normal). NÃO
+  // reexibimos tudo à toa: `setVisible(undefined,true)` a cada clique reseta a
+  // opacidade do vidro (fica opaco de novo) E reapareceria o que o usuário
+  // escondeu de propósito com o botão-direito. Só reexibe se havia algo oculto —
+  // aí sim reaplica o vidro depois (o reshow tira a transparência).
+  const haOcultos = !!(V._escondidos && V._escondidos.size);
   for(const x of V.modelos){
     try{ await x.model.resetHighlight(); }catch(_){}
-    try{ await x.model.setVisible(undefined, true); }catch(_){}
+    if(haOcultos){ try{ await x.model.setVisible(undefined, true); }catch(_){} }
   }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
       color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
-  try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
+  if(haOcultos){ try{ await _reaplicarVidroRapido(V); }catch(_){} }
   try{ await V.fragments.update(true); }catch(_){}
 }
 
