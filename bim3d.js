@@ -152,9 +152,15 @@ export async function carregar(V, modelos, msg){
   await V.fragments.update(true);
   // Modelo carregado: só a partir daqui a sombra (SAO) e os pins entram — durante
   // a carga o render é DIRETO (rápido, sem o flood de INVALID_OPERATION) e os pins
-  // não aparecem antes da geometria.
+  // não aparecem antes da geometria.  update(true) DISPARA a construção da malha,
+  // mas ela sobe em quadros seguintes; 2 RAFs garantem que o laço desenhou o
+  // modelo ao menos uma vez ANTES de liberarmos os pins (senão o pino aparece
+  // sobre a tela ainda vazia).
+  await _doisQuadros();
+  if(V._job!==meu || !V.vivo) return;
   V._pronto = true;
 }
+function _doisQuadros(){ return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); }
 let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
 
 // ── Carga incremental (adicionar/remover UM modelo sem recarregar os outros) ─
@@ -190,6 +196,7 @@ export async function adicionarModelo(V, m, msg){
   V._xrayReady = false; V._xrayCache = null;
   V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null;   //novo modelo → recalcula níveis/pavimentos
   try{ await V.fragments.update(true); }catch(_){}
+  V._pronto = true;   // defensivo: qualquer caminho de carga libera pins/sombra
   return wrapper;
 }
 // Remove um modelo específico da cena e libera memória.
@@ -478,14 +485,30 @@ const _VIDRO_CLS=[/^IFCWINDOW$/,/^IFCCURTAINWALL$/,/^IFCPLATE$/];
 export async function setVidroOpacidade(V, opac){
   V._vidroOpac = opac;
   for(const x of V.modelos){
-    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(_VIDRO_CLS)||{}).flat(); }catch(_){}
-    if(!ids.length) continue;
+    // Cacheia os ids do vidro no próprio modelo (x._vidroIds) — assim reaplicar
+    // depois de um clique/isolamento é barato (setOpacity direto, sem varrer
+    // categorias de novo).
+    if(!x._vidroIds){
+      try{ x._vidroIds = Object.values(await x.model.getItemsOfCategories(_VIDRO_CLS)||{}).flat(); }catch(_){ x._vidroIds=[]; }
+    }
+    const ids=x._vidroIds; if(!ids || !ids.length) continue;
     try{ if(opac>=1) await x.model.resetOpacity(ids); else await x.model.setOpacity(ids, opac); }catch(_){}
   }
   try{ await V.fragments.update(true); }catch(_){}
 }
 // Reaplica a opacidade do vidro que estava setada (chamar após federar/carregar).
-export async function reaplicarVidro(V){ if(V._vidroOpac!=null && V._vidroOpac<1) await setVidroOpacidade(V, V._vidroOpac); }
+export async function reaplicarVidro(V){ if(V._vidroOpac!=null && V._vidroOpac<1){ for(const x of V.modelos){ x._vidroIds=null; } await setVidroOpacidade(V, V._vidroOpac); } }
+// Reaplicação RÁPIDA (sem varrer categorias): usa os ids já cacheados. Chamada
+// ao fim de operações que resetam a opacidade global (destacar/isolar/reexibir).
+// NÃO chama fragments.update — quem chamou já vai atualizar. No-op se o vidro
+// está no padrão (>=1) ou se nunca foi setado.
+export async function _reaplicarVidroRapido(V){
+  if(V._vidroOpac==null || V._vidroOpac>=1) return;
+  for(const x of V.modelos){
+    const ids=x._vidroIds; if(!ids || !ids.length) continue;
+    try{ await x.model.setOpacity(ids, V._vidroOpac); }catch(_){}
+  }
+}
 
 // Tubo e duto de alguns exportadores são CASCA (superfície sem espessura). Com
 // descarte de face traseira, de dentro a face some e a peça aparece pela
@@ -817,6 +840,7 @@ export async function destacar(V, modelo, ids){
   if(V._colorido){
     await _reaplicarCores(V);
     if(modelo && ids && ids.length){ try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){} }
+    try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
     try{ await V.fragments.update(true); }catch(_){}
     return;
   }
@@ -837,6 +861,7 @@ export async function destacar(V, modelo, ids){
     if(modelo && ids && ids.length){
       try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
     }
+    try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
     try{ await V.fragments.update(true); }catch(_){}
     return;
   }
@@ -849,6 +874,7 @@ export async function destacar(V, modelo, ids){
     try{ await modelo.model.highlight(ids, {
       color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
+  try{ await _reaplicarVidroRapido(V); }catch(_){}   // clicar não deve tirar a transparência do vidro
   try{ await V.fragments.update(true); }catch(_){}
 }
 
