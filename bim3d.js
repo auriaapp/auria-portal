@@ -886,7 +886,12 @@ export async function destacar(V, modelo, ids){
     try{ await modelo.model.highlight(ids, {
       color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
-  if(haOcultos){ try{ await _reaplicarVidroRapido(V); }catch(_){} }
+  // Reaplica o vidro se (a) reexibimos ocultos ou (b) o vidro está translúcido —
+  // nesse caso clicar EM UM painel de vidro o deixa opaco (highlight opacity:1) e
+  // sem restaurar. Gate em _vidroOpac<1: no padrão (100%) é no-op, não afeta o
+  // caminho normal nem o desempenho.
+  const vidroTranslucido = (V._vidroOpac!=null && V._vidroOpac<1);
+  if(haOcultos || vidroTranslucido){ try{ await _reaplicarVidroRapido(V); }catch(_){} }
   try{ await V.fragments.update(true); }catch(_){}
 }
 
