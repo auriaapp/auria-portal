@@ -150,6 +150,10 @@ export async function carregar(V, modelos, msg){
   enquadrar(V);
   aplicarFaces(V, true);
   await V.fragments.update(true);
+  // Modelo carregado: só a partir daqui a sombra (SAO) e os pins entram — durante
+  // a carga o render é DIRETO (rápido, sem o flood de INVALID_OPERATION) e os pins
+  // não aparecem antes da geometria.
+  V._pronto = true;
 }
 let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
 
@@ -517,7 +521,7 @@ function laco(V){
     // Então só reseta quando o modo muda (direto→composer) ou após um render
     // fora do laço (print marca V._forcaReset). Em regime estável (sempre
     // composer) não reseta = rápido.
-    const usaComp = !!(V.ao && V.composer);
+    const usaComp = !!(V.ao && V.composer && V._pronto);   // SAO só depois do load
     if(usaComp){
       if(V._ultModoComp !== true || V._forcaReset){ V.renderer.resetState?.(); V._forcaReset=false; }
       V.composer.render();
@@ -1014,18 +1018,27 @@ async function _storeysMapa(V){
   if(V._storeys) return V._storeys;
   const out=[];
   for(let mi=0; mi<V.modelos.length; mi++){
-    let t=null; try{ t=await arvoreEspacial(V, mi); }catch(_){}
-    if(!t||!t.arvore) continue;
-    const walk=(n)=>{
-      if(String(n.tipo).toUpperCase()==='IFCBUILDINGSTOREY' && n.id!=null){
-        const ids=[]; const col=c=>{ if(c.filhos&&c.filhos.length) c.filhos.forEach(col); else if(c.id!=null && !_ESPACIAL.has(String(c.tipo).toUpperCase())) ids.push(c.id); };
-        col(n);
-        const nome=String((t.nomes||{})[n.id]||'').trim()||('Pavimento '+n.id);
-        out.push({ mi, id:n.id, nome, nomeNorm:_norm(nome), ids });
-      }
-      (n.filhos||[]).forEach(walk);
+    const x=V.modelos[mi]; if(!x||!x.model) continue;
+    let raw=null; try{ raw=await x.model.getSpatialStructure(); }catch(_){}
+    if(!raw) continue;
+    // Anda direto na estrutura CRUA (sem montar a árvore inteira de elementos, que
+    // é cara). Só acha os IfcBuildingStorey e junta os ids folha de cada um.
+    const storeys=[];
+    const coletaFolhas=(inst, acc)=>{ for(const cn of (inst.children||[])){ const c=String(cn.category||'').toUpperCase();
+      for(const ch of (cn.children||[])){ if(_ESPACIAL.has(c)) coletaFolhas(ch, acc); else if(ch.localId!=null) acc.push(ch.localId); } } };
+    const walk=(inst, tipoPai)=>{
+      if(String(tipoPai).toUpperCase()==='IFCBUILDINGSTOREY' && inst.localId!=null){ const acc=[]; coletaFolhas(inst, acc); storeys.push({ id:inst.localId, ids:acc }); }
+      for(const cn of (inst.children||[])){ for(const ch of (cn.children||[])) walk(ch, cn.category); }
     };
-    t.arvore.forEach(walk);
+    for(const inst of (raw.children||[])) walk(inst, raw.category);
+    if(!storeys.length) continue;
+    // nomes SÓ dos storeys (não de todos os nós espaciais)
+    const nm={}; const sids=storeys.map(s=>s.id);
+    for(let p=0;p<sids.length;p+=400){ const lote=sids.slice(p,p+400); let da=[];
+      try{ da=await x.model.getItemsData(lote,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+      (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; nm[lid]=String((d.Name&&d.Name.value)||(d.LongName&&d.LongName.value)||'').trim(); });
+    }
+    storeys.forEach(s=>{ const nome=nm[s.id]||('Pavimento '+s.id); out.push({ mi, id:s.id, nome, nomeNorm:_norm(nome), ids:s.ids }); });
   }
   V._storeys=out;
   return out;

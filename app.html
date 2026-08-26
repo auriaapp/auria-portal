@@ -574,7 +574,7 @@
               <path d="M8.4 8.6h3.4v1.9H8.4z"/>
               <path d="M19.6 9.1a2 2 0 1 1 1.7-2"/>
             </svg></button>
-          <select id="f3dPavSel" class="f3donly f3dpavsel" onchange="f3dPavSelChange(this.value)" title="Isolar um pavimento (federe os modelos na coluna)"><option value="">Pavimento…</option></select>
+          <select id="f3dPavSel" class="f3donly f3dpavsel" onmousedown="f3dPavSelPop()" onfocus="f3dPavSelPop()" onchange="f3dPavSelChange(this.value)" title="Isolar um pavimento (federe os modelos na coluna)"><option value="">Pavimento…</option></select>
           <button id="f3dBtn2D" class="bim-tb ico f3donly" onclick="f3dSplitToggle()" title="Mostrar/ocultar a prancha 2D ao lado">◫</button>
           <button class="bim-tb ico f3donly" onclick="f3dEnquadrar()" title="Enquadrar tudo">⤢</button>
           <button id="f3dBtnMedir" class="bim-tb ico f3donly" onclick="f3dTool('medir')" title="Medir distância entre dois pontos">📏</button>
@@ -3518,7 +3518,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ai').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24aj').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3658,7 +3658,7 @@ function f3dRenderPins(E, svg){
   // (f3dClique/pointerup): aqui só GUARDAMOS onde cada pin está na tela
   // (centro do círculo) para o hit-test por proximidade. Ver f3dPinNoPonto.
   E._pinHits = [];
-  if(!E || !E.vivo){ svg.innerHTML=''; return; }
+  if(!E || !E.vivo || !E._pronto){ svg.innerHTML=''; return; }   // pins só depois do modelo carregar
   if(!PINS_VISIVEIS && !(PIN_EDIT&&APT_EDIT)){ svg.innerHTML=''; return; }
   const arqs = new Set(E.modelos.map(m=>m.arquivoId));
   const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
@@ -3867,13 +3867,19 @@ async function f3dSplitToggle(){
   }
   _splitBtns(true); _splitResize();
 }
-// Seletor de pavimento na barra do 3D: popular (nomes reais dos storeys) + isolar.
+// Seletor de pavimento na barra do 3D — SOB DEMANDA: só lê os andares quando o
+// usuário abre o dropdown (não no load/federação). Cacheado até a federação mudar
+// (dataset.pronto zerado em f3dSincronizarSelecao/f3dAbrirSelecionados).
 async function f3dPavSelPop(){
   const sel=$('f3dPavSel'); if(!sel||!F3D||!B3) return;
-  let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
+  if(sel.dataset.pronto==='1' || sel.dataset.carregando==='1') return;   // já populado / carregando
+  sel.dataset.carregando='1';
   const atual=sel.value;
+  sel.innerHTML='<option value="">Carregando pavimentos…</option>';   // feedback imediato (1º clique)
+  let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
   sel.innerHTML='<option value="">Pavimento…</option>'+(pavs||[]).map(p=>'<option value="'+esc(p.nome)+'">'+esc(p.nome)+'</option>').join('');
   if(atual && [...sel.options].some(o=>o.value===atual)) sel.value=atual;
+  sel.dataset.pronto='1'; sel.dataset.carregando='';
 }
 async function f3dPavSelChange(nome){
   if(!F3D||!B3) return;
@@ -3991,7 +3997,7 @@ async function f3dSincronizarSelecao(){
   }
   f3dAbrirBotaoSync();
   f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
-  f3dPavSelPop();           // seletor de pavimento reflete os modelos federados
+  const ps=$('f3dPavSel'); if(ps) ps.dataset.pronto='';   // pavimento repopula sob demanda (federação mudou)
 }
 // Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
 // que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
@@ -4060,7 +4066,7 @@ async function f3dAbrirSelecionados(){
   // de modelo já vem assim, sem precisar refazer no painel.
   f3dCfgAplicar(f3dCfgLer()).catch(e=>console.warn('f3dCfg:', e));
   f3dDica(DICA_NAV);
-  f3dPavSelPop();   // popula o seletor de pavimento da barra
+  const ps=$('f3dPavSel'); if(ps) ps.dataset.pronto='';   // pavimento populado sob demanda (ao abrir)
 }
 const DICA_NAV='Arraste para girar · roda para zoom · clique da roda para deslocar';
 function f3dDescartar(){
