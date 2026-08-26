@@ -471,6 +471,21 @@ export function setSombraAmostras(V, n){      // 4..32 (é #define no shader →
     V.sao.saoMaterial.needsUpdate = true;
   }catch(_){}
 }
+// Opacidade do VIDRO (janelas/cortina/painéis). opac 0..1; 1 = normal (reset).
+// Identificado por CLASSE (rápido, sem ler Pset) — mais confiável que "VID" no
+// nome. Guarda em V._vidroOpac p/ reaplicar (ex.: após federar outro modelo).
+const _VIDRO_CLS=[/^IFCWINDOW$/,/^IFCCURTAINWALL$/,/^IFCPLATE$/];
+export async function setVidroOpacidade(V, opac){
+  V._vidroOpac = opac;
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(_VIDRO_CLS)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    try{ if(opac>=1) await x.model.resetOpacity(ids); else await x.model.setOpacity(ids, opac); }catch(_){}
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+// Reaplica a opacidade do vidro que estava setada (chamar após federar/carregar).
+export async function reaplicarVidro(V){ if(V._vidroOpac!=null && V._vidroOpac<1) await setVidroOpacidade(V, V._vidroOpac); }
 
 // Tubo e duto de alguns exportadores são CASCA (superfície sem espessura). Com
 // descarte de face traseira, de dentro a face some e a peça aparece pela

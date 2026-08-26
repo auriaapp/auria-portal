@@ -663,6 +663,11 @@
                   <i class="val" data-v="aoAm">16</i>
                 </div>
               </div>
+              <div class="lin"><span>Vidro (opacidade)</span>
+                <input type="range" data-c="vidro" min="0" max="100" value="100"
+                       oninput="f3dSlider(this,'vidro',v=>B3.setVidroOpacidade(F3D,v/100),true)">
+                <i class="val" data-v="vidro">100</i>
+              </div>
               <button class="f3d-reset" onclick="f3dResetCfg()">Restaurar padrão</button>
               <p class="nota">Suas escolhas ficam salvas — cada modelo abre já com esta configuração.</p>
             </div>
@@ -3518,7 +3523,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24aj').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-08-24ak').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -3997,6 +4002,7 @@ async function f3dSincronizarSelecao(){
   }
   f3dAbrirBotaoSync();
   f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
+  try{ if(B3.reaplicarVidro) B3.reaplicarVidro(F3D); }catch(_){}   // novo modelo herda a transparência do vidro
   const ps=$('f3dPavSel'); if(ps) ps.dataset.pronto='';   // pavimento repopula sob demanda (federação mudou)
 }
 // Rótulo do botão: "Abrir no 3D" enquanto não tem modelo carregado; assim
@@ -4448,6 +4454,7 @@ function f3dCfgToggle(){
 const F3D_CFG_PAD = { fundo:'escuro', grade:false,
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
   ao:false, aoInt:6, aoRaio:50, aoAm:16,
+  vidro:100,    // opacidade do vidro em % (100 = normal; menor = mais transparente)
   xrayProf:1,   // profundidade padrão do raio-X quando ligar
   snap:true,    // trena com encaixe em vértice/aresta/face (default ligado)
   dica:true };  // barra de dica de navegação (default ligada)
@@ -4495,7 +4502,7 @@ function f3dSlider(el, chave, apply, inteiro){
   const rot = document.querySelector('.f3d-cfg [data-v="'+chave+'"]');
   if(rot) rot.textContent = inteiro ? String(v) : (v/100).toFixed(2).replace('.',',');
   // Mapa data-c → chave no f3dCfg (nome mais legível no armazenamento)
-  const mapa = { expo:'expo', amb:'amb', sol:'sol', aoInt:'aoInt', aoRaio:'aoRaio', aoAm:'aoAm' };
+  const mapa = { expo:'expo', amb:'amb', sol:'sol', aoInt:'aoInt', aoRaio:'aoRaio', aoAm:'aoAm', vidro:'vidro' };
   const key = mapa[chave]; if(!key) return;
   f3dCfgSalvar({ [key]: inteiro ? v : v/100 });
 }
@@ -4547,6 +4554,8 @@ async function f3dCfgAplicar(c){
   };
   upd('expo',  c.expo);   upd('amb',   c.amb);   upd('sol',   c.sol);
   upd('aoInt', c.aoInt, true); upd('aoRaio', c.aoRaio, true); upd('aoAm', c.aoAm, true);
+  upd('vidro', (c.vidro==null?100:c.vidro), true);
+  if(c.vidro!=null && c.vidro<100){ B3.setVidroOpacidade(F3D, c.vidro/100).catch(()=>{}); }   // aplica a transparência salva
   const sub=$('f3dCfgSaoSub'); if(sub) sub.classList.toggle('off', !c.ao);
   // Restaura preferência de profundidade do raio-X. NÃO liga sozinho — só
   // sincroniza qual botão do submenu está marcado como o preferido.
@@ -4581,6 +4590,7 @@ function f3dSetSnap(on){
 async function f3dResetCfg(){
   if(!F3D || !B3) return;
   try{ localStorage.setItem('f3dCfg', JSON.stringify(F3D_CFG_PAD)); }catch(_){}
+  try{ await B3.setVidroOpacidade(F3D, 1); }catch(_){}   // devolve o vidro opaco
   await f3dCfgAplicar(F3D_CFG_PAD);
 }
 // Fecha o popover ao clicar fora — mesmo padrão do Pav./Regras.
