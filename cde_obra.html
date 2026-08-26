@@ -318,9 +318,26 @@
   .vfmt button.on{background:var(--navy);color:#fff}
 
   /* ── Coluna direita: navegação ──────────────────────────── */
-  .nav{width:322px;flex-shrink:0;display:flex;background:var(--panel);border-left:1px solid var(--line);
+  .nav{width:322px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);
        transition:width .16s ease;overflow:hidden}
   .nav.collapsed{width:0;border-left:none}
+  /* Busca de arquivos: barra fixa no topo da coluna; o corpo (lista+trilho)
+     rola por baixo. Fica FORA do #navPanel de propósito — o painel é reescrito a
+     cada tecla, e um input dentro dele perderia foco/cursor. */
+  .navSearch{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:9px 10px;
+             border-bottom:1px solid var(--line);position:relative}
+  .navSearch .navSearchIc{font-size:12px;opacity:.7;flex:none}
+  .navSearch input{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);
+             border-radius:8px;padding:7px 26px 7px 9px;color:var(--txt);font-size:12.5px;
+             font-family:inherit;outline:none}
+  .navSearch input::placeholder{color:var(--mut)}
+  .navSearch input:focus{border-color:var(--accent)}
+  .navSearch input::-webkit-search-cancel-button{display:none}
+  .navSearch button{position:absolute;right:16px;top:50%;transform:translateY(-50%);
+             background:none;border:none;color:var(--mut);cursor:pointer;font-size:13px;
+             line-height:1;padding:3px 5px;border-radius:6px}
+  .navSearch button:hover{background:rgba(255,255,255,.1);color:var(--txt)}
+  .navBody{flex:1;display:flex;min-height:0}
   /* z-index alto de propósito: as janelas de prancha vivem a partir de 101 e
      sobem a cada foco, então com um valor baixo elas cobriam este botão e não
      havia como reabrir a coluna. Fica abaixo dos modais (9000+). */
@@ -529,8 +546,16 @@
 
   <!-- Navegação -->
   <aside class="nav" id="navAside">
-    <div class="navpanel" id="navPanel"></div>
-    <div class="rail" id="rail"></div>
+    <div class="navSearch">
+      <span class="navSearchIc">🔎</span>
+      <input id="navBusca" type="search" autocomplete="off" placeholder="Buscar arquivo pelo nome…"
+             oninput="onBuscaInput(this.value)" onkeydown="if(event.key==='Escape')limparBusca()">
+      <button id="navBuscaX" onclick="limparBusca()" title="Limpar busca" style="display:none">✕</button>
+    </div>
+    <div class="navBody">
+      <div class="navpanel" id="navPanel"></div>
+      <div class="rail" id="rail"></div>
+    </div>
   </aside>
   <button class="navToggleBtn" id="navToggleBtn" onclick="toggleNav()" title="Recolher/expandir a coluna de arquivos">›</button>
 </div>
@@ -667,6 +692,7 @@ try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.ad
 const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null;
+let BUSCA='';   // texto da barra de busca de arquivos (coluna direita)
 // ATENÇÃO: DOC_SEL NÃO é declarado com let/const aqui de propósito. Ele é um
 // accessor definido via Object.defineProperty(window,'DOC_SEL') mais abaixo,
 // que espelha a janela ativa (cdeAtiva().DOC_SEL). Um `let DOC_SEL` global
@@ -986,10 +1012,13 @@ function renderRail(){
   if(SEL_DISC && SEL_DISC!=='__BIM__' && !discs.includes(SEL_DISC)) SEL_DISC=null;
   renderNav();
 }
-function selDisc(d){ const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
+function selDisc(d){ _zeraBusca(); const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
 
 function renderNav(){
   const p=$('navPanel');
+  // Busca ativa: mostra os arquivos que batem, agrupados por disciplina —
+  // atravessa todas as disciplinas (não depende do trilho selecionado).
+  if(BUSCA){ p.innerHTML = navBuscaResultados(); renderMultiBar(); return; }
   const toggle = `<div class="navtog">
     <button class="${NAV_MODE==='disc'?'on':''}" onclick="setNavMode('disc')">Disciplinas</button>
     <button class="${NAV_MODE==='grupo'?'on':''}" onclick="setNavMode('grupo')">Grupos${GRUPOS.length?(' ('+GRUPOS.length+')'):''}</button>
@@ -999,7 +1028,40 @@ function renderNav(){
   p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
   renderMultiBar();
 }
-function setNavMode(m){ NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); if(m!=='grupo'){ AUTOGRP_MODE=null; AUTOGRP_SEL=null; } renderNav(); renderRail(); }
+function setNavMode(m){ _zeraBusca(); NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_SEL:null); if(m!=='grupo'){ AUTOGRP_MODE=null; AUTOGRP_SEL=null; } renderNav(); renderRail(); }
+
+// ── Busca de arquivos (coluna direita) ─────────────────────────────────────
+// Filtra por código, título e nome do arquivo; mostra os achados agrupados por
+// disciplina. É um MODO: escolher uma disciplina/grupo o encerra.
+function onBuscaInput(v){
+  BUSCA=(v||'').trim();
+  const x=$('navBuscaX'); if(x) x.style.display = BUSCA ? 'block' : 'none';
+  renderNav();
+}
+function limparBusca(){
+  BUSCA=''; const i=$('navBusca'); if(i){ i.value=''; i.focus(); }
+  const x=$('navBuscaX'); if(x) x.style.display='none';
+  renderNav();
+}
+// Zera a busca SEM re-renderizar (quem chama já re-renderiza).
+function _zeraBusca(){ if(!BUSCA) return; BUSCA=''; const i=$('navBusca'); if(i) i.value=''; const x=$('navBuscaX'); if(x) x.style.display='none'; }
+function navBuscaResultados(){
+  const q=BUSCA.toLowerCase();
+  const bate = d => (d.codigo||'').toLowerCase().includes(q)
+    || (d.titulo||'').toLowerCase().includes(q)
+    || (d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
+  const achados = DOCS.filter(bate);
+  if(!achados.length) return '<div class="nav-hint">Nenhum arquivo encontrado para <b>“'+esc(BUSCA)+'”</b>.</div>';
+  const porDisc={}; achados.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
+  let out='<div class="nav-hint" style="padding:2px 4px 9px">'+achados.length+' arquivo(s) para <b>“'+esc(BUSCA)+'”</b>:</div>';
+  Object.keys(porDisc).sort().forEach(k=>{
+    const ds=porDisc[k].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    out+=`<div class="folder open"><div class="folder-h" style="cursor:default">
+      <span class="fic">📂</span><span class="fnm">${esc(discLabel(k))}</span><span class="fct">${ds.length}</span>
+    </div><div class="folder-b">${ds.map(d=> docEhBim(d)?cardFdocBim(d):cardFdoc(d)).join('')}</div></div>`;
+  });
+  return out;
+}
 
 // Pastas (etapa dentro de disciplina) abertas — memória entre sessões via
 // localStorage, por empreendimento. Chave "disciplina::etapa" porque a mesma
