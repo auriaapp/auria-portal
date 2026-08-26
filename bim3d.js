@@ -194,7 +194,7 @@ export async function adicionarModelo(V, m, msg){
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null;   //novo modelo → recalcula níveis/pavimentos
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //novo modelo → recalcula níveis/pavimentos/caixas do clash
   try{ await V.fragments.update(true); }catch(_){}
   V._pronto = true;   // defensivo: qualquer caminho de carga libera pins/sombra
   return wrapper;
@@ -212,7 +212,7 @@ export async function descarregarUm(V, idBusca){
   // Se estava escondendo peça deste modelo, esquece.
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null;   //conjunto de lajes mudou → recalcula pavimentos
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //conjunto de lajes mudou → recalcula pavimentos/caixas do clash
   try{ await V.fragments.update(true); }catch(_){}
 }
 
@@ -1322,11 +1322,24 @@ export async function colorirPorCategoria(V, cats){
 // ── CLASH (fase ampla / broad-phase por caixa envolvente AABB) ─────────────
 // Quais das categorias têm elementos no modelo (p/ montar o menu só com o que existe).
 export async function categoriasPresentes(V, lista){
+  // UMA chamada por modelo com a UNIÃO de todas as categorias — antes era uma
+  // chamada `getItemsOfCategories` por categoria × modelo (sequencial), o que
+  // deixava a abertura do menu de clash lenta. Aqui pegamos tudo de uma vez e
+  // contamos por categoria localmente.
+  const todasRx=[];
+  lista.forEach(item=> item.rx.split(',').forEach(c=>{ const t=c.trim(); if(t) todasRx.push(new RegExp('^'+t+'$','i')); }));
+  const contagem=new Map();   // nome-da-categoria → total de itens no conjunto federado
+  for(const x of V.modelos){
+    let porCat={}; try{ porCat=await x.model.getItemsOfCategories(todasRx)||{}; }catch(_){}
+    for(const [cat, ids] of Object.entries(porCat)){
+      contagem.set(cat, (contagem.get(cat)||0) + (ids ? ids.length : 0));
+    }
+  }
   const out=[];
   for(const item of lista){
-    const rx=item.rx.split(',').map(c=>new RegExp('^'+c.trim()+'$','i'));
+    const rxs=item.rx.split(',').map(c=>new RegExp('^'+c.trim()+'$','i'));
     let n=0;
-    for(const x of V.modelos){ try{ n+=Object.values(await x.model.getItemsOfCategories(rx)||{}).flat().length; }catch(_){} }
+    for(const [cat, cnt] of contagem){ if(rxs.some(r=>r.test(cat))) n+=cnt; }
     if(n>0) out.push({ ...item, n });
   }
   return out;
@@ -1338,10 +1351,31 @@ async function _caixasDe(V, regexes){
     const x=V.modelos[mi];
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(!ids.length) continue;
-    let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-    ids.forEach((id,i)=>{ const b=(boxes||[])[i]; if(b&&isFinite(b.min.x)) arr.push({mi,id,b}); });
+    const cache = await _boxesCacheadas(V, mi, x, ids);
+    ids.forEach(id=>{ const b=cache.get(id); if(b) arr.push({mi,id,b}); });
   }
   return arr;
+}
+// Caixas envolventes ESTÁVEIS por modelo. O `getBoxes` do Fragments varia com os
+// tiles que a câmera já carregou (streaming/LOD do `useCamera`): medir a cada
+// clash dava caixas diferentes p/ os MESMOS elementos → o clash oscilava ao
+// repetir, e inverter A/B (lógica simétrica) mudava a resposta. Aqui cada caixa
+// é medida UMA vez e guardada em `V._boxCache[mi]`; toda execução de clash reusa
+// a MESMA caixa → resultado repetível e simétrico. Só cacheamos caixas VÁLIDAS
+// (finitas): se um item ainda não tinha geometria carregada, ele é remedido na
+// próxima passada (converge p/ completo em vez de travar num valor degenerado).
+// Invalidado ao federar/descarregar, junto dos outros caches.
+async function _boxesCacheadas(V, mi, x, ids){
+  if(!V._boxCache) V._boxCache={};
+  let m=V._boxCache[mi]; if(!m){ m=new Map(); V._boxCache[mi]=m; }
+  const faltam = ids.filter(id=>!m.has(id));
+  if(faltam.length){
+    try{ await V.fragments.update(true); }catch(_){}   // melhor chance de a geometria estar carregada
+    let boxes=[]; try{ boxes=await x.model.getBoxes(faltam); }catch(_){}
+    faltam.forEach((id,i)=>{ const b=(boxes||[])[i];
+      if(b && isFinite(b.min.x) && isFinite(b.max.x)) m.set(id, b); });
+  }
+  return m;
 }
 // Candidatos de conflito entre A e B: pares cujas CAIXAS se interpenetram além
 // da tolerância `tol` (m). Broad-phase com grade uniforme (rápido). Retorna os
