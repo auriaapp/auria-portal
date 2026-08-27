@@ -1874,6 +1874,14 @@ let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 // de verdade esse caminho some, e ainda tiramos o parse pesado da thread principal.
 // O worker é um módulo criado a partir de um blob que importa a lib do esm.sh.
 let DXF_WF_URL = null;
+// Fontes p/ TEXTO/COTAS do DXF (o dxf-viewer não lê SHX; precisa de TTF/WOFF —
+// opentype.js NÃO suporta WOFF2). Roboto latin + latin-ext cobre o português.
+// jsDelivr serve com CORS, então o worker consegue baixar. Se falhar, a geometria
+// ainda aparece (o texto é que é pulado).
+const DXF_FONTS = [
+  'https://cdn.jsdelivr.net/npm/@fontsource/roboto@5.0.8/files/roboto-latin-400-normal.woff',
+  'https://cdn.jsdelivr.net/npm/@fontsource/roboto@5.0.8/files/roboto-latin-ext-400-normal.woff'
+];
 function _dxfWorkerFactory(){
   if(!DXF_WF_URL){
     const code = 'import {DxfViewer} from "https://esm.sh/dxf-viewer@1.0.48";DxfViewer.SetupWorker();';
@@ -3992,12 +4000,10 @@ class CdeWin {
       inner.style.cssText='position:absolute;inset:0;width:100%;height:100%';
       box.appendChild(inner);
       this.DXFV = new DXF_LIB.DxfViewer(inner, { autoResize:true, colorCorrection:true });
-      await this.DXFV.Load({ url, fonts:[], workerFactory:_dxfWorkerFactory(), progressCbk:null });
+      await this.DXFV.Load({ url, fonts:DXF_FONTS, workerFactory:_dxfWorkerFactory(), progressCbk:null });
       // Reforço: garante tamanho + enquadramento + um render após o Load.
       try{
         const w=box.clientWidth, h=box.clientHeight;
-        const cv=this.DXFV.GetCanvas?this.DXFV.GetCanvas():null;
-        console.log('[dxf] container', w, h, 'canvas', cv&&cv.width, cv&&cv.height);
         if(w>0 && h>0 && this.DXFV.SetSize) this.DXFV.SetSize(w, h);
         const b=this.DXFV.GetBounds?this.DXFV.GetBounds():null;
         if(b){
