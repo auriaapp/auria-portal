@@ -273,11 +273,22 @@
   /* Taskbar de janelas minimizadas — só aparece se houver alguma */
   #cdeTaskbar{display:none;flex-wrap:wrap;gap:6px;padding:6px 10px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
   .cdeTask{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
-           padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+           padding:5px 8px 5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;
+           display:inline-flex;align-items:center;gap:6px;max-width:220px;overflow:hidden}
   .cdeTask:hover{border-color:var(--accent)}
   .cdeTask.act{background:var(--navy);color:#fff;border-color:var(--navy)}
   .cdeTask.min{opacity:.55}
   .cdeTask.min:hover{opacity:1}
+  /* rótulo trunca; o X fica sempre visível ao lado (não é cortado pelo overflow) */
+  .cdeTaskLbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cdeTaskX{flex:none;opacity:.45;font-size:12px;line-height:1;padding:2px 4px;border-radius:5px;
+            cursor:pointer;transition:opacity .12s, background .12s}
+  .cdeTaskX:hover{opacity:1;background:rgba(148,163,184,.28)}
+  .cdeTask.act .cdeTaskX{opacity:.7}
+  .cdeTask.act .cdeTaskX:hover{opacity:1;background:rgba(255,255,255,.22)}
+  .cdeTask.dragging{opacity:.4}
+  /* alvo de solta: barra à esquerda indicando onde a aba vai entrar */
+  .cdeTask.drop{box-shadow:inset 3px 0 0 var(--accent);border-color:var(--accent)}
   .vempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--mut);gap:8px;text-align:center;padding:30px;pointer-events:none}
   .vempty.hidden{display:none}
   /* Overlay de pins do App sobre o canvas do CDE (Elo C) — mesma estética do
@@ -4272,9 +4283,37 @@ function atualizarTaskbar(){
     const cod = w.DOC_SEL ? w.DOC_SEL.codigo : (w.fedLabel || '(sem prancha)');
     const ic  = w.isFed ? '🧊' : '📄';
     const cls = 'cdeTask' + (WIN_STATE.act===w && w.state!=='min' ? ' act' : '') + (w.state==='min' ? ' min' : '');
-    return `<button class="${cls}" onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'}">${ic} ${esc(cod)}</button>`;
+    return `<div class="${cls}" draggable="true"
+      onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'} · arraste para reordenar"
+      ondragstart="cdeTaskDragStart(event,'${w.id}')" ondragend="cdeTaskDragEnd(event)"
+      ondragover="cdeTaskDragOver(event,'${w.id}')" ondragleave="cdeTaskDragLeave(event)" ondrop="cdeTaskDrop(event,'${w.id}')">
+      <span class="cdeTaskLbl">${ic} ${esc(cod)}</span>
+      <span class="cdeTaskX" title="Fechar" onclick="event.stopPropagation();cdeTaskFechar('${w.id}')">✕</span>
+    </div>`;
   }).join('');
 }
+// Arrastar as abas para reordená-las (reordena WIN_STATE.list e re-renderiza).
+// O X fecha a janela pela aba. Ver CdeWin.fechar().
+let TASK_DRAG=null;
+function cdeTaskDragStart(ev,id){ TASK_DRAG=id; ev.currentTarget.classList.add('dragging');
+  ev.dataTransfer.effectAllowed='move'; try{ ev.dataTransfer.setData('text/plain',id); }catch(_){} }
+function cdeTaskDragEnd(ev){ TASK_DRAG=null; try{ ev.currentTarget.classList.remove('dragging'); }catch(_){}
+  document.querySelectorAll('#cdeTaskbar .drop').forEach(e=>e.classList.remove('drop')); }
+function cdeTaskDragOver(ev,id){ if(!TASK_DRAG||TASK_DRAG===id) return; ev.preventDefault();
+  ev.dataTransfer.dropEffect='move'; ev.currentTarget.classList.add('drop'); }
+function cdeTaskDragLeave(ev){ ev.currentTarget.classList.remove('drop'); }
+function cdeTaskDrop(ev,id){
+  ev.preventDefault(); ev.currentTarget.classList.remove('drop');
+  if(!TASK_DRAG||TASK_DRAG===id) return;
+  const from=WIN_STATE.list.findIndex(w=>w.id===TASK_DRAG);
+  const to  =WIN_STATE.list.findIndex(w=>w.id===id);
+  if(from<0||to<0) return;
+  const [w]=WIN_STATE.list.splice(from,1);
+  WIN_STATE.list.splice(to,0,w);
+  TASK_DRAG=null;
+  atualizarTaskbar();
+}
+function cdeTaskFechar(id){ const w=WIN_STATE.list.find(x=>x.id===id); if(w) w.fechar(); }
 function cdeTaskClick(id){
   const w = WIN_STATE.list.find(x=>x.id===id); if(!w) return;
   if(w.state==='min'){
