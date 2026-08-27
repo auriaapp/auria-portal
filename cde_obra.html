@@ -1868,6 +1868,19 @@ const TILE_PX = 512;
 // ladrilho tem duas camadas, então o teto cai pela metade).
 const TILE_MAX = 90, TILE_MAX_CMP = 45;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
+// Fábrica de WORKER do dxf-viewer. Sem worker (workerFactory:null) a versão 1.0.48
+// estoura "Cannot read properties of null (reading 'Destroy')" no fim do Load —
+// mesmo tendo parseado a cena — e o desenho nunca chega ao canvas. Com um worker
+// de verdade esse caminho some, e ainda tiramos o parse pesado da thread principal.
+// O worker é um módulo criado a partir de um blob que importa a lib do esm.sh.
+let DXF_WF_URL = null;
+function _dxfWorkerFactory(){
+  if(!DXF_WF_URL){
+    const code = 'import {DxfViewer} from "https://esm.sh/dxf-viewer@1.0.48";DxfViewer.SetupWorker();';
+    DXF_WF_URL = URL.createObjectURL(new Blob([code], { type:'text/javascript' }));
+  }
+  return () => new Worker(DXF_WF_URL, { type:'module' });
+}
 
 // Detecta o bounding box do CONTEÚDO da página (ignora a margem branca do PDF)
 // renderizando numa resolução baixa (rápido) em canvas descartável e
@@ -3971,7 +3984,7 @@ class CdeWin {
       const url = await cdeSignedUrl(path, provider);
       try{ if(this.DXFV) this.DXFV.Destroy(); }catch(_){}
       box.innerHTML=''; this.DXFV = new DXF_LIB.DxfViewer(box, { autoResize:true, colorCorrection:true });
-      await this.DXFV.Load({ url, fonts:[], workerFactory:null, progressCbk:null });
+      await this.DXFV.Load({ url, fonts:[], workerFactory:_dxfWorkerFactory(), progressCbk:null });
     }catch(e){
       box.innerHTML='<div class="vmsg2">Não foi possível renderizar o DXF: '+esc((e&&e.message)||e)
         +'<br><br>O arquivo está guardado — baixe em "Detalhes / status".</div>';
