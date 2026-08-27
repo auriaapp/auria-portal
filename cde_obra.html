@@ -287,6 +287,9 @@
   .cdeTask.act .cdeTaskX{opacity:.7}
   .cdeTask.act .cdeTaskX:hover{opacity:1;background:rgba(255,255,255,.22)}
   .cdeTask.dragging{opacity:.4}
+  /* durante o arraste, os filhos não capturam eventos — evita o flicker do
+     dragover/dragleave alternando entre a aba e seus <span> internos */
+  #cdeTaskbar.arrastando .cdeTaskLbl, #cdeTaskbar.arrastando .cdeTaskX{pointer-events:none}
   /* alvo de solta: barra à esquerda indicando onde a aba vai entrar */
   .cdeTask.drop{box-shadow:inset 3px 0 0 var(--accent);border-color:var(--accent)}
   .vempty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--mut);gap:8px;text-align:center;padding:30px;pointer-events:none}
@@ -4286,7 +4289,7 @@ function atualizarTaskbar(){
     return `<div class="${cls}" draggable="true"
       onclick="cdeTaskClick('${w.id}')" title="${w.state==='min'?'Restaurar':'Trazer para frente'} · arraste para reordenar"
       ondragstart="cdeTaskDragStart(event,'${w.id}')" ondragend="cdeTaskDragEnd(event)"
-      ondragover="cdeTaskDragOver(event,'${w.id}')" ondragleave="cdeTaskDragLeave(event)" ondrop="cdeTaskDrop(event,'${w.id}')">
+      ondragover="cdeTaskDragOver(event,'${w.id}')" ondrop="cdeTaskDrop(event,'${w.id}')">
       <span class="cdeTaskLbl">${ic} ${esc(cod)}</span>
       <span class="cdeTaskX" title="Fechar" onclick="event.stopPropagation();cdeTaskFechar('${w.id}')">✕</span>
     </div>`;
@@ -4295,15 +4298,22 @@ function atualizarTaskbar(){
 // Arrastar as abas para reordená-las (reordena WIN_STATE.list e re-renderiza).
 // O X fecha a janela pela aba. Ver CdeWin.fechar().
 let TASK_DRAG=null;
+function _limpaDrop(){ document.querySelectorAll('#cdeTaskbar .drop').forEach(e=>e.classList.remove('drop')); }
 function cdeTaskDragStart(ev,id){ TASK_DRAG=id; ev.currentTarget.classList.add('dragging');
+  // Enquanto arrasta, os filhos (rótulo/X) não recebem eventos — assim o
+  // dragover não fica alternando ao passar sobre eles (era o que piscava).
+  const bar=$('cdeTaskbar'); if(bar) bar.classList.add('arrastando');
   ev.dataTransfer.effectAllowed='move'; try{ ev.dataTransfer.setData('text/plain',id); }catch(_){} }
 function cdeTaskDragEnd(ev){ TASK_DRAG=null; try{ ev.currentTarget.classList.remove('dragging'); }catch(_){}
-  document.querySelectorAll('#cdeTaskbar .drop').forEach(e=>e.classList.remove('drop')); }
-function cdeTaskDragOver(ev,id){ if(!TASK_DRAG||TASK_DRAG===id) return; ev.preventDefault();
-  ev.dataTransfer.dropEffect='move'; ev.currentTarget.classList.add('drop'); }
-function cdeTaskDragLeave(ev){ ev.currentTarget.classList.remove('drop'); }
+  const bar=$('cdeTaskbar'); if(bar) bar.classList.remove('arrastando'); _limpaDrop(); }
+// Sem dragleave (ele disparava sobre os filhos e causava o flicker): a cada
+// dragover limpamos o realce de TODAS as abas e marcamos só a que está sob o
+// cursor. Determinístico, sem piscar.
+function cdeTaskDragOver(ev,id){ if(!TASK_DRAG) return; ev.preventDefault();
+  ev.dataTransfer.dropEffect='move'; _limpaDrop();
+  if(TASK_DRAG!==id) ev.currentTarget.classList.add('drop'); }
 function cdeTaskDrop(ev,id){
-  ev.preventDefault(); ev.currentTarget.classList.remove('drop');
+  ev.preventDefault(); _limpaDrop();
   if(!TASK_DRAG||TASK_DRAG===id) return;
   const from=WIN_STATE.list.findIndex(w=>w.id===TASK_DRAG);
   const to  =WIN_STATE.list.findIndex(w=>w.id===id);
