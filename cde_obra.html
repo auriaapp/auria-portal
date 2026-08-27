@@ -3985,6 +3985,22 @@ class CdeWin {
       try{ if(this.DXFV) this.DXFV.Destroy(); }catch(_){}
       box.innerHTML=''; this.DXFV = new DXF_LIB.DxfViewer(box, { autoResize:true, colorCorrection:true });
       await this.DXFV.Load({ url, fonts:[], workerFactory:_dxfWorkerFactory(), progressCbk:null });
+      // A cena monta, mas às vezes o canvas nasce 0px (o container mediu 0 no
+      // construtor) e/ou a vista não enquadra → tela em branco. Forçamos tamanho,
+      // enquadramento e um render. O log ajuda a diagnosticar se ainda falhar.
+      try{
+        const w=box.clientWidth, h=box.clientHeight;
+        const cv=this.DXFV.GetCanvas?this.DXFV.GetCanvas():null;
+        console.log('[dxf] container', w, h, 'canvas', cv&&cv.width, cv&&cv.height);
+        if(w>0 && h>0 && this.DXFV.SetSize) this.DXFV.SetSize(w, h);
+        const b=this.DXFV.GetBounds?this.DXFV.GetBounds():null;
+        if(b){
+          const minX=(b.minX!=null?b.minX:(b.min&&b.min.x)), maxX=(b.maxX!=null?b.maxX:(b.max&&b.max.x));
+          const minY=(b.minY!=null?b.minY:(b.min&&b.min.y)), maxY=(b.maxY!=null?b.maxY:(b.max&&b.max.y));
+          if([minX,maxX,minY,maxY].every(v=>typeof v==='number'&&isFinite(v)) && this.DXFV.FitView) this.DXFV.FitView(minX,maxX,minY,maxY,0.05);
+        }
+        if(this.DXFV.Render) this.DXFV.Render();
+      }catch(err){ console.warn('[dxf] fit:', err); }
     }catch(e){
       box.innerHTML='<div class="vmsg2">Não foi possível renderizar o DXF: '+esc((e&&e.message)||e)
         +'<br><br>O arquivo está guardado — baixe em "Detalhes / status".</div>';
