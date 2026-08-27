@@ -3983,11 +3983,17 @@ class CdeWin {
       if(!DXF_LIB) DXF_LIB = await import('https://esm.sh/dxf-viewer@1.0.48');
       const url = await cdeSignedUrl(path, provider);
       try{ if(this.DXFV) this.DXFV.Destroy(); }catch(_){}
-      box.innerHTML=''; this.DXFV = new DXF_LIB.DxfViewer(box, { autoResize:true, colorCorrection:true });
+      // Passamos um div INTERNO ao dxf-viewer, não o .cdeWin-dxf direto: a lib
+      // troca o `position` do container que recebe (absolute→relative), e aí o
+      // nosso `inset:0` deixa de esticar a altura → colapsava para 0px (tela em
+      // branco). O interno é 100%×100% do .cdeWin-dxf, que mantém o tamanho.
+      box.innerHTML='';
+      const inner=document.createElement('div');
+      inner.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+      box.appendChild(inner);
+      this.DXFV = new DXF_LIB.DxfViewer(inner, { autoResize:true, colorCorrection:true });
       await this.DXFV.Load({ url, fonts:[], workerFactory:_dxfWorkerFactory(), progressCbk:null });
-      // A cena monta, mas às vezes o canvas nasce 0px (o container mediu 0 no
-      // construtor) e/ou a vista não enquadra → tela em branco. Forçamos tamanho,
-      // enquadramento e um render. O log ajuda a diagnosticar se ainda falhar.
+      // Reforço: garante tamanho + enquadramento + um render após o Load.
       try{
         const w=box.clientWidth, h=box.clientHeight;
         const cv=this.DXFV.GetCanvas?this.DXFV.GetCanvas():null;
