@@ -707,7 +707,6 @@ const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null;
 let BUSCA='';   // texto da barra de busca de arquivos (coluna direita)
-let ULT_DOC=null;   // id da última prancha vista (restaurada ao reabrir o CDE)
 // ATENÇÃO: DOC_SEL NÃO é declarado com let/const aqui de propósito. Ele é um
 // accessor definido via Object.defineProperty(window,'DOC_SEL') mais abaixo,
 // que espelha a janela ativa (cdeAtiva().DOC_SEL). Um `let DOC_SEL` global
@@ -1034,7 +1033,16 @@ function selDisc(d){ _zeraBusca(); const novo=(SEL_DISC===d?null:d); if(novo!=='
 // última prancha vista. Guardado por empreendimento em localStorage.
 function _ultimoKey(){ return 'cde_ultimo_'+EMP_ID; }
 function salvarUltimoCDE(){
-  try{ localStorage.setItem(_ultimoKey(), JSON.stringify({ disc: SEL_DISC||null, docId: ULT_DOC||null })); }catch(_){}
+  // Restaura só o que FICOU ABERTO: a prancha da janela ativa; se a ativa não for
+  // prancha, a última prancha ainda aberta na lista. NENHUMA prancha aberta →
+  // docId null → nada reabre no próximo boot (início continua leve). Federação e
+  // comparação não contam como "prancha". A disciplina é sempre lembrada (barata).
+  let docId=null;
+  const a=WIN_STATE.act;
+  if(a && a.DOC_SEL && !a.isFed && !a.isCmp) docId=a.DOC_SEL.id;
+  else for(let i=WIN_STATE.list.length-1;i>=0;i--){ const w=WIN_STATE.list[i];
+    if(w.DOC_SEL && !w.isFed && !w.isCmp){ docId=w.DOC_SEL.id; break; } }
+  try{ localStorage.setItem(_ultimoKey(), JSON.stringify({ disc: SEL_DISC||null, docId })); }catch(_){}
 }
 function restaurarUltimoCDE(){
   let s=null; try{ s=JSON.parse(localStorage.getItem(_ultimoKey())||'null'); }catch(_){}
@@ -2237,6 +2245,7 @@ class CdeWin {
     }
     atualizarTaskbar();
     atualizarVempty();
+    salvarUltimoCDE();   // fechou uma prancha → atualiza o que reabre (ou zera)
   }
   msg(t){ this.canvas.style.display='none'; this.loadEl.textContent=t; this.loadEl.classList.add('on'); }
   hideMsg(){ this.canvas.style.display='block'; this.loadEl.classList.remove('on'); }
@@ -4217,9 +4226,7 @@ function focar(w){
   WIN_STATE.list.forEach(x=> x.el.classList.toggle('act', x===w));
   atualizarToolbar();
   atualizarTaskbar();
-  // Lembra a última PRANCHA vista (documento real, não federação/comparação)
-  // para restaurar na próxima vez que o CDE abrir.
-  if(w.DOC_SEL && !w.isFed && !w.isCmp){ ULT_DOC = w.DOC_SEL.id; salvarUltimoCDE(); }
+  salvarUltimoCDE();   // registra o estado atual (disciplina + prancha aberta)
 }
 
 function atualizarToolbar(){
