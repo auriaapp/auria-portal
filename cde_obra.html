@@ -1060,16 +1060,33 @@ function docEhBim(d){
 }
 function renderRail(){
   const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))].sort();
+  // Poda disciplinas que sumiram do acervo (arquivos mudam entre sessões).
+  [...FILTROS.disc].forEach(d=>{ if(!discs.includes(d)) FILTROS.disc.delete(d); });
+  if(SEL_DISC && SEL_DISC!=='__BIM__') SEL_DISC=null;   // SEL_DISC hoje só guarda o modo BIM
   const temBim = DOCS.some(docEhBim);
   const bimTag = temBim
     ? `<div class="tag bim ${SEL_DISC==='__BIM__'?'sel':''}" title="Modelos BIM (IFC, RVT…)" onclick="selDisc('__BIM__')">BIM</div>` : '';
+  // O trilho é a MESMA seleção do filtro de disciplina. Mas o realce da aba só
+  // faz sentido para UMA disciplina: quando o filtro tem VÁRIAS, as abas apagam e
+  // o resultado do filtro (agrupado) é priorizado.
+  const umaDisc = FILTROS.disc.size===1;
   $('rail').innerHTML = bimTag + (discs.length
-    ? discs.map(d=>`<div class="tag ${SEL_DISC===d?'sel':''}" title="${esc(discLabel(d))}" onclick="selDisc('${esc(d)}')">${esc(d)}</div>`).join('')
+    ? discs.map(d=>`<div class="tag ${umaDisc&&FILTROS.disc.has(d)?'sel':''}" title="${esc(discLabel(d))}" onclick="selDisc('${esc(d)}')">${esc(d)}</div>`).join('')
     : (temBim ? '' : '<div class="none">sem arquivos</div>'));
-  if(SEL_DISC && SEL_DISC!=='__BIM__' && !discs.includes(SEL_DISC)) SEL_DISC=null;
+  atualizarFiltroBadge();
   renderNav();
 }
-function selDisc(d){ _zeraBusca(); const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); salvarUltimoCDE(); }
+// Clique no trilho = seleção ÚNICA rápida da disciplina (o filtro permite várias).
+// Clicar na disciplina já marcada a desmarca. A aba BIM é um modo à parte.
+function selDisc(d){
+  _zeraBusca();
+  if(d==='__BIM__'){ SEL_DISC = (SEL_DISC==='__BIM__') ? null : '__BIM__'; if(SEL_DISC==='__BIM__') FILTROS.disc.clear(); else bimPararPoll(); NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); salvarUltimoCDE(); return; }
+  bimPararPoll(); SEL_DISC=null;
+  if(FILTROS.disc.size===1 && FILTROS.disc.has(d)) FILTROS.disc.clear();
+  else FILTROS.disc = new Set([d]);
+  NAV_MODE='disc'; GRUPO_SEL=null;
+  renderRail(); salvarUltimoCDE();
+}
 
 // ── Memória: disciplina + última prancha aberta (por empreendimento) ────────
 // Ao reabrir o CDE, volta para a disciplina que estava selecionada e reabre a
@@ -1085,7 +1102,9 @@ function salvarUltimoCDE(){
   if(a && a.DOC_SEL && !a.isFed && !a.isCmp) docId=a.DOC_SEL.id;
   else for(let i=WIN_STATE.list.length-1;i>=0;i--){ const w=WIN_STATE.list[i];
     if(w.DOC_SEL && !w.isFed && !w.isCmp){ docId=w.DOC_SEL.id; break; } }
-  try{ localStorage.setItem(_ultimoKey(), JSON.stringify({ disc: SEL_DISC||null, docId })); }catch(_){}
+  // Disciplina: o modo BIM, ou a disciplina única do filtro (várias não guarda).
+  const disc = SEL_DISC==='__BIM__' ? '__BIM__' : (FILTROS.disc.size===1 ? [...FILTROS.disc][0] : null);
+  try{ localStorage.setItem(_ultimoKey(), JSON.stringify({ disc, docId })); }catch(_){}
 }
 function restaurarUltimoCDE(){
   let s=null; try{ s=JSON.parse(localStorage.getItem(_ultimoKey())||'null'); }catch(_){}
@@ -1098,7 +1117,10 @@ function restaurarUltimoCDE(){
   if((!disc || !discValida(disc)) && s.docId){
     const dd=DOCS.find(d=>d.id===s.docId); if(dd) disc=dd.disciplina;
   }
-  if(disc && discValida(disc)){ SEL_DISC=disc; if(disc!=='__BIM__') NAV_MODE='disc'; }
+  if(disc && discValida(disc)){
+    if(disc==='__BIM__') SEL_DISC='__BIM__';
+    else { SEL_DISC=null; FILTROS.disc=new Set([disc]); NAV_MODE='disc'; }
+  }
   renderRail();
   // Última prancha: reabre a janela se o documento ainda existe.
   if(s.docId && DOCS.some(d=>d.id===s.docId)){
@@ -1225,7 +1247,14 @@ function renderFiltroPop(){
     <button class="btn sec sm" onclick="_fechaPops()">Fechar</button></div>`;
   $('filtroPop').innerHTML=html;
 }
-function toggleFiltro(dim,val){ const s=FILTROS[dim]; if(s.has(val)) s.delete(val); else s.add(val); atualizarFiltroBadge(); renderNav(); }
+function toggleFiltro(dim,val){
+  const s=FILTROS[dim]; if(s.has(val)) s.delete(val); else s.add(val);
+  atualizarFiltroBadge();
+  // Disciplina é a mesma seleção do trilho → re-renderiza o trilho (e a lista);
+  // marcar disciplina sai do modo BIM. As outras dimensões só atualizam a lista.
+  if(dim==='disc'){ if(SEL_DISC==='__BIM__') SEL_DISC=null; renderRail(); }
+  else renderNav();
+}
 function limparFiltros(){ FILTROS.disc.clear(); FILTROS.etapa.clear(); FILTROS.status.clear(); FILTROS.formato.clear();
   atualizarFiltroBadge(); renderFiltroPop(); renderNav(); }
 function atualizarFiltroBadge(){
@@ -1254,8 +1283,8 @@ function carregarPastasAbertas(){
 function salvarPastasAbertas(){
   try{ localStorage.setItem(pastasKey(), JSON.stringify({ abertas:[...PASTAS_ABERTAS], visitadas:[...PASTAS_DISC_VISITADAS] })); }catch(_){}
 }
-function toggleEtapa(et){
-  const key=SEL_DISC+'::'+et;
+function toggleEtapa(disc, et){
+  const key=disc+'::'+et;
   if(PASTAS_ABERTAS.has(key)) PASTAS_ABERTAS.delete(key); else PASTAS_ABERTAS.add(key);
   salvarPastasAbertas();
   renderNav();
@@ -1562,28 +1591,40 @@ function bimAtualizarPoll(){
 }
 function navDisciplina(){
   if(SEL_DISC==='__BIM__') return navBim();
-  if(!SEL_DISC) return '<div class="nav-hint">Clique numa <b>disciplina</b> ao lado para ver as pastas por etapa e as pranchas.</div>';
-  const doDisc = DOCS.filter(d=>d.disciplina===SEL_DISC && docPassaFiltro(d));
-  if(!doDisc.length) return `<h3>${esc(discLabel(SEL_DISC))}</h3><div class="nav-hint">Nenhum arquivo desta disciplina passa pelos filtros ativos.</div>`;
+  if(!temFiltro()) return '<div class="nav-hint">Clique numa <b>disciplina</b> ao lado (ou use o <b>filtro</b>) para ver as pranchas.</div>';
+  return navFiltrado();
+}
+// Visão unificada dirigida pelo FILTRO: os documentos que passam agrupados por
+// DISCIPLINA → ETAPA (pastas). Uma disciplina só = a visão de sempre; várias =
+// cada disciplina com suas pastas. O trilho e o filtro de disciplina são o mesmo
+// estado, então "abrir uma disciplina" é ter uma disciplina no filtro.
+function navFiltrado(){
+  const docs = DOCS.filter(docPassaFiltro);
+  if(!docs.length) return '<div class="nav-hint">Nenhum arquivo corresponde aos filtros ativos.</div>';
+  const porDisc={}; docs.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
+  const discs=Object.keys(porDisc).sort();
+  const umaDisc = discs.length===1;
   const ordemFase = (faseCampo()||{}).dominio || [];
   const idx = v => { const i=ordemFase.findIndex(x=>((typeof x==='object')?x.v:x)===v); return i<0?99:i; };
-  const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
-  // Primeira vez que esta disciplina é vista nesta máquina: abre só a etapa
-  // MAIS AVANÇADA disponível (ex.: se o Executivo já foi postado, só ele
-  // abre — não EP/AP/PL/PE também). Visitas seguintes respeitam o que o
-  // usuário deixou aberto/fechado manualmente.
-  if(!PASTAS_DISC_VISITADAS.has(SEL_DISC)){
-    PASTAS_DISC_VISITADAS.add(SEL_DISC);
-    if(etapas.length) PASTAS_ABERTAS.add(SEL_DISC+'::'+etapas[etapas.length-1]);
-    salvarPastasAbertas();
-  }
-  return `<h3>${esc(discLabel(SEL_DISC))}</h3>` + etapas.map(et=>{
-    const ds=ordenarDocs(doDisc.filter(d=>(d.etapa||'—')===et));
-    const open = PASTAS_ABERTAS.has(SEL_DISC+'::'+et);
-    return `<div class="folder ${open?'open':''}">
-      <div class="folder-h" onclick="toggleEtapa('${esc(et)}')">
-        <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${esc(faseLabel(et))}</span><span class="fct">${ds.length}</span>
-      </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
+  return discs.map(disc=>{
+    const doDisc = porDisc[disc];
+    const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
+    // 1ª vez que esta disciplina é vista nesta máquina: abre só a etapa mais
+    // avançada (as visitas seguintes respeitam o que o usuário deixou aberto).
+    if(!PASTAS_DISC_VISITADAS.has(disc)){
+      PASTAS_DISC_VISITADAS.add(disc);
+      if(etapas.length) PASTAS_ABERTAS.add(disc+'::'+etapas[etapas.length-1]);
+      salvarPastasAbertas();
+    }
+    const folders = etapas.map(et=>{
+      const ds=ordenarDocs(doDisc.filter(d=>(d.etapa||'—')===et));
+      const open = PASTAS_ABERTAS.has(disc+'::'+et);
+      return `<div class="folder ${open?'open':''}">
+        <div class="folder-h" onclick="toggleEtapa('${esc(disc)}','${esc(et)}')">
+          <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${esc(faseLabel(et))}</span><span class="fct">${ds.length}</span>
+        </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
+    }).join('');
+    return `<h3>${esc(discLabel(disc))}</h3>` + folders;
   }).join('');
 }
 
