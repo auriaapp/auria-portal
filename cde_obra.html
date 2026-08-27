@@ -707,6 +707,7 @@ const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null;
 let BUSCA='';   // texto da barra de busca de arquivos (coluna direita)
+let ULT_DOC=null;   // id da última prancha vista (restaurada ao reabrir o CDE)
 // ATENÇÃO: DOC_SEL NÃO é declarado com let/const aqui de propósito. Ele é um
 // accessor definido via Object.defineProperty(window,'DOC_SEL') mais abaixo,
 // que espelha a janela ativa (cdeAtiva().DOC_SEL). Um `let DOC_SEL` global
@@ -772,7 +773,7 @@ async function boot(){
   await carregarGrupos();
   $('load').style.display='none';
   $('main').style.display='flex';
-  renderRail();
+  restaurarUltimoCDE();   // volta à disciplina + reabre a última prancha (chama renderRail)
   restaurarNavColapsada();
 }
 
@@ -1026,7 +1027,33 @@ function renderRail(){
   if(SEL_DISC && SEL_DISC!=='__BIM__' && !discs.includes(SEL_DISC)) SEL_DISC=null;
   renderNav();
 }
-function selDisc(d){ _zeraBusca(); const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); }
+function selDisc(d){ _zeraBusca(); const novo=(SEL_DISC===d?null:d); if(novo!=='__BIM__') bimPararPoll(); SEL_DISC=novo; NAV_MODE='disc'; GRUPO_SEL=null; renderRail(); salvarUltimoCDE(); }
+
+// ── Memória: disciplina + última prancha aberta (por empreendimento) ────────
+// Ao reabrir o CDE, volta para a disciplina que estava selecionada e reabre a
+// última prancha vista. Guardado por empreendimento em localStorage.
+function _ultimoKey(){ return 'cde_ultimo_'+EMP_ID; }
+function salvarUltimoCDE(){
+  try{ localStorage.setItem(_ultimoKey(), JSON.stringify({ disc: SEL_DISC||null, docId: ULT_DOC||null })); }catch(_){}
+}
+function restaurarUltimoCDE(){
+  let s=null; try{ s=JSON.parse(localStorage.getItem(_ultimoKey())||'null'); }catch(_){}
+  if(!s) return renderRail();
+  // Disciplina: a salva se ainda existe; senão, a da própria prancha (ex.: foi
+  // aberta pela busca, sem disciplina selecionada). Arquivos mudam entre sessões,
+  // então tudo é validado contra o acervo atual.
+  let disc = s.disc;
+  const discValida = d => d==='__BIM__' ? DOCS.some(docEhBim) : DOCS.some(x=>x.disciplina===d);
+  if((!disc || !discValida(disc)) && s.docId){
+    const dd=DOCS.find(d=>d.id===s.docId); if(dd) disc=dd.disciplina;
+  }
+  if(disc && discValida(disc)){ SEL_DISC=disc; if(disc!=='__BIM__') NAV_MODE='disc'; }
+  renderRail();
+  // Última prancha: reabre a janela se o documento ainda existe.
+  if(s.docId && DOCS.some(d=>d.id===s.docId)){
+    Promise.resolve(openDocInWindow(s.docId)).catch(e=>console.warn('restaurar prancha:', e&&e.message||e));
+  }
+}
 
 function renderNav(){
   const p=$('navPanel');
@@ -4190,6 +4217,9 @@ function focar(w){
   WIN_STATE.list.forEach(x=> x.el.classList.toggle('act', x===w));
   atualizarToolbar();
   atualizarTaskbar();
+  // Lembra a última PRANCHA vista (documento real, não federação/comparação)
+  // para restaurar na próxima vez que o CDE abrir.
+  if(w.DOC_SEL && !w.isFed && !w.isCmp){ ULT_DOC = w.DOC_SEL.id; salvarUltimoCDE(); }
 }
 
 function atualizarToolbar(){
