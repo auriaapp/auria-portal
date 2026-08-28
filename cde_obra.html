@@ -1912,34 +1912,44 @@ async function baixarQrImagem(docId){
   const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
   try{
     document.title='⏳ Gerando QR…';
-    const W=1654, H=2339, M=130, ACC='#e8960a';
+    const W=1654, H=2339, ACC='#e8960a', NAVY='#152036', SLATE='#475569', MUT='#94a3b8';
+    const disc=discLabel(d.disciplina)||d.disciplina||'', cod=d.codigo||'';
     const out=document.createElement('canvas'); out.width=W; out.height=H;
     const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
-    // borda suave de recorte
-    ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=3; _roundRect(ctx,40,40,W-80,H-80,40); ctx.stroke();
-    ctx.textAlign='center'; ctx.textBaseline='top';
-    let y=190;
-    // logo completa (grande)
-    try{ const logo=await _carregarImg('logo_full.png');
-      const lgW=Math.min(720, W*0.46), lgH=lgW*((logo.height/logo.width)||0.32);
-      ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+80; }catch(_){ y+=60; }
-    // divisor em destaque
-    ctx.fillStyle=ACC; ctx.fillRect((W-130)/2, y, 130, 7); y+=78;
-    // disciplina (grande)
-    ctx.fillStyle='#475569';
-    _textoCentro(ctx, discLabel(d.disciplina)||d.disciplina||'', W/2, y, W-2*M, '600', 104, FONT); y+=104+128;   // separação maior do código
-    // código (sem revisão — d.codigo já não inclui a revisão)
-    ctx.fillStyle='#0f172a';
-    _textoCentro(ctx, d.codigo||'', W/2, y, W-2*M, '800', 116, FONT); y+=116+96;
-    // QR grande (com o símbolo no centro) sobre um painel claro arredondado
-    const qrSide=Math.min(W-2*M, H-y-250);
-    const px=(W-qrSide)/2-34, py=y-34, ps=qrSide+68;
-    ctx.fillStyle='#f8fafc'; _roundRect(ctx,px,py,ps,ps,40); ctx.fill();
-    ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=2; _roundRect(ctx,px,py,ps,ps,40); ctx.stroke();
+    // moldura de recorte
+    ctx.strokeStyle='#e6ebf2'; ctx.lineWidth=3; _roundRect(ctx,44,44,W-88,H-88,48); ctx.stroke();
+    ctx.textAlign='center';
+    // pré-carrega a logo p/ medir a altura real e centralizar o bloco todo
+    let logo=null; try{ logo=await _carregarImg('logo_full.png'); }catch(_){}
+    const lgW=Math.min(820, W*0.52), lgH=logo?lgW*((logo.height/logo.width)||0.32):0;
+    // alturas dos blocos (para centralizar verticalmente = folha simétrica)
+    const gA=78, dividerH=8, gB=76, discF=104, gC=58, codF=116, codPadY=52, badgeH=codF+codPadY*2;
+    const gD=84, qrSide=Math.min(W-320, 1080), panelPad=36, qrBlk=qrSide+panelPad*2, gE=70, footF=44;
+    const totalH=lgH+gA+dividerH+gB+discF+gC+badgeH+gD+qrBlk+gE+footF;
+    let y=Math.max(120,(H-totalH)/2);
+    ctx.textBaseline='top';
+    // logo
+    if(logo){ ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+gA; }
+    // divisor accent
+    ctx.fillStyle=ACC; _roundRect(ctx,(W-150)/2,y,150,dividerH,dividerH/2); ctx.fill(); y+=dividerH+gB;
+    // disciplina
+    ctx.fillStyle=SLATE; _textoCentro(ctx, disc, W/2, y, W-360, '600', discF, FONT); y+=discF+gC;
+    // código — BADGE navy arredondado (destaque geométrico, paleta do CDE)
+    let cs=codF; ctx.font='800 '+cs+'px '+FONT;
+    while(cs>44 && ctx.measureText(cod).width>W-460){ cs-=4; ctx.font='800 '+cs+'px '+FONT; }
+    const tw=ctx.measureText(cod).width, bw=Math.min(W-200, tw+150), bx=(W-bw)/2;
+    ctx.fillStyle=NAVY; _roundRect(ctx,bx,y,bw,badgeH,30); ctx.fill();
+    ctx.fillStyle=ACC; _roundRect(ctx,bx,y,14,badgeH,7); ctx.fill();   // filete accent na borda
+    ctx.fillStyle='#ffffff'; ctx.textBaseline='middle'; ctx.fillText(cod, W/2, y+badgeH/2+2);
+    ctx.textBaseline='top'; y+=badgeH+gD;
+    // QR (símbolo no centro) sobre painel claro arredondado
+    const X=(W-qrSide)/2, panX=X-panelPad, panY=y-panelPad, ps=qrSide+panelPad*2;
+    ctx.fillStyle='#f8fafc'; _roundRect(ctx,panX,panY,ps,ps,44); ctx.fill();
+    ctx.strokeStyle='#e6ebf2'; ctx.lineWidth=2; _roundRect(ctx,panX,panY,ps,ps,44); ctx.stroke();
     const qr=await _qrComLogoCanvas(url, Math.round(qrSide));
-    ctx.drawImage(qr,(W-qrSide)/2,y,qrSide,qrSide); y+=qrSide+78;
+    ctx.drawImage(qr,X,y,qrSide,qrSide); y+=qrSide+panelPad+gE;
     // rodapé
-    ctx.fillStyle='#94a3b8'; ctx.font='500 42px '+FONT;
+    ctx.fillStyle=MUT; ctx.font='500 '+footF+'px '+FONT;
     ctx.fillText('Escaneie para ver a última revisão liberada para a obra.', W/2, y);
     out.toBlob(b=>{ if(b) _baixarBlob(b,(d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
   }catch(e){ alert('Não foi possível gerar o QR: '+((e&&e.message)||e)); console.warn('qrimg',e); }
