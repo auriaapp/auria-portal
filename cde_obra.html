@@ -1798,9 +1798,10 @@ function docMenuOpen(ev,id){
     rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
   });
   if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
-  if(byExt.pdf){   // disponível para todos (a obra imprime a prancha com o QR)
+  if(d.qr_token){   // QR disponível para todos (inclusive obra)
     rows.push('<div class="dm-sep"></div>');
-    rows.push(`<button onclick="docMenuAct('${id}','','qrimp')"><span class="mi">▦</span>Baixar com QR (impressão)</button>`);
+    if(byExt.pdf) rows.push(`<button onclick="docMenuAct('${id}','','qrimp')"><span class="mi">▦</span>Baixar prancha com QR (PDF)</button>`);
+    rows.push(`<button onclick="docMenuAct('${id}','','qrimg')"><span class="mi">⬛</span>Baixar QR (imagem grande)</button>`);
   }
   if(byExt.pdf && !READONLY){
     rows.push('<div class="dm-sep"></div>');
@@ -1840,52 +1841,98 @@ async function docMenuAct(id,ext,mode){
   if(mode==='link'){ abrirVincular(id); return; }
   if(mode==='cmp'){ abrirComparar(id); return; }
   if(mode==='qrimp'){ baixarPranchaComQr(id); return; }
+  if(mode==='qrimg'){ baixarQrImagem(id); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
   if(mode==='view') openDocInWindow(id, ext);
   else baixar(a.storage_path, a.nome, a.storage_provider);
 }
 
-// ── QR para impressão: compõe QR + logo do Auria no CANTO SUPERIOR ESQUERDO da
-//  prancha e baixa um PDF NOVO (o original fica intocado). O QR aponta para a
-//  página pública v.html?p=<token>, que sempre mostra a última revisão liberada.
+// ── QR com o SÍMBOLO do Auria NO CENTRO. Correção de erro 'H' (30%) permite o
+//  logo no meio sem perder a leitura. Reusado no PDF e na imagem avulsa.
+function _carregarImg(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error('img '+src)); im.src=src; }); }
+function _roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+async function _qrComLogoCanvas(url, px){
+  const QRmod = await import('https://esm.sh/qrcode@1.5.4'); const QR=(QRmod.default||QRmod);
+  const cv=document.createElement('canvas'); cv.width=px; cv.height=px;
+  await QR.toCanvas(cv, url, { width:px, margin:2, errorCorrectionLevel:'H', color:{ dark:'#111111', light:'#ffffff' } });
+  const ctx=cv.getContext('2d');
+  try{
+    const logo=await _carregarImg('logo_symbol.png');
+    const lw=px*0.20, lh=lw*((logo.height/logo.width)||1);
+    const bw=lw*1.32, bh=lh*1.32, bx=(px-bw)/2, by=(px-bh)/2;
+    ctx.fillStyle='#fff'; _roundRect(ctx,bx,by,bw,bh,Math.min(bw,bh)*0.18); ctx.fill();   // respiro branco atrás do logo
+    ctx.drawImage(logo,(px-lw)/2,(px-lh)/2,lw,lh);
+  }catch(_){ /* sem logo: o QR puro ainda funciona */ }
+  return cv;
+}
+// PDF de impressão: QR (com o logo no centro) numa caixa branca no canto sup. esq.
+// Não-destrutivo: gera um PDF NOVO; o original no CDE fica intocado.
 async function baixarPranchaComQr(docId){
   const d=DOCS.find(x=>x.id===docId); if(!d) return;
   const arq=((d.atual&&d.atual.arqs)||[]).find(a=>(a.extensao||'').toLowerCase()==='pdf');
   if(!arq){ alert('Esta prancha não tem PDF para gerar o QR.'); return; }
   if(!d.qr_token){ alert('Esta prancha ainda não tem token de QR.'); return; }
-  const url = location.origin + '/v.html?p=' + d.qr_token;
-  const titAntes = document.title;
+  const url=location.origin+'/v.html?p='+d.qr_token, tit=document.title;
   try{
-    document.title = '⏳ Gerando QR…';
-    const [QRmod, PDFmod, srcObj, logoBuf] = await Promise.all([
-      import('https://esm.sh/qrcode@1.5.4'),
+    document.title='⏳ Gerando QR…';
+    const [PDFmod, srcObj, qrCv] = await Promise.all([
       import('https://esm.sh/pdf-lib@1.17.1'),
       cdePdfBytes(arq.storage_path, arq.storage_provider),
-      fetch('logo_symbol.png').then(r=>r.arrayBuffer())
+      _qrComLogoCanvas(url, 600)
     ]);
-    const QR = (QRmod.default||QRmod), { PDFDocument, rgb } = PDFmod;
-    const qrDataUrl = await QR.toDataURL(url, { margin:1, width:600, errorCorrectionLevel:'M' });
-    const pdf = await PDFDocument.load(srcObj.bytes);
-    const qrImg = await pdf.embedPng(_dataUrlToBytes(qrDataUrl));
-    const logoImg = await pdf.embedPng(new Uint8Array(logoBuf));
+    const { PDFDocument, rgb }=PDFmod;
+    const pdf=await PDFDocument.load(srcObj.bytes);
+    const qrImg=await pdf.embedPng(_dataUrlToBytes(qrCv.toDataURL('image/png')));
     for(const page of pdf.getPages()){
-      const { width, height } = page.getSize();
-      const qrSide = Math.max(58, Math.min(width, height)*0.05);   // ~3cm numa A1 → escaneável
-      const pad = qrSide*0.18, logoH = qrSide*0.34;
-      const boxW = qrSide + pad*2, boxH = qrSide + logoH + pad*2.6;
-      const mx = qrSide*0.35, my = qrSide*0.35;
-      const x = mx, y = height - boxH - my;   // pdf-lib: origem embaixo-esquerda
+      const { width, height }=page.getSize();
+      const qrSide=Math.max(58, Math.min(width,height)*0.05), pad=qrSide*0.16;
+      const boxW=qrSide+pad*2, boxH=qrSide+pad*2, mx=qrSide*0.35, my=qrSide*0.35;
+      const x=mx, y=height-boxH-my;   // pdf-lib: origem embaixo-esquerda
       page.drawRectangle({ x, y, width:boxW, height:boxH, color:rgb(1,1,1), borderColor:rgb(0.75,0.75,0.75), borderWidth:0.6 });
-      const ls = logoImg.scale(logoH/logoImg.height);
-      page.drawImage(logoImg, { x:x+(boxW-ls.width)/2, y:y+boxH-pad-ls.height, width:ls.width, height:ls.height });
       page.drawImage(qrImg, { x:x+pad, y:y+pad, width:qrSide, height:qrSide });
     }
     _baixarBytes(await pdf.save(), (d.codigo||'prancha')+'_QR.pdf', 'application/pdf');
-  }catch(e){ alert('Não foi possível gerar o PDF com QR: '+((e&&e.message)||e)); console.warn('qrimp', e); }
-  finally{ document.title = titAntes; }
+  }catch(e){ alert('Não foi possível gerar o PDF com QR: '+((e&&e.message)||e)); console.warn('qrimp',e); }
+  finally{ document.title=tit; }
+}
+// Cartaz A4 (retrato) do QR — a obra imprime e afixa por pavimento. Topo: logo
+// COMPLETA do Auria + disciplina + código (sem revisão); abaixo, o QR grande
+// (com o símbolo no centro). 200 DPI (1654×2339) p/ impressão nítida.
+async function baixarQrImagem(docId){
+  const d=DOCS.find(x=>x.id===docId); if(!d) return;
+  if(!d.qr_token){ alert('Esta prancha ainda não tem token de QR.'); return; }
+  const url=location.origin+'/v.html?p='+d.qr_token, tit=document.title;
+  const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
+  try{
+    document.title='⏳ Gerando QR…';
+    const W=1654, H=2339, M=130;
+    const out=document.createElement('canvas'); out.width=W; out.height=H;
+    const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='top';
+    let y=M;
+    // logo completa
+    try{ const logo=await _carregarImg('logo_full.png'); const lgH=210, lgW=lgH*(logo.width/logo.height||3);
+      ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+64; }catch(_){ y+=40; }
+    // disciplina
+    ctx.fillStyle='#64748b'; ctx.font='600 54px '+FONT;
+    ctx.fillText(discLabel(d.disciplina)||d.disciplina||'', W/2, y); y+=78;
+    // código (sem revisão — d.codigo já não inclui a revisão)
+    ctx.fillStyle='#0f172a'; ctx.font='800 92px '+FONT;
+    ctx.fillText(d.codigo||'', W/2, y); y+=126;
+    // QR grande (com o símbolo no centro), quadrado, centralizado
+    const qrSide=Math.min(W-2*M, H-y-230);
+    const qr=await _qrComLogoCanvas(url, Math.round(qrSide));
+    ctx.drawImage(qr,(W-qrSide)/2,y,qrSide,qrSide); y+=qrSide+70;
+    // rodapé
+    ctx.fillStyle='#94a3b8'; ctx.font='500 40px '+FONT;
+    ctx.fillText('Escaneie para ver a última revisão liberada para a obra.', W/2, y);
+    out.toBlob(b=>{ if(b) _baixarBlob(b,(d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
+  }catch(e){ alert('Não foi possível gerar o QR: '+((e&&e.message)||e)); console.warn('qrimg',e); }
+  finally{ document.title=tit; }
 }
 function _dataUrlToBytes(dataUrl){ const b=atob(dataUrl.split(',')[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
-function _baixarBytes(bytes, nome, mime){ const blob=new Blob([bytes],{type:mime||'application/octet-stream'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nome; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500); }
+function _baixarBytes(bytes, nome, mime){ _baixarBlob(new Blob([bytes],{type:mime||'application/octet-stream'}), nome); }
+function _baixarBlob(blob, nome){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nome; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500); }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SISTEMA DE JANELAS DO CDE (múltiplas pranchas abertas em paralelo)
