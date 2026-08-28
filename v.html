@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Auria — Visualização da prancha</title>
 <link rel="icon" href="logo_symbol.png" type="image/png">
 <!-- importmap para o 3D (bim3d.js importa three / @thatopen/fragments por bare specifier) -->
@@ -42,6 +42,8 @@
   #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
   #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:var(--mut); }
   #msg .big{ font-size:40px; }
+  #msg .spin{ width:68px; height:68px; animation:auGira 1s linear infinite; }
+  @keyframes auGira{ to{ transform:rotate(360deg); } }
   #msg.hide{ display:none; }
   #card{ position:absolute; left:50%; bottom:66px; transform:translateX(-50%); z-index:25; width:min(92vw,380px); background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); display:none; }
   #card .ch{ display:flex; align-items:center; gap:8px; padding:9px 11px; border-bottom:1px solid var(--line); }
@@ -69,7 +71,7 @@
   </div>
   <div id="tools"></div>
   <div id="card"></div>
-  <div id="msg"><div class="big">⏳</div><div>Carregando…</div></div>
+  <div id="msg"><img src="logo_symbol.png" class="spin" alt=""><div>Carregando…</div></div>
   <div id="foot">Auria · visualização somente leitura</div>
 
 <script>
@@ -81,6 +83,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function msg(html){ const m=$('msg'); m.classList.remove('hide'); m.innerHTML=html; }
 function hideMsg(){ $('msg').classList.add('hide'); }
+function carregando(txt){ msg('<img src="logo_symbol.png" class="spin" alt=""><div>'+esc(txt)+'</div>'); }
 const CORPRIO = { 'Alta':'#ef4444','Média':'#f59e0b','Media':'#f59e0b','Baixa':'#22c55e' };
 function corPrio(p){ return CORPRIO[p] || '#38bdf8'; }
 function pinSvg(num,cor){ return '<svg width="30" height="38" viewBox="0 0 30 38"><path d="M15 37C15 37 28 22 28 13.5A13 13 0 1 0 2 13.5C2 22 15 37 15 37Z" fill="'+cor+'" stroke="#fff" stroke-width="1.5"/><text x="15" y="18" text-anchor="middle" font-size="12" font-weight="800" fill="#fff" font-family="system-ui,sans-serif">'+esc(num)+'</text></svg>'; }
@@ -117,11 +120,17 @@ async function computeContentBBoxPx(page){
 }
 function dims(){ const vp=V.page.getViewport({scale:1}); return { pw:vp.width, ph:vp.height }; }
 function cancelarRender(){ if(V._renderTask){ try{ V._renderTask.cancel(); }catch(_){} V._renderTask=null; } }
+// No CELULAR o canvas tem limite bem menor de ÁREA/LADO — um bitmap grande demais
+// renderiza só em pedaços ou sai branco. Reduzimos MAXPIX/lado/folga e capamos o
+// dpr. Os TILES de detalhe (512px cada) continuam refinando ao ampliar.
+const _MOVEL = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Math.min(window.innerWidth, window.innerHeight) < 820;
 function baseScaleAlvo(){
-  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, dpr=window.devicePixelRatio||1, b=BBOX;
+  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
+  const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
   const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-  const MAXPIX=42e6, teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 16000/pw, 16000/ph);
-  let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
+  const FOLGA=_MOVEL?1.8:BASE_FOLGA, MAXPIX=_MOVEL?9e6:42e6, MAXDIM=_MOVEL?4096:16000;
+  const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), MAXDIM/pw, MAXDIM/ph);
+  let s=Math.min(fitZoom*dpr*FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
   return { s, pw, ph };
 }
 async function rasterizar(job, s, rx, ry, W, H, cv){
@@ -225,23 +234,24 @@ function gestos(){
   if(_GESTOS) return; _GESTOS=true;
   stage.addEventListener('wheel', e=>{ if($('bim').style.display==='block') return; e.preventDefault();
     const r=stage.getBoundingClientRect(); zoomAt(e.deltaY<0?1.15:1/1.15, e.clientX-r.left, e.clientY-r.top); }, {passive:false});
-  stage.addEventListener('pointerdown', e=>{ if($('bim').style.display==='block') return;
+  stage.addEventListener('pointerdown', e=>{ if($('bim').style.display==='block'||V._pinch) return;
     if(e.target.closest && e.target.closest('.pin')) return;
     try{ stage.setPointerCapture(e.pointerId); }catch(_){}
     V._pan={ id:e.pointerId, x:e.clientX, y:e.clientY, px:V.panX, py:V.panY }; stage.classList.add('grab'); });
-  stage.addEventListener('pointermove', e=>{ const d=V._pan; if(!d||e.pointerId!==d.id) return;
+  stage.addEventListener('pointermove', e=>{ const d=V._pan; if(!d||e.pointerId!==d.id||V._pinch) return;
     V._panPend={ x:d.px-(e.clientX-d.x), y:d.py-(e.clientY-d.y) };
     if(V._rafId) return; V._rafId=requestAnimationFrame(()=>{ V._rafId=null; if(!V._panPend) return; V.panX=V._panPend.x; V.panY=V._panPend.y; updateCss(); }); });
   const end=e=>{ const d=V._pan; if(!d||(e&&e.pointerId!==d.id)) return; V._pan=null; stage.classList.remove('grab');
     if(V._rafId){ cancelAnimationFrame(V._rafId); V._rafId=null; } if(V._panPend){ V.panX=V._panPend.x; V.panY=V._panPend.y; V._panPend=null; updateCss(); } };
   stage.addEventListener('pointerup', end); stage.addEventListener('pointercancel', end);
-  // pinça (2 dedos)
+  // pinça (2 dedos) — cancela o pan de 1 dedo enquanto amplia
   let pinch=null;
+  stage.addEventListener('touchstart', e=>{ if(e.touches.length>=2){ V._pinch=true; V._pan=null; pinch=null; stage.classList.remove('grab'); } }, {passive:true});
   stage.addEventListener('touchmove', e=>{ if(e.touches.length!==2) return; e.preventDefault();
     const a=e.touches[0], b=e.touches[1], dist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
     const r=stage.getBoundingClientRect(), cx=(a.clientX+b.clientX)/2-r.left, cy=(a.clientY+b.clientY)/2-r.top;
     if(pinch) zoomAt(dist/pinch, cx, cy); pinch=dist; }, {passive:false});
-  stage.addEventListener('touchend', ()=>{ pinch=null; });
+  stage.addEventListener('touchend', e=>{ if(e.touches.length<2){ pinch=null; V._pinch=false; } });
   if(window.ResizeObserver){ new ResizeObserver(()=>{ if(!V.page||$('bim').style.display==='block') return;
     if(stage.clientWidth<=0||stage.clientHeight<=0) return; if(!V._fitted){ fitPage(); return; }
     clearTimeout(V._baseTimer); V._baseTimer=setTimeout(revisarBase,250); updateCss(); }).observe(stage); }
@@ -268,11 +278,11 @@ async function verModo(m){
 let B3=null, F3D=null;
 async function abrir3D(fragUrl, jaAberto){
   try{
-    if(!jaAberto) msg('<div class="big">🧊</div><div>Carregando modelo 3D…</div>');
+    if(!jaAberto) carregando('Carregando modelo 3D…');
     if(!B3) B3=await import('./bim3d.js');
     if(!F3D) F3D=await B3.criar($('bim'), { fundo:0x20262f, on:{} });
     const nome=(DADOS&&DADOS.doc&&DADOS.doc.codigo)||'modelo';
-    await B3.carregar(F3D, [{ nome, id:'qr', arquivoId:'qr', url:()=>fragUrl }], t=>{ if(!jaAberto) msg('<div class="big">🧊</div><div>'+esc(t)+'</div>'); });
+    await B3.carregar(F3D, [{ nome, id:'qr', arquivoId:'qr', url:()=>fragUrl }], t=>{ if(!jaAberto) carregando(t); });
     $('bim').style.display='block';
     if(!jaAberto){ hideMsg(); cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('tools').style.display='flex'; }
   }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
