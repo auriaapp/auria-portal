@@ -1851,6 +1851,13 @@ async function docMenuAct(id,ext,mode){
 //  logo no meio sem perder a leitura. Reusado no PDF e na imagem avulsa.
 function _carregarImg(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error('img '+src)); im.src=src; }); }
 function _roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+// Texto centralizado que ENCOLHE a fonte se não couber em maxW (nome de
+// disciplina/código longos não estouram a largura do cartaz).
+function _textoCentro(ctx, txt, cx, y, maxW, weight, size, FONT){
+  let s=size; ctx.font=weight+' '+s+'px '+FONT;
+  while(s>24 && ctx.measureText(txt).width>maxW){ s-=4; ctx.font=weight+' '+s+'px '+FONT; }
+  ctx.fillText(txt, cx, y);
+}
 async function _qrComLogoCanvas(url, px){
   const QRmod = await import('https://esm.sh/qrcode@1.5.4'); const QR=(QRmod.default||QRmod);
   const cv=document.createElement('canvas'); cv.width=px; cv.height=px;
@@ -1905,26 +1912,34 @@ async function baixarQrImagem(docId){
   const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
   try{
     document.title='⏳ Gerando QR…';
-    const W=1654, H=2339, M=130;
+    const W=1654, H=2339, M=130, ACC='#e8960a';
     const out=document.createElement('canvas'); out.width=W; out.height=H;
     const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+    // borda suave de recorte
+    ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=3; _roundRect(ctx,40,40,W-80,H-80,40); ctx.stroke();
     ctx.textAlign='center'; ctx.textBaseline='top';
-    let y=M;
-    // logo completa
-    try{ const logo=await _carregarImg('logo_full.png'); const lgH=210, lgW=lgH*(logo.width/logo.height||3);
-      ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+64; }catch(_){ y+=40; }
-    // disciplina
-    ctx.fillStyle='#64748b'; ctx.font='600 54px '+FONT;
-    ctx.fillText(discLabel(d.disciplina)||d.disciplina||'', W/2, y); y+=78;
+    let y=190;
+    // logo completa (grande)
+    try{ const logo=await _carregarImg('logo_full.png');
+      const lgW=Math.min(720, W*0.46), lgH=lgW*((logo.height/logo.width)||0.32);
+      ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+80; }catch(_){ y+=60; }
+    // divisor em destaque
+    ctx.fillStyle=ACC; ctx.fillRect((W-130)/2, y, 130, 7); y+=78;
+    // disciplina (grande)
+    ctx.fillStyle='#475569';
+    _textoCentro(ctx, discLabel(d.disciplina)||d.disciplina||'', W/2, y, W-2*M, '600', 104, FONT); y+=104+128;   // separação maior do código
     // código (sem revisão — d.codigo já não inclui a revisão)
-    ctx.fillStyle='#0f172a'; ctx.font='800 92px '+FONT;
-    ctx.fillText(d.codigo||'', W/2, y); y+=126;
-    // QR grande (com o símbolo no centro), quadrado, centralizado
-    const qrSide=Math.min(W-2*M, H-y-230);
+    ctx.fillStyle='#0f172a';
+    _textoCentro(ctx, d.codigo||'', W/2, y, W-2*M, '800', 116, FONT); y+=116+96;
+    // QR grande (com o símbolo no centro) sobre um painel claro arredondado
+    const qrSide=Math.min(W-2*M, H-y-250);
+    const px=(W-qrSide)/2-34, py=y-34, ps=qrSide+68;
+    ctx.fillStyle='#f8fafc'; _roundRect(ctx,px,py,ps,ps,40); ctx.fill();
+    ctx.strokeStyle='#e2e8f0'; ctx.lineWidth=2; _roundRect(ctx,px,py,ps,ps,40); ctx.stroke();
     const qr=await _qrComLogoCanvas(url, Math.round(qrSide));
-    ctx.drawImage(qr,(W-qrSide)/2,y,qrSide,qrSide); y+=qrSide+70;
+    ctx.drawImage(qr,(W-qrSide)/2,y,qrSide,qrSide); y+=qrSide+78;
     // rodapé
-    ctx.fillStyle='#94a3b8'; ctx.font='500 40px '+FONT;
+    ctx.fillStyle='#94a3b8'; ctx.font='500 42px '+FONT;
     ctx.fillText('Escaneie para ver a última revisão liberada para a obra.', W/2, y);
     out.toBlob(b=>{ if(b) _baixarBlob(b,(d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
   }catch(e){ alert('Não foi possível gerar o QR: '+((e&&e.message)||e)); console.warn('qrimg',e); }
