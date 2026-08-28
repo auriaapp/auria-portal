@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
 <title>Auria — Visualização da prancha</title>
 <link rel="icon" href="logo_symbol.png" type="image/png">
-<!-- importmap para o visualizador 3D (bim3d.js importa three / @thatopen/fragments
-     por bare specifier — precisa estar definido antes do import dinâmico) -->
+<!-- importmap para o 3D (bim3d.js importa three / @thatopen/fragments por bare specifier) -->
 <script type="importmap">
 { "imports": {
   "three":"https://esm.sh/three@0.185.1",
@@ -16,7 +15,7 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
-  :root{ --bg:#0b1220; --panel:#141c2b; --line:#26324a; --txt:#e8eef6; --mut:#8496ac; --accent:#e8960a; --err:#ef4444; }
+  :root{ --bg:#0b1220; --panel:#141c2b; --line:#26324a; --txt:#e8eef6; --mut:#8496ac; --accent:#e8960a; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; height:100%; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
   #top{ display:flex; align-items:center; gap:10px; padding:8px 12px; background:linear-gradient(90deg,#0b1220,#152036); border-bottom:1px solid var(--line); }
@@ -26,19 +25,20 @@
   #top .sub{ font-size:11px; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #top .rev{ margin-left:auto; flex:none; font-size:11px; font-weight:800; color:#231703; background:var(--accent); border-radius:20px; padding:3px 10px; }
   #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#20262f; touch-action:none; }
-  #pdfPan{ position:absolute; left:0; top:0; transform-origin:0 0; }
-  #pdfCv{ display:block; box-shadow:0 4px 30px rgba(0,0,0,.5); background:#fff; }
-  #pins{ position:absolute; left:0; top:0; }
-  .pin{ position:absolute; transform:translate(-50%,-100%); cursor:pointer; }
+  #stage.grab{ cursor:grabbing; }
+  #pdfCv{ position:absolute; left:0; top:0; transform-origin:0 0; background:#fff; box-shadow:0 4px 30px rgba(0,0,0,.5); }
+  #tiles{ position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; }
+  #tiles canvas{ position:absolute; background:transparent; }
+  #pins{ position:absolute; inset:0; pointer-events:none; }
+  .pin{ position:absolute; transform:translate(-50%,-100%); cursor:pointer; pointer-events:auto; }
   .pin svg{ display:block; filter:drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
   #bim{ position:absolute; inset:0; display:none; }
   #banner{ position:absolute; left:0; right:0; top:52px; z-index:20; display:none; background:rgba(239,68,68,.96); color:#fff; padding:10px 14px; font-size:13px; font-weight:700; line-height:1.35; box-shadow:0 6px 20px rgba(0,0,0,.4); }
-  #banner b{ font-weight:900; }
-  #tools{ position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:15; display:flex; gap:6px; background:rgba(20,28,43,.92); border:1px solid var(--line); border-radius:12px; padding:6px; backdrop-filter:blur(4px); }
+  #tools{ position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:15; display:none; gap:6px; background:rgba(20,28,43,.92); border:1px solid var(--line); border-radius:12px; padding:6px; backdrop-filter:blur(4px); }
   #tools button{ min-width:38px; height:38px; padding:0 10px; background:#1b2536; border:1px solid var(--line); color:var(--txt); border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; }
   #tools button:hover{ border-color:var(--accent); }
   #tools button.on{ background:var(--accent); border-color:var(--accent); color:#231703; }
-  #tools .sep{ width:1px; background:var(--line); margin:2px 2px; }
+  #tools .sep{ width:1px; background:var(--line); margin:2px; }
   #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
   #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:var(--mut); }
   #msg .big{ font-size:40px; }
@@ -57,21 +57,17 @@
 <body>
   <div id="top">
     <img src="logo_symbol.png" alt="Auria">
-    <div class="info">
-      <div class="cod" id="tCod">—</div>
-      <div class="sub" id="tSub"></div>
-    </div>
+    <div class="info"><div class="cod" id="tCod">—</div><div class="sub" id="tSub"></div></div>
     <span class="rev" id="tRev" style="display:none"></span>
   </div>
-
   <div id="banner">⚠ Existe uma versão <b>mais atual ainda não liberada para a obra</b>. Esta é a última revisão liberada. <b>Contatar a coordenação de projeto.</b></div>
-
   <div id="stage">
-    <div id="pdfPan"><canvas id="pdfCv"></canvas><div id="pins"></div></div>
+    <canvas id="pdfCv"></canvas>
+    <div id="tiles"></div>
+    <div id="pins"></div>
     <div id="bim"></div>
   </div>
-
-  <div id="tools" style="display:none"></div>
+  <div id="tools"></div>
   <div id="card"></div>
   <div id="msg"><div class="big">⏳</div><div>Carregando…</div></div>
   <div id="foot">Auria · visualização somente leitura</div>
@@ -85,203 +81,224 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 function msg(html){ const m=$('msg'); m.classList.remove('hide'); m.innerHTML=html; }
 function hideMsg(){ $('msg').classList.add('hide'); }
-
 const CORPRIO = { 'Alta':'#ef4444','Média':'#f59e0b','Media':'#f59e0b','Baixa':'#22c55e' };
 function corPrio(p){ return CORPRIO[p] || '#38bdf8'; }
-function pinSvg(num,cor){
-  return '<svg width="30" height="38" viewBox="0 0 30 38"><path d="M15 37C15 37 28 22 28 13.5A13 13 0 1 0 2 13.5C2 22 15 37 15 37Z" fill="'+cor+'" stroke="#fff" stroke-width="1.5"/><text x="15" y="18" text-anchor="middle" font-size="12" font-weight="800" fill="#fff" font-family="system-ui,sans-serif">'+esc(num)+'</text></svg>';
+function pinSvg(num,cor){ return '<svg width="30" height="38" viewBox="0 0 30 38"><path d="M15 37C15 37 28 22 28 13.5A13 13 0 1 0 2 13.5C2 22 15 37 15 37Z" fill="'+cor+'" stroke="#fff" stroke-width="1.5"/><text x="15" y="18" text-anchor="middle" font-size="12" font-weight="800" fill="#fff" font-family="system-ui,sans-serif">'+esc(num)+'</text></svg>'; }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Renderizador de PDF — PORTADO do CDE (cde_obra.html): bitmap base numa única
+//  rasterização adaptativa + detalhe em LADRILHOS quantizados no zoom; pan/zoom
+//  são só transform CSS (sem re-render = sem piscar/sumir). Sem o modo de
+//  comparação nem o cache em IndexedDB (o QR não precisa). Mesma nitidez/fluidez.
+// ════════════════════════════════════════════════════════════════════════════
+const BASE_FOLGA = 7, DET_SS = 1.5, TILE_PX = 512, TILE_MAX = 90;
+const V = { doc:null, page:null, pageNum:1, nPages:1, zoom:1, panX:0, panY:0,
+            _renderJob:0, _renderTask:null, _detTimer:null, _rafId:null, _panPend:null, _fitted:false, _baseTimer:null };
+const B = { scale:1, pw:0, ph:0, valido:false };
+const T = { mapa:new Map(), nivel:null, escala:1, tam:0 };
+let BBOX = null, APTS = [], DADOS = null;
+const stage = $('stage'), cvBase = $('pdfCv'), tilesEl = $('tiles'), pinsEl = $('pins');
+
+async function computeContentBBoxPx(page){
+  const ALVO_PX=900, vp0=page.getViewport({scale:1});
+  const s=ALVO_PX/Math.max(vp0.width,vp0.height), vp=page.getViewport({scale:s});
+  const cv=document.createElement('canvas'); cv.width=Math.max(1,Math.ceil(vp.width)); cv.height=Math.max(1,Math.ceil(vp.height));
+  const ctx=cv.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  try{ await page.render({canvasContext:ctx,viewport:vp,background:'#fff'}).promise; }catch(e){ return null; }
+  let img; try{ img=ctx.getImageData(0,0,cv.width,cv.height).data; }catch(e){ return null; }
+  const W=cv.width,H=cv.height,TH=248; let minX=W,minY=H,maxX=-1,maxY=-1;
+  for(let y=0;y<H;y++){ const rb=y*W*4; for(let x=0;x<W;x++){ const i=rb+x*4;
+    if(img[i]<TH||img[i+1]<TH||img[i+2]<TH){ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } } }
+  if(maxX<0) return null;
+  let left=minX/s,top=minY/s,w=(maxX-minX+1)/s,h=(maxY-minY+1)/s;
+  const pad=Math.max(w,h)*0.02; left=Math.max(0,left-pad); top=Math.max(0,top-pad);
+  w=Math.min(vp0.width-left,w+2*pad); h=Math.min(vp0.height-top,h+2*pad);
+  return { left, top, w, h };
 }
-
-// ── Estado ──────────────────────────────────────────────────────────────────
-const V = { doc:null, page:null, pageNum:1, nPages:1, scale:1, zoom:1, panX:0, panY:0, pw:0, ph:0 };
-let APTS = [];
-let DADOS = null;
-
-function token(){ const u=new URLSearchParams(location.search); return (u.get('p')||u.get('token')||'').trim(); }
-
-async function boot(){
-  const t = token();
-  if(!t){ msg('<div class="big">🔗</div><div>Link inválido — sem código da prancha.</div>'); return; }
-  let r;
+function dims(){ const vp=V.page.getViewport({scale:1}); return { pw:vp.width, ph:vp.height }; }
+function cancelarRender(){ if(V._renderTask){ try{ V._renderTask.cancel(); }catch(_){} V._renderTask=null; } }
+function baseScaleAlvo(){
+  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, dpr=window.devicePixelRatio||1, b=BBOX;
+  const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
+  const MAXPIX=42e6, teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 16000/pw, 16000/ph);
+  let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
+  return { s, pw, ph };
+}
+async function rasterizar(job, s, rx, ry, W, H, cv){
+  cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.translate(-rx*s,-ry*s);
+  const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}), background:'#fff' });
+  V._renderTask=task; try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
+  V._renderTask=null; ctx.restore(); return job===V._renderJob;
+}
+async function renderBase(){
+  if(!V.page) return; const job=++V._renderJob; cancelarRender();
   try{
-    const resp = await fetch(SB_URL+'/functions/v1/qr-view', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'apikey':SB_ANON, 'Authorization':'Bearer '+SB_ANON },
-      body: JSON.stringify({ token:t })
-    });
-    r = await resp.json();
-    if(!resp.ok || r.error) throw new Error(r&&r.error || ('HTTP '+resp.status));
-  }catch(e){ msg('<div class="big">⚠</div><div>Não foi possível abrir a prancha.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); return; }
-
-  DADOS = r;
-  $('tCod').textContent = r.doc.codigo || '—';
-  $('tSub').textContent = [r.doc.empreendimento, r.doc.disciplina].filter(Boolean).join(' · ');
-  document.title = 'Auria — ' + (r.doc.codigo || 'prancha');
-
-  if(!r.released){
-    msg('<div class="big">🔒</div><div><b>Nenhuma revisão liberada</b> para a obra ainda.<br>Contatar a coordenação de projeto.</div>');
-    return;
+    const {s,pw,ph}=baseScaleAlvo(), W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
+    const direto=!B.valido, cvA=direto?cvBase:document.createElement('canvas');
+    const ok=await rasterizar(job,s,0,0,W,H,cvA); if(!ok||job!==V._renderJob) return;
+    if(!direto){ cvBase.width=W; cvBase.height=H; cvBase.getContext('2d').drawImage(cvA,0,0); }
+    cvBase.style.width=W+'px'; cvBase.style.height=H+'px';
+    B.scale=s; B.pw=pw; B.ph=ph; B.valido=true; tilesLimpar(); updateCss();
+  }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
+}
+async function ajustarBBox(){ const page=V.page; try{ const bb=await computeContentBBoxPx(page); if(V.page===page) BBOX=bb; }catch(e){ BBOX=null; } }
+function updateCss(){
+  if(!B.valido) return;
+  const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
+  cvBase.style.transform=tr;
+  renderPins(); tilesPosicionar(); detAgendar();
+}
+// ── Detalhe em ladrilhos ──
+function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*DET_SS; }
+function detNivel(){ const a=detEscalaAlvo(); if(!(a>0)) return null; return Math.ceil(Math.log2(a)*2)/2; }
+function detPrecisa(){ if(!B.valido||!V.page) return false; const r=detEscalaAlvo()/B.scale; return r>1.05||r<0.65; }
+function tilesLimpar(){ T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove(); }); T.mapa.clear(); T.nivel=null; }
+function tilesPosicionar(){ if(!B.valido) return; const k=V.zoom/B.scale; tilesEl.style.transform='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')'; }
+function tilesVisibilidade(nivel){ T.mapa.forEach(t=>{ t.el.style.display=(t.nivel===nivel)?'block':'none'; }); }
+function detAgendar(){ clearTimeout(V._detTimer); if(!detPrecisa()){ tilesVisibilidade(null); return; } const n=detNivel(); if(n!==T.nivel) tilesVisibilidade(n); V._detTimer=setTimeout(tilesGarantir,200); }
+async function tilesGarantir(){
+  if(!detPrecisa()||!B.valido) return; const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
+  const nivel=detNivel(); if(nivel==null) return; const s=Math.pow(2,nivel), tam=TILE_PX/s;
+  T.nivel=nivel; T.escala=s; T.tam=tam; tilesVisibilidade(nivel);
+  const z=V.zoom, x0=V.panX/z-tam/2, y0=V.panY/z-tam/2, x1=(V.panX+cw)/z+tam/2, y1=(V.panY+ch)/z+tam/2;
+  const i0=Math.max(0,Math.floor(x0/tam)), i1=Math.floor(Math.min(B.pw,x1)/tam);
+  const j0=Math.max(0,Math.floor(y0/tam)), j1=Math.floor(Math.min(B.ph,y1)/tam);
+  const job=++V._renderJob; cancelarRender();
+  for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
+    if(job!==V._renderJob) return;
+    const chave=V.pageNum+'|'+nivel+'|'+i+'|'+j, achado=T.mapa.get(chave);
+    if(achado){ T.mapa.delete(chave); T.mapa.set(chave,achado); continue; }
+    const px=i*tam, py=j*tam, w=Math.min(tam,B.pw-px), h=Math.min(tam,B.ph-py); if(w<=0||h<=0) continue;
+    const W=Math.max(1,Math.round(w*s)), H=Math.max(1,Math.round(h*s)), cvA=document.createElement('canvas');
+    const ok=await rasterizar(job,s,px,py,W,H,cvA); if(!ok||job!==V._renderJob) return;
+    cvA.style.left=(px*B.scale)+'px'; cvA.style.top=(py*B.scale)+'px'; cvA.style.width=(w*B.scale)+'px'; cvA.style.height=(h*B.scale)+'px';
+    tilesEl.appendChild(cvA); T.mapa.set(chave,{ nivel, el:cvA }); tilesPodar();
   }
-  $('tRev').style.display=''; $('tRev').textContent = 'rev '+(r.released.revisao||'');
-  if(r.hasNewerUnreleased) $('banner').style.display='block';
-  APTS = r.apontamentos || [];
-
-  // Prefere PDF; se só houver 3D, abre o 3D.
-  if(r.released.pdf) await abrirPdf(r.released.pdf, !!r.released.frag);
-  else if(r.released.frag) await abrir3D(r.released.frag);
-  else msg('<div class="big">📄</div><div>Revisão liberada sem arquivo visualizável.</div>');
 }
-
-// ── PDF (pdf.js) — só zoom/pan + pins/cards ─────────────────────────────────
-async function abrirPdf(url, tem3D){
-  try{
-    V.doc = await pdfjsLib.getDocument({ url }).promise;
-    V.nPages = V.doc.numPages;
-    V.pageNum = 1;
-    await renderPagina();
-    hideMsg();
-    montarTools(tem3D);
-    ligarGestos();
-  }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
+function tilesPodar(){ while(T.mapa.size>TILE_MAX){ const c=T.mapa.keys().next().value, t=T.mapa.get(c); if(t&&t.el) t.el.remove(); T.mapa.delete(c); } }
+function revisarBase(){ if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
+function fitPage(){
+  if(!V.page) return; const d=dims(), b=BBOX, left=b?b.left:0, top=b?b.top:0, pw=b?b.w:d.pw, ph=b?b.h:d.ph;
+  const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return; V._fitted=true;
+  V.zoom=Math.min(cw/pw,ch/ph)*0.96; const contentW=pw*V.zoom, contentH=ph*V.zoom;
+  V.panX=left*V.zoom-(cw-contentW)/2; V.panY=top*V.zoom-(ch-contentH)/2; updateCss();
 }
-async function renderPagina(){
-  V.page = await V.doc.getPage(V.pageNum);
-  const vp1 = V.page.getViewport({ scale:1 });
-  V.pw = vp1.width; V.ph = vp1.height;
-  const maxSide = Math.max(V.pw, V.ph);
-  // Resolução de RENDER (device px), INDEPENDENTE da tela: alvo ~3200px no lado
-  // maior (nitidez ao ampliar), com teto p/ não estourar memória em prancha grande.
-  const rs = Math.min(3200/maxSide, 3);
-  const vp = V.page.getViewport({ scale:rs });
-  const cv = $('pdfCv');
-  cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
-  const ctx = cv.getContext('2d');
-  await V.page.render({ canvasContext:ctx, viewport:vp }).promise;
-  // Tamanho de EXIBIÇÃO (CSS px) com zoom=1 = cabe na tela. O canvas tem MAIS
-  // pixels do que isso, então dá pra ampliar bastante antes de borrar.
-  const st = $('stage');
-  const fitCss = Math.min(st.clientWidth/V.pw, st.clientHeight/V.ph) * 0.96;
-  V.cssW = V.pw*fitCss; V.cssH = V.ph*fitCss;
-  cv.style.width = V.cssW+'px'; cv.style.height = V.cssH+'px';
-  V.zoom = 1;
-  V.panX = (st.clientWidth - V.cssW)/2; V.panY = (st.clientHeight - V.cssH)/2;
-  aplicarTransform();
-  renderPins();
-}
-function aplicarTransform(){
-  $('pdfPan').style.transform = 'translate('+V.panX+'px,'+V.panY+'px) scale('+V.zoom+')';
-}
+function zoomAt(f, cx, cy){ const nv=Math.min(20,Math.max(0.05,V.zoom*f)), k=nv/V.zoom; V.panX=(V.panX+cx)*k-cx; V.panY=(V.panY+cy)*k-cy; V.zoom=nv; updateCss(); }
 function renderPins(){
-  const wrap=$('pins'); wrap.innerHTML='';
-  const cw = V.cssW, ch = V.cssH;   // tamanho CSS da página com zoom=1 (o #pdfPan escala)
-  APTS.forEach(a=>{
-    if(a.status==='Resolvido' || a.status==='Reprovado') return;
-    (a.pontos_json||[]).forEach(pt=>{
-      if(!pt) return; const pg=pt.pg||1; if(pg!==V.pageNum) return;
-      if(pt.nx==null||pt.ny==null) return;  // pin 3D não entra no 2D
-      const el=document.createElement('div');
-      el.className='pin';
-      el.style.left=(pt.nx*cw)+'px'; el.style.top=(pt.ny*ch)+'px';
-      el.innerHTML=pinSvg(a.id_num, corPrio(a.prioridade));
-      el.onclick=(ev)=>{ ev.stopPropagation(); abrirCard(a); };
-      wrap.appendChild(el);
+  pinsEl.innerHTML=''; if(!APTS.length||!V.page) return; const {pw,ph}=dims();
+  APTS.forEach(a=>{ if(a.status==='Resolvido'||a.status==='Reprovado') return;
+    (a.pontos_json||[]).forEach(pt=>{ if(!pt||pt.nx==null||pt.ny==null) return; if((pt.pg||1)!==V.pageNum) return;
+      const x=pt.nx*pw*V.zoom-V.panX, y=pt.ny*ph*V.zoom-V.panY;
+      if(x<-30||y<-40||x>stage.clientWidth+30||y>stage.clientHeight+10) return;
+      const el=document.createElement('div'); el.className='pin'; el.style.left=x+'px'; el.style.top=y+'px';
+      el.innerHTML=pinSvg(a.id_num,corPrio(a.prioridade)); el.onclick=(ev)=>{ ev.stopPropagation(); abrirCard(a); };
+      pinsEl.appendChild(el);
     });
   });
 }
 function abrirCard(a){
   const cor=corPrio(a.prioridade);
-  $('card').innerHTML =
-    '<div class="ch"><span class="cnum" style="color:'+cor+'">#'+esc(a.id_num)+'</span>'
-    + '<span style="font-weight:700">'+esc(a.titulo||'Apontamento')+'</span>'
-    + '<button class="cx" onclick="document.getElementById(\'card\').style.display=\'none\'">✕</button></div>'
-    + '<div class="cb">'
-    +   '<span class="cbadge" style="background:'+cor+';color:#fff">'+esc(a.prioridade||'—')+'</span>'
-    +   '<span class="cbadge" style="background:#334155;color:#fff">'+esc(a.status||'—')+'</span>'
-    +   (a.tipo?'<span class="cbadge" style="background:#1e3a5f;color:#fff">'+esc(a.tipo)+'</span>':'')
-    +   '<div class="cdesc">'+esc(a.descricao||'')+'</div>'
-    + '</div>';
+  $('card').innerHTML='<div class="ch"><span class="cnum" style="color:'+cor+'">#'+esc(a.id_num)+'</span><span style="font-weight:700">'+esc(a.titulo||'Apontamento')+'</span><button class="cx" onclick="document.getElementById(\'card\').style.display=\'none\'">✕</button></div>'
+    +'<div class="cb"><span class="cbadge" style="background:'+cor+';color:#fff">'+esc(a.prioridade||'—')+'</span><span class="cbadge" style="background:#334155;color:#fff">'+esc(a.status||'—')+'</span>'
+    +(a.tipo?'<span class="cbadge" style="background:#1e3a5f;color:#fff">'+esc(a.tipo)+'</span>':'')+'<div class="cdesc">'+esc(a.descricao||'')+'</div></div>';
   $('card').style.display='block';
 }
 
-// ── Zoom / pan (mouse + touch) ──────────────────────────────────────────────
-function ligarGestos(){
-  const st=$('stage');
-  let drag=null, pinch=null;
-  st.addEventListener('wheel', e=>{ e.preventDefault(); zoomEm(e.clientX, e.clientY, e.deltaY<0?1.12:1/1.12); }, {passive:false});
-  st.addEventListener('pointerdown', e=>{ if($('bim').style.display==='block') return; drag={x:e.clientX,y:e.clientY,px:V.panX,py:V.panY}; st.setPointerCapture(e.pointerId); });
-  st.addEventListener('pointermove', e=>{ if(!drag) return; V.panX=drag.px+(e.clientX-drag.x); V.panY=drag.py+(e.clientY-drag.y); aplicarTransform(); });
-  st.addEventListener('pointerup', ()=>{ drag=null; });
-  st.addEventListener('pointercancel', ()=>{ drag=null; });
-  // pinça (touch)
-  const pts=new Map();
-  st.addEventListener('touchmove', e=>{
-    if(e.touches.length!==2) return; e.preventDefault();
-    const a=e.touches[0], b=e.touches[1];
-    const d=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
-    const cx=(a.clientX+b.clientX)/2, cy=(a.clientY+b.clientY)/2;
-    if(pinch){ zoomEm(cx, cy, d/pinch); } pinch=d;
-  }, {passive:false});
-  st.addEventListener('touchend', ()=>{ pinch=null; });
+// ── Abrir PDF + gestos ──
+async function abrirPdf(url, tem3D){
+  try{
+    V.doc=await pdfjsLib.getDocument({url}).promise; V.nPages=V.doc.numPages; V.pageNum=1;
+    V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
+    await ajustarBBox(); fitPage(); await renderBase();
+    hideMsg(); montarTools(tem3D); gestos();
+  }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
-function zoomEm(clientX, clientY, fator){
-  const st=$('stage'); const r=st.getBoundingClientRect();
-  const mx=clientX-r.left, my=clientY-r.top;
-  const nz=Math.max(0.2, Math.min(8, V.zoom*fator));
-  const k=nz/V.zoom;
-  V.panX = mx - (mx - V.panX)*k;
-  V.panY = my - (my - V.panY)*k;
-  V.zoom = nz; aplicarTransform();
-}
-function zoomBtn(f){ const st=$('stage'); zoomEm(st.clientWidth/2 + st.getBoundingClientRect().left, st.clientHeight/2 + st.getBoundingClientRect().top, f); }
 async function irPagina(delta){
-  const n=V.pageNum+delta; if(n<1||n>V.nPages) return;
-  V.pageNum=n; $('card').style.display='none'; await renderPagina(); atualizaPg();
+  const n=V.pageNum+delta; if(n<1||n>V.nPages) return; V.pageNum=n; $('card').style.display='none';
+  V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
+  await ajustarBBox(); fitPage(); await renderBase(); atualizaPg();
 }
-function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent = V.nPages>1 ? (V.pageNum+' / '+V.nPages) : ''; }
-
-// ── Barra de ferramentas (2D; alterna 3D se houver) ─────────────────────────
+function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent=V.nPages>1?(V.pageNum+' / '+V.nPages):''; }
+let _GESTOS=false;
+function gestos(){
+  if(_GESTOS) return; _GESTOS=true;
+  stage.addEventListener('wheel', e=>{ if($('bim').style.display==='block') return; e.preventDefault();
+    const r=stage.getBoundingClientRect(); zoomAt(e.deltaY<0?1.15:1/1.15, e.clientX-r.left, e.clientY-r.top); }, {passive:false});
+  stage.addEventListener('pointerdown', e=>{ if($('bim').style.display==='block') return;
+    if(e.target.closest && e.target.closest('.pin')) return;
+    try{ stage.setPointerCapture(e.pointerId); }catch(_){}
+    V._pan={ id:e.pointerId, x:e.clientX, y:e.clientY, px:V.panX, py:V.panY }; stage.classList.add('grab'); });
+  stage.addEventListener('pointermove', e=>{ const d=V._pan; if(!d||e.pointerId!==d.id) return;
+    V._panPend={ x:d.px-(e.clientX-d.x), y:d.py-(e.clientY-d.y) };
+    if(V._rafId) return; V._rafId=requestAnimationFrame(()=>{ V._rafId=null; if(!V._panPend) return; V.panX=V._panPend.x; V.panY=V._panPend.y; updateCss(); }); });
+  const end=e=>{ const d=V._pan; if(!d||(e&&e.pointerId!==d.id)) return; V._pan=null; stage.classList.remove('grab');
+    if(V._rafId){ cancelAnimationFrame(V._rafId); V._rafId=null; } if(V._panPend){ V.panX=V._panPend.x; V.panY=V._panPend.y; V._panPend=null; updateCss(); } };
+  stage.addEventListener('pointerup', end); stage.addEventListener('pointercancel', end);
+  // pinça (2 dedos)
+  let pinch=null;
+  stage.addEventListener('touchmove', e=>{ if(e.touches.length!==2) return; e.preventDefault();
+    const a=e.touches[0], b=e.touches[1], dist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const r=stage.getBoundingClientRect(), cx=(a.clientX+b.clientX)/2-r.left, cy=(a.clientY+b.clientY)/2-r.top;
+    if(pinch) zoomAt(dist/pinch, cx, cy); pinch=dist; }, {passive:false});
+  stage.addEventListener('touchend', ()=>{ pinch=null; });
+  if(window.ResizeObserver){ new ResizeObserver(()=>{ if(!V.page||$('bim').style.display==='block') return;
+    if(stage.clientWidth<=0||stage.clientHeight<=0) return; if(!V._fitted){ fitPage(); return; }
+    clearTimeout(V._baseTimer); V._baseTimer=setTimeout(revisarBase,250); updateCss(); }).observe(stage); }
+}
 function montarTools(tem3D){
   const t=$('tools'); t.style.display='flex';
-  let h = '<button onclick="zoomBtn(1/1.25)" title="Menos zoom">−</button>'
-        + '<button onclick="zoomBtn(1.25)" title="Mais zoom">+</button>'
-        + '<button onclick="renderPagina()" title="Enquadrar">⤢</button>';
-  if(V.nPages>1) h += '<div class="sep"></div><button onclick="irPagina(-1)">◀</button><div class="pg">'+V.pageNum+' / '+V.nPages+'</div><button onclick="irPagina(1)">▶</button>';
-  if(tem3D) h += '<div class="sep"></div><button id="b2d" class="on" onclick="verModo(\'2d\')">2D</button><button id="b3d" onclick="verModo(\'3d\')">3D</button>';
+  let h='<button onclick="zoomAt(1/1.25, stage.clientWidth/2, stage.clientHeight/2)">−</button>'
+      +'<button onclick="zoomAt(1.25, stage.clientWidth/2, stage.clientHeight/2)">+</button>'
+      +'<button onclick="fitPage()" title="Enquadrar">⤢</button>';
+  if(V.nPages>1) h+='<div class="sep"></div><button onclick="irPagina(-1)">◀</button><div class="pg">'+V.pageNum+' / '+V.nPages+'</div><button onclick="irPagina(1)">▶</button>';
+  if(tem3D) h+='<div class="sep"></div><button id="b2d" class="on" onclick="verModo(\'2d\')">2D</button><button id="b3d" onclick="verModo(\'3d\')">3D</button>';
   t.innerHTML=h;
 }
 async function verModo(m){
   const b2=$('b2d'), b3=$('b3d');
-  if(m==='3d'){
-    $('stage').querySelector('#pdfPan').style.display='none'; $('bim').style.display='block';
-    if(b2) b2.classList.remove('on'); if(b3) b3.classList.add('on');
-    $('card').style.display='none';
-    if(!V._3dReady){ V._3dReady=true; await abrir3D(DADOS.released.frag, true); }
-  }else{
-    $('bim').style.display='none'; $('stage').querySelector('#pdfPan').style.display='';
-    if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on');
-  }
+  if(m==='3d'){ cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('bim').style.display='block';
+    if(b2) b2.classList.remove('on'); if(b3) b3.classList.add('on'); $('card').style.display='none';
+    if(!V._3dReady){ V._3dReady=true; await abrir3D(DADOS.released.frag, true); } }
+  else{ $('bim').style.display='none'; cvBase.style.display=''; tilesEl.style.display=''; pinsEl.style.display='';
+    if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on'); }
 }
 
-// ── 3D (reusa bim3d.js do App) — só orbit/pan/zoom (sem menu de config) ─────
+// ── 3D (reusa bim3d.js) — orbit/pan/zoom ──
 let B3=null, F3D=null;
 async function abrir3D(fragUrl, jaAberto){
   try{
-    if(!jaAberto){ msg('<div class="big">🧊</div><div>Carregando modelo 3D…</div>'); }
-    if(!B3) B3 = await import('./bim3d.js');
-    if(!F3D){
-      F3D = await B3.criar($('bim'), { fundo:0x20262f, on:{} });
-    }
-    const nome = (DADOS&&DADOS.doc&&DADOS.doc.codigo) || 'modelo';
-    await B3.carregar(F3D, [{ nome, arquivoId:'qr', url: ()=>fragUrl }], t=>{ if(!jaAberto) msg('<div class="big">🧊</div><div>'+esc(t)+'</div>'); });
+    if(!jaAberto) msg('<div class="big">🧊</div><div>Carregando modelo 3D…</div>');
+    if(!B3) B3=await import('./bim3d.js');
+    if(!F3D) F3D=await B3.criar($('bim'), { fundo:0x20262f, on:{} });
+    const nome=(DADOS&&DADOS.doc&&DADOS.doc.codigo)||'modelo';
+    await B3.carregar(F3D, [{ nome, id:'qr', arquivoId:'qr', url:()=>fragUrl }], t=>{ if(!jaAberto) msg('<div class="big">🧊</div><div>'+esc(t)+'</div>'); });
     $('bim').style.display='block';
-    if(!jaAberto){ hideMsg(); $('pdfPan').style.display='none'; }
+    if(!jaAberto){ hideMsg(); cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('tools').style.display='flex'; }
   }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 
-// Fecha o card ao tocar fora
-$('stage').addEventListener('pointerdown', ()=>{ if($('card').style.display==='block') $('card').style.display='none'; });
-window.addEventListener('resize', ()=>{ if(V.doc && $('bim').style.display!=='block') renderPagina(); });
-
+// ── Boot ──
+function token(){ const u=new URLSearchParams(location.search); return (u.get('p')||u.get('token')||'').trim(); }
+async function boot(){
+  const t=token(); if(!t){ msg('<div class="big">🔗</div><div>Link inválido — sem código da prancha.</div>'); return; }
+  let r;
+  try{
+    const resp=await fetch(SB_URL+'/functions/v1/qr-view', { method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':SB_ANON, 'Authorization':'Bearer '+SB_ANON }, body:JSON.stringify({ token:t }) });
+    r=await resp.json(); if(!resp.ok||r.error) throw new Error(r&&r.error||('HTTP '+resp.status));
+  }catch(e){ msg('<div class="big">⚠</div><div>Não foi possível abrir a prancha.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); return; }
+  DADOS=r; $('tCod').textContent=r.doc.codigo||'—'; $('tSub').textContent=[r.doc.empreendimento,r.doc.disciplina].filter(Boolean).join(' · ');
+  document.title='Auria — '+(r.doc.codigo||'prancha');
+  if(!r.released){ msg('<div class="big">🔒</div><div><b>Nenhuma revisão liberada</b> para a obra ainda.<br>Contatar a coordenação de projeto.</div>'); return; }
+  $('tRev').style.display=''; $('tRev').textContent='rev '+(r.released.revisao||'');
+  if(r.hasNewerUnreleased) $('banner').style.display='block';
+  APTS=r.apontamentos||[];
+  if(r.released.pdf) await abrirPdf(r.released.pdf, !!r.released.frag);
+  else if(r.released.frag) await abrir3D(r.released.frag);
+  else msg('<div class="big">📄</div><div>Revisão liberada sem arquivo visualizável.</div>');
+}
+stage.addEventListener('pointerdown', ()=>{ if($('card').style.display==='block') $('card').style.display='none'; });
 boot();
 </script>
 </body>
