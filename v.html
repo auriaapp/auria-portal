@@ -148,20 +148,23 @@ async function renderPagina(){
   V.page = await V.doc.getPage(V.pageNum);
   const vp1 = V.page.getViewport({ scale:1 });
   V.pw = vp1.width; V.ph = vp1.height;
-  // Escala base: cabe na tela (com folga), boa nitidez.
-  const st = $('stage');
-  const fit = Math.min(st.clientWidth/V.pw, st.clientHeight/V.ph) * 0.96;
-  V.scale = Math.max(0.2, fit) * (window.devicePixelRatio||1);
-  const vp = V.page.getViewport({ scale:V.scale });
-  const cv = $('pdfCv'); cv.width=vp.width; cv.height=vp.height;
-  cv.style.width=(vp.width/(window.devicePixelRatio||1))+'px';
-  cv.style.height=(vp.height/(window.devicePixelRatio||1))+'px';
+  const maxSide = Math.max(V.pw, V.ph);
+  // Resolução de RENDER (device px), INDEPENDENTE da tela: alvo ~3200px no lado
+  // maior (nitidez ao ampliar), com teto p/ não estourar memória em prancha grande.
+  const rs = Math.min(3200/maxSide, 3);
+  const vp = V.page.getViewport({ scale:rs });
+  const cv = $('pdfCv');
+  cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
   const ctx = cv.getContext('2d');
   await V.page.render({ canvasContext:ctx, viewport:vp }).promise;
-  // Centraliza
+  // Tamanho de EXIBIÇÃO (CSS px) com zoom=1 = cabe na tela. O canvas tem MAIS
+  // pixels do que isso, então dá pra ampliar bastante antes de borrar.
+  const st = $('stage');
+  const fitCss = Math.min(st.clientWidth/V.pw, st.clientHeight/V.ph) * 0.96;
+  V.cssW = V.pw*fitCss; V.cssH = V.ph*fitCss;
+  cv.style.width = V.cssW+'px'; cv.style.height = V.cssH+'px';
   V.zoom = 1;
-  const cw = vp.width/(window.devicePixelRatio||1), ch = vp.height/(window.devicePixelRatio||1);
-  V.panX = (st.clientWidth - cw)/2; V.panY = (st.clientHeight - ch)/2;
+  V.panX = (st.clientWidth - V.cssW)/2; V.panY = (st.clientHeight - V.cssH)/2;
   aplicarTransform();
   renderPins();
 }
@@ -170,8 +173,7 @@ function aplicarTransform(){
 }
 function renderPins(){
   const wrap=$('pins'); wrap.innerHTML='';
-  const cw = V.pw * (V.scale/(window.devicePixelRatio||1));  // largura CSS da página @scale
-  const ch = V.ph * (V.scale/(window.devicePixelRatio||1));
+  const cw = V.cssW, ch = V.cssH;   // tamanho CSS da página com zoom=1 (o #pdfPan escala)
   APTS.forEach(a=>{
     if(a.status==='Resolvido' || a.status==='Reprovado') return;
     (a.pontos_json||[]).forEach(pt=>{
