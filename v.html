@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
+<title>Auria — Visualização da prancha</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<!-- importmap para o visualizador 3D (bim3d.js importa three / @thatopen/fragments
+     por bare specifier — precisa estar definido antes do import dinâmico) -->
+<script type="importmap">
+{ "imports": {
+  "three":"https://esm.sh/three@0.185.1",
+  "three/":"https://esm.sh/three@0.185.1/",
+  "@thatopen/fragments":"https://esm.sh/@thatopen/fragments@3.4.6?external=three"
+} }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<style>
+  :root{ --bg:#0b1220; --panel:#141c2b; --line:#26324a; --txt:#e8eef6; --mut:#8496ac; --accent:#e8960a; --err:#ef4444; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #top{ display:flex; align-items:center; gap:10px; padding:8px 12px; background:linear-gradient(90deg,#0b1220,#152036); border-bottom:1px solid var(--line); }
+  #top img{ height:34px; }
+  #top .info{ min-width:0; }
+  #top .cod{ font-size:14px; font-weight:800; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #top .sub{ font-size:11px; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #top .rev{ margin-left:auto; flex:none; font-size:11px; font-weight:800; color:#231703; background:var(--accent); border-radius:20px; padding:3px 10px; }
+  #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#20262f; touch-action:none; }
+  #pdfPan{ position:absolute; left:0; top:0; transform-origin:0 0; }
+  #pdfCv{ display:block; box-shadow:0 4px 30px rgba(0,0,0,.5); background:#fff; }
+  #pins{ position:absolute; left:0; top:0; }
+  .pin{ position:absolute; transform:translate(-50%,-100%); cursor:pointer; }
+  .pin svg{ display:block; filter:drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
+  #bim{ position:absolute; inset:0; display:none; }
+  #banner{ position:absolute; left:0; right:0; top:52px; z-index:20; display:none; background:rgba(239,68,68,.96); color:#fff; padding:10px 14px; font-size:13px; font-weight:700; line-height:1.35; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+  #banner b{ font-weight:900; }
+  #tools{ position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:15; display:flex; gap:6px; background:rgba(20,28,43,.92); border:1px solid var(--line); border-radius:12px; padding:6px; backdrop-filter:blur(4px); }
+  #tools button{ min-width:38px; height:38px; padding:0 10px; background:#1b2536; border:1px solid var(--line); color:var(--txt); border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; }
+  #tools button:hover{ border-color:var(--accent); }
+  #tools button.on{ background:var(--accent); border-color:var(--accent); color:#231703; }
+  #tools .sep{ width:1px; background:var(--line); margin:2px 2px; }
+  #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
+  #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:var(--mut); }
+  #msg .big{ font-size:40px; }
+  #msg.hide{ display:none; }
+  #card{ position:absolute; left:50%; bottom:66px; transform:translateX(-50%); z-index:25; width:min(92vw,380px); background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); display:none; }
+  #card .ch{ display:flex; align-items:center; gap:8px; padding:9px 11px; border-bottom:1px solid var(--line); }
+  #card .cnum{ font-weight:900; }
+  #card .cx{ margin-left:auto; background:none; border:none; color:var(--mut); font-size:16px; cursor:pointer; }
+  #card .cb{ padding:10px 12px; font-size:13px; line-height:1.4; max-height:40vh; overflow:auto; }
+  #card .cbadge{ display:inline-block; font-size:10px; font-weight:800; border-radius:20px; padding:2px 8px; margin:0 5px 6px 0; }
+  #card .cdesc{ color:var(--mut); white-space:pre-wrap; }
+  #foot{ position:absolute; left:0; right:0; bottom:0; text-align:center; font-size:10px; color:var(--mut); padding:2px; pointer-events:none; }
+  @media (max-width:520px){ #top img{ height:28px; } #top .cod{ font-size:13px; } }
+</style>
+</head>
+<body>
+  <div id="top">
+    <img src="logo_symbol.png" alt="Auria">
+    <div class="info">
+      <div class="cod" id="tCod">—</div>
+      <div class="sub" id="tSub"></div>
+    </div>
+    <span class="rev" id="tRev" style="display:none"></span>
+  </div>
+
+  <div id="banner">⚠ Existe uma versão <b>mais atual ainda não liberada para a obra</b>. Esta é a última revisão liberada. <b>Contatar a coordenação de projeto.</b></div>
+
+  <div id="stage">
+    <div id="pdfPan"><canvas id="pdfCv"></canvas><div id="pins"></div></div>
+    <div id="bim"></div>
+  </div>
+
+  <div id="tools" style="display:none"></div>
+  <div id="card"></div>
+  <div id="msg"><div class="big">⏳</div><div>Carregando…</div></div>
+  <div id="foot">Auria · visualização somente leitura</div>
+
+<script>
+const SB_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function msg(html){ const m=$('msg'); m.classList.remove('hide'); m.innerHTML=html; }
+function hideMsg(){ $('msg').classList.add('hide'); }
+
+const CORPRIO = { 'Alta':'#ef4444','Média':'#f59e0b','Media':'#f59e0b','Baixa':'#22c55e' };
+function corPrio(p){ return CORPRIO[p] || '#38bdf8'; }
+function pinSvg(num,cor){
+  return '<svg width="30" height="38" viewBox="0 0 30 38"><path d="M15 37C15 37 28 22 28 13.5A13 13 0 1 0 2 13.5C2 22 15 37 15 37Z" fill="'+cor+'" stroke="#fff" stroke-width="1.5"/><text x="15" y="18" text-anchor="middle" font-size="12" font-weight="800" fill="#fff" font-family="system-ui,sans-serif">'+esc(num)+'</text></svg>';
+}
+
+// ── Estado ──────────────────────────────────────────────────────────────────
+const V = { doc:null, page:null, pageNum:1, nPages:1, scale:1, zoom:1, panX:0, panY:0, pw:0, ph:0 };
+let APTS = [];
+let DADOS = null;
+
+function token(){ const u=new URLSearchParams(location.search); return (u.get('p')||u.get('token')||'').trim(); }
+
+async function boot(){
+  const t = token();
+  if(!t){ msg('<div class="big">🔗</div><div>Link inválido — sem código da prancha.</div>'); return; }
+  let r;
+  try{
+    const resp = await fetch(SB_URL+'/functions/v1/qr-view', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':SB_ANON, 'Authorization':'Bearer '+SB_ANON },
+      body: JSON.stringify({ token:t })
+    });
+    r = await resp.json();
+    if(!resp.ok || r.error) throw new Error(r&&r.error || ('HTTP '+resp.status));
+  }catch(e){ msg('<div class="big">⚠</div><div>Não foi possível abrir a prancha.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); return; }
+
+  DADOS = r;
+  $('tCod').textContent = r.doc.codigo || '—';
+  $('tSub').textContent = [r.doc.empreendimento, r.doc.disciplina].filter(Boolean).join(' · ');
+  document.title = 'Auria — ' + (r.doc.codigo || 'prancha');
+
+  if(!r.released){
+    msg('<div class="big">🔒</div><div><b>Nenhuma revisão liberada</b> para a obra ainda.<br>Contatar a coordenação de projeto.</div>');
+    return;
+  }
+  $('tRev').style.display=''; $('tRev').textContent = 'rev '+(r.released.revisao||'');
+  if(r.hasNewerUnreleased) $('banner').style.display='block';
+  APTS = r.apontamentos || [];
+
+  // Prefere PDF; se só houver 3D, abre o 3D.
+  if(r.released.pdf) await abrirPdf(r.released.pdf, !!r.released.frag);
+  else if(r.released.frag) await abrir3D(r.released.frag);
+  else msg('<div class="big">📄</div><div>Revisão liberada sem arquivo visualizável.</div>');
+}
+
+// ── PDF (pdf.js) — só zoom/pan + pins/cards ─────────────────────────────────
+async function abrirPdf(url, tem3D){
+  try{
+    V.doc = await pdfjsLib.getDocument({ url }).promise;
+    V.nPages = V.doc.numPages;
+    V.pageNum = 1;
+    await renderPagina();
+    hideMsg();
+    montarTools(tem3D);
+    ligarGestos();
+  }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
+}
+async function renderPagina(){
+  V.page = await V.doc.getPage(V.pageNum);
+  const vp1 = V.page.getViewport({ scale:1 });
+  V.pw = vp1.width; V.ph = vp1.height;
+  // Escala base: cabe na tela (com folga), boa nitidez.
+  const st = $('stage');
+  const fit = Math.min(st.clientWidth/V.pw, st.clientHeight/V.ph) * 0.96;
+  V.scale = Math.max(0.2, fit) * (window.devicePixelRatio||1);
+  const vp = V.page.getViewport({ scale:V.scale });
+  const cv = $('pdfCv'); cv.width=vp.width; cv.height=vp.height;
+  cv.style.width=(vp.width/(window.devicePixelRatio||1))+'px';
+  cv.style.height=(vp.height/(window.devicePixelRatio||1))+'px';
+  const ctx = cv.getContext('2d');
+  await V.page.render({ canvasContext:ctx, viewport:vp }).promise;
+  // Centraliza
+  V.zoom = 1;
+  const cw = vp.width/(window.devicePixelRatio||1), ch = vp.height/(window.devicePixelRatio||1);
+  V.panX = (st.clientWidth - cw)/2; V.panY = (st.clientHeight - ch)/2;
+  aplicarTransform();
+  renderPins();
+}
+function aplicarTransform(){
+  $('pdfPan').style.transform = 'translate('+V.panX+'px,'+V.panY+'px) scale('+V.zoom+')';
+}
+function renderPins(){
+  const wrap=$('pins'); wrap.innerHTML='';
+  const cw = V.pw * (V.scale/(window.devicePixelRatio||1));  // largura CSS da página @scale
+  const ch = V.ph * (V.scale/(window.devicePixelRatio||1));
+  APTS.forEach(a=>{
+    if(a.status==='Resolvido' || a.status==='Reprovado') return;
+    (a.pontos_json||[]).forEach(pt=>{
+      if(!pt) return; const pg=pt.pg||1; if(pg!==V.pageNum) return;
+      if(pt.nx==null||pt.ny==null) return;  // pin 3D não entra no 2D
+      const el=document.createElement('div');
+      el.className='pin';
+      el.style.left=(pt.nx*cw)+'px'; el.style.top=(pt.ny*ch)+'px';
+      el.innerHTML=pinSvg(a.id_num, corPrio(a.prioridade));
+      el.onclick=(ev)=>{ ev.stopPropagation(); abrirCard(a); };
+      wrap.appendChild(el);
+    });
+  });
+}
+function abrirCard(a){
+  const cor=corPrio(a.prioridade);
+  $('card').innerHTML =
+    '<div class="ch"><span class="cnum" style="color:'+cor+'">#'+esc(a.id_num)+'</span>'
+    + '<span style="font-weight:700">'+esc(a.titulo||'Apontamento')+'</span>'
+    + '<button class="cx" onclick="document.getElementById(\'card\').style.display=\'none\'">✕</button></div>'
+    + '<div class="cb">'
+    +   '<span class="cbadge" style="background:'+cor+';color:#fff">'+esc(a.prioridade||'—')+'</span>'
+    +   '<span class="cbadge" style="background:#334155;color:#fff">'+esc(a.status||'—')+'</span>'
+    +   (a.tipo?'<span class="cbadge" style="background:#1e3a5f;color:#fff">'+esc(a.tipo)+'</span>':'')
+    +   '<div class="cdesc">'+esc(a.descricao||'')+'</div>'
+    + '</div>';
+  $('card').style.display='block';
+}
+
+// ── Zoom / pan (mouse + touch) ──────────────────────────────────────────────
+function ligarGestos(){
+  const st=$('stage');
+  let drag=null, pinch=null;
+  st.addEventListener('wheel', e=>{ e.preventDefault(); zoomEm(e.clientX, e.clientY, e.deltaY<0?1.12:1/1.12); }, {passive:false});
+  st.addEventListener('pointerdown', e=>{ if($('bim').style.display==='block') return; drag={x:e.clientX,y:e.clientY,px:V.panX,py:V.panY}; st.setPointerCapture(e.pointerId); });
+  st.addEventListener('pointermove', e=>{ if(!drag) return; V.panX=drag.px+(e.clientX-drag.x); V.panY=drag.py+(e.clientY-drag.y); aplicarTransform(); });
+  st.addEventListener('pointerup', ()=>{ drag=null; });
+  st.addEventListener('pointercancel', ()=>{ drag=null; });
+  // pinça (touch)
+  const pts=new Map();
+  st.addEventListener('touchmove', e=>{
+    if(e.touches.length!==2) return; e.preventDefault();
+    const a=e.touches[0], b=e.touches[1];
+    const d=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    const cx=(a.clientX+b.clientX)/2, cy=(a.clientY+b.clientY)/2;
+    if(pinch){ zoomEm(cx, cy, d/pinch); } pinch=d;
+  }, {passive:false});
+  st.addEventListener('touchend', ()=>{ pinch=null; });
+}
+function zoomEm(clientX, clientY, fator){
+  const st=$('stage'); const r=st.getBoundingClientRect();
+  const mx=clientX-r.left, my=clientY-r.top;
+  const nz=Math.max(0.2, Math.min(8, V.zoom*fator));
+  const k=nz/V.zoom;
+  V.panX = mx - (mx - V.panX)*k;
+  V.panY = my - (my - V.panY)*k;
+  V.zoom = nz; aplicarTransform();
+}
+function zoomBtn(f){ const st=$('stage'); zoomEm(st.clientWidth/2 + st.getBoundingClientRect().left, st.clientHeight/2 + st.getBoundingClientRect().top, f); }
+async function irPagina(delta){
+  const n=V.pageNum+delta; if(n<1||n>V.nPages) return;
+  V.pageNum=n; $('card').style.display='none'; await renderPagina(); atualizaPg();
+}
+function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent = V.nPages>1 ? (V.pageNum+' / '+V.nPages) : ''; }
+
+// ── Barra de ferramentas (2D; alterna 3D se houver) ─────────────────────────
+function montarTools(tem3D){
+  const t=$('tools'); t.style.display='flex';
+  let h = '<button onclick="zoomBtn(1/1.25)" title="Menos zoom">−</button>'
+        + '<button onclick="zoomBtn(1.25)" title="Mais zoom">+</button>'
+        + '<button onclick="renderPagina()" title="Enquadrar">⤢</button>';
+  if(V.nPages>1) h += '<div class="sep"></div><button onclick="irPagina(-1)">◀</button><div class="pg">'+V.pageNum+' / '+V.nPages+'</div><button onclick="irPagina(1)">▶</button>';
+  if(tem3D) h += '<div class="sep"></div><button id="b2d" class="on" onclick="verModo(\'2d\')">2D</button><button id="b3d" onclick="verModo(\'3d\')">3D</button>';
+  t.innerHTML=h;
+}
+async function verModo(m){
+  const b2=$('b2d'), b3=$('b3d');
+  if(m==='3d'){
+    $('stage').querySelector('#pdfPan').style.display='none'; $('bim').style.display='block';
+    if(b2) b2.classList.remove('on'); if(b3) b3.classList.add('on');
+    $('card').style.display='none';
+    if(!V._3dReady){ V._3dReady=true; await abrir3D(DADOS.released.frag, true); }
+  }else{
+    $('bim').style.display='none'; $('stage').querySelector('#pdfPan').style.display='';
+    if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on');
+  }
+}
+
+// ── 3D (reusa bim3d.js do App) — só orbit/pan/zoom (sem menu de config) ─────
+let B3=null, F3D=null;
+async function abrir3D(fragUrl, jaAberto){
+  try{
+    if(!jaAberto){ msg('<div class="big">🧊</div><div>Carregando modelo 3D…</div>'); }
+    if(!B3) B3 = await import('./bim3d.js');
+    if(!F3D){
+      F3D = await B3.criar($('bim'), { fundo:0x20262f, on:{} });
+    }
+    const nome = (DADOS&&DADOS.doc&&DADOS.doc.codigo) || 'modelo';
+    await B3.carregar(F3D, [{ nome, arquivoId:'qr', url: ()=>fragUrl }], t=>{ if(!jaAberto) msg('<div class="big">🧊</div><div>'+esc(t)+'</div>'); });
+    $('bim').style.display='block';
+    if(!jaAberto){ hideMsg(); $('pdfPan').style.display='none'; }
+  }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
+}
+
+// Fecha o card ao tocar fora
+$('stage').addEventListener('pointerdown', ()=>{ if($('card').style.display==='block') $('card').style.display='none'; });
+window.addEventListener('resize', ()=>{ if(V.doc && $('bim').style.display!=='block') renderPagina(); });
+
+boot();
+</script>
+</body>
+</html>
