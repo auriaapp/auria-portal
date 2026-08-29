@@ -40,7 +40,7 @@
   #tools button.on{ background:var(--accent); border-color:var(--accent); color:#231703; }
   #tools .sep{ width:1px; background:var(--line); margin:2px; }
   #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
-  #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:var(--mut); }
+  #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:#64748b; background:#eef2f7; }
   #msg .big{ font-size:40px; }
   #msg .spin{ width:68px; height:68px; object-fit:contain; animation:auGira 1s linear infinite; }
   @keyframes auGira{ to{ transform:rotate(360deg); } }
@@ -129,27 +129,26 @@ function baseScaleAlvo(){
   const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
   const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
   if(_MOVEL){
-    // Mobile: SEM tiles. O bitmap base SEGUE o zoom atual (renderiza na resolução
-    // que a pessoa está vendo → texto nítido), com piso no "ajustar à tela" e teto
-    // no limite de canvas do celular. É re-renderizado (debounce) ao mudar o zoom.
+    // Mobile: SEM tiles e SEM re-render por zoom (era o que travava). UMA
+    // rasterização no MÁXIMO que o canvas do celular aguenta → nítida p/ leitura;
+    // zoom/pan depois é só transform CSS (fluido). Deep zoom além disso amolece.
     const MAXPIX=9e6, MAXDIM=4096;
     const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), MAXDIM/pw, MAXDIM/ph);
-    const alvo=Math.max(V.zoom||fitZoom, fitZoom)*dpr*1.35;
-    const s=Math.max(Math.min(alvo, teto), Math.min(fitZoom*dpr, teto));
-    return { s, pw, ph };
+    return { s: Math.max(teto, Math.min(fitZoom*dpr, teto)), pw, ph };
   }
   const teto=Math.min(Math.sqrt(42e6/(pw*ph)), 16000/pw, 16000/ph);
   let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
   return { s, pw, ph };
 }
-// Mobile: re-renderiza a base na resolução do zoom atual (debounce), quando a
-// base ficou longe do ideal. No desktop os tiles cuidam disso.
 let _zoomTimer=null;
-function _agendarBaseZoom(){
-  if(!_MOVEL || !B.valido) return;
-  const s=baseScaleAlvo().s, r=s/B.scale;
-  if(r>1.18 || r<0.6){ clearTimeout(_zoomTimer); _zoomTimer=setTimeout(()=>{ if(B.valido) renderBase(); }, 240); }
+// Escala LEVE p/ a 1ª passada no celular (aparece rápido); depois vem a nítida.
+function _escalaRapidaMobile(){
+  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
+  const dpr=Math.min(window.devicePixelRatio||1,2), fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
+  return Math.min(fitZoom*dpr*2.5, Math.sqrt(9e6/(pw*ph)), 4096/pw, 4096/ph);
 }
+// 2ª passada: renderiza a base NÍTIDA (baseScaleAlvo) em background e troca.
+function _mobileNitido(){ clearTimeout(_zoomTimer); _zoomTimer=setTimeout(()=>{ if(V.page&&_MOVEL&&$('bim').style.display!=='block') renderBase(); }, 80); }
 async function rasterizar(job, s, rx, ry, W, H, cv){
   cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.translate(-rx*s,-ry*s);
@@ -157,10 +156,11 @@ async function rasterizar(job, s, rx, ry, W, H, cv){
   V._renderTask=task; try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
   V._renderTask=null; ctx.restore(); return job===V._renderJob;
 }
-async function renderBase(){
+async function renderBase(scaleForcado){
   if(!V.page) return; const job=++V._renderJob; cancelarRender();
   try{
-    const {s,pw,ph}=baseScaleAlvo(), W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
+    const b=baseScaleAlvo(), pw=b.pw, ph=b.ph, s=(scaleForcado!=null?scaleForcado:b.s);
+    const W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
     const direto=!B.valido, cvA=direto?cvBase:document.createElement('canvas');
     const ok=await rasterizar(job,s,0,0,W,H,cvA); if(!ok||job!==V._renderJob) return;
     if(!direto){ cvBase.width=W; cvBase.height=H; cvBase.getContext('2d').drawImage(cvA,0,0); }
@@ -173,7 +173,7 @@ function updateCss(){
   if(!B.valido) return;
   const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
   cvBase.style.transform=tr;
-  renderPins(); tilesPosicionar(); detAgendar(); _agendarBaseZoom();
+  renderPins(); tilesPosicionar(); detAgendar();
 }
 // ── Detalhe em ladrilhos ──
 function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*DET_SS; }
@@ -236,14 +236,17 @@ async function abrirPdf(url, tem3D){
   try{
     V.doc=await pdfjsLib.getDocument({url}).promise; V.nPages=V.doc.numPages; V.pageNum=1;
     V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
-    await ajustarBBox(); fitPage(); await renderBase();
-    hideMsg(); montarTools(tem3D); gestos();
+    await ajustarBBox(); fitPage();
+    if(_MOVEL){ await renderBase(_escalaRapidaMobile()); hideMsg(); montarTools(tem3D); gestos(); _mobileNitido(); }
+    else { await renderBase(); hideMsg(); montarTools(tem3D); gestos(); }
   }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 async function irPagina(delta){
   const n=V.pageNum+delta; if(n<1||n>V.nPages) return; V.pageNum=n; $('card').style.display='none';
   V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
-  await ajustarBBox(); fitPage(); await renderBase(); atualizaPg();
+  await ajustarBBox(); fitPage();
+  if(_MOVEL){ await renderBase(_escalaRapidaMobile()); _mobileNitido(); } else await renderBase();
+  atualizaPg();
 }
 function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent=V.nPages>1?(V.pageNum+' / '+V.nPages):''; }
 let _GESTOS=false;
