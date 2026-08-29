@@ -147,21 +147,39 @@ function baseScaleAlvo(){
 //  quando o movimento para; some enquanto arrasta/pinça (aí a base leve dá a
 //  fluidez). É o que deixa os textos pequenos legíveis em qualquer zoom.
 const DET_RDPR = Math.min(window.devicePixelRatio||1, 2);
+const DET = { zoom:1, panX:0, panY:0, valido:false };   // vista da última renderização (cache)
+// O detalhe ACOMPANHA o pan/zoom por CSS: enquanto não re-renderiza, o que já foi
+// rasterizado continua nítido, só transladado/escalado — nada de voltar pro base
+// borrado ao arrastar. Fórmula: pixel do detCv (renderizado p/ DET) → posição na
+// vista atual. Só as bordas recém-reveladas ficam no base (soft) até o re-render.
+function _detSeguir(){
+  const cv=$('detCv'); if(!cv || !DET.valido || cv.style.display==='none') return;
+  const k=V.zoom/DET.zoom, tx=k*DET.panX - V.panX, ty=k*DET.panY - V.panY;
+  cv.style.transformOrigin='0 0';
+  cv.style.transform='translate('+tx+'px,'+ty+'px) scale('+k+')';
+}
 async function detMobile(){
   if(!V.page || !B.valido || $('bim').style.display==='block') return;
   const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
-  const s=V.zoom*DET_RDPR, W=Math.round(cw*DET_RDPR), H=Math.round(ch*DET_RDPR);
+  const zoom0=V.zoom, panX0=V.panX, panY0=V.panY;   // congela a vista deste render
+  const s=zoom0*DET_RDPR, W=Math.round(cw*DET_RDPR), H=Math.round(ch*DET_RDPR);
   const job=++V._renderJob; cancelarRender();
-  const cv=$('detCv'); cv.width=W; cv.height=H; cv.style.width=cw+'px'; cv.style.height=ch+'px';
-  const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,H);
-  const vp=V.page.getViewport({ scale:s, offsetX:-V.panX*DET_RDPR, offsetY:-V.panY*DET_RDPR });
-  const task=V.page.render({ canvasContext:ctx, viewport:vp });
+  // renderiza FORA da tela e troca de uma vez (sem piscar); o detCv atual segue
+  // visível (transladado) até a troca.
+  const off=document.createElement('canvas'); off.width=W; off.height=H;
+  const vp=V.page.getViewport({ scale:s, offsetX:-panX0*DET_RDPR, offsetY:-panY0*DET_RDPR });
+  const task=V.page.render({ canvasContext:off.getContext('2d'), viewport:vp });
   V._renderTask=task;
   try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('det:',e); return; }
-  V._renderTask=null;
-  if(job===V._renderJob) cv.style.display='block';
+  V._renderTask=null; if(job!==V._renderJob) return;
+  const cv=$('detCv'); cv.width=W; cv.height=H; cv.style.width=cw+'px'; cv.style.height=ch+'px';
+  cv.getContext('2d').drawImage(off,0,0);
+  DET.zoom=zoom0; DET.panX=panX0; DET.panY=panY0; DET.valido=true;
+  cv.style.transform='none'; _detSeguir();   // alinha caso a vista tenha mudado durante o render
+  cv.style.display='block';
 }
-function detAgendarMobile(){ const cv=$('detCv'); if(cv) cv.style.display='none'; clearTimeout(V._detTimer); V._detTimer=setTimeout(detMobile, 220); }
+// Ao mexer: o detalhe ACOMPANHA (segue nítido) e re-renderiza só quando parar.
+function detAgendarMobile(){ _detSeguir(); clearTimeout(V._detTimer); V._detTimer=setTimeout(detMobile, 200); }
 async function rasterizar(job, s, rx, ry, W, H, cv){
   cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.translate(-rx*s,-ry*s);
@@ -249,7 +267,7 @@ function abrirCard(a){
 async function abrirPdf(url, tem3D){
   try{
     V.doc=await pdfjsLib.getDocument({url}).promise; V.nPages=V.doc.numPages; V.pageNum=1;
-    V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
+    V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false; DET.valido=false; $('detCv').style.display='none';
     await ajustarBBox(); fitPage();
     await renderBase(); hideMsg(); montarTools(tem3D); gestos();
     if(_MOVEL) detMobile();
@@ -257,7 +275,7 @@ async function abrirPdf(url, tem3D){
 }
 async function irPagina(delta){
   const n=V.pageNum+delta; if(n<1||n>V.nPages) return; V.pageNum=n; $('card').style.display='none';
-  V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
+  V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false; DET.valido=false; $('detCv').style.display='none';
   await ajustarBBox(); fitPage();
   await renderBase(); if(_MOVEL) detMobile();
   atualizaPg();
