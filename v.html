@@ -127,9 +127,9 @@ const _MOVEL = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Mat
 // Parâmetros dos LADRILHOS ajustados por dispositivo. No celular: ladrilhos
 // MAIORES (menos renders por vista), menos supersample, e cache LRU menor
 // (memória). O cache é o que faz arrastar REAPROVEITAR o que já foi renderizado.
-const _TILE_PX  = _MOVEL ? 1024 : TILE_PX;
-const _DET_SS   = _MOVEL ? 1.2  : DET_SS;
-const _TILE_MAX = _MOVEL ? 48   : TILE_MAX;
+const _TILE_PX  = _MOVEL ? 768 : TILE_PX;   // 768² ≈ 2,25MB/ladrilho
+const _DET_SS   = _MOVEL ? 1.2 : DET_SS;
+const _TILE_MAX = _MOVEL ? 40  : TILE_MAX;   // ~90MB de cache no total (não estoura a memória do celular)
 function baseScaleAlvo(){
   const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
   const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
@@ -201,7 +201,8 @@ async function tilesGarantir(){
   }
 }
 function tilesPodar(){ while(T.mapa.size>_TILE_MAX){ const c=T.mapa.keys().next().value, t=T.mapa.get(c); if(t&&t.el) t.el.remove(); T.mapa.delete(c); } }
-function revisarBase(){ if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
+function revisarBase(){ if(_MOVEL) return;   // no celular NÃO re-renderiza a base (isso limparia o cache dos ladrilhos); a base leve basta + tiles
+  if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
 function fitPage(){
   if(!V.page) return; const d=dims(), b=BBOX, left=b?b.left:0, top=b?b.top:0, pw=b?b.w:d.pw, ph=b?b.h:d.ph;
   const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return; V._fitted=true;
@@ -327,6 +328,9 @@ async function boot(){
   else msg('<div class="big">📄</div><div>Revisão liberada sem arquivo visualizável.</div>');
 }
 stage.addEventListener('pointerdown', ()=>{ if($('card').style.display==='block') $('card').style.display='none'; });
+window._dbg=()=>({ tiles:T.mapa.size, nivel:T.nivel, zoom:+V.zoom.toFixed(3), base:+B.scale.toFixed(2), precisa:detPrecisa(), movel:_MOVEL, panX:Math.round(V.panX) });
+window._pan=(dx)=>{ V.panX+=dx; updateCss(); };
+window._zoom=(f)=>{ zoomAt(f, stage.clientWidth/2, stage.clientHeight/2); };
 boot();
 </script>
 </body>
