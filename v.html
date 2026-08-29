@@ -24,7 +24,7 @@
   #top .cod{ font-size:14px; font-weight:800; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #top .sub{ font-size:11px; color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #top .rev{ margin-left:auto; flex:none; font-size:11px; font-weight:800; color:#231703; background:var(--accent); border-radius:20px; padding:3px 10px; }
-  #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#20262f; touch-action:none; }
+  #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#eef2f7; touch-action:none; }
   #stage.grab{ cursor:grabbing; }
   #pdfCv{ position:absolute; left:0; top:0; transform-origin:0 0; background:#fff; box-shadow:0 4px 30px rgba(0,0,0,.5); }
   #tiles{ position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; }
@@ -42,7 +42,7 @@
   #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
   #msg{ position:absolute; inset:52px 0 0 0; z-index:30; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; padding:30px; color:var(--mut); }
   #msg .big{ font-size:40px; }
-  #msg .spin{ width:68px; height:68px; animation:auGira 1s linear infinite; }
+  #msg .spin{ width:68px; height:68px; object-fit:contain; animation:auGira 1s linear infinite; }
   @keyframes auGira{ to{ transform:rotate(360deg); } }
   #msg.hide{ display:none; }
   #card{ position:absolute; left:50%; bottom:66px; transform:translateX(-50%); z-index:25; width:min(92vw,380px); background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.5); display:none; }
@@ -128,10 +128,27 @@ function baseScaleAlvo(){
   const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
   const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
   const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-  const FOLGA=_MOVEL?1.8:BASE_FOLGA, MAXPIX=_MOVEL?9e6:42e6, MAXDIM=_MOVEL?4096:16000;
-  const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), MAXDIM/pw, MAXDIM/ph);
-  let s=Math.min(fitZoom*dpr*FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
+  if(_MOVEL){
+    // Mobile: SEM tiles. O bitmap base SEGUE o zoom atual (renderiza na resolução
+    // que a pessoa está vendo → texto nítido), com piso no "ajustar à tela" e teto
+    // no limite de canvas do celular. É re-renderizado (debounce) ao mudar o zoom.
+    const MAXPIX=9e6, MAXDIM=4096;
+    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), MAXDIM/pw, MAXDIM/ph);
+    const alvo=Math.max(V.zoom||fitZoom, fitZoom)*dpr*1.35;
+    const s=Math.max(Math.min(alvo, teto), Math.min(fitZoom*dpr, teto));
+    return { s, pw, ph };
+  }
+  const teto=Math.min(Math.sqrt(42e6/(pw*ph)), 16000/pw, 16000/ph);
+  let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
   return { s, pw, ph };
+}
+// Mobile: re-renderiza a base na resolução do zoom atual (debounce), quando a
+// base ficou longe do ideal. No desktop os tiles cuidam disso.
+let _zoomTimer=null;
+function _agendarBaseZoom(){
+  if(!_MOVEL || !B.valido) return;
+  const s=baseScaleAlvo().s, r=s/B.scale;
+  if(r>1.18 || r<0.6){ clearTimeout(_zoomTimer); _zoomTimer=setTimeout(()=>{ if(B.valido) renderBase(); }, 240); }
 }
 async function rasterizar(job, s, rx, ry, W, H, cv){
   cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
@@ -156,7 +173,7 @@ function updateCss(){
   if(!B.valido) return;
   const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
   cvBase.style.transform=tr;
-  renderPins(); tilesPosicionar(); detAgendar();
+  renderPins(); tilesPosicionar(); detAgendar(); _agendarBaseZoom();
 }
 // ── Detalhe em ladrilhos ──
 function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*DET_SS; }
@@ -165,7 +182,7 @@ function detPrecisa(){ if(!B.valido||!V.page) return false; const r=detEscalaAlv
 function tilesLimpar(){ T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove(); }); T.mapa.clear(); T.nivel=null; }
 function tilesPosicionar(){ if(!B.valido) return; const k=V.zoom/B.scale; tilesEl.style.transform='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')'; }
 function tilesVisibilidade(nivel){ T.mapa.forEach(t=>{ t.el.style.display=(t.nivel===nivel)?'block':'none'; }); }
-function detAgendar(){ clearTimeout(V._detTimer); if(!detPrecisa()){ tilesVisibilidade(null); return; } const n=detNivel(); if(n!==T.nivel) tilesVisibilidade(n); V._detTimer=setTimeout(tilesGarantir,200); }
+function detAgendar(){ if(_MOVEL) return; clearTimeout(V._detTimer); if(!detPrecisa()){ tilesVisibilidade(null); return; } const n=detNivel(); if(n!==T.nivel) tilesVisibilidade(n); V._detTimer=setTimeout(tilesGarantir,200); }
 async function tilesGarantir(){
   if(!detPrecisa()||!B.valido) return; const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
   const nivel=detNivel(); if(nivel==null) return; const s=Math.pow(2,nivel), tam=TILE_PX/s;
