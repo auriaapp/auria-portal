@@ -27,6 +27,7 @@
   #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#eef2f7; touch-action:none; }
   #stage.grab{ cursor:grabbing; }
   #pdfCv{ position:absolute; left:0; top:0; transform-origin:0 0; background:#fff; box-shadow:0 4px 30px rgba(0,0,0,.5); }
+  #detCv{ position:absolute; left:0; top:0; display:none; }
   #tiles{ position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; }
   #tiles canvas{ position:absolute; background:transparent; }
   #pins{ position:absolute; inset:0; pointer-events:none; }
@@ -65,6 +66,7 @@
   <div id="banner">⚠ Existe uma versão <b>mais atual ainda não liberada para a obra</b>. Esta é a última revisão liberada. <b>Contatar a coordenação de projeto.</b></div>
   <div id="stage">
     <canvas id="pdfCv"></canvas>
+    <canvas id="detCv"></canvas>
     <div id="tiles"></div>
     <div id="pins"></div>
     <div id="bim"></div>
@@ -129,26 +131,37 @@ function baseScaleAlvo(){
   const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
   const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
   if(_MOVEL){
-    // Mobile: SEM tiles e SEM re-render por zoom (era o que travava). UMA
-    // rasterização no MÁXIMO que o canvas do celular aguenta → nítida p/ leitura;
-    // zoom/pan depois é só transform CSS (fluido). Deep zoom além disso amolece.
-    const MAXPIX=9e6, MAXDIM=4096;
-    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), MAXDIM/pw, MAXDIM/ph);
-    return { s: Math.max(teto, Math.min(fitZoom*dpr, teto)), pw, ph };
+    // Mobile: base LEVE (carrega rápido; é a camada FLUIDA do zoom por CSS). A
+    // nitidez de leitura vem da camada de DETALHE (detMobile), que renderiza só o
+    // pedaço visível na resolução exata do zoom → cotas/textos pequenos legíveis.
+    const teto=Math.min(Math.sqrt(9e6/(pw*ph)), 4096/pw, 4096/ph);
+    const s=Math.min(fitZoom*dpr*2.5, teto);
+    return { s: Math.max(s, Math.min(fitZoom*dpr, teto)), pw, ph };
   }
   const teto=Math.min(Math.sqrt(42e6/(pw*ph)), 16000/pw, 16000/ph);
   let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
   return { s, pw, ph };
 }
-let _zoomTimer=null;
-// Escala LEVE p/ a 1ª passada no celular (aparece rápido); depois vem a nítida.
-function _escalaRapidaMobile(){
-  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
-  const dpr=Math.min(window.devicePixelRatio||1,2), fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-  return Math.min(fitZoom*dpr*2.5, Math.sqrt(9e6/(pw*ph)), 4096/pw, 4096/ph);
+// ── Camada de DETALHE (mobile): renderiza APENAS o pedaço visível na resolução
+//  do zoom atual, num canvas do tamanho da tela (constante, rápido). Aparece
+//  quando o movimento para; some enquanto arrasta/pinça (aí a base leve dá a
+//  fluidez). É o que deixa os textos pequenos legíveis em qualquer zoom.
+const DET_RDPR = Math.min(window.devicePixelRatio||1, 2);
+async function detMobile(){
+  if(!V.page || !B.valido || $('bim').style.display==='block') return;
+  const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
+  const s=V.zoom*DET_RDPR, W=Math.round(cw*DET_RDPR), H=Math.round(ch*DET_RDPR);
+  const job=++V._renderJob; cancelarRender();
+  const cv=$('detCv'); cv.width=W; cv.height=H; cv.style.width=cw+'px'; cv.style.height=ch+'px';
+  const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,W,H);
+  const vp=V.page.getViewport({ scale:s, offsetX:-V.panX*DET_RDPR, offsetY:-V.panY*DET_RDPR });
+  const task=V.page.render({ canvasContext:ctx, viewport:vp });
+  V._renderTask=task;
+  try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('det:',e); return; }
+  V._renderTask=null;
+  if(job===V._renderJob) cv.style.display='block';
 }
-// 2ª passada: renderiza a base NÍTIDA (baseScaleAlvo) em background e troca.
-function _mobileNitido(){ clearTimeout(_zoomTimer); _zoomTimer=setTimeout(()=>{ if(V.page&&_MOVEL&&$('bim').style.display!=='block') renderBase(); }, 80); }
+function detAgendarMobile(){ const cv=$('detCv'); if(cv) cv.style.display='none'; clearTimeout(V._detTimer); V._detTimer=setTimeout(detMobile, 220); }
 async function rasterizar(job, s, rx, ry, W, H, cv){
   cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.translate(-rx*s,-ry*s);
@@ -173,7 +186,8 @@ function updateCss(){
   if(!B.valido) return;
   const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
   cvBase.style.transform=tr;
-  renderPins(); tilesPosicionar(); detAgendar();
+  renderPins();
+  if(_MOVEL) detAgendarMobile(); else { tilesPosicionar(); detAgendar(); }
 }
 // ── Detalhe em ladrilhos ──
 function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*DET_SS; }
@@ -237,15 +251,15 @@ async function abrirPdf(url, tem3D){
     V.doc=await pdfjsLib.getDocument({url}).promise; V.nPages=V.doc.numPages; V.pageNum=1;
     V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
     await ajustarBBox(); fitPage();
-    if(_MOVEL){ await renderBase(_escalaRapidaMobile()); hideMsg(); montarTools(tem3D); gestos(); _mobileNitido(); }
-    else { await renderBase(); hideMsg(); montarTools(tem3D); gestos(); }
+    await renderBase(); hideMsg(); montarTools(tem3D); gestos();
+    if(_MOVEL) detMobile();
   }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 async function irPagina(delta){
   const n=V.pageNum+delta; if(n<1||n>V.nPages) return; V.pageNum=n; $('card').style.display='none';
   V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
   await ajustarBBox(); fitPage();
-  if(_MOVEL){ await renderBase(_escalaRapidaMobile()); _mobileNitido(); } else await renderBase();
+  await renderBase(); if(_MOVEL) detMobile();
   atualizaPg();
 }
 function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent=V.nPages>1?(V.pageNum+' / '+V.nPages):''; }
@@ -287,11 +301,11 @@ function montarTools(tem3D){
 }
 async function verModo(m){
   const b2=$('b2d'), b3=$('b3d');
-  if(m==='3d'){ cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('bim').style.display='block';
+  if(m==='3d'){ cvBase.style.display='none'; $('detCv').style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('bim').style.display='block';
     if(b2) b2.classList.remove('on'); if(b3) b3.classList.add('on'); $('card').style.display='none';
     if(!V._3dReady){ V._3dReady=true; await abrir3D(DADOS.released.frag, true); } }
   else{ $('bim').style.display='none'; cvBase.style.display=''; tilesEl.style.display=''; pinsEl.style.display='';
-    if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on'); }
+    if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on'); if(_MOVEL) detMobile(); }
 }
 
 // ── 3D (reusa bim3d.js) — orbit/pan/zoom ──
