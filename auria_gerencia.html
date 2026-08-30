@@ -912,6 +912,17 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       </div>
     </div>
 
+    <!-- ══ SEÇÃO: Características gerais (briefing) ══ -->
+    <div style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;gap:8px;background:var(--blue);color:#fff;border-radius:8px 8px 0 0;padding:8px 14px;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase">
+        &#128203; Caracter&iacute;sticas gerais
+      </div>
+      <div style="border:1px solid var(--gray-border);border-top:none;border-radius:0 0 8px 8px;padding:16px 14px;background:#fff">
+        <div style="font-size:11.5px;color:var(--text-mid);margin-bottom:12px;line-height:1.5">Briefing do empreendimento &mdash; consult&aacute;vel por toda a equipe. Tudo opcional; preencha o que j&aacute; souber. A vincula&ccedil;&atilde;o de PDF do CDE fica dispon&iacute;vel na edi&ccedil;&atilde;o.</div>
+        <div id="briefRows"></div>
+      </div>
+    </div>
+
     <!-- Aviso analistas -->
     <div style="display:flex;align-items:flex-start;gap:10px;background:#EFF6FF;
                 border-left:3px solid var(--blue);border-radius:0 8px 8px 0;
@@ -1006,6 +1017,25 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     <div class="modal-footer" style="margin-top:16px">
       <button class="btn-secondary" onclick="closeModal('modalPavEdit')">Cancelar</button>
       <button class="btn-primary" id="btnSalvarPavEdit" onclick="salvarPavimentosEdit()">Salvar pavimentos</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: FICHA / BRIEFING (empreendimento existente) ═══ -->
+<div class="modal-bg" id="modalBriefEdit">
+  <div class="modal" style="width:660px;max-width:97vw;max-height:93vh;overflow-y:auto;padding:26px 26px 20px">
+    <button class="modal-close" onclick="closeModal('modalBriefEdit')">&#215;</button>
+    <div style="display:flex;align-items:center;gap:13px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-border)">
+      <div style="width:44px;height:44px;background:var(--blue);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">&#128203;</div>
+      <div>
+        <div class="modal-title" style="margin-bottom:1px">Ficha do empreendimento</div>
+        <div class="modal-sub" style="margin-bottom:0">Editando: <strong id="briefEditNome">&mdash;</strong></div>
+      </div>
+    </div>
+    <div id="briefRowsEdit"></div>
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn-secondary" onclick="closeModal('modalBriefEdit')">Cancelar</button>
+      <button class="btn-primary" id="btnSalvarBrief" onclick="salvarBriefing()">Salvar ficha</button>
     </div>
   </div>
 </div>
@@ -1619,6 +1649,7 @@ function buildCard(emp, adminMode=false){
         ${adminMode ? `<button class="btn-ver" onclick="abrirDeleteEmp('${emp.id}')"
           style="border-color:var(--red);color:var(--red);margin-right:auto">&#128465; Excluir</button>` : ''}
         ${adminMode ? `<button class="btn-ver" onclick="editarPavimentos('${emp.id}')">&#127963; Pavimentos</button>` : ''}
+        ${adminMode ? `<button class="btn-ver" onclick="editarBriefing('${emp.id}')">&#128203; Ficha</button>` : ''}
         <button class="btn-ver" onclick="abrirCronograma('${emp.id}')">&#128197; Cronograma</button>
         <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
       </div>
@@ -2371,6 +2402,156 @@ async function salvarPavimentosEdit(){
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// FICHA / BRIEFING DO EMPREENDIMENTO (config.briefing)
+// ═══════════════════════════════════════════════════════
+let BRIEF = { carac:[], docs:[] };
+let BRIEF_BOX = 'briefRows';      // 'briefRows' (criação) | 'briefRowsEdit' (edição)
+let BRIEF_EDIT_EMP = null;
+
+function briefDefault(){
+  return {
+    carac:[
+      {rotulo:'Torres / blocos', valor:'', unidade:'un'},
+      {rotulo:'Área do terreno', valor:'', unidade:'m²'},
+      {rotulo:'Área construída total', valor:'', unidade:'m²'},
+      {rotulo:'Área privativa total', valor:'', unidade:'m²'},
+      {rotulo:'Nº de unidades', valor:'', unidade:'un'},
+      {rotulo:'Nº de unidades acessíveis (PCD)', valor:'', unidade:'un'},
+      {rotulo:'Unidades por andar tipo', valor:'', unidade:'un'},
+      {rotulo:'Nº de vagas', valor:'', unidade:'un'},
+      {rotulo:'Nº de vagas especiais (PCD/idoso)', valor:'', unidade:'un'},
+      {rotulo:'Nº de vagas moto / bicicletário', valor:'', unidade:'un'},
+      {rotulo:'Coeficiente de aproveitamento (CA)', valor:'', unidade:''},
+      {rotulo:'Taxa de ocupação', valor:'', unidade:'%'},
+      {rotulo:'Recuos (frente / lateral / fundo)', valor:'', unidade:''},
+      {rotulo:'Zoneamento', valor:'', unidade:''},
+      {rotulo:'Coordenadas (lat, long)', valor:'', unidade:''},
+      {rotulo:'Orientação / Norte verdadeiro', valor:'', unidade:'°'},
+    ],
+    docs:[
+      {rotulo:'Viabilidade de Água',       op:'sne', status:'', cond:{quando:['nao'], tipo:'status3', rotulo:'Possui E.T.A.'}, sub:'', texto:'', fixo:true},
+      {rotulo:'Viabilidade de Esgoto',     op:'sne', status:'', cond:{quando:['nao'], tipo:'status3', rotulo:'Possui E.T.E.'}, sub:'', texto:'', fixo:true},
+      {rotulo:'Viabilidade de Eletricidade',op:'sne', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'Viabilidade de Gás',        op:'sne', status:'', cond:{quando:['sim','processo'], tipo:'texto', rotulo:'Tipo de abastecimento'}, sub:'', texto:'', fixo:true},
+      {rotulo:'Alvará de construção',      op:'sne', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'RRT do Projeto de Arquitetura', op:'sn', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'ART do Cálculo Estrutural', op:'sn', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'ART/RRT de Instalações',    op:'sn', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'ART/RRT de Incêndio',       op:'sn', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'Book / Material de vendas', op:'sn', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'Matrícula do imóvel',       op:'sn', status:'', cond:{quando:['sim'], tipo:'texto', rotulo:'Nº da matrícula'}, sub:'', texto:'', fixo:true},
+      {rotulo:'Aprovação na prefeitura',   op:'sne', status:'', cond:{quando:['sim','processo'], tipo:'texto', rotulo:'Nº do protocolo'}, sub:'', texto:'', fixo:true},
+      {rotulo:'Habite-se',                 op:'sne', status:'', cond:null, sub:'', texto:'', fixo:true},
+      {rotulo:'Licença ambiental',         op:'sne', status:'', cond:null, sub:'', texto:'', fixo:true},
+    ]
+  };
+}
+// mescla defaults com o que já foi salvo (preserva itens custom e mantém os fixos)
+function briefFromConfig(cfg){
+  const base=briefDefault();
+  const b=(cfg&&cfg.briefing)||null;
+  if(!b) return base;
+  const carac=Array.isArray(b.carac)&&b.carac.length ? b.carac.map(c=>({rotulo:c.rotulo||'',valor:c.valor||'',unidade:c.unidade||''})) : base.carac;
+  // docs: começa pelos fixos default, sobrepõe status/sub/texto salvos por rótulo; anexa custom salvos
+  const salvos=Array.isArray(b.docs)?b.docs:[];
+  const porRot={}; salvos.forEach(d=>{ porRot[(d.rotulo||'').trim().toLowerCase()]=d; });
+  const docs=base.docs.map(d=>{ const s=porRot[d.rotulo.trim().toLowerCase()];
+    return s?Object.assign({},d,{status:s.status||'',sub:s.sub||'',texto:s.texto||''}):d; });
+  const fixosRot=new Set(base.docs.map(d=>d.rotulo.trim().toLowerCase()));
+  salvos.forEach(s=>{ const k=(s.rotulo||'').trim().toLowerCase(); if(k && !fixosRot.has(k))
+    docs.push({rotulo:s.rotulo,op:s.op||'sne',status:s.status||'',cond:s.cond||null,sub:s.sub||'',texto:s.texto||'',fixo:false}); });
+  return { carac, docs };
+}
+function briefParaSalvar(){ return JSON.parse(JSON.stringify(BRIEF)); }
+
+function briefSetCarac(i,f,v){ if(BRIEF.carac[i]) BRIEF.carac[i][f]=v; }
+function briefAddCarac(){ BRIEF.carac.push({rotulo:'',valor:'',unidade:''}); renderBrief();
+  const box=document.getElementById(BRIEF_BOX); const inp=box&&box.querySelectorAll('.brief-carac-rot'); if(inp&&inp.length) inp[inp.length-1].focus(); }
+function briefDelCarac(i){ BRIEF.carac.splice(i,1); renderBrief(); }
+function briefSetDoc(i,f,v){ if(BRIEF.docs[i]) BRIEF.docs[i][f]=v; }
+function briefSetDocStatus(i,v){ if(BRIEF.docs[i]) BRIEF.docs[i].status=v; renderBrief(); }
+function briefAddDoc(){ BRIEF.docs.push({rotulo:'',op:'sne',status:'',cond:null,sub:'',texto:'',fixo:false}); renderBrief();
+  const box=document.getElementById(BRIEF_BOX); const inp=box&&box.querySelectorAll('.brief-doc-rot'); if(inp&&inp.length) inp[inp.length-1].focus(); }
+function briefDelDoc(i){ BRIEF.docs.splice(i,1); renderBrief(); }
+
+function renderBrief(){
+  const box=document.getElementById(BRIEF_BOX); if(!box) return;
+  const inpCss='padding:6px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12.5px;outline:none';
+  const selCss='padding:6px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff';
+  const carHtml=BRIEF.carac.map((c,i)=>`
+    <div style="display:flex;gap:7px;align-items:center;margin-bottom:6px">
+      <input class="brief-carac-rot" value="${_escAttr(c.rotulo)}" oninput="briefSetCarac(${i},'rotulo',this.value)" placeholder="Característica" style="flex:1;min-width:110px;${inpCss}">
+      <input value="${_escAttr(c.valor)}" oninput="briefSetCarac(${i},'valor',this.value)" placeholder="valor" style="width:110px;text-align:right;${inpCss}">
+      <input value="${_escAttr(c.unidade)}" oninput="briefSetCarac(${i},'unidade',this.value)" placeholder="un." style="width:54px;color:var(--text-mid);font-size:11.5px;${inpCss}">
+      <button type="button" onclick="briefDelCarac(${i})" title="Remover" style="border:none;background:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:2px 5px">&#8722;</button>
+    </div>`).join('');
+  const docHtml=BRIEF.docs.map((d,i)=>{
+    const op3=d.op!=='sn';
+    const st=v=>d.status===v?'selected':'';
+    const statusSel=`<select onchange="briefSetDocStatus(${i},this.value)" style="width:120px;${selCss}">
+      <option value="" ${d.status===''?'selected':''}>—</option>
+      <option value="sim" ${st('sim')}>Sim</option>
+      <option value="nao" ${st('nao')}>Não</option>
+      ${op3?`<option value="processo" ${st('processo')}>Em processo</option>`:''}</select>`;
+    let cond='';
+    if(d.cond && (d.cond.quando||[]).includes(d.status)){
+      if(d.cond.tipo==='status3'){
+        cond=`<div style="margin:6px 0 1px 16px;display:flex;gap:8px;align-items:center">
+          <span style="font-size:11.5px;color:var(--text-mid)">${esc(d.cond.rotulo)}</span>
+          <select onchange="briefSetDoc(${i},'sub',this.value)" style="width:120px;${selCss}">
+            <option value="" ${d.sub===''?'selected':''}>—</option>
+            <option value="sim" ${d.sub==='sim'?'selected':''}>Sim</option>
+            <option value="nao" ${d.sub==='nao'?'selected':''}>Não</option>
+            <option value="adefinir" ${d.sub==='adefinir'?'selected':''}>A definir</option>
+          </select></div>`;
+      }else{
+        cond=`<div style="margin:6px 0 1px 16px;display:flex;gap:8px;align-items:center">
+          <span style="font-size:11.5px;color:var(--text-mid);white-space:nowrap">${esc(d.cond.rotulo)}</span>
+          <input value="${_escAttr(d.texto)}" oninput="briefSetDoc(${i},'texto',this.value)" placeholder="${_escAttr(d.cond.rotulo)}" style="flex:1;${inpCss}"></div>`;
+      }
+    }
+    const anexo = (d.status==='sim'||d.status==='processo')
+      ? `<div style="margin:6px 0 0 16px;font-size:10.5px;color:#94a3b8">&#128279; vincular PDF do CDE &mdash; dispon&iacute;vel em breve</div>` : '';
+    const rot = d.fixo
+      ? `<span style="flex:1;font-size:12.5px;color:var(--text)">${esc(d.rotulo)}</span>`
+      : `<input class="brief-doc-rot" value="${_escAttr(d.rotulo)}" oninput="briefSetDoc(${i},'rotulo',this.value)" placeholder="Documento / viabilidade" style="flex:1;min-width:120px;${inpCss}">`;
+    return `<div style="border:1px solid var(--gray-border);border-radius:8px;padding:8px 10px;margin-bottom:7px">
+      <div style="display:flex;gap:8px;align-items:center">${rot}${statusSel}
+        <button type="button" onclick="briefDelDoc(${i})" title="Remover" style="border:none;background:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:2px 5px">&#8722;</button>
+      </div>${cond}${anexo}</div>`;
+  }).join('');
+  box.innerHTML=`
+    <div style="font-size:11px;color:var(--text-mid);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin:0 0 9px">Características</div>
+    ${carHtml}
+    <button type="button" class="btn-secondary" style="padding:5px 11px;font-size:12px;margin:3px 0 16px" onclick="briefAddCarac()">&#43; Adicionar característica</button>
+    <div style="font-size:11px;color:var(--text-mid);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 9px;border-top:1px dashed var(--gray-border);padding-top:14px">Viabilidades &amp; documentação</div>
+    ${docHtml}
+    <button type="button" class="btn-secondary" style="padding:5px 11px;font-size:12px;margin-top:3px" onclick="briefAddDoc()">&#43; Adicionar item</button>`;
+}
+
+async function editarBriefing(empId){
+  const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
+  BRIEF_EDIT_EMP=emp;
+  document.getElementById('briefEditNome').textContent=emp.nome;
+  BRIEF=briefFromConfig(emp.config);
+  BRIEF_BOX='briefRowsEdit'; renderBrief();
+  document.getElementById('modalBriefEdit').classList.add('open');
+}
+async function salvarBriefing(){
+  if(!BRIEF_EDIT_EMP) return;
+  const emp=BRIEF_EDIT_EMP;
+  const btn=document.getElementById('btnSalvarBrief'); btn.disabled=true; const t0=btn.textContent; btn.textContent='Salvando…';
+  try{
+    const cfg=Object.assign({}, emp.config||{}, { briefing: briefParaSalvar() });
+    const { error } = await sb.from('empreendimentos_auria').update({ config: cfg }).eq('id', emp.id);
+    if(error) throw error;
+    emp.config=cfg;   // mantém EMPS em sincronia
+    closeModal('modalBriefEdit'); showToast('Ficha salva.','success'); BRIEF_BOX='briefRows';
+  }catch(e){ showToast('Erro ao salvar a ficha: '+(e.message||e),'red'); }
+  finally{ btn.disabled=false; btn.textContent=t0; }
+}
+
 function previewLogo(input){
   const file = input.files?.[0];
   if(!file) return;
@@ -2419,7 +2600,9 @@ function resetFormEmp(){
   const _g=document.getElementById('empTipoGrupo'); if(_g) _g.value='Pavimentos Tipo';
   const _e=document.getElementById('empEtapas'); if(_e) _e.value='Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo';
   // Pavimentos
-  PAV_ROWS = []; renderPavRows();
+  PAV_BOX='pavRows'; PAV_ROWS = []; renderPavRows();
+  // Ficha / briefing
+  BRIEF_BOX='briefRows'; BRIEF=briefDefault(); renderBrief();
   // Logo
   const logoInp = document.getElementById('empLogoInput');
   if(logoInp) logoInp.value = '';
@@ -2457,7 +2640,8 @@ async function criarEmpreendimento(){
       n_subsolo: document.getElementById('chkGaragem')?.checked ? _getSub() : 0,
       n_sobressolo: document.getElementById('chkSobressolo')?.checked ? _getSbs() : 0,
       n_edicula: document.getElementById('chkEdicula')?.checked ? _getEdi() : 0,
-      etapas: _etapas.length ? _etapas : ['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo']
+      etapas: _etapas.length ? _etapas : ['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo'],
+      briefing: briefParaSalvar()
     };
     // 1. Inserir empreendimento e obter o ID
     const { data: empRow, error } = await sb.from('empreendimentos_auria').insert({
