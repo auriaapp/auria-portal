@@ -1938,13 +1938,26 @@ async function baixarQrImagem(docId){
     ctx.strokeStyle='#e6ebf2'; ctx.lineWidth=3; _roundRect(ctx,44,44,W-88,H-88,48); ctx.stroke();
     ctx.textAlign='center';
     const titulo=((d.titulo||'').trim()), temTit=!!titulo && titulo!==cod;
-    // logo MANTIDA no topo; os demais blocos fluem para cima (folha ancorada no
-    // topo, não centralizada) → distribuição mais harmônica com respiro embaixo.
+    // logo MANTIDA no topo; os demais blocos são PUXADOS para cima. O QR nunca
+    // encolhe — só os ESPAÇAMENTOS se ajustam (fator k) para tudo caber na A4.
     let logo=null; try{ logo=await _carregarImg('logo_full.png'); }catch(_){}
     const lgW=Math.min(820, W*0.52), lgH=logo?lgW*((logo.height/logo.width)||0.32):0;
-    const gA=72, dividerH=8, gB=70, discF=104, codF=116, codPadY=52, badgeH=codF+codPadY*2;
-    const gD=84, qrSide=Math.min(W-320, 1080), panelPad=36, gE=70, footF=44;
-    let y=150;
+    const dividerH=8, discF=104, codF=116, codPadY=52, badgeH=codF+codPadY*2;
+    const qrSide=Math.min(W-320, 1080), panelPad=36, footF=44;
+    // título: quantas linhas / que altura ocupa (medido antes p/ calcular o encaixe)
+    let Ttit=null, titH=0;
+    if(temTit){ Ttit=_tituloLinhas(ctx, titulo, W-380, 52, FONT); titH=Ttit.lines.length*Math.round(Ttit.size*1.28); }
+    // gaps IDEAIS (topo→base). gTT/gTB = respiro antes/depois do título.
+    let gA=72, gB=70, gTT=44, gTB=52, gNo=58, gD=84, gE=70;
+    const yTop=100, yBot=70;
+    // altura fixa (elementos, nunca encolhe) + soma dos gaps ativos
+    const fixa = lgH+dividerH+discF+titH+badgeH+qrSide+panelPad+footF;
+    let gaps = gA+gB+gD+gE + (temTit ? (gTT+gTB) : gNo);
+    const disp = H-yTop-yBot-fixa;            // espaço livre p/ os gaps
+    const k = Math.min(1, disp/gaps);         // só reduz os espaços (≤1), nunca amplia demais
+    gA=Math.round(gA*k); gB=Math.round(gB*k); gTT=Math.round(gTT*k);
+    gTB=Math.round(gTB*k); gNo=Math.round(gNo*k); gD=Math.round(gD*k); gE=Math.round(gE*k);
+    let y=yTop;
     ctx.textBaseline='top';
     // logo
     if(logo){ ctx.drawImage(logo,(W-lgW)/2,y,lgW,lgH); y+=lgH+gA; }
@@ -1954,12 +1967,11 @@ async function baixarQrImagem(docId){
     ctx.fillStyle=SLATE; _textoCentro(ctx, disc, W/2, y, W-360, '600', discF, FONT); y+=discF;
     // título/descrição da prancha (cadastrado no upload) — some quando vazio
     if(temTit){
-      y+=44;
-      const T=_tituloLinhas(ctx, titulo, W-380, 52, FONT), lh=Math.round(T.size*1.28);
-      ctx.fillStyle='#64748b'; ctx.font='500 '+T.size+'px '+FONT;
-      for(const ln of T.lines){ ctx.fillText(ln, W/2, y); y+=lh; }
-      y+=52;
-    } else { y+=58; }
+      y+=gTT; const lh=Math.round(Ttit.size*1.28);
+      ctx.fillStyle='#64748b'; ctx.font='500 '+Ttit.size+'px '+FONT;
+      for(const ln of Ttit.lines){ ctx.fillText(ln, W/2, y); y+=lh; }
+      y+=gTB;
+    } else { y+=gNo; }
     // código — BADGE navy arredondado (destaque geométrico, paleta do CDE)
     let cs=codF; ctx.font='800 '+cs+'px '+FONT;
     while(cs>44 && ctx.measureText(cod).width>W-460){ cs-=4; ctx.font='800 '+cs+'px '+FONT; }
