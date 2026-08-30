@@ -862,15 +862,27 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
                  style="flex:1;padding:8px 12px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;outline:none">
         </div>
 
-        <!-- Checkboxes -->
-        <div style="display:flex;gap:24px">
-          <div class="check-row">
-            <input type="checkbox" id="chkGaragem">
-            <label for="chkGaragem">Possui Edif. Garagem / Subsolo</label>
+        <!-- Checkboxes + contadores -->
+        <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center">
+          <div class="check-row" style="gap:10px">
+            <input type="checkbox" id="chkGaragem" onchange="toggleSub()">
+            <label for="chkGaragem">Possui Subsolo</label>
+            <div class="pav-spin" id="ssSpin" style="display:none">
+              <button type="button" onclick="adjSub(-1)">&#8722;</button>
+              <span class="pav-spin-val" id="nSubVal">1</span>
+              <button type="button" onclick="adjSub(1)">&#43;</button>
+            </div>
+            <input type="hidden" id="nSubsolo" value="1">
           </div>
-          <div class="check-row">
-            <input type="checkbox" id="chkEdicula">
+          <div class="check-row" style="gap:10px">
+            <input type="checkbox" id="chkEdicula" onchange="toggleEdi()">
             <label for="chkEdicula">Possui Edicula</label>
+            <div class="pav-spin" id="ediSpin" style="display:none">
+              <button type="button" onclick="adjEdi(-1)">&#8722;</button>
+              <span class="pav-spin-val" id="nEdiVal">1</span>
+              <button type="button" onclick="adjEdi(1)">&#43;</button>
+            </div>
+            <input type="hidden" id="nEdicula" value="1">
           </div>
         </div>
 
@@ -881,7 +893,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <span style="font-size:11px;color:var(--text-mid)">nome + código (o código casa com o do arquivo)</span>
             <button type="button" class="btn-secondary" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="pavSort()" title="Ordenar por código (alfanumérico)">&#8693; Ordenar A&#8594;Z</button>
             <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAuto()">&#8635; Gerar automaticamente</button>
-            <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavimento</button>
+            <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavto./Grupo/Vista</button>
           </div>
           <div id="pavRows" style="max-height:320px;overflow-y:auto;padding-right:3px"></div>
           <div id="pavVazio" style="font-size:12px;color:var(--text-mid);padding:6px 2px">Nenhum pavimento cadastrado. Use &#8220;Gerar automaticamente&#8221; ou &#8220;&#43; Pavimento&#8221;.</div>
@@ -2048,6 +2060,14 @@ function _updTipoCount(){
   if(el) el.textContent = '\u2192 '+c+' tipo(s)';
 }
 
+// Subsolos / Edículas — contador ao lado do checkbox
+function _getSub(){ return parseInt(document.getElementById('nSubsolo')?.value||'1'); }
+function _getEdi(){ return parseInt(document.getElementById('nEdicula')?.value||'1'); }
+function toggleSub(){ const on=document.getElementById('chkGaragem')?.checked; const s=document.getElementById('ssSpin'); if(s) s.style.display=on?'':'none'; }
+function toggleEdi(){ const on=document.getElementById('chkEdicula')?.checked; const s=document.getElementById('ediSpin'); if(s) s.style.display=on?'':'none'; }
+function adjSub(d){ const n=Math.max(1,Math.min(9,_getSub()+d)); document.getElementById('nSubsolo').value=n; const v=document.getElementById('nSubVal'); if(v) v.textContent=n; }
+function adjEdi(d){ const n=Math.max(1,Math.min(9,_getEdi()+d)); document.getElementById('nEdicula').value=n; const v=document.getElementById('nEdiVal'); if(v) v.textContent=n; }
+
 function adjPav(delta){
   let n = Math.max(1, Math.min(60, _getPav() + delta));
   document.getElementById('empPavimentos').value = n;
@@ -2161,9 +2181,10 @@ function pavDel(i){ _pavSync(); PAV_ROWS.splice(i,1); renderPavRows(); }
 function pavAuto(){   // rascunho: andares individuais + grupo dos tipos (o gestor ajusta)
   const de=_getDe(), ate=_getAte();
   const g=document.getElementById('chkGaragem')?.checked, e=document.getElementById('chkEdicula')?.checked;
+  const nSub=g?_getSub():0, nEdi=e?_getEdi():0;
   const grp=(document.getElementById('empTipoGrupo')?.value||'Pavimentos Tipo').trim()||'Pavimentos Tipo';
   const rows=[], tipoCods=[];
-  if(g) rows.push({codigo:'SS1', nome:'Subsolo 1', tipo:'pavimento', membros:[]});
+  for(let k=1;k<=nSub;k++) rows.push({codigo:'SS'+k, nome:'Subsolo '+String(k).padStart(2,'0'), tipo:'pavimento', membros:[]});
   rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento', membros:[]});
   // andares tipo INDIVIDUAIS (01T, 02T … NNT) — a numeração do TIPO recomeça no 1º
   // tipo, independente de em que planta física ele começa (ex.: começa na 9ª planta,
@@ -2172,7 +2193,7 @@ function pavAuto(){   // rascunho: andares individuais + grupo dos tipos (o gest
   for(let i=1;i<=nTipos;i++){ const c=String(i).padStart(2,'0')+'T'; tipoCods.push(c);
     rows.push({codigo:c, nome:i+'º Pavimento Tipo', tipo:'pavimento', membros:[]}); }
   rows.push({codigo:'COB', nome:'Cobertura', tipo:'pavimento', membros:[]});
-  if(e) rows.push({codigo:'EDI', nome:'Edícula 01', tipo:'ambiente', membros:[]});
+  for(let k=1;k<=nEdi;k++) rows.push({codigo:'EDI'+k, nome:'Edícula '+String(k).padStart(2,'0'), tipo:'ambiente', membros:[]});
   // VISTAS (representações do prédio inteiro — não são andares, sem cota)
   rows.push({codigo:'IMP', nome:'Implantação',    tipo:'vista', membros:[]});
   rows.push({codigo:'COR', nome:'Cortes / Seções', tipo:'vista', membros:[]});
@@ -2242,6 +2263,8 @@ function resetFormEmp(){
   // Checkboxes
   document.getElementById('chkGaragem').checked = false;
   document.getElementById('chkEdicula').checked = false;
+  document.getElementById('nSubsolo').value='1'; { const v=document.getElementById('nSubVal'); if(v) v.textContent='1'; const s=document.getElementById('ssSpin'); if(s) s.style.display='none'; }
+  document.getElementById('nEdicula').value='1'; { const v=document.getElementById('nEdiVal'); if(v) v.textContent='1'; const s=document.getElementById('ediSpin'); if(s) s.style.display='none'; }
   const _g=document.getElementById('empTipoGrupo'); if(_g) _g.value='Pavimentos Tipo';
   const _e=document.getElementById('empEtapas'); if(_e) _e.value='Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo';
   // Pavimentos
@@ -2280,6 +2303,8 @@ async function criarEmpreendimento(){
       tipo_grupo_nome: _grupo,
       tem_garagem: document.getElementById('chkGaragem')?.checked || false,
       tem_edicula: document.getElementById('chkEdicula')?.checked || false,
+      n_subsolo: document.getElementById('chkGaragem')?.checked ? _getSub() : 0,
+      n_edicula: document.getElementById('chkEdicula')?.checked ? _getEdi() : 0,
       etapas: _etapas.length ? _etapas : ['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo']
     };
     // 1. Inserir empreendimento e obter o ID
