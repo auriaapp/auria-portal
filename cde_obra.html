@@ -1736,7 +1736,7 @@ function navGrupos(){
       </div>`;
   }
   if(AUTOGRP_MODE) return navAutoGrupo(AUTOGRP_MODE);
-  const qtdLocais = new Set(DOCS.map(d=>{ const k=localKey(); return k&&d.campos?d.campos[k]:null; }).filter(Boolean)).size;
+  const _locSet=new Set(); DOCS.forEach(d=> orgLabelsDoc(d).forEach(l=>{ if(l.cod!=='__sem__') _locSet.add(l.cod); })); const qtdLocais=_locSet.size;
   const qtdEtapas = new Set(DOCS.map(d=>d.etapa).filter(Boolean)).size;
   return `<div style="margin-bottom:10px"><button class="btn sec sm" onclick="novoGrupo()">＋ Novo grupo</button></div>
     <div class="folder"><div class="folder-h" onclick="AUTOGRP_MODE='local';AUTOGRP_SEL=null;renderNav()">
@@ -1755,6 +1755,7 @@ function navGrupos(){
 // sempre refletem os documentos atuais.
 function navAutoGrupo(modo){
   const isLocal = modo==='local';
+  if(isLocal) return navLocalPav();   // F3-b: usa a associação doc↔pavimento + expansão de grupo
   const key = isLocal ? localKey() : faseKey();
   const titulo = isLocal ? 'localização' : 'etapa';
   const icone = isLocal ? '📍' : '🏗';
@@ -1779,6 +1780,28 @@ function navAutoGrupo(modo){
     (valores.length ? valores.map(v=>`<div class="folder"><div class="folder-h" onclick="AUTOGRP_SEL='${esc(v)}';renderNav()">
         <span class="fic">${icone}</span><span class="fnm">${esc(label(v))}</span><span class="fct">${porValor[v].length}</span></div></div>`).join('')
       : `<div class="nav-hint">Nenhum documento com ${titulo} definida ainda.</div>`);
+}
+// F3-b: pasta "Por localização" agora reflete a associação doc↔pavimento (multi),
+// com expansão de grupo (abrir um andar traz também as pranchas do grupo que o contém)
+// e fallback no token `local` das pranchas antigas — igual ao organizador de QR.
+function navLocalPav(){
+  const info=new Map();   // cod -> {label,rank}
+  DOCS.forEach(d=> orgLabelsDoc(d).forEach(l=>{ if(l.cod==='__sem__') return; if(!info.has(l.cod)) info.set(l.cod,{label:l.label,rank:l.rank}); }));
+  if(AUTOGRP_SEL){
+    const meta=info.get(AUTOGRP_SEL)||{label:AUTOGRP_SEL};
+    const ds=DOCS.filter(d=>orgDocMatchPav(d,AUTOGRP_SEL)).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    return `<div class="grp-back" onclick="AUTOGRP_SEL=null;renderNav()">← Por localização</div>
+      <h3>📍 ${esc(meta.label)}</h3>
+      <button class="btn sec sm" style="margin-bottom:8px" onclick='selecionarTodosGrupo(${JSON.stringify(ds.map(d=>d.id))})'>☑ Selecionar todas (${ds.length})</button>
+      ${ds.length? ds.map(cardFdoc).join('') : '<div class="nav-hint">Nenhuma prancha neste pavimento.</div>'}`;
+  }
+  const cods=[...info.keys()].sort((a,b)=>{ const A=info.get(a),B=info.get(b); return (A.rank-B.rank)||A.label.localeCompare(B.label,'pt',{numeric:true}); });
+  return `<div class="grp-back" onclick="AUTOGRP_MODE=null;renderNav()">← Grupos</div>
+    <h3>📍 Por localização</h3>` +
+    (cods.length ? cods.map(c=>{ const m=info.get(c), n=DOCS.filter(d=>orgDocMatchPav(d,c)).length;
+      return `<div class="folder"><div class="folder-h" onclick="AUTOGRP_SEL='${esc(c)}';renderNav()">
+        <span class="fic">📍</span><span class="fnm">${esc(m.label)}</span><span class="fct">${n}</span></div></div>`; }).join('')
+      : `<div class="nav-hint">Nenhuma prancha com pavimento definido ainda.</div>`);
 }
 function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';

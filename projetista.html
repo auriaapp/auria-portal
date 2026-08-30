@@ -1805,10 +1805,25 @@ function cdePavSelInit(g){
   if(loc){ const m=CDE_PAVS.find(function(p){ return String(p.codigo||'').trim().toUpperCase()===loc; });
     if(m) g.pavSel=[m.id]; }
 }
+// Categoria: grupo entra junto de 'pav' (é um conjunto de pavimentos); ambiente e vista à parte.
+function cdePavFamilia(tipo){ return tipo==='ambiente'?'amb':(tipo==='vista'?'vista':'pav'); }
+// Documento NOVO, havendo pavimentos cadastrados, EXIGE seleção (chip) ou "Não se aplica".
+function cdePavFaltando(g){
+  if(!CDE_PAVS.length || !(g.acao&&g.acao.tipo==='novo')) return false;
+  cdePavSelInit(g);
+  return !g.pavNA && !(g.pavSel&&g.pavSel.length);
+}
 function cdePavToggle(base, id){
   const g=CDE_LOTE.find(function(x){ return x.base===base; }); if(!g) return;
   cdePavSelInit(g); g.pavNA=false;
-  const i=g.pavSel.indexOf(id); if(i>=0) g.pavSel.splice(i,1); else g.pavSel.push(id);
+  const p=CDE_PAVS.find(function(x){ return x.id===id; }); const fam=p?cdePavFamilia(p.tipo):'pav';
+  const i=g.pavSel.indexOf(id);
+  if(i>=0){ g.pavSel.splice(i,1); }
+  else{
+    const curFam = g.pavSel.length ? cdePavFamilia((CDE_PAVS.find(function(x){ return x.id===g.pavSel[0]; })||{}).tipo) : null;
+    if(curFam && curFam!==fam) g.pavSel=[];   // trocou de categoria → recomeça (só mesma categoria junta)
+    g.pavSel.push(id);
+  }
   cdeAvaliar();
 }
 function cdePavNA(base){
@@ -1819,21 +1834,29 @@ function cdePavNA(base){
 function cdePavRow(g){
   if(!CDE_PAVS.length) return '';
   cdePavSelInit(g);
+  const curFam = (!g.pavNA && g.pavSel.length) ? cdePavFamilia((CDE_PAVS.find(function(x){ return x.id===g.pavSel[0]; })||{}).tipo) : null;
   const chips=cdePavsOrdenados().map(function(p){
     const on=g.pavSel.indexOf(p.id)>=0 && !g.pavNA;
+    const fam=cdePavFamilia(p.tipo);
+    const dim = (curFam && fam!==curFam && !on) ? 'opacity:.4;' : '';
     const pref=p.tipo==='grupo'?'Grupo ':'';
     const cor = on ? 'background:#185FA5;color:#fff;border-color:#185FA5'
                    : (p.tipo==='grupo'?'background:#eef4ff;color:#274a6e;border-color:#cdd9ea'
                      :(p.tipo==='vista'?'background:#fff7ed;color:#8a5a12;border-color:#f0dcc0':'background:#fff;color:#33506b;border-color:#d9dee6'));
     return '<span onclick="cdePavToggle(\''+escH(g.base)+'\',\''+p.id+'\')" title="'+escH(p.nome)+'" '
-      +'style="cursor:pointer;display:inline-block;padding:3px 9px;border:1px solid;border-radius:20px;font-size:11px;'+cor+'">'
+      +'style="cursor:pointer;display:inline-block;padding:3px 9px;border:1px solid;border-radius:20px;font-size:11px;'+dim+cor+'">'
       +escH(pref+p.codigo)+'</span>';
   }).join(' ');
   const naOn=g.pavNA?'background:#475569;color:#fff;border-color:#475569':'background:#fff;color:#64748b;border-color:#d9dee6';
   const na='<span onclick="cdePavNA(\''+escH(g.base)+'\')" style="cursor:pointer;display:inline-block;padding:3px 9px;border:1px solid;border-radius:20px;font-size:11px;'+naOn+'">Não se aplica</span>';
-  return '<tr><td colspan="5" style="padding-top:0">'
+  const falta=cdePavFaltando(g);
+  const lblCor=falta?'#E67E22':'#7A9AB8';
+  return '<tr><td colspan="5" style="padding-top:0'+(falta?';box-shadow:inset 3px 0 0 #E67E22':'')+'">'
     +'<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0 4px">'
-    +'<span style="font-size:11px;color:#7A9AB8;margin-right:2px">Pavimento(s):</span>'+chips+' '+na+'</div></td></tr>';
+    +'<span style="font-size:11px;color:'+lblCor+';font-weight:'+(falta?'700':'400')+';margin-right:2px">Pavimento(s)'+(falta?' *obrigatório':'')+':</span>'
+    +chips+' '+na
+    +'<span style="font-size:10.5px;color:#94a3b8;flex-basis:100%">Selecione um ou mais da MESMA categoria (pavimento, ambiente ou vista) — ou &ldquo;Não se aplica&rdquo; (documentos, viabilidades, book/marketing).</span>'
+    +'</div></td></tr>';
 }
 
 async function cdeCarregarDocs(){
@@ -2004,20 +2027,25 @@ function cdeAvaliar(){
       }).join('')+'</tbody>';
   cdeEl('cde-prev').style.display='block';
   cdeEl('cde-btn-enviar').disabled=!cdeLoteConfirmavel();
-  const falta=CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); });
-  cdeEl('cde-msg').textContent = falta ? 'Preencha o título dos documentos novos para enviar.' : '';
+  cdeEl('cde-msg').textContent = cdeLoteMsg();
 }
 function cdeLoteConfirmavel(){
   const validos=CDE_LOTE.filter(function(g){ return g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'); });
   if(!validos.length) return false;
-  return !CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); });
+  if(CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); })) return false;
+  if(CDE_LOTE.some(function(g){ return cdePavFaltando(g); })) return false;   // pavimento obrigatório
+  return true;
+}
+function cdeLoteMsg(){
+  if(CDE_LOTE.some(function(g){ return g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim(); })) return 'Preencha o título dos documentos novos para enviar.';
+  if(CDE_LOTE.some(function(g){ return cdePavFaltando(g); })) return 'Selecione o pavimento (ou "Não se aplica") dos documentos novos.';
+  return '';
 }
 function cdeLoteTitInput(el){
   const g=CDE_LOTE.find(function(x){ return x.base===el.dataset.base; }); if(g) g.titulo=el.value;
   el.style.borderColor=(el.value||'').trim()?'#d9dee6':'#E67E22';
   cdeEl('cde-btn-enviar').disabled=!cdeLoteConfirmavel();
-  const falta=CDE_LOTE.some(function(x){ return x.acao&&x.acao.tipo==='novo'&&!(x.titulo||'').trim(); });
-  cdeEl('cde-msg').textContent = falta ? 'Preencha o título dos documentos novos para enviar.' : '';
+  cdeEl('cde-msg').textContent = cdeLoteMsg();
 }
 
 async function cdeSha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return Array.prototype.map.call(new Uint8Array(h),function(b){ return b.toString(16).padStart(2,'0'); }).join(''); }catch(e){ return null; } }
