@@ -656,6 +656,11 @@
   .org-seg button{background:var(--panel);border:none;padding:7px 15px;font-size:13px;font-weight:700;color:var(--txt);cursor:pointer;border-left:1px solid var(--line)}
   .org-seg button:first-child{border-left:none}
   .org-seg button.on{background:var(--navy);color:#fff}
+  .org-buscacg{flex:1;min-width:210px}
+  .org-buscacg>span{font-size:14px}
+  .org-inp{flex:1;width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:var(--panel);color:var(--txt)}
+  .org-inp:focus{outline:none;border-color:var(--accent)}
+  .org-selel{border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;font-weight:600;background:var(--panel2);color:var(--txt);cursor:pointer;max-width:220px}
   .org-tudo{margin-left:auto;padding:6px 12px;font-size:12px}
   .org-list{max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:11px;padding:6px}
   .org-grp{margin-bottom:5px}
@@ -678,6 +683,8 @@
       <div class="org-ctrls">
         <div class="cg"><span>Formato</span><div class="org-seg"><button id="orgFmt_A4" onclick="orgSetFmt('A4')">A4</button><button id="orgFmt_A3" onclick="orgSetFmt('A3')">A3</button></div></div>
         <div class="cg"><span>Por página</span><div class="org-seg"><button id="orgNpp_4" onclick="orgSetNpp(4)">4</button><button id="orgNpp_6" onclick="orgSetNpp(6)">6</button><button id="orgNpp_8" onclick="orgSetNpp(8)">8</button><button id="orgNpp_10" onclick="orgSetNpp(10)">10</button></div></div>
+        <div class="cg org-buscacg"><span>🔍</span><input id="orgBusca" class="org-inp" type="text" placeholder="Buscar código, disciplina ou título…" oninput="orgSetBusca(this.value)"></div>
+        <div class="cg"><span>Pavimento</span><select id="orgPav" class="org-selel" onchange="orgSetPav(this.value)"><option value="__all__">Todos os pavimentos</option></select></div>
         <button class="btn sec org-tudo" onclick="orgToggleTudo()">Selecionar / limpar tudo</button>
       </div>
       <div class="org-list" id="orgList"></div>
@@ -2048,33 +2055,50 @@ async function baixarQrImagem(docId){
 //  página com os cards em grade — MESMO card do QR avulso, porém SEM a logo de
 //  cada card: uma logo única centralizada no topo de cada página + nome do empr.
 // ═════════════════════════════════════════════════════════════════════════════
-let QRORG = { fmt:'A3', npp:6, sel:new Set() };
+let QRORG = { fmt:'A3', npp:6, sel:new Set(), busca:'', pav:'__all__' };
+const PAV_SEM='Sem pavimento', PAV_TODAS='Todas as pranchas';
 
 function orgDocsElegiveis(){ return DOCS.filter(d=> d.qr_token); }
-function orgGrupos(){
-  const lk=localKey(), groups=new Map();
-  orgDocsElegiveis().forEach(d=>{
-    const val=(lk&&d.campos)?d.campos[lk]:null;
-    const label=(lk?localLabel(val):'Todas as pranchas')||'Sem pavimento';
-    if(!groups.has(label)) groups.set(label,[]);
-    groups.get(label).push(d);
+function _pavDe(d){ const lk=localKey(); const val=(lk&&d.campos)?d.campos[lk]:null; return (lk?localLabel(val):PAV_TODAS)||PAV_SEM; }
+function orgPavList(){ const s=new Set(); orgDocsElegiveis().forEach(d=> s.add(_pavDe(d))); return [...s].sort((a,b)=>a.localeCompare(b,'pt',{numeric:true})); }
+// Lista filtrada por busca + pavimento (só p/ exibir e selecionar).
+function orgDocsFiltrados(){
+  const q=QRORG.busca, pav=QRORG.pav;
+  return orgDocsElegiveis().filter(d=>{
+    if(pav && pav!=='__all__' && _pavDe(d)!==pav) return false;
+    if(q){ const hay=((d.codigo||'')+' '+discLabel(d.disciplina)+' '+(d.titulo||'')).toLowerCase(); if(!hay.includes(q)) return false; }
+    return true;
   });
+}
+// Agrupa uma lista de docs por pavimento (grupos e docs ordenados).
+function orgGruposDe(docs){
+  const groups=new Map();
+  docs.forEach(d=>{ const label=_pavDe(d); if(!groups.has(label)) groups.set(label,[]); groups.get(label).push(d); });
   const arr=[...groups.entries()].map(([k,v])=>[k, v.sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'','pt',{numeric:true}))]);
   arr.sort((a,b)=> a[0].localeCompare(b[0],'pt',{numeric:true}));
   return arr;
 }
-function abrirOrganizadorQR(){ QRORG.sel=new Set(); renderOrgQR(); $('orgQR').style.display='flex'; }
+function orgGrupos(){ return orgGruposDe(orgDocsFiltrados()); }        // p/ a lista (respeita filtros)
+function orgGruposSelecionados(){ return orgGruposDe(orgDocsElegiveis().filter(d=>QRORG.sel.has(d.id))); } // p/ gerar (TODA a seleção)
+function abrirOrganizadorQR(){
+  QRORG.sel=new Set(); QRORG.busca=''; QRORG.pav='__all__';
+  const bi=$('orgBusca'); if(bi) bi.value='';
+  const sel=$('orgPav'); if(sel){ sel.innerHTML='<option value="__all__">Todos os pavimentos</option>'+orgPavList().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join(''); sel.value='__all__'; }
+  renderOrgQR(); $('orgQR').style.display='flex';
+}
 function fecharOrgQR(){ $('orgQR').style.display='none'; }
 function orgSetFmt(f){ QRORG.fmt=f; renderOrgQR(); }
 function orgSetNpp(n){ QRORG.npp=n; renderOrgQR(); }
+function orgSetBusca(v){ QRORG.busca=(v||'').trim().toLowerCase(); renderOrgQR(); }
+function orgSetPav(v){ QRORG.pav=v; renderOrgQR(); }
 function orgToggle(id){ QRORG.sel.has(id)?QRORG.sel.delete(id):QRORG.sel.add(id); renderOrgQR(); }
 function orgToggleGrupo(csv){ const ids=csv.split(','), todos=ids.every(i=>QRORG.sel.has(i)); ids.forEach(i=> todos?QRORG.sel.delete(i):QRORG.sel.add(i)); renderOrgQR(); }
-function orgToggleTudo(){ const all=orgDocsElegiveis().map(d=>d.id), todos=all.length&&all.every(i=>QRORG.sel.has(i)); QRORG.sel = todos?new Set():new Set(all); renderOrgQR(); }
+function orgToggleTudo(){ const all=orgDocsFiltrados().map(d=>d.id), todos=all.length&&all.every(i=>QRORG.sel.has(i)); if(todos) all.forEach(i=>QRORG.sel.delete(i)); else all.forEach(i=>QRORG.sel.add(i)); renderOrgQR(); }
 function renderOrgQR(){
   ['A4','A3'].forEach(f=>{ const b=$('orgFmt_'+f); if(b) b.classList.toggle('on', QRORG.fmt===f); });
   [4,6,8,10].forEach(n=>{ const b=$('orgNpp_'+n); if(b) b.classList.toggle('on', QRORG.npp===n); });
   const grupos=orgGrupos(); let html='';
-  if(!grupos.length) html='<div class="org-hint">Nenhuma prancha com QR neste empreendimento.</div>';
+  if(!grupos.length) html='<div class="org-hint">'+(QRORG.busca||QRORG.pav!=='__all__'?'Nenhuma prancha para o filtro atual.':'Nenhuma prancha com QR neste empreendimento.')+'</div>';
   grupos.forEach(([nome,ds])=>{
     const ids=ds.map(d=>d.id), marc=ids.filter(i=>QRORG.sel.has(i)).length, todos=marc===ids.length;
     html+=`<div class="org-grp"><label class="org-grp-h"><input type="checkbox" ${todos?'checked':''} onchange="orgToggleGrupo('${ids.join(',')}')"><span class="org-grp-nm">${esc(nome)}</span><span class="org-grp-ct">${marc}/${ids.length}</span></label>`;
@@ -2083,26 +2107,30 @@ function renderOrgQR(){
     html+='</div>';
   });
   $('orgList').innerHTML=html;
-  const n=QRORG.sel.size, pg=Math.max(1,Math.ceil(n/QRORG.npp));
-  $('orgResumo').textContent = n? `${n} prancha(s) · ${pg} página(s) ${QRORG.fmt} paisagem` : 'Nenhuma prancha selecionada';
+  const n=QRORG.sel.size;
+  let pg=0; orgGruposSelecionados().forEach(([_,ds])=> pg+=Math.ceil(ds.length/QRORG.npp));  // 1 seção por pavimento
+  $('orgResumo').textContent = n? `${n} prancha(s) · ${pg} página(s) ${QRORG.fmt} paisagem · uma seção por pavimento` : 'Nenhuma prancha selecionada';
   $('orgGerar').disabled = n===0;
 }
 async function orgGerarPDF(){
   if(!QRORG.sel.size) return;
-  const ordem=[]; orgGrupos().forEach(([_,ds])=>ds.forEach(d=>{ if(QRORG.sel.has(d.id)) ordem.push(d); }));
+  const perPage=QRORG.npp, cols=QRORG.npp/2, rows=2, DPI=150;
+  // Opção A: uma seção por pavimento → quebra a página ao trocar de pavimento.
+  const paginas=[];
+  orgGruposSelecionados().forEach(([pav,ds])=>{ for(let i=0;i<ds.length;i+=perPage) paginas.push({ pav, docs:ds.slice(i,i+perPage) }); });
+  if(!paginas.length) return;
   const btn=$('orgGerar'), bt=btn.textContent, tit=document.title;
   try{
     btn.disabled=true; document.title='⏳ Gerando QR…';
-    const perPage=QRORG.npp, cols=QRORG.npp/2, rows=2, DPI=150;
     const mm = QRORG.fmt==='A3' ? [420,297] : [297,210];               // paisagem [w,h]
     const W=Math.round(mm[0]/25.4*DPI), H=Math.round(mm[1]/25.4*DPI);
     const ptW=mm[0]/25.4*72, ptH=mm[1]/25.4*72;
     let logo=null; try{ logo=await _carregarImg('logo_full.png'); }catch(_){}
     const PDFmod=await import('https://esm.sh/pdf-lib@1.17.1'); const { PDFDocument }=PDFmod;
     const pdf=await PDFDocument.create();
-    for(let p=0;p<ordem.length;p+=perPage){
-      btn.textContent='Gerando… '+Math.min(p+perPage,ordem.length)+'/'+ordem.length;
-      const cv=await _orgRenderPagina(ordem.slice(p,p+perPage), W, H, cols, rows, logo);
+    for(let p=0;p<paginas.length;p++){
+      btn.textContent='Gerando… '+(p+1)+'/'+paginas.length;
+      const cv=await _orgRenderPagina(paginas[p].docs, W, H, cols, rows, logo, paginas[p].pav);
       const png=await pdf.embedPng(_dataUrlToBytes(cv.toDataURL('image/png')));
       pdf.addPage([ptW,ptH]).drawImage(png,{ x:0, y:0, width:ptW, height:ptH });
     }
@@ -2112,7 +2140,7 @@ async function orgGerarPDF(){
   finally{ document.title=tit; btn.disabled=false; btn.textContent=bt; }
 }
 // Uma página: cabeçalho (logo única + empreendimento) + grade de cards.
-async function _orgRenderPagina(grupo, W, H, cols, rows, logo){
+async function _orgRenderPagina(grupo, W, H, cols, rows, logo, pavLabel){
   const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
   const ACC='#e8960a', NAVY='#152036', SLATE='#475569', MUT='#94a3b8';
   const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
@@ -2126,6 +2154,17 @@ async function _orgRenderPagina(grupo, W, H, cols, rows, logo){
   if(logo) ctx.drawImage(logo,(W-lgW)/2,hy,lgW,lgH);
   const nm=(EMP&&EMP.nome)||''; if(nm){ ctx.fillStyle=SLATE; ctx.font='600 '+Math.round(headH*0.13)+'px '+FONT; ctx.fillText(nm, W/2, hy+lgH+Math.round(headH*0.02)); }
   ctx.fillStyle=ACC; _roundRect(ctx,(W-W*0.05)/2, headH, W*0.05, Math.max(3,H*0.004), 3); ctx.fill();
+  // selo do PAVIMENTO no canto superior esquerdo (Opção A: 1 pavimento por folha)
+  if(pavLabel && pavLabel!==PAV_TODAS){
+    ctx.save(); ctx.textAlign='left'; ctx.textBaseline='middle';
+    const fs=Math.round(H*0.026); ctx.font='800 '+fs+'px '+FONT;
+    const tw=ctx.measureText(pavLabel).width, sq=fs*0.55, gp=fs*0.45, padx=fs*0.75, bh=fs+fs*0.9;
+    const bw=padx+sq+gp+tw+padx, bx=Math.round(W*0.03), by=Math.round(H*0.028);
+    ctx.fillStyle=NAVY; _roundRect(ctx,bx,by,bw,bh,bh*0.3); ctx.fill();
+    ctx.fillStyle=ACC; _roundRect(ctx,bx+padx,by+(bh-sq)/2,sq,sq,3); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.fillText(pavLabel, bx+padx+sq+gp, by+bh/2+1);
+    ctx.restore(); ctx.textAlign='center'; ctx.textBaseline='top';
+  }
   // grade
   const mL=W*0.03, mR=W*0.03, gap=W*0.016, gridY=headH+Math.round(H*0.018), mB=H*0.025;
   const cellW=(W-mL-mR-gap*(cols-1))/cols, cellH=(H-gridY-mB-gap*(rows-1))/rows;
