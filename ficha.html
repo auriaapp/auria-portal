@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — Ficha do empreendimento</title>
+<link rel="icon" type="image/png" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#EEF2F7;--panel:#fff;--line:#E2E8F0;--txt:#0F172A;--txt2:#334155;--mut:#64748B;
+        --navy:#152036;--accent:#E8960A;--ok:#1E8449;--err:#A32D2D;--warn:#B7791F;--blue:#185FA5;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);
+       font-size:14px;line-height:1.55;min-height:100vh}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:14px}
+  header img{height:46px;object-fit:contain}
+  header .tt b{font-size:16px;font-weight:800;display:block;line-height:1.15}
+  header .tt span{font-size:12px;color:#8FA6C0}
+  .wrap{max-width:900px;margin:0 auto;padding:20px 16px 48px}
+  .sec{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-bottom:16px;overflow:hidden}
+  .sec-h{background:var(--navy);color:#fff;padding:9px 15px;font-size:11.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase}
+  .sec-b{padding:14px 15px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+  .car{background:#F6F9FC;border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+  .car .k{font-size:11px;color:var(--mut)}
+  .car .v{font-size:15px;font-weight:700;color:var(--txt);margin-top:2px}
+  .car .v small{font-size:11px;color:var(--mut);font-weight:400;margin-left:3px}
+  .doc{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line)}
+  .doc:last-child{border-bottom:none}
+  .doc .nm{flex:1;min-width:150px;font-size:13.5px;color:var(--txt)}
+  .doc .sub{display:block;font-size:11.5px;color:var(--mut);margin-top:2px}
+  .badge{font-size:11px;font-weight:700;border-radius:20px;padding:2px 10px;white-space:nowrap}
+  .b-sim{background:#E7F6EC;color:var(--ok)} .b-nao{background:#FBEAEA;color:var(--err)}
+  .b-proc{background:#FDF3E2;color:var(--warn)} .b-na{background:#EEF2F7;color:var(--mut)}
+  .anexo{font-size:11.5px;color:var(--blue);text-decoration:none;background:#EAF2FB;border-radius:7px;padding:2px 9px;white-space:nowrap}
+  .anexo:hover{text-decoration:underline}
+  .msg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:34px;text-align:center;color:var(--mut)}
+  .spin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:g .8s linear infinite;margin:0 auto 12px}
+  @keyframes g{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <img id="logo" src="logo_full.png" alt="Auria" onerror="this.style.display='none'">
+  <div class="tt"><b id="empNome">Ficha do empreendimento</b><span id="empSub">carregando…</span></div>
+</header>
+<div class="wrap" id="wrap">
+  <div class="msg"><div class="spin"></div>Carregando a ficha…</div>
+</div>
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+const $=id=>document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function qp(k){ return new URLSearchParams(location.search).get(k); }
+
+function statusBadge(op, st){
+  if(st==='sim')      return '<span class="badge b-sim">Sim</span>';
+  if(st==='nao')      return '<span class="badge b-nao">Não</span>';
+  if(st==='processo') return '<span class="badge b-proc">Em processo</span>';
+  return '<span class="badge b-na">—</span>';
+}
+function subLabel(v){ return v==='sim'?'Sim':v==='nao'?'Não':v==='adefinir'?'A definir':'—'; }
+
+function render(nome, logoUrl, config){
+  $('empNome').textContent = nome || 'Empreendimento';
+  const b = (config&&config.briefing) || null;
+  const linha = [config&&config.tipo_empreendimento, config&&config.tipologia].filter(Boolean).join(' · ');
+  $('empSub').textContent = linha || 'Ficha do empreendimento';
+  if(!b || ((!b.carac||!b.carac.length) && (!b.docs||!b.docs.length))){
+    $('wrap').innerHTML = '<div class="msg">Este empreendimento ainda não tem a ficha preenchida.</div>';
+    return;
+  }
+  let html='';
+  // Características (só as com valor)
+  const carac = (b.carac||[]).filter(c=>(c.valor||'').toString().trim());
+  if(carac.length){
+    html += '<div class="sec"><div class="sec-h">Características gerais</div><div class="sec-b"><div class="grid">'
+      + carac.map(c=>`<div class="car"><div class="k">${esc(c.rotulo)}</div><div class="v">${esc(c.valor)}${c.unidade?` <small>${esc(c.unidade)}</small>`:''}</div></div>`).join('')
+      + '</div></div></div>';
+  }
+  // Viabilidades & documentação (só as com status definido)
+  const docs = (b.docs||[]).filter(d=>d.status);
+  if(docs.length){
+    html += '<div class="sec"><div class="sec-h">Viabilidades &amp; documentação</div><div class="sec-b">'
+      + docs.map(d=>{
+        let sub='';
+        if(d.cond && (d.cond.quando||[]).includes(d.status)){
+          if(d.cond.tipo==='status3' && d.sub) sub = `<span class="sub">${esc(d.cond.rotulo)}: ${esc(subLabel(d.sub))}</span>`;
+          else if(d.cond.tipo==='texto' && (d.texto||'').trim()) sub = `<span class="sub">${esc(d.cond.rotulo)}: ${esc(d.texto)}</span>`;
+        }
+        let anexo='';
+        if(d.anexo && d.anexo.documento_id){
+          anexo = d.anexo.qr_token
+            ? `<a class="anexo" href="v.html?p=${esc(d.anexo.qr_token)}" target="_blank" rel="noopener">🔗 ${esc(d.anexo.codigo||'ver PDF')}</a>`
+            : `<span class="anexo" style="color:var(--mut);background:#EEF2F7">🔗 ${esc(d.anexo.codigo||'')}</span>`;
+        }
+        return `<div class="doc"><div class="nm">${esc(d.rotulo)}${sub}</div>${anexo}${statusBadge(d.op,d.status)}</div>`;
+      }).join('')
+      + '</div></div>';
+  }
+  if(!html) html='<div class="msg">Este empreendimento ainda não tem a ficha preenchida.</div>';
+  $('wrap').innerHTML = html;
+}
+
+(async function(){
+  const emp = qp('emp');
+  if(!emp){ $('wrap').innerHTML='<div class="msg">Link inválido (sem empreendimento).</div>'; return; }
+  let session=null;
+  try{ const r=await sb.auth.getSession(); session=r.data&&r.data.session; }catch(e){}
+  if(!session){ location.replace('./'); return; }  // sem sessão → login único
+  try{
+    const { data, error } = await sb.rpc('cde_ficha_empreendimento', { p_emp: emp });
+    if(error) throw error;
+    const row = data && data[0];
+    if(!row){ $('wrap').innerHTML='<div class="msg">Você não tem acesso a este empreendimento, ou ele não existe.</div>'; $('empSub').textContent=''; return; }
+    render(row.nome, row.logo_url, row.config);
+  }catch(e){
+    $('wrap').innerHTML='<div class="msg">Erro ao carregar a ficha: '+esc(e.message||e)+'</div>';
+    $('empSub').textContent='';
+  }
+})();
+</script>
+</body>
+</html>
