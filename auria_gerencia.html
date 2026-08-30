@@ -874,6 +874,18 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           </div>
         </div>
 
+        <!-- ══ Lista de pavimentos (nome + código) — usada no upload e no QR ══ -->
+        <div style="margin-top:16px;border-top:1px dashed var(--gray-border);padding-top:14px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">
+            <span style="font-size:13px;color:var(--text-mid);font-weight:600">Pavimentos do empreendimento</span>
+            <span style="font-size:11px;color:var(--text-mid)">nome + código (o código casa com o do arquivo)</span>
+            <button type="button" class="btn-secondary" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="pavAuto()">&#8635; Gerar automaticamente</button>
+            <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavimento</button>
+          </div>
+          <div id="pavRows"></div>
+          <div id="pavVazio" style="font-size:12px;color:var(--text-mid);padding:6px 2px">Nenhum pavimento cadastrado. Use &#8220;Gerar automaticamente&#8221; ou &#8220;&#43; Pavimento&#8221;.</div>
+        </div>
+
       </div>
     </div>
 
@@ -2065,6 +2077,62 @@ function adjTipoPav(field, delta){
   _updTipoCount();
 }
 
+// ── Pavimentos do empreendimento (lista editável nome + código) ─────────────
+let PAV_ROWS = [];   // [{codigo, nome, tipo}]
+function _escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de re-render/salvar)
+  document.querySelectorAll('#pavRows .pav-row').forEach(row=>{
+    const i=+row.dataset.i; if(!PAV_ROWS[i]) return;
+    PAV_ROWS[i].codigo=(row.querySelector('.pav-cod')?.value||'');
+    PAV_ROWS[i].nome  =(row.querySelector('.pav-nome')?.value||'');
+    PAV_ROWS[i].tipo  =(row.querySelector('.pav-tipo')?.value||'pavimento');
+  });
+}
+function renderPavRows(){
+  const box=document.getElementById('pavRows'); if(!box) return;
+  box.innerHTML = PAV_ROWS.map((r,i)=>`
+    <div class="pav-row" data-i="${i}" style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+      <input class="pav-cod" value="${_escAttr(r.codigo)}" placeholder="Código" maxlength="16"
+             style="width:96px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
+      <input class="pav-nome" value="${_escAttr(r.nome)}" placeholder="Nome do pavimento / ambiente"
+             style="flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--gray-border);border-radius:7px;font-size:13px;outline:none">
+      <select class="pav-tipo" style="padding:7px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff">
+        <option value="pavimento" ${r.tipo!=='ambiente'?'selected':''}>Pavimento</option>
+        <option value="ambiente"  ${r.tipo==='ambiente'?'selected':''}>Ambiente</option>
+      </select>
+      <button type="button" onclick="pavDel(${i})" title="Remover"
+              style="border:none;background:none;color:#94a3b8;font-size:17px;cursor:pointer;line-height:1;padding:2px 6px">&#215;</button>
+    </div>`).join('');
+  const vazio=document.getElementById('pavVazio'); if(vazio) vazio.style.display = PAV_ROWS.length ? 'none' : '';
+}
+function pavAdd(){ _pavSync(); PAV_ROWS.push({codigo:'',nome:'',tipo:'pavimento'}); renderPavRows();
+  const rows=document.querySelectorAll('#pavRows .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
+function pavDel(i){ _pavSync(); PAV_ROWS.splice(i,1); renderPavRows(); }
+function pavAuto(){   // rascunho a partir dos números acima (o gestor ajusta os códigos)
+  const de=_getDe(), ate=_getAte();
+  const g=document.getElementById('chkGaragem')?.checked, e=document.getElementById('chkEdicula')?.checked;
+  const grp=(document.getElementById('empTipoGrupo')?.value||'Pavimentos Tipo').trim()||'Pavimentos Tipo';
+  const rows=[];
+  if(g) rows.push({codigo:'SS1', nome:'Subsolo / Garagem', tipo:'pavimento'});
+  rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento'});
+  if(ate>=de) rows.push({codigo:'TIP', nome: grp + (ate>de ? ' ('+de+'º ao '+ate+'º)' : ' ('+de+'º)'), tipo:'pavimento'});
+  rows.push({codigo:'COB', nome:'Cobertura', tipo:'pavimento'});
+  if(e) rows.push({codigo:'EDI', nome:'Edícula', tipo:'ambiente'});
+  PAV_ROWS = rows; renderPavRows();
+}
+// Lê a lista pronta para gravar (aparados, sem duplicar código, com ordem).
+function pavParaSalvar(){
+  _pavSync();
+  const vistos=new Set(), out=[];
+  PAV_ROWS.forEach((r,idx)=>{
+    const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
+    if(!codigo || !nome || vistos.has(codigo)) return;
+    vistos.add(codigo);
+    out.push({ codigo, nome, tipo:(r.tipo==='ambiente'?'ambiente':'pavimento'), ordem:idx });
+  });
+  return out;
+}
+
 function previewLogo(input){
   const file = input.files?.[0];
   if(!file) return;
@@ -2108,6 +2176,8 @@ function resetFormEmp(){
   document.getElementById('chkEdicula').checked = false;
   const _g=document.getElementById('empTipoGrupo'); if(_g) _g.value='Pavimentos Tipo';
   const _e=document.getElementById('empEtapas'); if(_e) _e.value='Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo';
+  // Pavimentos
+  PAV_ROWS = []; renderPavRows();
   // Logo
   const logoInp = document.getElementById('empLogoInput');
   if(logoInp) logoInp.value = '';
@@ -2173,6 +2243,14 @@ async function criarEmpreendimento(){
         console.warn('Logo não enviada:', logoErr.message);
         showToast('Empreendimento criado, mas a logo nao foi salva: '+logoErr.message,'');
       }
+    }
+
+    // 3. Pavimentos do empreendimento (não bloqueia a criação se falhar)
+    const pavs = pavParaSalvar();
+    if(pavs.length && empRow?.id){
+      const { error:pe } = await sb.from('cde_pavimento_auria')
+        .insert(pavs.map(p=>({ empreendimento_id: empRow.id, ...p })));
+      if(pe){ console.warn('pavimentos:', pe.message); showToast('Empreendimento criado, mas os pavimentos não foram salvos: '+pe.message,''); }
     }
 
     closeModal('modalNovoEmp');
