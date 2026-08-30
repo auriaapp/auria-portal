@@ -932,6 +932,41 @@ function localLabel(v){
   return v||'—';
 }
 
+// ── Pavimentos por empreendimento (F3): associação doc↔pavimento + grupos ──
+let PAVS=[], PAV_BY_ID={}, PAV_BY_COD={}, GRP_MEMBROS={}, DOCPAV={};
+async function carregarPavimentos(){
+  PAVS=[]; PAV_BY_ID={}; PAV_BY_COD={}; GRP_MEMBROS={}; DOCPAV={};
+  try{
+    const { data:pv } = await sb.from('cde_pavimento_auria')
+      .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',EMP_ID).eq('ativo',true).order('ordem');
+    PAVS = pv||[];
+    PAVS.forEach(p=>{ const cod=(p.codigo||'').trim().toUpperCase();
+      PAV_BY_ID[p.id]=p; if(cod) PAV_BY_COD[cod]=p;
+      if(p.tipo==='grupo') GRP_MEMBROS[cod]=new Set((p.membros||[]).map(x=>String(x).trim().toUpperCase())); });
+    const ids=(DOCS||[]).map(d=>d.id);
+    if(ids.length){
+      const { data:dp } = await sb.from('cde_documento_pavimento_auria').select('documento_id,pavimento_id').in('documento_id',ids);
+      (dp||[]).forEach(r=>{ (DOCPAV[r.documento_id]=DOCPAV[r.documento_id]||new Set()).add(r.pavimento_id); });
+    }
+  }catch(e){ /* tabelas podem não existir ainda — organizador cai no fallback */ }
+}
+// Rótulos de pavimento de um documento (via associação; fallback no token `local`).
+function docPavLabels(d){
+  const set=DOCPAV[d.id]; const out=[];
+  if(set && set.size){ set.forEach(pid=>{ const p=PAV_BY_ID[pid]; if(p) out.push(p); }); if(out.length) return out; }
+  const lk=localKey(); const val=(lk&&d.campos)?d.campos[lk]:null;
+  if(val){ const cod=String(val).trim().toUpperCase(); if(PAV_BY_COD[cod]) return [PAV_BY_COD[cod]];
+    return [{codigo:val, nome:localLabel(val), tipo:'pavimento', _fb:true}]; }
+  return [];
+}
+// Expansão p/ o filtro: floor ⇒ + grupos que o contêm; grupo ⇒ + seus membros.
+function pavExpand(codUpper){
+  const exp=new Set([codUpper]); const p=PAV_BY_COD[codUpper];
+  if(p && p.tipo==='grupo'){ (GRP_MEMBROS[codUpper]||new Set()).forEach(m=>exp.add(m)); }
+  else { Object.keys(GRP_MEMBROS).forEach(g=>{ if(GRP_MEMBROS[g].has(codUpper)) exp.add(g); }); }
+  return exp;
+}
+
 async function carregarDocs(){
   const { data: docs } = await sb.from('cde_documento_auria')
     .select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
@@ -958,6 +993,7 @@ async function carregarDocs(){
     const fk=faseKey();
     return { ...d, revs:rs, atual:rs[0]||null, etapa:(d.campos&&fk)?d.campos[fk]:null };
   });
+  await carregarPavimentos();
   await carregarPranchasVinculadas();
 }
 
@@ -2059,31 +2095,50 @@ let QRORG = { fmt:'A3', npp:6, sel:new Set(), busca:'', pav:'__all__' };
 const PAV_SEM='Sem pavimento', PAV_TODAS='Todas as pranchas';
 
 function orgDocsElegiveis(){ return DOCS.filter(d=> d.qr_token); }
-function _pavDe(d){ const lk=localKey(); const val=(lk&&d.campos)?d.campos[lk]:null; return (lk?localLabel(val):PAV_TODAS)||PAV_SEM; }
-function orgPavList(){ const s=new Set(); orgDocsElegiveis().forEach(d=> s.add(_pavDe(d))); return [...s].sort((a,b)=>a.localeCompare(b,'pt',{numeric:true})); }
+// Rótulos {cod,label,rank} de um doc — MULTI (associação) com fallback no token local.
+function orgLabelsDoc(d){
+  const labs=docPavLabels(d);
+  if(!labs.length) return [{cod:'__sem__', label:PAV_SEM, rank:3}];
+  return labs.map(p=>({ cod:(p.codigo||'').trim().toUpperCase()||'__sem__',
+    label:(p.tipo==='grupo'?'Grupo ':'')+(p.nome||p.codigo||PAV_SEM),
+    rank:(p.tipo==='grupo'?2:(p.tipo==='vista'?1:0)) }));
+}
+// Opções do seletor: pavimentos registrados (ordenados) + rótulos de docs sem registro.
+function orgPavList(){
+  const seen=new Map();
+  PAVS.forEach(p=>{ const cod=(p.codigo||'').trim().toUpperCase(); if(cod&&!seen.has(cod))
+    seen.set(cod,{cod,label:(p.tipo==='grupo'?'Grupo ':'')+(p.nome||p.codigo),rank:(p.tipo==='grupo'?2:(p.tipo==='vista'?1:0))}); });
+  orgDocsElegiveis().forEach(d=> orgLabelsDoc(d).forEach(l=>{ if(l.cod!=='__sem__'&&!seen.has(l.cod)) seen.set(l.cod,{cod:l.cod,label:l.label,rank:0}); }));
+  return [...seen.values()].sort((a,b)=> (a.rank-b.rank) || a.label.localeCompare(b.label,'pt',{numeric:true}));
+}
+function orgDocMatchPav(d, codSel){
+  if(!codSel || codSel==='__all__') return true;
+  const exp=pavExpand(codSel);
+  return orgLabelsDoc(d).some(l=> exp.has(l.cod));
+}
 // Lista filtrada por busca + pavimento (só p/ exibir e selecionar).
 function orgDocsFiltrados(){
   const q=QRORG.busca, pav=QRORG.pav;
   return orgDocsElegiveis().filter(d=>{
-    if(pav && pav!=='__all__' && _pavDe(d)!==pav) return false;
+    if(!orgDocMatchPav(d,pav)) return false;
     if(q){ const hay=((d.codigo||'')+' '+discLabel(d.disciplina)+' '+(d.titulo||'')).toLowerCase(); if(!hay.includes(q)) return false; }
     return true;
   });
 }
-// Agrupa uma lista de docs por pavimento (grupos e docs ordenados).
+// Agrupa por pavimento — um doc entra em CADA rótulo (andar/ambiente/vista/grupo).
 function orgGruposDe(docs){
-  const groups=new Map();
-  docs.forEach(d=>{ const label=_pavDe(d); if(!groups.has(label)) groups.set(label,[]); groups.get(label).push(d); });
-  const arr=[...groups.entries()].map(([k,v])=>[k, v.sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'','pt',{numeric:true}))]);
-  arr.sort((a,b)=> a[0].localeCompare(b[0],'pt',{numeric:true}));
-  return arr;
+  const groups=new Map();   // label -> {rank, docs}
+  docs.forEach(d=> orgLabelsDoc(d).forEach(l=>{ if(!groups.has(l.label)) groups.set(l.label,{rank:l.rank,docs:[]}); groups.get(l.label).docs.push(d); }));
+  const arr=[...groups.entries()].map(([k,v])=>[k, v.docs.sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'','pt',{numeric:true})), v.rank]);
+  arr.sort((a,b)=> (a[2]-b[2]) || a[0].localeCompare(b[0],'pt',{numeric:true}));
+  return arr.map(x=>[x[0], x[1]]);
 }
 function orgGrupos(){ return orgGruposDe(orgDocsFiltrados()); }        // p/ a lista (respeita filtros)
 function orgGruposSelecionados(){ return orgGruposDe(orgDocsElegiveis().filter(d=>QRORG.sel.has(d.id))); } // p/ gerar (TODA a seleção)
 function abrirOrganizadorQR(){
   QRORG.sel=new Set(); QRORG.busca=''; QRORG.pav='__all__';
   const bi=$('orgBusca'); if(bi) bi.value='';
-  const sel=$('orgPav'); if(sel){ sel.innerHTML='<option value="__all__">Todos os pavimentos</option>'+orgPavList().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join(''); sel.value='__all__'; }
+  const sel=$('orgPav'); if(sel){ sel.innerHTML='<option value="__all__">Todos os pavimentos</option>'+orgPavList().map(p=>`<option value="${esc(p.cod)}">${esc(p.label)}</option>`).join(''); sel.value='__all__'; }
   renderOrgQR(); $('orgQR').style.display='flex';
 }
 function fecharOrgQR(){ $('orgQR').style.display='none'; }
