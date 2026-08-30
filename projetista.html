@@ -1727,7 +1727,7 @@ async function enviarMensagem(id){
 //  O projetista entrega arquivos direto no CDE do empreendimento. Permissões:
 //  supabase_cde_projetista.sql (RLS por e-mail → fornecedor → disciplina).
 //  O parser e o fluxo de lote espelham o cde_obra.html (mesma convenção).
-var CDE_ENT=[], CDE_EMPS=[], CDE_CUR=null, CDE_CONV=null, CDE_ST=null, CDE_DOCS=[], CDE_LOTE=[];
+var CDE_ENT=[], CDE_EMPS=[], CDE_CUR=null, CDE_CONV=null, CDE_ST=null, CDE_DOCS=[], CDE_LOTE=[], CDE_PAVS=[];
 function cdeEl(id){ return document.getElementById(id); }
 
 async function cdeBootCheck(){
@@ -1772,7 +1772,7 @@ async function showCde(){
 
 async function cdeAbrirEmp(empId){
   CDE_CUR = CDE_EMPS.find(function(e){ return e.id===empId; }) || CDE_EMPS[0];
-  CDE_LOTE=[]; CDE_CONV=null; CDE_DOCS=[];
+  CDE_LOTE=[]; CDE_CONV=null; CDE_DOCS=[]; CDE_PAVS=[];
   cdeEl('cde-body').innerHTML='<div class="loading">Carregando CDE de '+escH(CDE_CUR.nome)+'…</div>';
   try{
     if(!CDE_ST){
@@ -1782,8 +1782,58 @@ async function cdeAbrirEmp(empId){
     const { data: c } = await sb.rpc('cde_convencao', { p_emp: CDE_CUR.id });
     CDE_CONV=(c&&c[0])||null;
   }catch(e){ CDE_CONV=null; }
+  try{
+    const { data: pv } = await sb.from('cde_pavimento_auria')
+      .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',CDE_CUR.id).eq('ativo',true).order('ordem');
+    CDE_PAVS = pv||[];
+  }catch(e){ CDE_PAVS=[]; }
   await cdeCarregarDocs();
   cdeRender();
+}
+
+// Ordena os pavimentos p/ exibição: pav/ambiente < vista < grupo. Dentro de cada
+// tipo, preserva a ordem manual do gestor (CDE_PAVS já vem por `ordem`; sort estável).
+function cdePavsOrdenados(){
+  const rk=function(t){ return t==='grupo'?2:(t==='vista'?1:0); };
+  return CDE_PAVS.slice().sort(function(a,b){ return rk(a.tipo)-rk(b.tipo); });
+}
+// Seleção default de um grupo NOVO: casa o token `local` do código com um pavimento.
+function cdePavSelInit(g){
+  if(g.pavSel!==undefined) return;                     // já inicializado
+  g.pavSel=[]; g.pavNA=false;
+  const loc=(g.parse&&g.parse.local||'').trim().toUpperCase();
+  if(loc){ const m=CDE_PAVS.find(function(p){ return String(p.codigo||'').trim().toUpperCase()===loc; });
+    if(m) g.pavSel=[m.id]; }
+}
+function cdePavToggle(base, id){
+  const g=CDE_LOTE.find(function(x){ return x.base===base; }); if(!g) return;
+  cdePavSelInit(g); g.pavNA=false;
+  const i=g.pavSel.indexOf(id); if(i>=0) g.pavSel.splice(i,1); else g.pavSel.push(id);
+  cdeAvaliar();
+}
+function cdePavNA(base){
+  const g=CDE_LOTE.find(function(x){ return x.base===base; }); if(!g) return;
+  cdePavSelInit(g); g.pavNA=true; g.pavSel=[]; cdeAvaliar();
+}
+// Linha de seleção de pavimento (chips) para um grupo NOVO — só se houver pavimentos.
+function cdePavRow(g){
+  if(!CDE_PAVS.length) return '';
+  cdePavSelInit(g);
+  const chips=cdePavsOrdenados().map(function(p){
+    const on=g.pavSel.indexOf(p.id)>=0 && !g.pavNA;
+    const pref=p.tipo==='grupo'?'Grupo ':'';
+    const cor = on ? 'background:#185FA5;color:#fff;border-color:#185FA5'
+                   : (p.tipo==='grupo'?'background:#eef4ff;color:#274a6e;border-color:#cdd9ea'
+                     :(p.tipo==='vista'?'background:#fff7ed;color:#8a5a12;border-color:#f0dcc0':'background:#fff;color:#33506b;border-color:#d9dee6'));
+    return '<span onclick="cdePavToggle(\''+escH(g.base)+'\',\''+p.id+'\')" title="'+escH(p.nome)+'" '
+      +'style="cursor:pointer;display:inline-block;padding:3px 9px;border:1px solid;border-radius:20px;font-size:11px;'+cor+'">'
+      +escH(pref+p.codigo)+'</span>';
+  }).join(' ');
+  const naOn=g.pavNA?'background:#475569;color:#fff;border-color:#475569':'background:#fff;color:#64748b;border-color:#d9dee6';
+  const na='<span onclick="cdePavNA(\''+escH(g.base)+'\')" style="cursor:pointer;display:inline-block;padding:3px 9px;border:1px solid;border-radius:20px;font-size:11px;'+naOn+'">Não se aplica</span>';
+  return '<tr><td colspan="5" style="padding-top:0">'
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0 4px">'
+    +'<span style="font-size:11px;color:#7A9AB8;margin-right:2px">Pavimento(s):</span>'+chips+' '+na+'</div></td></tr>';
 }
 
 async function cdeCarregarDocs(){
@@ -1950,7 +2000,7 @@ function cdeAvaliar(){
           : '';
         return '<tr><td><span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span>'+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
           +'<td>'+escH(p.disciplina?cdeDiscLabel(p.disciplina):'—')+'</td><td class="cde-cod">'+escH(p.revisao||'—')+'</td>'
-          +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>'+titRow;
+          +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>'+titRow+(a.tipo==='novo'?cdePavRow(g):'');
       }).join('')+'</tbody>';
   cdeEl('cde-prev').style.display='block';
   cdeEl('cde-btn-enviar').disabled=!cdeLoteConfirmavel();
@@ -1988,6 +2038,14 @@ async function cdeConfirmar(){
           disciplina:g.parse.disciplina, campos:g.parse.vals, numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
         }).select('id').single();
         if(error) throw error; docId=d.id;
+        // Associa o documento aos pavimentos escolhidos (F2). "Não se aplica" e
+        // ausência de lista de pavimentos → não grava nada (fallback = local_txt).
+        cdePavSelInit(g);
+        if(!g.pavNA && (g.pavSel||[]).length){
+          const vinc=g.pavSel.map(function(pid){ return { documento_id:docId, pavimento_id:pid }; });
+          const { error:pe } = await sb.from('cde_documento_pavimento_auria').insert(vinc);
+          if(pe) console.warn('cde vínculo pavimento:', pe.message||pe);
+        }
       }
       const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
         documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0',
