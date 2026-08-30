@@ -879,7 +879,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">
             <span style="font-size:13px;color:var(--text-mid);font-weight:600">Pavimentos do empreendimento</span>
             <span style="font-size:11px;color:var(--text-mid)">nome + código (o código casa com o do arquivo)</span>
-            <button type="button" class="btn-secondary" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="pavAuto()">&#8635; Gerar automaticamente</button>
+            <button type="button" class="btn-secondary" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="pavSort()" title="Ordenar por código (alfanumérico)">&#8693; Ordenar A&#8594;Z</button>
+            <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAuto()">&#8635; Gerar automaticamente</button>
             <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavimento</button>
           </div>
           <div id="pavRows"></div>
@@ -2091,9 +2092,12 @@ function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de 
 function renderPavRows(){
   const box=document.getElementById('pavRows'); if(!box) return;
   box.innerHTML = PAV_ROWS.map((r,i)=>`
-    <div class="pav-row" data-i="${i}" style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+    <div class="pav-row" data-i="${i}" ondragover="pavDragOver(event)" ondragleave="pavDragLeave(event)" ondrop="pavDrop(${i},event)"
+         style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+      <span class="pav-drag" draggable="true" ondragstart="pavDragStart(${i},event)" ondragend="pavDragEnd(event)" title="Arraste para reordenar"
+            style="cursor:grab;color:#cbd5e1;font-size:16px;line-height:1;padding:0 2px;user-select:none">&#8942;&#8942;</span>
       <input class="pav-cod" value="${_escAttr(r.codigo)}" placeholder="Código" maxlength="16"
-             style="width:96px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
+             style="width:88px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
       <input class="pav-nome" value="${_escAttr(r.nome)}" placeholder="Nome do pavimento / ambiente"
              style="flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--gray-border);border-radius:7px;font-size:13px;outline:none">
       <select class="pav-tipo" style="padding:7px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff">
@@ -2105,6 +2109,15 @@ function renderPavRows(){
     </div>`).join('');
   const vazio=document.getElementById('pavVazio'); if(vazio) vazio.style.display = PAV_ROWS.length ? 'none' : '';
 }
+// Reordenar: arrastar pela alça (⋮⋮) ou botão "Ordenar A→Z".
+let _pavDrag=-1;
+function pavDragStart(i,ev){ _pavSync(); _pavDrag=i; ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',String(i));}catch(_){}}
+function pavDragOver(ev){ ev.preventDefault(); ev.dataTransfer.dropEffect='move'; ev.currentTarget.style.boxShadow='inset 0 2px 0 0 var(--blue)'; }
+function pavDragLeave(ev){ ev.currentTarget.style.boxShadow=''; }
+function pavDragEnd(){ _pavDrag=-1; document.querySelectorAll('#pavRows .pav-row').forEach(r=>r.style.boxShadow=''); }
+function pavDrop(i,ev){ ev.preventDefault(); ev.currentTarget.style.boxShadow=''; if(_pavDrag<0||_pavDrag===i) return;
+  _pavSync(); const [m]=PAV_ROWS.splice(_pavDrag,1); PAV_ROWS.splice(i,0,m); _pavDrag=-1; renderPavRows(); }
+function pavSort(){ _pavSync(); PAV_ROWS.sort((a,b)=> String(a.codigo||'').localeCompare(String(b.codigo||''),'pt',{numeric:true,sensitivity:'base'})); renderPavRows(); }
 function pavAdd(){ _pavSync(); PAV_ROWS.push({codigo:'',nome:'',tipo:'pavimento'}); renderPavRows();
   const rows=document.querySelectorAll('#pavRows .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
 function pavDel(i){ _pavSync(); PAV_ROWS.splice(i,1); renderPavRows(); }
