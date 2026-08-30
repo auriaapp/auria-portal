@@ -2378,23 +2378,15 @@ async function salvarPavimentosEdit(){
 
   const btn=document.getElementById('btnSalvarPavEdit'); btn.disabled=true; const t0=btn.textContent; btn.textContent='Salvando…';
   try{
-    // 1) atualizar existentes / inserir novos
-    for(const k of keep){
-      if(k._id){
-        const { error } = await sb.from('cde_pavimento_auria')
-          .update({ codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros, ativo:true }).eq('id',k._id);
-        if(error) throw error;
-      }else{
-        const { error } = await sb.from('cde_pavimento_auria')
-          .insert({ empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros });
-        if(error) throw error;
-      }
-    }
-    // 2) removidos: soft-delete se tem referência, hard-delete se não tem
-    for(const o of removidos){
-      if(o.refs>0){ await sb.from('cde_pavimento_auria').update({ ativo:false }).eq('id',o._id); }
-      else       { await sb.from('cde_pavimento_auria').delete().eq('id',o._id); }
-    }
+    // Tudo em LOTE (poucas requisições) — antes era 1 await por linha e travava com muitos pavimentos.
+    const novos = keep.filter(k=>!k._id).map(k=>({ empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros }));
+    const exist = keep.filter(k=>k._id).map(k=>({ id:k._id, empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros, ativo:true }));
+    const softIds = removidos.filter(o=>o.refs>0).map(o=>o._id);   // desativa (tem pranchas)
+    const hardIds = removidos.filter(o=>o.refs===0).map(o=>o._id); // apaga (sem vínculo)
+    if(exist.length){   const { error } = await sb.from('cde_pavimento_auria').upsert(exist,{onConflict:'id'});      if(error) throw error; }
+    if(novos.length){   const { error } = await sb.from('cde_pavimento_auria').insert(novos);                        if(error) throw error; }
+    if(softIds.length){ const { error } = await sb.from('cde_pavimento_auria').update({ativo:false}).in('id',softIds); if(error) throw error; }
+    if(hardIds.length){ const { error } = await sb.from('cde_pavimento_auria').delete().in('id',hardIds);            if(error) throw error; }
     closeModal('modalPavEdit');
     let msg='Pavimentos salvos.';
     if(remComRef.length) msg+=' '+remComRef.length+' desativado(s) por terem pranchas.';
