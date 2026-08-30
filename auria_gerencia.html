@@ -2549,6 +2549,7 @@ async function salvarPavimentosEdit(){
 let BRIEF = { carac:[], docs:[] };
 let BRIEF_BOX = 'briefRows';      // 'briefRows' (criação) | 'briefRowsEdit' (edição)
 let BRIEF_EDIT_EMP = null;
+let BRIEF_DOCS = [];              // documentos do CDE do empreend. (p/ anexar PDF na edição)
 
 function briefDefault(){
   return {
@@ -2598,10 +2599,10 @@ function briefFromConfig(cfg){
   const salvos=Array.isArray(b.docs)?b.docs:[];
   const porRot={}; salvos.forEach(d=>{ porRot[(d.rotulo||'').trim().toLowerCase()]=d; });
   const docs=base.docs.map(d=>{ const s=porRot[d.rotulo.trim().toLowerCase()];
-    return s?Object.assign({},d,{status:s.status||'',sub:s.sub||'',texto:s.texto||''}):d; });
+    return s?Object.assign({},d,{status:s.status||'',sub:s.sub||'',texto:s.texto||'',anexo:s.anexo||null}):d; });
   const fixosRot=new Set(base.docs.map(d=>d.rotulo.trim().toLowerCase()));
   salvos.forEach(s=>{ const k=(s.rotulo||'').trim().toLowerCase(); if(k && !fixosRot.has(k))
-    docs.push({rotulo:s.rotulo,op:s.op||'sne',status:s.status||'',cond:s.cond||null,sub:s.sub||'',texto:s.texto||'',fixo:false}); });
+    docs.push({rotulo:s.rotulo,op:s.op||'sne',status:s.status||'',cond:s.cond||null,sub:s.sub||'',texto:s.texto||'',anexo:s.anexo||null,fixo:false}); });
   return { carac, docs };
 }
 function briefParaSalvar(){ return JSON.parse(JSON.stringify(BRIEF)); }
@@ -2615,6 +2616,12 @@ function briefSetDocStatus(i,v){ if(BRIEF.docs[i]) BRIEF.docs[i].status=v; rende
 function briefAddDoc(){ BRIEF.docs.push({rotulo:'',op:'sne',status:'',cond:null,sub:'',texto:'',fixo:false}); renderBrief();
   const box=document.getElementById(BRIEF_BOX); const inp=box&&box.querySelectorAll('.brief-doc-rot'); if(inp&&inp.length) inp[inp.length-1].focus(); }
 function briefDelDoc(i){ BRIEF.docs.splice(i,1); renderBrief(); }
+function briefSetDocAnexo(i, docId){
+  if(!BRIEF.docs[i]) return;
+  if(!docId){ BRIEF.docs[i].anexo=null; }
+  else{ const doc=BRIEF_DOCS.find(x=>x.id===docId); if(doc) BRIEF.docs[i].anexo={documento_id:doc.id, codigo:doc.codigo, titulo:doc.titulo||'', qr_token:doc.qr_token||null}; }
+  renderBrief();
+}
 
 function renderBrief(){
   const box=document.getElementById(BRIEF_BOX); if(!box) return;
@@ -2652,8 +2659,24 @@ function renderBrief(){
           <input value="${_escAttr(d.texto)}" oninput="briefSetDoc(${i},'texto',this.value)" placeholder="${_escAttr(d.cond.rotulo)}" style="flex:1;${inpCss}"></div>`;
       }
     }
-    const anexo = (d.status==='sim'||d.status==='processo')
-      ? `<div style="margin:6px 0 0 16px;font-size:10.5px;color:#94a3b8">&#128279; vincular PDF do CDE &mdash; dispon&iacute;vel em breve</div>` : '';
+    let anexo='';
+    if(d.status==='sim'||d.status==='processo'){
+      if(!BRIEF_DOCS.length){
+        anexo = `<div style="margin:6px 0 0 16px;font-size:10.5px;color:#94a3b8">&#128279; vincular PDF do CDE &mdash; dispon&iacute;vel ao editar a ficha do empreendimento</div>`;
+      }else if(d.anexo && d.anexo.documento_id){
+        const abrir = d.anexo.qr_token ? ` &middot; <a href="v.html?p=${esc(d.anexo.qr_token)}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none">abrir</a>` : '';
+        anexo = `<div style="margin:6px 0 0 16px;display:flex;align-items:center;gap:8px;font-size:11px">
+          <span style="color:var(--blue);background:var(--blue-light);border-radius:7px;padding:2px 8px">&#128279; ${esc(d.anexo.codigo)}${d.anexo.titulo?(' &mdash; '+esc(d.anexo.titulo)):''}</span>${abrir}
+          <button type="button" onclick="briefSetDocAnexo(${i},'')" style="border:none;background:none;color:#94a3b8;font-size:12px;cursor:pointer">remover</button></div>`;
+      }else{
+        anexo = `<div style="margin:6px 0 0 16px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;color:var(--text-mid)">&#128279; PDF do CDE:</span>
+          <select onchange="briefSetDocAnexo(${i},this.value)" style="max-width:340px;${selCss}">
+            <option value="">Vincular documento&hellip;</option>
+            ${BRIEF_DOCS.map(doc=>`<option value="${esc(doc.id)}">${esc(doc.codigo)}${doc.titulo?(' — '+esc(doc.titulo)):''}</option>`).join('')}
+          </select></div>`;
+      }
+    }
     const rot = d.fixo
       ? `<span style="flex:1;font-size:12.5px;color:var(--text)">${esc(d.rotulo)}</span>`
       : `<input class="brief-doc-rot" value="${_escAttr(d.rotulo)}" oninput="briefSetDoc(${i},'rotulo',this.value)" placeholder="Documento / viabilidade" style="flex:1;min-width:120px;${inpCss}">`;
@@ -2676,8 +2699,15 @@ async function editarBriefing(empId){
   BRIEF_EDIT_EMP=emp;
   document.getElementById('briefEditNome').textContent=emp.nome;
   BRIEF=briefFromConfig(emp.config);
-  BRIEF_BOX='briefRowsEdit'; renderBrief();
+  BRIEF_BOX='briefRowsEdit'; BRIEF_DOCS=[]; renderBrief();
   document.getElementById('modalBriefEdit').classList.add('open');
+  // carrega os documentos do CDE p/ o seletor de anexo (re-render quando chegar)
+  try{
+    const { data:docs } = await sb.from('cde_documento_auria')
+      .select('id,codigo,titulo,disciplina,qr_token').eq('empreendimento_id',empId).eq('arquivado',false).order('codigo');
+    BRIEF_DOCS = docs||[];
+    if(BRIEF_BOX==='briefRowsEdit') renderBrief();
+  }catch(e){ BRIEF_DOCS=[]; }
 }
 async function salvarBriefing(){
   if(!BRIEF_EDIT_EMP) return;
@@ -2743,7 +2773,7 @@ function resetFormEmp(){
   // Pavimentos
   PAV_BOX='pavRows'; PAV_ROWS = []; renderPavRows();
   // Ficha / briefing
-  BRIEF_BOX='briefRows'; BRIEF=briefDefault(); renderBrief();
+  BRIEF_BOX='briefRows'; BRIEF=briefDefault(); BRIEF_DOCS=[]; renderBrief();
   // Logo
   const logoInp = document.getElementById('empLogoInput');
   if(logoInp) logoInp.value = '';
