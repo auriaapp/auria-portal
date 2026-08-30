@@ -883,7 +883,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAuto()">&#8635; Gerar automaticamente</button>
             <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavimento</button>
           </div>
-          <div id="pavRows"></div>
+          <div id="pavRows" style="max-height:320px;overflow-y:auto;padding-right:3px"></div>
           <div id="pavVazio" style="font-size:12px;color:var(--text-mid);padding:6px 2px">Nenhum pavimento cadastrado. Use &#8220;Gerar automaticamente&#8221; ou &#8220;&#43; Pavimento&#8221;.</div>
         </div>
 
@@ -2089,26 +2089,58 @@ function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de 
     PAV_ROWS[i].tipo  =(row.querySelector('.pav-tipo')?.value||'pavimento');
   });
 }
+let _pavGrpOpen=-1;   // índice do grupo com o editor de membros aberto (-1 = nenhum)
 function renderPavRows(){
   const box=document.getElementById('pavRows'); if(!box) return;
-  box.innerHTML = PAV_ROWS.map((r,i)=>`
+  const codsPav = PAV_ROWS.filter(r=>r.tipo!=='grupo' && (r.codigo||'').trim()).map(r=>(r.codigo||'').trim().toUpperCase());
+  box.innerHTML = PAV_ROWS.map((r,i)=>{
+    const grupo = r.tipo==='grupo';
+    const membros = grupo ? (r.membros||[]) : [];
+    let ed='';
+    if(grupo && _pavGrpOpen===i){
+      const chks = codsPav.length ? codsPav.map(c=>`
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace">
+          <input type="checkbox" ${membros.map(x=>String(x).toUpperCase()).includes(c)?'checked':''} onchange="pavGrpMember(${i},'${c}')" style="cursor:pointer">${c}</label>`).join('')
+        : '<span style="font-size:12px;color:var(--text-mid)">Cadastre pavimentos acima para incluir no grupo.</span>';
+      ed = `<div style="margin:0 0 10px 34px;padding:9px 11px;border:1px dashed var(--gray-border);border-radius:8px;background:#f8fafc">
+        <div style="font-size:11px;color:var(--text-mid);margin-bottom:7px;font-weight:600">Pavimentos deste grupo</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center">${chks}
+          <button type="button" onclick="pavGrpToggle(-1)" style="margin-left:auto;border:none;background:none;color:var(--blue);font-size:12px;font-weight:600;cursor:pointer">Fechar</button>
+        </div></div>`;
+    }
+    return `
     <div class="pav-row" data-i="${i}" ondragover="pavDragOver(event)" ondragleave="pavDragLeave(event)" ondrop="pavDrop(${i},event)"
-         style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+         style="display:flex;gap:8px;align-items:center;margin-bottom:7px${grupo?';background:#eef4ff;border-radius:8px;padding:5px 6px':''}">
       <span class="pav-drag" draggable="true" ondragstart="pavDragStart(${i},event)" ondragend="pavDragEnd(event)" title="Arraste para reordenar"
             style="cursor:grab;color:#cbd5e1;font-size:16px;line-height:1;padding:0 2px;user-select:none">&#8942;&#8942;</span>
       <input class="pav-cod" value="${_escAttr(r.codigo)}" placeholder="Código" maxlength="16"
              style="width:88px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
-      <input class="pav-nome" value="${_escAttr(r.nome)}" placeholder="Nome do pavimento / ambiente"
+      <input class="pav-nome" value="${_escAttr(r.nome)}" placeholder="${grupo?'Nome do grupo (ex.: Subsolos)':'Nome do pavimento / ambiente'}"
              style="flex:1;min-width:120px;padding:7px 10px;border:1px solid var(--gray-border);border-radius:7px;font-size:13px;outline:none">
-      <select class="pav-tipo" style="padding:7px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff">
-        <option value="pavimento" ${r.tipo!=='ambiente'?'selected':''}>Pavimento</option>
+      ${grupo?`<button type="button" onclick="pavGrpToggle(${i})" title="Escolher pavimentos do grupo"
+             style="border:1px solid var(--gray-border);background:#fff;border-radius:7px;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap">Membros (${membros.length})</button>`:''}
+      <select class="pav-tipo" onchange="pavTipoChange(${i},this.value)" style="padding:7px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff">
+        <option value="pavimento" ${(r.tipo!=='ambiente'&&!grupo)?'selected':''}>Pavimento</option>
         <option value="ambiente"  ${r.tipo==='ambiente'?'selected':''}>Ambiente</option>
+        <option value="grupo"     ${grupo?'selected':''}>Grupo</option>
       </select>
       <button type="button" onclick="pavDel(${i})" title="Remover"
               style="border:none;background:none;color:#94a3b8;font-size:17px;cursor:pointer;line-height:1;padding:2px 6px">&#215;</button>
-    </div>`).join('');
+    </div>${ed}`;
+  }).join('');
   const vazio=document.getElementById('pavVazio'); if(vazio) vazio.style.display = PAV_ROWS.length ? 'none' : '';
 }
+// tipo mudou (pavimento/ambiente/grupo)
+function pavTipoChange(i,val){ _pavSync(); PAV_ROWS[i].tipo=val;
+  if(val==='grupo'){ if(!PAV_ROWS[i].membros) PAV_ROWS[i].membros=[]; }
+  else { PAV_ROWS[i].membros=[]; if(_pavGrpOpen===i) _pavGrpOpen=-1; }
+  renderPavRows(); }
+// abre/fecha o editor de membros de um grupo
+function pavGrpToggle(i){ _pavSync(); _pavGrpOpen = (_pavGrpOpen===i? -1 : i); renderPavRows(); }
+// marca/desmarca um pavimento como membro do grupo i
+function pavGrpMember(i,cod){ _pavSync(); const m=(PAV_ROWS[i].membros=PAV_ROWS[i].membros||[]);
+  const u=String(cod).toUpperCase(), k=m.map(x=>String(x).toUpperCase()).indexOf(u);
+  if(k>=0) m.splice(k,1); else m.push(u); renderPavRows(); }
 // Reordenar: arrastar pela alça (⋮⋮) ou botão "Ordenar A→Z".
 let _pavDrag=-1;
 function pavDragStart(i,ev){ _pavSync(); _pavDrag=i; ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',String(i));}catch(_){}}
@@ -2117,31 +2149,43 @@ function pavDragLeave(ev){ ev.currentTarget.style.boxShadow=''; }
 function pavDragEnd(){ _pavDrag=-1; document.querySelectorAll('#pavRows .pav-row').forEach(r=>r.style.boxShadow=''); }
 function pavDrop(i,ev){ ev.preventDefault(); ev.currentTarget.style.boxShadow=''; if(_pavDrag<0||_pavDrag===i) return;
   _pavSync(); const [m]=PAV_ROWS.splice(_pavDrag,1); PAV_ROWS.splice(i,0,m); _pavDrag=-1; renderPavRows(); }
-function pavSort(){ _pavSync(); PAV_ROWS.sort((a,b)=> String(a.codigo||'').localeCompare(String(b.codigo||''),'pt',{numeric:true,sensitivity:'base'})); renderPavRows(); }
+function pavSort(){ _pavSync(); PAV_ROWS.sort((a,b)=>{ const ga=a.tipo==='grupo'?1:0, gb=b.tipo==='grupo'?1:0; if(ga!==gb) return ga-gb;  // grupos sempre no fim
+  return String(a.codigo||'').localeCompare(String(b.codigo||''),'pt',{numeric:true,sensitivity:'base'}); }); renderPavRows(); }
 function pavAdd(){ _pavSync(); PAV_ROWS.push({codigo:'',nome:'',tipo:'pavimento'}); renderPavRows();
   const rows=document.querySelectorAll('#pavRows .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
 function pavDel(i){ _pavSync(); PAV_ROWS.splice(i,1); renderPavRows(); }
-function pavAuto(){   // rascunho a partir dos números acima (o gestor ajusta os códigos)
+function pavAuto(){   // rascunho: andares individuais + grupo dos tipos (o gestor ajusta)
   const de=_getDe(), ate=_getAte();
   const g=document.getElementById('chkGaragem')?.checked, e=document.getElementById('chkEdicula')?.checked;
   const grp=(document.getElementById('empTipoGrupo')?.value||'Pavimentos Tipo').trim()||'Pavimentos Tipo';
-  const rows=[];
-  if(g) rows.push({codigo:'SS1', nome:'Subsolo / Garagem', tipo:'pavimento'});
-  rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento'});
-  if(ate>=de) rows.push({codigo:'TIP', nome: grp + (ate>de ? ' ('+de+'º ao '+ate+'º)' : ' ('+de+'º)'), tipo:'pavimento'});
-  rows.push({codigo:'COB', nome:'Cobertura', tipo:'pavimento'});
-  if(e) rows.push({codigo:'EDI', nome:'Edícula', tipo:'ambiente'});
-  PAV_ROWS = rows; renderPavRows();
+  const rows=[], tipoCods=[];
+  if(g) rows.push({codigo:'SS1', nome:'Subsolo 1', tipo:'pavimento', membros:[]});
+  rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento', membros:[]});
+  // andares tipo INDIVIDUAIS (ex.: 09T, 10T … 55T) — armação pode diferir por andar
+  if(ate>=de) for(let n=de;n<=ate;n++){ const c=String(n).padStart(2,'0')+'T'; tipoCods.push(c);
+    rows.push({codigo:c, nome:n+'º Pavimento Tipo', tipo:'pavimento', membros:[]}); }
+  rows.push({codigo:'COB', nome:'Cobertura', tipo:'pavimento', membros:[]});
+  if(e) rows.push({codigo:'EDI', nome:'Edícula', tipo:'ambiente', membros:[]});
+  // GRUPO dos tipos, no fim (TIP agrupa os andares tipo)
+  if(tipoCods.length>1) rows.push({codigo:'TIP', nome:grp, tipo:'grupo', membros:tipoCods});
+  PAV_ROWS = rows; _pavGrpOpen=-1; renderPavRows();
 }
 // Lê a lista pronta para gravar (aparados, sem duplicar código, com ordem).
 function pavParaSalvar(){
   _pavSync();
+  // códigos válidos de pavimento/ambiente (p/ validar os membros dos grupos)
+  const validos=new Set();
+  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c && r.tipo!=='grupo') validos.add(c); });
   const vistos=new Set(), out=[];
   PAV_ROWS.forEach((r,idx)=>{
     const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
     if(!codigo || !nome || vistos.has(codigo)) return;
     vistos.add(codigo);
-    out.push({ codigo, nome, tipo:(r.tipo==='ambiente'?'ambiente':'pavimento'), ordem:idx });
+    const tipo = (r.tipo==='ambiente'||r.tipo==='grupo') ? r.tipo : 'pavimento';
+    const membros = tipo==='grupo'
+      ? [...new Set((r.membros||[]).map(x=>String(x).trim().toUpperCase()).filter(x=>validos.has(x)))]
+      : [];
+    out.push({ codigo, nome, tipo, ordem:idx, membros });
   });
   return out;
 }
