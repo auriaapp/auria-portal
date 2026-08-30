@@ -967,6 +967,39 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- ═══ MODAL: EDITAR PAVIMENTOS (empreendimento existente) ═══ -->
+<div class="modal-bg" id="modalPavEdit">
+  <div class="modal" style="width:640px;max-width:97vw;max-height:93vh;overflow-y:auto;padding:26px 26px 20px">
+    <button class="modal-close" onclick="closeModal('modalPavEdit')">&#215;</button>
+    <div style="display:flex;align-items:center;gap:13px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--gray-border)">
+      <div style="width:44px;height:44px;background:var(--blue);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">&#127963;</div>
+      <div>
+        <div class="modal-title" style="margin-bottom:1px">Pavimentos do empreendimento</div>
+        <div class="modal-sub" style="margin-bottom:0">Editando: <strong id="pavEditNome">&mdash;</strong></div>
+      </div>
+    </div>
+
+    <div style="background:#f0f7ff;border:1px solid #cfe3fb;border-radius:9px;padding:10px 13px;margin-bottom:14px;font-size:12px;color:#274a6e;line-height:1.7">
+      Adicionar/renomear/reordenar é livre. O vínculo prancha&#8596;pavimento é por <b>id</b>, então
+      <b>trocar o código</b> não quebra os arquivos já cadastrados (só o casamento automático pelo nome de arquivos antigos).
+      Ao <b>remover</b> um pavimento que já tem pranchas (badge <span style="background:#f1f5f9;border-radius:10px;padding:1px 6px">N&nbsp;pr.</span>),
+      ele é <b>desativado</b>, não apagado — o histórico e os vínculos ficam preservados.
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap">
+      <span style="font-size:13px;color:var(--text-mid);font-weight:600">Lista de pavimentos</span>
+      <button type="button" class="btn-secondary" style="margin-left:auto;padding:5px 10px;font-size:12px" onclick="pavSort()" title="Ordenar por código (alfanumérico)">&#8693; Ordenar A&#8594;Z</button>
+      <button type="button" class="btn-secondary" style="padding:5px 10px;font-size:12px" onclick="pavAdd()">&#43; Pavto./Grupo/Vista</button>
+    </div>
+    <div id="pavRowsEdit" style="max-height:46vh;overflow-y:auto;padding-right:3px"></div>
+
+    <div class="modal-footer" style="margin-top:16px">
+      <button class="btn-secondary" onclick="closeModal('modalPavEdit')">Cancelar</button>
+      <button class="btn-primary" id="btnSalvarPavEdit" onclick="salvarPavimentosEdit()">Salvar pavimentos</button>
+    </div>
+  </div>
+</div>
+
 <!-- CRONOGRAMA -->
 <div class="modal-bg" id="modalCronograma">
   <div class="modal cron-modal" style="border-top:4px solid var(--blue)">
@@ -1575,6 +1608,7 @@ function buildCard(emp, adminMode=false){
       <div class="card-footer-btns">
         ${adminMode ? `<button class="btn-ver" onclick="abrirDeleteEmp('${emp.id}')"
           style="border-color:var(--red);color:var(--red);margin-right:auto">&#128465; Excluir</button>` : ''}
+        ${adminMode ? `<button class="btn-ver" onclick="editarPavimentos('${emp.id}')">&#127963; Pavimentos</button>` : ''}
         <button class="btn-ver" onclick="abrirCronograma('${emp.id}')">&#128197; Cronograma</button>
         <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
       </div>
@@ -2099,10 +2133,11 @@ function adjTipoPav(field, delta){
 }
 
 // ── Pavimentos do empreendimento (lista editável nome + código) ─────────────
-let PAV_ROWS = [];   // [{codigo, nome, tipo}]
+let PAV_ROWS = [];   // [{codigo, nome, tipo, membros, _id?, _refs?}]
+let PAV_BOX  = 'pavRows';   // container atual do editor (novo empreend. ou edição)
 function _escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de re-render/salvar)
-  document.querySelectorAll('#pavRows .pav-row').forEach(row=>{
+  document.querySelectorAll('#'+PAV_BOX+' .pav-row').forEach(row=>{
     const i=+row.dataset.i; if(!PAV_ROWS[i]) return;
     PAV_ROWS[i].codigo=(row.querySelector('.pav-cod')?.value||'');
     PAV_ROWS[i].nome  =(row.querySelector('.pav-nome')?.value||'');
@@ -2111,7 +2146,7 @@ function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de 
 }
 let _pavGrpOpen=-1;   // índice do grupo com o editor de membros aberto (-1 = nenhum)
 function renderPavRows(){
-  const box=document.getElementById('pavRows'); if(!box) return;
+  const box=document.getElementById(PAV_BOX); if(!box) return;
   // candidatos a membro de grupo: só pavimentos/ambientes (vista e grupo não entram)
   const codsPav = PAV_ROWS.filter(r=>(r.tipo==='pavimento'||r.tipo==='ambiente') && (r.codigo||'').trim()).map(r=>(r.codigo||'').trim().toUpperCase());
   box.innerHTML = PAV_ROWS.map((r,i)=>{
@@ -2147,11 +2182,12 @@ function renderPavRows(){
         <option value="vista"     ${vista?'selected':''}>Vista</option>
         <option value="grupo"     ${grupo?'selected':''}>Grupo</option>
       </select>
+      ${(r._refs>0)?`<span title="pranchas usando este pavimento" style="font-size:10.5px;color:#64748b;background:#f1f5f9;border-radius:10px;padding:2px 7px;white-space:nowrap">${r._refs} pr.</span>`:''}
       <button type="button" onclick="pavDel(${i})" title="Remover"
               style="border:none;background:none;color:#94a3b8;font-size:17px;cursor:pointer;line-height:1;padding:2px 6px">&#215;</button>
     </div>${ed}`;
   }).join('');
-  const vazio=document.getElementById('pavVazio'); if(vazio) vazio.style.display = PAV_ROWS.length ? 'none' : '';
+  const vazio=document.getElementById('pavVazio'); if(vazio) vazio.style.display = (PAV_BOX==='pavRows' && !PAV_ROWS.length) ? '' : 'none';
 }
 // tipo mudou (pavimento/ambiente/grupo)
 function pavTipoChange(i,val){ _pavSync(); PAV_ROWS[i].tipo=val;
@@ -2220,6 +2256,106 @@ function pavParaSalvar(){
     out.push({ codigo, nome, tipo, ordem:idx, membros });
   });
   return out;
+}
+
+// ═══ EDITAR PAVIMENTOS DE EMPREENDIMENTO EXISTENTE (F1b) ═══
+let PAV_EDIT_EMP=null;   // empreendimento em edição
+let PAV_ORIG=[];         // snapshot {_id, codigo, _refs} p/ diff ao salvar
+async function editarPavimentos(empId){
+  const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
+  PAV_EDIT_EMP=emp;
+  document.getElementById('pavEditNome').textContent=emp.nome;
+  PAV_BOX='pavRowsEdit'; _pavGrpOpen=-1;
+  const box=document.getElementById('pavRowsEdit');
+  box.innerHTML='<div style="padding:12px;color:var(--text-mid);font-size:13px">Carregando pavimentos…</div>';
+  document.getElementById('modalPavEdit').classList.add('open');
+  try{
+    const { data:pv } = await sb.from('cde_pavimento_auria')
+      .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',empId).eq('ativo',true).order('ordem');
+    const ids=(pv||[]).map(p=>p.id);
+    // vínculos explícitos (associação doc↔pavimento)
+    const refCount={};
+    if(ids.length){
+      const { data:vinc } = await sb.from('cde_documento_pavimento_auria').select('pavimento_id').in('pavimento_id',ids);
+      (vinc||[]).forEach(v=>{ refCount[v.pavimento_id]=(refCount[v.pavimento_id]||0)+1; });
+    }
+    // legado: docs cujo local_txt casa com o código (pranchas antigas sem vínculo)
+    const legado={};
+    try{
+      const { data:docs } = await sb.from('cde_documento_auria').select('local_txt').eq('empreendimento_id',empId).eq('arquivado',false);
+      (docs||[]).forEach(d=>{ const k=(d.local_txt||'').trim().toUpperCase(); if(k) legado[k]=(legado[k]||0)+1; });
+    }catch(e){}
+    PAV_ROWS=(pv||[]).map(p=>{
+      const refs=(refCount[p.id]||0)+(legado[(p.codigo||'').trim().toUpperCase()]||0);
+      return { _id:p.id, codigo:p.codigo, nome:p.nome, tipo:p.tipo, membros:p.membros||[], _refs:refs };
+    });
+    PAV_ORIG=PAV_ROWS.map(r=>({ _id:r._id, codigo:(r.codigo||'').trim().toUpperCase(), refs:r._refs }));
+    renderPavRows();
+  }catch(e){
+    box.innerHTML='<div style="padding:12px;color:var(--red);font-size:13px">Erro ao carregar: '+esc(e.message||e)+'</div>';
+  }
+}
+
+async function salvarPavimentosEdit(){
+  if(!PAV_EDIT_EMP) return;
+  const emp=PAV_EDIT_EMP;
+  _pavSync();
+  // valida e monta a lista a manter (preservando _id)
+  const validos=new Set();
+  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c&&(r.tipo==='pavimento'||r.tipo==='ambiente')) validos.add(c); });
+  const vistos=new Set(), keep=[];
+  for(let idx=0; idx<PAV_ROWS.length; idx++){
+    const r=PAV_ROWS[idx];
+    const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
+    if(!codigo || !nome) continue;                 // linha incompleta: ignora
+    if(vistos.has(codigo)){ showToast('Código repetido na lista: '+codigo+'. Corrija antes de salvar.','red'); return; }
+    vistos.add(codigo);
+    const tipo=(r.tipo==='ambiente'||r.tipo==='grupo'||r.tipo==='vista')?r.tipo:'pavimento';
+    const membros=tipo==='grupo'?[...new Set((r.membros||[]).map(x=>String(x).trim().toUpperCase()).filter(x=>validos.has(x)))]:[];
+    keep.push({ _id:r._id||null, codigo, nome, tipo, ordem:idx, membros });
+  }
+  // removidos = ids originais que não estão mais na lista
+  const keptIds=new Set(keep.filter(k=>k._id).map(k=>k._id));
+  const removidos=PAV_ORIG.filter(o=>!keptIds.has(o._id));
+  const remComRef=removidos.filter(o=>o.refs>0);
+  if(remComRef.length){
+    const lst=remComRef.map(o=>o.codigo+' ('+o.refs+' pr.)').join(', ');
+    if(!confirm('Estes pavimentos têm pranchas vinculadas e serão DESATIVADOS (não apagados), preservando o histórico:\n\n'+lst+'\n\nDeseja continuar?')) return;
+  }
+  // aviso não-bloqueante: código alterado em pavimento com referências
+  const origById={}; PAV_ORIG.forEach(o=>origById[o._id]=o);
+  const codMudou=keep.filter(k=>k._id && origById[k._id] && origById[k._id].codigo!==k.codigo && origById[k._id].refs>0);
+
+  const btn=document.getElementById('btnSalvarPavEdit'); btn.disabled=true; const t0=btn.textContent; btn.textContent='Salvando…';
+  try{
+    // 1) atualizar existentes / inserir novos
+    for(const k of keep){
+      if(k._id){
+        const { error } = await sb.from('cde_pavimento_auria')
+          .update({ codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros, ativo:true }).eq('id',k._id);
+        if(error) throw error;
+      }else{
+        const { error } = await sb.from('cde_pavimento_auria')
+          .insert({ empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros });
+        if(error) throw error;
+      }
+    }
+    // 2) removidos: soft-delete se tem referência, hard-delete se não tem
+    for(const o of removidos){
+      if(o.refs>0){ await sb.from('cde_pavimento_auria').update({ ativo:false }).eq('id',o._id); }
+      else       { await sb.from('cde_pavimento_auria').delete().eq('id',o._id); }
+    }
+    closeModal('modalPavEdit');
+    let msg='Pavimentos salvos.';
+    if(remComRef.length) msg+=' '+remComRef.length+' desativado(s) por terem pranchas.';
+    if(codMudou.length)  msg+=' Atenção: '+codMudou.length+' código(s) alterado(s) em pavimento com pranchas — vínculos preservados, mas o casamento por nome de arquivos antigos pode mudar.';
+    showToast(msg,'success');
+    PAV_BOX='pavRows';
+  }catch(e){
+    showToast('Erro ao salvar pavimentos: '+(e.message||e),'red');
+  }finally{
+    btn.disabled=false; btn.textContent=t0;
+  }
 }
 
 function previewLogo(input){
@@ -2848,7 +2984,7 @@ function finRender(){
 // MODAIS
 // ═══════════════════════════════════════════════════════
 function openModalConvite(){ document.getElementById('modalConvite').classList.add('open'); }
-function openModalNovoEmp(){ resetFormEmp(); preencherFiltroEmpresas(); document.getElementById('modalNovoEmp').classList.add('open'); }
+function openModalNovoEmp(){ PAV_BOX='pavRows'; resetFormEmp(); preencherFiltroEmpresas(); document.getElementById('modalNovoEmp').classList.add('open'); }
 function closeModal(id){ document.getElementById(id).classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════════
