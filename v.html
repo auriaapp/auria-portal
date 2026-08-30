@@ -171,13 +171,14 @@ function updateCss(){
   const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
   cvBase.style.transform=tr;
   renderPins();
-  tilesPosicionar(); detAgendar();
+  tilesPosicionar();
+  if(_MOVEL) detAgendarView(); else detAgendar();
 }
 // ── Detalhe em ladrilhos ──
 function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*_DET_SS; }
 function detNivel(){ const a=detEscalaAlvo(); if(!(a>0)) return null; return Math.ceil(Math.log2(a)*2)/2; }
 function detPrecisa(){ if(!B.valido||!V.page) return false; const r=detEscalaAlvo()/B.scale; return r>1.05||r<0.65; }
-function tilesLimpar(){ T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove(); }); T.mapa.clear(); T.nivel=null; }
+function tilesLimpar(){ T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove(); }); T.mapa.clear(); T.nivel=null; _vcLimpar(); }
 function tilesPosicionar(){ if(!B.valido) return; const k=V.zoom/B.scale; tilesEl.style.transform='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')'; }
 function tilesVisibilidade(nivel){ T.mapa.forEach(t=>{ t.el.style.display=(t.nivel===nivel)?'block':'none'; }); }
 function detAgendar(){ clearTimeout(V._detTimer); if(!detPrecisa()){ tilesVisibilidade(null); return; } const n=detNivel(); if(n!==T.nivel) tilesVisibilidade(n); V._detTimer=setTimeout(tilesGarantir, _MOVEL?150:200); }
@@ -201,6 +202,53 @@ async function tilesGarantir(){
   }
 }
 function tilesPodar(){ while(T.mapa.size>_TILE_MAX){ const c=T.mapa.keys().next().value, t=T.mapa.get(c); if(t&&t.el) t.el.remove(); T.mapa.delete(c); } }
+
+// ── CACHE DE VISTAS (mobile) ────────────────────────────────────────────────
+//  Em vez de ladrilhos pequenos (lento, quadradinho por quadradinho), renderiza a
+//  ÁREA VISÍVEL INTEIRA (+ margem) de UMA vez, num canvas só, e GUARDA. Arrastar
+//  move os canvas guardados por CSS (instantâneo); só renderiza de novo quando a
+//  vista sai da área já coberta. Voltar a uma área já vista é imediato (cache).
+let VCACHE = [];
+const _VC_MAX = 6;        // ~6 vistas guardadas
+const _VC_MARGEM = 0.35;  // 35% de folga além da tela (pans pequenos não re-renderizam)
+const _VC_RDPR = Math.min(window.devicePixelRatio||1, 2);
+function _vcVis(nv){ VCACHE.forEach(v=>{ v.cv.style.display = (v.nivel===nv)?'block':'none'; }); }
+function _vcCobre(nv){   // já existe vista no cache (nível nv) cobrindo a tela toda?
+  const z=V.zoom, cw=stage.clientWidth, ch=stage.clientHeight;
+  const x0=V.panX/z, y0=V.panY/z, x1=(V.panX+cw)/z, y1=(V.panY+ch)/z;
+  const v = VCACHE.find(v=> v.nivel===nv && v.rx<=x0+0.5 && v.ry<=y0+0.5 && v.rx+v.rw>=x1-0.5 && v.ry+v.rh>=y1-0.5);
+  if(v){ VCACHE.splice(VCACHE.indexOf(v),1); VCACHE.push(v); }   // LRU: renova
+  return v;
+}
+function _vcPodar(){ while(VCACHE.length>_VC_MAX){ const v=VCACHE.shift(); if(v&&v.cv&&v.cv.parentNode) v.cv.remove(); } }
+function _vcLimpar(){ VCACHE.forEach(v=>{ if(v.cv&&v.cv.parentNode) v.cv.remove(); }); VCACHE=[]; }
+function detAgendarView(){ clearTimeout(V._detTimer); V._detTimer=setTimeout(detView, _MOVEL?150:200); }
+async function detView(){
+  if(!V.page || !B.valido || $('bim').style.display==='block') return;
+  const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
+  const nv=detNivel(); if(nv==null) return;
+  _vcVis(nv);
+  if(_vcCobre(nv)) return;                 // já coberto pelo cache → nada a renderizar
+  const z=V.zoom, s=z*_VC_RDPR;            // resolução exata da vista atual
+  const mx=(cw/z)*_VC_MARGEM, my=(ch/z)*_VC_MARGEM;
+  let rx=Math.max(0, V.panX/z - mx), ry=Math.max(0, V.panY/z - my);
+  let rw=Math.min(B.pw-rx, cw/z + 2*mx), rh=Math.min(B.ph-ry, ch/z + 2*my);
+  if(rw<=0||rh<=0) return;
+  const W=Math.max(1,Math.round(rw*s)), H=Math.max(1,Math.round(rh*s));
+  const job=++V._renderJob; cancelarRender();
+  const off=document.createElement('canvas'); off.width=W; off.height=H;
+  const ctx=off.getContext('2d'); ctx.setTransform(1,0,0,1,0,0); ctx.save(); ctx.translate(-rx*s,-ry*s);
+  const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}) });
+  V._renderTask=task;
+  try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('view:',e); return; }
+  V._renderTask=null; ctx.restore(); if(job!==V._renderJob) return;
+  off.style.position='absolute';
+  off.style.left=(rx*B.scale)+'px'; off.style.top=(ry*B.scale)+'px';
+  off.style.width=(rw*B.scale)+'px'; off.style.height=(rh*B.scale)+'px';
+  tilesEl.appendChild(off);
+  VCACHE.push({ cv:off, nivel:nv, rx, ry, rw, rh });
+  _vcPodar(); _vcVis(nv);
+}
 function revisarBase(){ if(_MOVEL) return;   // no celular NÃO re-renderiza a base (isso limparia o cache dos ladrilhos); a base leve basta + tiles
   if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
 function fitPage(){
