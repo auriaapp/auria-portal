@@ -969,7 +969,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 
     <div class="modal-footer" style="margin-top:0">
       <button class="btn-secondary" onclick="closeModal('modalNovoEmp')">Cancelar</button>
-      <button class="btn-primary" id="btnCriarEmp" onclick="criarEmpreendimento()">&#43; Criar Empreendimento</button>
+      <button class="btn-primary" id="btnCriarEmp" onclick="submitEmp()">&#43; Criar Empreendimento</button>
     </div>
   </div>
 </div>
@@ -1685,8 +1685,7 @@ function buildCard(emp, adminMode=false){
       <div class="card-footer-btns">
         ${adminMode ? `<button class="btn-ver" onclick="abrirDeleteEmp('${emp.id}')"
           style="border-color:var(--red);color:var(--red);margin-right:auto">&#128465; Excluir</button>` : ''}
-        ${adminMode ? `<button class="btn-ver" onclick="editarPavimentos('${emp.id}')">&#127963; Pavimentos</button>` : ''}
-        ${adminMode ? `<button class="btn-ver" onclick="editarBriefing('${emp.id}')">&#128203; Ficha</button>` : ''}
+        ${adminMode ? `<button class="btn-ver" onclick="abrirEditarEmp('${emp.id}')">&#9881; Editar</button>` : ''}
         <button class="btn-ver" onclick="abrirCronograma('${emp.id}')">&#128197; Cronograma</button>
         <button class="btn-ver" onclick="verDetalhe('${emp.id}')">Ver detalhes &#8594;</button>
       </div>
@@ -2458,6 +2457,59 @@ function pavParaSalvar(){
 // ═══ EDITAR PAVIMENTOS DE EMPREENDIMENTO EXISTENTE (F1b) ═══
 let PAV_EDIT_EMP=null;   // empreendimento em edição
 let PAV_ORIG=[];         // snapshot {_id, codigo, _refs} p/ diff ao salvar
+// Carrega os pavimentos de um empreend. em PAV_ROWS (+ PAV_ORIG p/ diff), com contador de pranchas.
+async function pavCarregar(empId){
+  const { data:pv } = await sb.from('cde_pavimento_auria')
+    .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',empId).eq('ativo',true).order('ordem');
+  const ids=(pv||[]).map(p=>p.id);
+  const refCount={};
+  if(ids.length){
+    const { data:vinc } = await sb.from('cde_documento_pavimento_auria').select('pavimento_id').in('pavimento_id',ids);
+    (vinc||[]).forEach(v=>{ refCount[v.pavimento_id]=(refCount[v.pavimento_id]||0)+1; });
+  }
+  const legado={};
+  try{
+    const { data:docs } = await sb.from('cde_documento_auria').select('local_txt').eq('empreendimento_id',empId).eq('arquivado',false);
+    (docs||[]).forEach(d=>{ const k=(d.local_txt||'').trim().toUpperCase(); if(k) legado[k]=(legado[k]||0)+1; });
+  }catch(e){}
+  PAV_ROWS=(pv||[]).map(p=>{
+    const refs=(refCount[p.id]||0)+(legado[(p.codigo||'').trim().toUpperCase()]||0);
+    return { _id:p.id, codigo:p.codigo, nome:p.nome, tipo:p.tipo, membros:p.membros||[], _refs:refs };
+  });
+  PAV_ORIG=PAV_ROWS.map(r=>({ _id:r._id, codigo:(r.codigo||'').trim().toUpperCase(), refs:r._refs }));
+}
+// Aplica no banco a lista atual (diff contra PAV_ORIG): upsert/insert/soft-delete/delete, em LOTE.
+// Lança erro em caso de código repetido ou falha; devolve {remComRef, codMudou} p/ mensagem.
+async function pavAplicar(emp){
+  _pavSync();
+  const validos=new Set();
+  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c&&(r.tipo==='pavimento'||r.tipo==='ambiente')) validos.add(c); });
+  const vistos=new Set(), keep=[];
+  for(let idx=0; idx<PAV_ROWS.length; idx++){
+    const r=PAV_ROWS[idx];
+    const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
+    if(!codigo || !nome) continue;
+    if(vistos.has(codigo)) throw new Error('Código de pavimento repetido: '+codigo);
+    vistos.add(codigo);
+    const tipo=(r.tipo==='ambiente'||r.tipo==='grupo'||r.tipo==='vista')?r.tipo:'pavimento';
+    const membros=tipo==='grupo'?[...new Set((r.membros||[]).map(x=>String(x).trim().toUpperCase()).filter(x=>validos.has(x)))]:[];
+    keep.push({ _id:r._id||null, codigo, nome, tipo, ordem:idx, membros });
+  }
+  const keptIds=new Set(keep.filter(k=>k._id).map(k=>k._id));
+  const removidos=PAV_ORIG.filter(o=>!keptIds.has(o._id));
+  const origById={}; PAV_ORIG.forEach(o=>origById[o._id]=o);
+  const codMudou=keep.filter(k=>k._id && origById[k._id] && origById[k._id].codigo!==k.codigo && origById[k._id].refs>0).length;
+  const novos = keep.filter(k=>!k._id).map(k=>({ empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros }));
+  const exist = keep.filter(k=>k._id).map(k=>({ id:k._id, empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros, ativo:true }));
+  const softIds = removidos.filter(o=>o.refs>0).map(o=>o._id);
+  const hardIds = removidos.filter(o=>o.refs===0).map(o=>o._id);
+  if(exist.length){   const { error } = await sb.from('cde_pavimento_auria').upsert(exist,{onConflict:'id'});      if(error) throw error; }
+  if(novos.length){   const { error } = await sb.from('cde_pavimento_auria').insert(novos);                        if(error) throw error; }
+  if(softIds.length){ const { error } = await sb.from('cde_pavimento_auria').update({ativo:false}).in('id',softIds); if(error) throw error; }
+  if(hardIds.length){ const { error } = await sb.from('cde_pavimento_auria').delete().in('id',hardIds);            if(error) throw error; }
+  return { remComRef:softIds.length, codMudou };
+}
+// Modal AVULSO de pavimentos (ainda usado internamente; no card, o acesso é via "Editar").
 async function editarPavimentos(empId){
   const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
   PAV_EDIT_EMP=emp;
@@ -2466,81 +2518,101 @@ async function editarPavimentos(empId){
   const box=document.getElementById('pavRowsEdit');
   box.innerHTML='<div style="padding:12px;color:var(--text-mid);font-size:13px">Carregando pavimentos…</div>';
   document.getElementById('modalPavEdit').classList.add('open');
-  try{
-    const { data:pv } = await sb.from('cde_pavimento_auria')
-      .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',empId).eq('ativo',true).order('ordem');
-    const ids=(pv||[]).map(p=>p.id);
-    // vínculos explícitos (associação doc↔pavimento)
-    const refCount={};
-    if(ids.length){
-      const { data:vinc } = await sb.from('cde_documento_pavimento_auria').select('pavimento_id').in('pavimento_id',ids);
-      (vinc||[]).forEach(v=>{ refCount[v.pavimento_id]=(refCount[v.pavimento_id]||0)+1; });
-    }
-    // legado: docs cujo local_txt casa com o código (pranchas antigas sem vínculo)
-    const legado={};
-    try{
-      const { data:docs } = await sb.from('cde_documento_auria').select('local_txt').eq('empreendimento_id',empId).eq('arquivado',false);
-      (docs||[]).forEach(d=>{ const k=(d.local_txt||'').trim().toUpperCase(); if(k) legado[k]=(legado[k]||0)+1; });
-    }catch(e){}
-    PAV_ROWS=(pv||[]).map(p=>{
-      const refs=(refCount[p.id]||0)+(legado[(p.codigo||'').trim().toUpperCase()]||0);
-      return { _id:p.id, codigo:p.codigo, nome:p.nome, tipo:p.tipo, membros:p.membros||[], _refs:refs };
-    });
-    PAV_ORIG=PAV_ROWS.map(r=>({ _id:r._id, codigo:(r.codigo||'').trim().toUpperCase(), refs:r._refs }));
-    renderPavRows();
-  }catch(e){
-    box.innerHTML='<div style="padding:12px;color:var(--red);font-size:13px">Erro ao carregar: '+esc(e.message||e)+'</div>';
-  }
+  try{ await pavCarregar(empId); renderPavRows(); }
+  catch(e){ box.innerHTML='<div style="padding:12px;color:var(--red);font-size:13px">Erro ao carregar: '+esc(e.message||e)+'</div>'; }
 }
-
 async function salvarPavimentosEdit(){
   if(!PAV_EDIT_EMP) return;
-  const emp=PAV_EDIT_EMP;
-  _pavSync();
-  // valida e monta a lista a manter (preservando _id)
-  const validos=new Set();
-  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c&&(r.tipo==='pavimento'||r.tipo==='ambiente')) validos.add(c); });
-  const vistos=new Set(), keep=[];
-  for(let idx=0; idx<PAV_ROWS.length; idx++){
-    const r=PAV_ROWS[idx];
-    const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
-    if(!codigo || !nome) continue;                 // linha incompleta: ignora
-    if(vistos.has(codigo)){ showToast('Código repetido na lista: '+codigo+'. Corrija antes de salvar.','red'); return; }
-    vistos.add(codigo);
-    const tipo=(r.tipo==='ambiente'||r.tipo==='grupo'||r.tipo==='vista')?r.tipo:'pavimento';
-    const membros=tipo==='grupo'?[...new Set((r.membros||[]).map(x=>String(x).trim().toUpperCase()).filter(x=>validos.has(x)))]:[];
-    keep.push({ _id:r._id||null, codigo, nome, tipo, ordem:idx, membros });
-  }
-  // removidos = ids originais que não estão mais na lista
-  const keptIds=new Set(keep.filter(k=>k._id).map(k=>k._id));
-  const removidos=PAV_ORIG.filter(o=>!keptIds.has(o._id));
-  const remComRef=removidos.filter(o=>o.refs>0);   // aviso já foi dado no × (pavDel)
-  // aviso não-bloqueante: código alterado em pavimento com referências
-  const origById={}; PAV_ORIG.forEach(o=>origById[o._id]=o);
-  const codMudou=keep.filter(k=>k._id && origById[k._id] && origById[k._id].codigo!==k.codigo && origById[k._id].refs>0);
-
   const btn=document.getElementById('btnSalvarPavEdit'); btn.disabled=true; const t0=btn.textContent; btn.textContent='Salvando…';
   try{
-    // Tudo em LOTE (poucas requisições) — antes era 1 await por linha e travava com muitos pavimentos.
-    const novos = keep.filter(k=>!k._id).map(k=>({ empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros }));
-    const exist = keep.filter(k=>k._id).map(k=>({ id:k._id, empreendimento_id:emp.id, codigo:k.codigo, nome:k.nome, tipo:k.tipo, ordem:k.ordem, membros:k.membros, ativo:true }));
-    const softIds = removidos.filter(o=>o.refs>0).map(o=>o._id);   // desativa (tem pranchas)
-    const hardIds = removidos.filter(o=>o.refs===0).map(o=>o._id); // apaga (sem vínculo)
-    if(exist.length){   const { error } = await sb.from('cde_pavimento_auria').upsert(exist,{onConflict:'id'});      if(error) throw error; }
-    if(novos.length){   const { error } = await sb.from('cde_pavimento_auria').insert(novos);                        if(error) throw error; }
-    if(softIds.length){ const { error } = await sb.from('cde_pavimento_auria').update({ativo:false}).in('id',softIds); if(error) throw error; }
-    if(hardIds.length){ const { error } = await sb.from('cde_pavimento_auria').delete().in('id',hardIds);            if(error) throw error; }
+    const r=await pavAplicar(PAV_EDIT_EMP);
     closeModal('modalPavEdit');
     let msg='Pavimentos salvos.';
-    if(remComRef.length) msg+=' '+remComRef.length+' desativado(s) por terem pranchas.';
-    if(codMudou.length)  msg+=' Atenção: '+codMudou.length+' código(s) alterado(s) em pavimento com pranchas — vínculos preservados, mas o casamento por nome de arquivos antigos pode mudar.';
-    showToast(msg,'success');
-    PAV_BOX='pavRows';
-  }catch(e){
-    showToast('Erro ao salvar pavimentos: '+(e.message||e),'red');
-  }finally{
-    btn.disabled=false; btn.textContent=t0;
-  }
+    if(r.remComRef) msg+=' '+r.remComRef+' desativado(s) por terem pranchas.';
+    if(r.codMudou)  msg+=' '+r.codMudou+' código(s) alterado(s) com pranchas — vínculos preservados.';
+    showToast(msg,'success'); PAV_BOX='pavRows';
+  }catch(e){ showToast('Erro ao salvar pavimentos: '+(e.message||e),'red'); }
+  finally{ btn.disabled=false; btn.textContent=t0; }
+}
+
+// ═══ EDITAR EMPREENDIMENTO (formulário de criação reusado em modo edição) ═══
+let EMP_EDIT_ID=null;
+async function abrirEditarEmp(empId){
+  const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
+  resetFormEmp();                       // limpa (zera EMP_EDIT_ID)
+  EMP_EDIT_ID=empId; PAV_EDIT_EMP=emp;
+  preencherFiltroEmpresas();
+  const tt=document.querySelector('#modalNovoEmp .modal-title'); if(tt) tt.textContent='Editar empreendimento';
+  const bt=document.getElementById('btnCriarEmp'); if(bt) bt.innerHTML='Salvar altera&ccedil;&otilde;es';
+  const cfg=emp.config||{};
+  const sv=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val; };
+  const spin=(id,valId,val)=>{ sv(id,val); const v2=document.getElementById(valId); if(v2) v2.textContent=val; };
+  sv('empNome',emp.nome||''); sv('empCidade',emp.cidade||''); sv('empEstado',emp.estado||'');
+  if(emp.construtora_id) sv('empEmpresa',emp.construtora_id);
+  const tipo=emp.tipo_empreendimento||cfg.tipo_empreendimento||'Residencial';
+  sv('empTipo',tipo); document.querySelectorAll('#grupoTipo .tipo-btn').forEach(b=>b.classList.toggle('sel', b.textContent.trim()===tipo));
+  const tipol=emp.tipologia||cfg.tipologia||'Vertical';
+  sv('empTipologia',tipol); document.querySelectorAll('#grupoTipologia .tipo-btn').forEach(b=>b.classList.toggle('sel', b.textContent.trim()===tipol));
+  spin('empPavimentos','pavVal', cfg.n_pavimentos||emp.n_pavimentos||1);
+  spin('tipoDe','tipoDeVal', cfg.tipo_de||emp.tipo_de||1);
+  spin('tipoAte','tipoAteVal', cfg.tipo_ate||emp.tipo_ate||1);
+  _updTipoCount();
+  sv('empTipoGrupo', cfg.tipo_grupo_nome||'Pavimentos Tipo');
+  sv('empEtapas', (cfg.etapas&&cfg.etapas.length)?cfg.etapas.join(', '):'Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo');
+  const cg=document.getElementById('chkGaragem'); if(cg){ cg.checked=!!(cfg.n_subsolo||cfg.tem_garagem); toggleSub(); spin('nSubsolo','nSubVal', cfg.n_subsolo||1); }
+  const cs=document.getElementById('chkSobressolo'); if(cs){ cs.checked=!!cfg.n_sobressolo; toggleSbs(); spin('nSobressolo','nSbsVal', cfg.n_sobressolo||1); }
+  const ce=document.getElementById('chkEdicula'); if(ce){ ce.checked=!!(cfg.n_edicula||cfg.tem_edicula); toggleEdi(); spin('nEdicula','nEdiVal', cfg.n_edicula||1); }
+  if(emp.logo_url){ const img=document.getElementById('logoPreviewImg'); if(img){ img.src=emp.logo_url; img.style.display='block'; } const ico=document.getElementById('logoPreviewIcon'); if(ico) ico.style.display='none'; }
+  // Ficha (briefing)
+  BRIEF=briefFromConfig(cfg); BRIEF_BOX='briefRows'; BRIEF_DOCS=[]; renderBrief();
+  // Pavimentos (carrega da tabela) + docs do CDE p/ anexo da ficha
+  PAV_BOX='pavRows'; _pavGrpOpen=-1;
+  document.getElementById('modalNovoEmp').classList.add('open');
+  const pb=document.getElementById('pavRows'); if(pb) pb.innerHTML='<div style="padding:12px;color:var(--text-mid);font-size:13px">Carregando pavimentos…</div>';
+  try{ await pavCarregar(empId); renderPavRows(); }catch(e){ PAV_ROWS=[]; PAV_ORIG=[]; renderPavRows(); }
+  try{ const { data:docs }=await sb.from('cde_documento_auria').select('id,codigo,titulo,disciplina,qr_token').eq('empreendimento_id',empId).eq('arquivado',false).order('codigo'); BRIEF_DOCS=docs||[]; if(BRIEF_BOX==='briefRows') renderBrief(); }catch(e){}
+}
+function submitEmp(){ if(EMP_EDIT_ID) salvarEmpreendimento(EMP_EDIT_ID); else criarEmpreendimento(); }
+async function salvarEmpreendimento(empId){
+  const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
+  const nome=v('empNome').trim();
+  if(!nome){ showToast('Informe o nome do empreendimento','red'); return; }
+  const cidade=v('empCidade').trim(), estado=v('empEstado').trim().toUpperCase().slice(0,2);
+  const construtoraId=v('empEmpresa')||emp.construtora_id||null;
+  const btn=document.getElementById('btnCriarEmp'); btn.disabled=true; const t0=btn.innerHTML; btn.textContent='Salvando...';
+  try{
+    const _grupo=(document.getElementById('empTipoGrupo')?.value||'').trim()||'Pavimentos Tipo';
+    const _etapas=(document.getElementById('empEtapas')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const _config=Object.assign({}, emp.config||{}, {
+      nome, cidade, estado,
+      tipo_empreendimento: document.getElementById('empTipo')?.value||'Residencial',
+      tipologia: document.getElementById('empTipologia')?.value||'Vertical',
+      n_pavimentos:_getPav(), tipo_de:_getDe(), tipo_ate:_getAte(), n_tipo:Math.max(0,_getAte()-_getDe()+1),
+      tipo_grupo_nome:_grupo,
+      tem_garagem: document.getElementById('chkGaragem')?.checked||false,
+      tem_edicula: document.getElementById('chkEdicula')?.checked||false,
+      n_subsolo: document.getElementById('chkGaragem')?.checked?_getSub():0,
+      n_sobressolo: document.getElementById('chkSobressolo')?.checked?_getSbs():0,
+      n_edicula: document.getElementById('chkEdicula')?.checked?_getEdi():0,
+      etapas:_etapas.length?_etapas:['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo'],
+      briefing: briefParaSalvar()
+    });
+    const upd={ nome, cidade, estado, construtora_id:construtoraId,
+      tipo_empreendimento:_config.tipo_empreendimento, tipologia:_config.tipologia,
+      n_pavimentos:_config.n_pavimentos, tipo_de:_config.tipo_de, tipo_ate:_config.tipo_ate,
+      tem_garagem:_config.tem_garagem, tem_edicula:_config.tem_edicula, config:_config };
+    const logoFile=document.getElementById('empLogoInput')?.files?.[0];
+    if(logoFile){ btn.textContent='Enviando logo...'; try{ upd.logo_url=await uploadLogoStorage(logoFile,empId); }catch(le){ showToast('Logo não enviada: '+(le.message||le),''); } btn.textContent='Salvando...'; }
+    const { error }=await sb.from('empreendimentos_auria').update(upd).eq('id',empId);
+    if(error) throw error;
+    let pavMsg='';
+    try{ const r=await pavAplicar(emp); if(r.remComRef) pavMsg=' '+r.remComRef+' pavimento(s) desativado(s).'; }
+    catch(pe){ showToast('Dados salvos, mas os pavimentos falharam: '+(pe.message||pe),'red'); }
+    closeModal('modalNovoEmp'); resetFormEmp();
+    showToast('Empreendimento atualizado.'+pavMsg,'green');
+    await loadEmpreendimentos(); renderCards(); renderEmpreendimentosPage();
+  }catch(e){ showToast('Erro ao salvar: '+(e.message||e),'red'); }
+  finally{ btn.disabled=false; btn.innerHTML=t0; }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2747,6 +2819,9 @@ async function uploadLogoStorage(file, empId){
 }
 
 function resetFormEmp(){
+  EMP_EDIT_ID=null;
+  const _tt=document.querySelector('#modalNovoEmp .modal-title'); if(_tt) _tt.textContent='Novo Empreendimento';
+  const _bt=document.getElementById('btnCriarEmp'); if(_bt) _bt.innerHTML='&#43; Criar Empreendimento';
   ['empNome','empCidade','empEstado'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
