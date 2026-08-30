@@ -875,6 +875,16 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <input type="hidden" id="nSubsolo" value="1">
           </div>
           <div class="check-row" style="gap:10px">
+            <input type="checkbox" id="chkSobressolo" onchange="toggleSbs()">
+            <label for="chkSobressolo">Possui Sobressolo</label>
+            <div class="pav-spin" id="sbsSpin" style="display:none">
+              <button type="button" onclick="adjSbs(-1)">&#8722;</button>
+              <span class="pav-spin-val" id="nSbsVal">1</span>
+              <button type="button" onclick="adjSbs(1)">&#43;</button>
+            </div>
+            <input type="hidden" id="nSobressolo" value="1">
+          </div>
+          <div class="check-row" style="gap:10px">
             <input type="checkbox" id="chkEdicula" onchange="toggleEdi()">
             <label for="chkEdicula">Possui Edicula</label>
             <div class="pav-spin" id="ediSpin" style="display:none">
@@ -2096,10 +2106,13 @@ function _updTipoCount(){
 
 // Subsolos / Edículas — contador ao lado do checkbox
 function _getSub(){ return parseInt(document.getElementById('nSubsolo')?.value||'1'); }
+function _getSbs(){ return parseInt(document.getElementById('nSobressolo')?.value||'1'); }
 function _getEdi(){ return parseInt(document.getElementById('nEdicula')?.value||'1'); }
 function toggleSub(){ const on=document.getElementById('chkGaragem')?.checked; const s=document.getElementById('ssSpin'); if(s) s.style.display=on?'':'none'; }
+function toggleSbs(){ const on=document.getElementById('chkSobressolo')?.checked; const s=document.getElementById('sbsSpin'); if(s) s.style.display=on?'':'none'; }
 function toggleEdi(){ const on=document.getElementById('chkEdicula')?.checked; const s=document.getElementById('ediSpin'); if(s) s.style.display=on?'':'none'; }
 function adjSub(d){ const n=Math.max(1,Math.min(9,_getSub()+d)); document.getElementById('nSubsolo').value=n; const v=document.getElementById('nSubVal'); if(v) v.textContent=n; }
+function adjSbs(d){ const n=Math.max(1,Math.min(9,_getSbs()+d)); document.getElementById('nSobressolo').value=n; const v=document.getElementById('nSbsVal'); if(v) v.textContent=n; }
 function adjEdi(d){ const n=Math.max(1,Math.min(9,_getEdi()+d)); document.getElementById('nEdicula').value=n; const v=document.getElementById('nEdiVal'); if(v) v.textContent=n; }
 
 function adjPav(delta){
@@ -2205,23 +2218,27 @@ let _pavDrag=-1;
 function pavDragStart(i,ev){ _pavSync(); _pavDrag=i; ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',String(i));}catch(_){}}
 function pavDragOver(ev){ ev.preventDefault(); ev.dataTransfer.dropEffect='move'; ev.currentTarget.style.boxShadow='inset 0 2px 0 0 var(--blue)'; }
 function pavDragLeave(ev){ ev.currentTarget.style.boxShadow=''; }
-function pavDragEnd(){ _pavDrag=-1; document.querySelectorAll('#pavRows .pav-row').forEach(r=>r.style.boxShadow=''); }
+function pavDragEnd(){ _pavDrag=-1; document.querySelectorAll('#'+PAV_BOX+' .pav-row').forEach(r=>r.style.boxShadow=''); }
 function pavDrop(i,ev){ ev.preventDefault(); ev.currentTarget.style.boxShadow=''; if(_pavDrag<0||_pavDrag===i) return;
   _pavSync(); const [m]=PAV_ROWS.splice(_pavDrag,1); PAV_ROWS.splice(i,0,m); _pavDrag=-1; renderPavRows(); }
 function pavSort(){ _pavSync(); const rk=t=>t==='grupo'?2:(t==='vista'?1:0); // pav/ambiente < vista < grupo
   PAV_ROWS.sort((a,b)=>{ const ra=rk(a.tipo), rb=rk(b.tipo); if(ra!==rb) return ra-rb;
   return String(a.codigo||'').localeCompare(String(b.codigo||''),'pt',{numeric:true,sensitivity:'base'}); }); renderPavRows(); }
 function pavAdd(){ _pavSync(); PAV_ROWS.push({codigo:'',nome:'',tipo:'pavimento'}); renderPavRows();
-  const rows=document.querySelectorAll('#pavRows .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
-function pavDel(i){ _pavSync(); PAV_ROWS.splice(i,1); renderPavRows(); }
+  const rows=document.querySelectorAll('#'+PAV_BOX+' .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
+function pavDel(i){ _pavSync(); const r=PAV_ROWS[i];
+  if(r && r._refs>0 && !confirm('“'+(r.codigo||'')+'” tem '+r._refs+' prancha(s) vinculada(s).\n\nAo salvar, este pavimento será DESATIVADO (não apagado), preservando os vínculos e o histórico. Remover da lista?')) return;
+  PAV_ROWS.splice(i,1); renderPavRows(); }
 function pavAuto(){   // rascunho: andares individuais + grupo dos tipos (o gestor ajusta)
   const de=_getDe(), ate=_getAte();
   const g=document.getElementById('chkGaragem')?.checked, e=document.getElementById('chkEdicula')?.checked;
-  const nSub=g?_getSub():0, nEdi=e?_getEdi():0;
+  const sb2=document.getElementById('chkSobressolo')?.checked;
+  const nSub=g?_getSub():0, nSbs=sb2?_getSbs():0, nEdi=e?_getEdi():0;
   const grp=(document.getElementById('empTipoGrupo')?.value||'Pavimentos Tipo').trim()||'Pavimentos Tipo';
   const rows=[], tipoCods=[];
   for(let k=1;k<=nSub;k++) rows.push({codigo:'SS'+k, nome:'Subsolo '+String(k).padStart(2,'0'), tipo:'pavimento', membros:[]});
   rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento', membros:[]});
+  for(let k=1;k<=nSbs;k++) rows.push({codigo:'SBS'+k, nome:'Sobressolo '+String(k).padStart(2,'0'), tipo:'pavimento', membros:[]});
   // andares tipo INDIVIDUAIS (01T, 02T … NNT) — a numeração do TIPO recomeça no 1º
   // tipo, independente de em que planta física ele começa (ex.: começa na 9ª planta,
   // mas é o "1º Pavimento Tipo"). O range "do X até Y" só define QUANTOS tipos há.
@@ -2317,11 +2334,7 @@ async function salvarPavimentosEdit(){
   // removidos = ids originais que não estão mais na lista
   const keptIds=new Set(keep.filter(k=>k._id).map(k=>k._id));
   const removidos=PAV_ORIG.filter(o=>!keptIds.has(o._id));
-  const remComRef=removidos.filter(o=>o.refs>0);
-  if(remComRef.length){
-    const lst=remComRef.map(o=>o.codigo+' ('+o.refs+' pr.)').join(', ');
-    if(!confirm('Estes pavimentos têm pranchas vinculadas e serão DESATIVADOS (não apagados), preservando o histórico:\n\n'+lst+'\n\nDeseja continuar?')) return;
-  }
+  const remComRef=removidos.filter(o=>o.refs>0);   // aviso já foi dado no × (pavDel)
   // aviso não-bloqueante: código alterado em pavimento com referências
   const origById={}; PAV_ORIG.forEach(o=>origById[o._id]=o);
   const codMudou=keep.filter(k=>k._id && origById[k._id] && origById[k._id].codigo!==k.codigo && origById[k._id].refs>0);
@@ -2398,8 +2411,10 @@ function resetFormEmp(){
   document.querySelectorAll('#grupoTipologia .tipo-btn').forEach((b,i)=>b.classList.toggle('sel',i===0));
   // Checkboxes
   document.getElementById('chkGaragem').checked = false;
+  document.getElementById('chkSobressolo').checked = false;
   document.getElementById('chkEdicula').checked = false;
   document.getElementById('nSubsolo').value='1'; { const v=document.getElementById('nSubVal'); if(v) v.textContent='1'; const s=document.getElementById('ssSpin'); if(s) s.style.display='none'; }
+  document.getElementById('nSobressolo').value='1'; { const v=document.getElementById('nSbsVal'); if(v) v.textContent='1'; const s=document.getElementById('sbsSpin'); if(s) s.style.display='none'; }
   document.getElementById('nEdicula').value='1'; { const v=document.getElementById('nEdiVal'); if(v) v.textContent='1'; const s=document.getElementById('ediSpin'); if(s) s.style.display='none'; }
   const _g=document.getElementById('empTipoGrupo'); if(_g) _g.value='Pavimentos Tipo';
   const _e=document.getElementById('empEtapas'); if(_e) _e.value='Estudo Preliminar, Anteprojeto, Projeto Legal, Projeto Executivo';
@@ -2440,6 +2455,7 @@ async function criarEmpreendimento(){
       tem_garagem: document.getElementById('chkGaragem')?.checked || false,
       tem_edicula: document.getElementById('chkEdicula')?.checked || false,
       n_subsolo: document.getElementById('chkGaragem')?.checked ? _getSub() : 0,
+      n_sobressolo: document.getElementById('chkSobressolo')?.checked ? _getSbs() : 0,
       n_edicula: document.getElementById('chkEdicula')?.checked ? _getEdi() : 0,
       etapas: _etapas.length ? _etapas : ['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo']
     };
