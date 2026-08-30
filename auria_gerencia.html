@@ -2092,9 +2092,11 @@ function _pavSync(){   // lê os inputs atuais de volta para PAV_ROWS (antes de 
 let _pavGrpOpen=-1;   // índice do grupo com o editor de membros aberto (-1 = nenhum)
 function renderPavRows(){
   const box=document.getElementById('pavRows'); if(!box) return;
-  const codsPav = PAV_ROWS.filter(r=>r.tipo!=='grupo' && (r.codigo||'').trim()).map(r=>(r.codigo||'').trim().toUpperCase());
+  // candidatos a membro de grupo: só pavimentos/ambientes (vista e grupo não entram)
+  const codsPav = PAV_ROWS.filter(r=>(r.tipo==='pavimento'||r.tipo==='ambiente') && (r.codigo||'').trim()).map(r=>(r.codigo||'').trim().toUpperCase());
   box.innerHTML = PAV_ROWS.map((r,i)=>{
     const grupo = r.tipo==='grupo';
+    const vista = r.tipo==='vista';
     const membros = grupo ? (r.membros||[]) : [];
     let ed='';
     if(grupo && _pavGrpOpen===i){
@@ -2110,7 +2112,7 @@ function renderPavRows(){
     }
     return `
     <div class="pav-row" data-i="${i}" ondragover="pavDragOver(event)" ondragleave="pavDragLeave(event)" ondrop="pavDrop(${i},event)"
-         style="display:flex;gap:8px;align-items:center;margin-bottom:7px${grupo?';background:#eef4ff;border-radius:8px;padding:5px 6px':''}">
+         style="display:flex;gap:8px;align-items:center;margin-bottom:7px${grupo?';background:#eef4ff;border-radius:8px;padding:5px 6px':(vista?';background:#fff7ed;border-radius:8px;padding:5px 6px':'')}">
       <span class="pav-drag" draggable="true" ondragstart="pavDragStart(${i},event)" ondragend="pavDragEnd(event)" title="Arraste para reordenar"
             style="cursor:grab;color:#cbd5e1;font-size:16px;line-height:1;padding:0 2px;user-select:none">&#8942;&#8942;</span>
       <input class="pav-cod" value="${_escAttr(r.codigo)}" placeholder="Código" maxlength="16"
@@ -2120,8 +2122,9 @@ function renderPavRows(){
       ${grupo?`<button type="button" onclick="pavGrpToggle(${i})" title="Escolher pavimentos do grupo"
              style="border:1px solid var(--gray-border);background:#fff;border-radius:7px;font-size:12px;padding:6px 10px;cursor:pointer;white-space:nowrap">Membros (${membros.length})</button>`:''}
       <select class="pav-tipo" onchange="pavTipoChange(${i},this.value)" style="padding:7px 8px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;outline:none;background:#fff">
-        <option value="pavimento" ${(r.tipo!=='ambiente'&&!grupo)?'selected':''}>Pavimento</option>
+        <option value="pavimento" ${(!grupo&&!vista&&r.tipo!=='ambiente')?'selected':''}>Pavimento</option>
         <option value="ambiente"  ${r.tipo==='ambiente'?'selected':''}>Ambiente</option>
+        <option value="vista"     ${vista?'selected':''}>Vista</option>
         <option value="grupo"     ${grupo?'selected':''}>Grupo</option>
       </select>
       <button type="button" onclick="pavDel(${i})" title="Remover"
@@ -2149,7 +2152,8 @@ function pavDragLeave(ev){ ev.currentTarget.style.boxShadow=''; }
 function pavDragEnd(){ _pavDrag=-1; document.querySelectorAll('#pavRows .pav-row').forEach(r=>r.style.boxShadow=''); }
 function pavDrop(i,ev){ ev.preventDefault(); ev.currentTarget.style.boxShadow=''; if(_pavDrag<0||_pavDrag===i) return;
   _pavSync(); const [m]=PAV_ROWS.splice(_pavDrag,1); PAV_ROWS.splice(i,0,m); _pavDrag=-1; renderPavRows(); }
-function pavSort(){ _pavSync(); PAV_ROWS.sort((a,b)=>{ const ga=a.tipo==='grupo'?1:0, gb=b.tipo==='grupo'?1:0; if(ga!==gb) return ga-gb;  // grupos sempre no fim
+function pavSort(){ _pavSync(); const rk=t=>t==='grupo'?2:(t==='vista'?1:0); // pav/ambiente < vista < grupo
+  PAV_ROWS.sort((a,b)=>{ const ra=rk(a.tipo), rb=rk(b.tipo); if(ra!==rb) return ra-rb;
   return String(a.codigo||'').localeCompare(String(b.codigo||''),'pt',{numeric:true,sensitivity:'base'}); }); renderPavRows(); }
 function pavAdd(){ _pavSync(); PAV_ROWS.push({codigo:'',nome:'',tipo:'pavimento'}); renderPavRows();
   const rows=document.querySelectorAll('#pavRows .pav-row'); const last=rows[rows.length-1]; if(last) last.querySelector('.pav-cod')?.focus(); }
@@ -2161,11 +2165,18 @@ function pavAuto(){   // rascunho: andares individuais + grupo dos tipos (o gest
   const rows=[], tipoCods=[];
   if(g) rows.push({codigo:'SS1', nome:'Subsolo 1', tipo:'pavimento', membros:[]});
   rows.push({codigo:'TER', nome:'Térreo', tipo:'pavimento', membros:[]});
-  // andares tipo INDIVIDUAIS (ex.: 09T, 10T … 55T) — armação pode diferir por andar
-  if(ate>=de) for(let n=de;n<=ate;n++){ const c=String(n).padStart(2,'0')+'T'; tipoCods.push(c);
-    rows.push({codigo:c, nome:n+'º Pavimento Tipo', tipo:'pavimento', membros:[]}); }
+  // andares tipo INDIVIDUAIS (01T, 02T … NNT) — a numeração do TIPO recomeça no 1º
+  // tipo, independente de em que planta física ele começa (ex.: começa na 9ª planta,
+  // mas é o "1º Pavimento Tipo"). O range "do X até Y" só define QUANTOS tipos há.
+  const nTipos = Math.max(0, ate - de + 1);
+  for(let i=1;i<=nTipos;i++){ const c=String(i).padStart(2,'0')+'T'; tipoCods.push(c);
+    rows.push({codigo:c, nome:i+'º Pavimento Tipo', tipo:'pavimento', membros:[]}); }
   rows.push({codigo:'COB', nome:'Cobertura', tipo:'pavimento', membros:[]});
-  if(e) rows.push({codigo:'EDI', nome:'Edícula', tipo:'ambiente', membros:[]});
+  if(e) rows.push({codigo:'EDI', nome:'Edícula 01', tipo:'ambiente', membros:[]});
+  // VISTAS (representações do prédio inteiro — não são andares, sem cota)
+  rows.push({codigo:'IMP', nome:'Implantação',    tipo:'vista', membros:[]});
+  rows.push({codigo:'COR', nome:'Cortes / Seções', tipo:'vista', membros:[]});
+  rows.push({codigo:'FAC', nome:'Fachadas',        tipo:'vista', membros:[]});
   // GRUPO dos tipos, no fim (TIP agrupa os andares tipo)
   if(tipoCods.length>1) rows.push({codigo:'TIP', nome:grp, tipo:'grupo', membros:tipoCods});
   PAV_ROWS = rows; _pavGrpOpen=-1; renderPavRows();
@@ -2175,13 +2186,13 @@ function pavParaSalvar(){
   _pavSync();
   // códigos válidos de pavimento/ambiente (p/ validar os membros dos grupos)
   const validos=new Set();
-  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c && r.tipo!=='grupo') validos.add(c); });
+  PAV_ROWS.forEach(r=>{ const c=(r.codigo||'').trim().toUpperCase(); if(c && (r.tipo==='pavimento'||r.tipo==='ambiente')) validos.add(c); });
   const vistos=new Set(), out=[];
   PAV_ROWS.forEach((r,idx)=>{
     const codigo=(r.codigo||'').trim().toUpperCase(), nome=(r.nome||'').trim();
     if(!codigo || !nome || vistos.has(codigo)) return;
     vistos.add(codigo);
-    const tipo = (r.tipo==='ambiente'||r.tipo==='grupo') ? r.tipo : 'pavimento';
+    const tipo = (r.tipo==='ambiente'||r.tipo==='grupo'||r.tipo==='vista') ? r.tipo : 'pavimento';
     const membros = tipo==='grupo'
       ? [...new Set((r.membros||[]).map(x=>String(x).trim().toUpperCase()).filter(x=>validos.has(x)))]
       : [];
