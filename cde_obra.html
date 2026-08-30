@@ -532,6 +532,7 @@
   <span class="sp"></span>
   <a class="hbtn" id="lnkPadrao" href="cde.html" title="Padrão de codificação (gestão)">⚙ Padrão</a>
   <a class="hbtn" href="portal.html">← Portal</a>
+  <button class="hbtn" id="btnOrgQR" onclick="abrirOrganizadorQR()" style="display:none" title="Organizar vários QR para impressão (A4/A3 paisagem)">🖨 Organizar QR</button>
   <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Receber arquivos</button>
 </header>
 
@@ -641,6 +642,50 @@
       </div>
       <button class="btn sec" onclick="fecharReceber()">Cancelar</button>
       <button class="btn pri" id="btnConfirmar" onclick="confirmarLote()" disabled>Registrar recebimento</button>
+    </div>
+  </div>
+</div>
+
+<!-- Organizador de QR para impressão (perfil Obra) -->
+<style>
+  #orgQR .modal{width:min(1000px,100%)}
+  .org-ctrls{display:flex;flex-wrap:wrap;gap:18px 22px;align-items:center;margin-bottom:14px}
+  .org-ctrls .cg{display:flex;align-items:center;gap:9px}
+  .org-ctrls .cg>span{font-size:12px;color:var(--mut);font-weight:600}
+  .org-seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .org-seg button{background:var(--panel);border:none;padding:7px 15px;font-size:13px;font-weight:700;color:var(--txt);cursor:pointer;border-left:1px solid var(--line)}
+  .org-seg button:first-child{border-left:none}
+  .org-seg button.on{background:var(--navy);color:#fff}
+  .org-tudo{margin-left:auto;padding:6px 12px;font-size:12px}
+  .org-list{max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:11px;padding:6px}
+  .org-grp{margin-bottom:5px}
+  .org-grp-h{display:flex;align-items:center;gap:9px;padding:8px 10px;background:var(--panel2);border-radius:8px;cursor:pointer}
+  .org-grp-nm{font-weight:700;font-size:13.5px;flex:1}
+  .org-grp-ct{font-size:11.5px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .org-row{display:flex;align-items:center;gap:11px;padding:7px 10px 7px 26px;border-radius:7px;cursor:pointer}
+  .org-row:hover{background:var(--panel2)}
+  .org-row.on{background:rgba(26,90,150,.08)}
+  .org-cod{font-family:var(--mono);font-weight:700;font-size:12px;min-width:158px}
+  .org-disc{color:var(--mut);font-size:12px;min-width:92px}
+  .org-tit{color:var(--txt);font-size:12.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .org-hint{padding:24px;text-align:center;color:var(--mut)}
+  .org-row input,.org-grp-h input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0}
+</style>
+<div class="ov" id="orgQR" onclick="if(event.target===this)fecharOrgQR()">
+  <div class="modal">
+    <div class="modal-h"><b>🖨 Organizar QR para impressão</b><button class="x" onclick="fecharOrgQR()">×</button></div>
+    <div class="modal-b">
+      <div class="org-ctrls">
+        <div class="cg"><span>Formato</span><div class="org-seg"><button id="orgFmt_A4" onclick="orgSetFmt('A4')">A4</button><button id="orgFmt_A3" onclick="orgSetFmt('A3')">A3</button></div></div>
+        <div class="cg"><span>Por página</span><div class="org-seg"><button id="orgNpp_4" onclick="orgSetNpp(4)">4</button><button id="orgNpp_6" onclick="orgSetNpp(6)">6</button><button id="orgNpp_8" onclick="orgSetNpp(8)">8</button><button id="orgNpp_10" onclick="orgSetNpp(10)">10</button></div></div>
+        <button class="btn sec org-tudo" onclick="orgToggleTudo()">Selecionar / limpar tudo</button>
+      </div>
+      <div class="org-list" id="orgList"></div>
+    </div>
+    <div class="modal-f">
+      <span class="msg" id="orgResumo" style="flex:1">Nenhuma prancha selecionada</span>
+      <button class="btn sec" onclick="fecharOrgQR()">Fechar</button>
+      <button class="btn pri" id="orgGerar" onclick="orgGerarPDF()" disabled>Gerar PDF</button>
     </div>
   </div>
 </div>
@@ -811,6 +856,8 @@ async function boot(){
     return;
   }
   if(!READONLY) $('btnReceber').style.display='';
+  // Organizador de QR: perfil Obra (e gestão/admin, p/ preparar as folhas). Setor não.
+  if(USER_ROLE==='obra' || !READONLY){ const b=$('btnOrgQR'); if(b) b.style.display=''; }
   await carregarDocs();
   await carregarGrupos();
   $('load').style.display='none';
@@ -1992,6 +2039,138 @@ async function baixarQrImagem(docId){
     out.toBlob(b=>{ if(b) _baixarBlob(b,(d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
   }catch(e){ alert('Não foi possível gerar o QR: '+((e&&e.message)||e)); console.warn('qrimg',e); }
   finally{ document.title=tit; }
+}
+// ═════════════════════════════════════════════════════════════════════════════
+// ORGANIZADOR DE QR PARA IMPRESSÃO (perfil Obra)
+// ─────────────────────────────────────────────────────────────────────────────
+//  A obra escolhe formato (A4/A3 paisagem) e quantos por página (4/6/8/10),
+//  seleciona pranchas (agrupadas por pavimento) e o sistema gera um PDF multi-
+//  página com os cards em grade — MESMO card do QR avulso, porém SEM a logo de
+//  cada card: uma logo única centralizada no topo de cada página + nome do empr.
+// ═════════════════════════════════════════════════════════════════════════════
+let QRORG = { fmt:'A3', npp:6, sel:new Set() };
+
+function orgDocsElegiveis(){ return DOCS.filter(d=> d.qr_token); }
+function orgGrupos(){
+  const lk=localKey(), groups=new Map();
+  orgDocsElegiveis().forEach(d=>{
+    const val=(lk&&d.campos)?d.campos[lk]:null;
+    const label=(lk?localLabel(val):'Todas as pranchas')||'Sem pavimento';
+    if(!groups.has(label)) groups.set(label,[]);
+    groups.get(label).push(d);
+  });
+  const arr=[...groups.entries()].map(([k,v])=>[k, v.sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'','pt',{numeric:true}))]);
+  arr.sort((a,b)=> a[0].localeCompare(b[0],'pt',{numeric:true}));
+  return arr;
+}
+function abrirOrganizadorQR(){ QRORG.sel=new Set(); renderOrgQR(); $('orgQR').style.display='flex'; }
+function fecharOrgQR(){ $('orgQR').style.display='none'; }
+function orgSetFmt(f){ QRORG.fmt=f; renderOrgQR(); }
+function orgSetNpp(n){ QRORG.npp=n; renderOrgQR(); }
+function orgToggle(id){ QRORG.sel.has(id)?QRORG.sel.delete(id):QRORG.sel.add(id); renderOrgQR(); }
+function orgToggleGrupo(csv){ const ids=csv.split(','), todos=ids.every(i=>QRORG.sel.has(i)); ids.forEach(i=> todos?QRORG.sel.delete(i):QRORG.sel.add(i)); renderOrgQR(); }
+function orgToggleTudo(){ const all=orgDocsElegiveis().map(d=>d.id), todos=all.length&&all.every(i=>QRORG.sel.has(i)); QRORG.sel = todos?new Set():new Set(all); renderOrgQR(); }
+function renderOrgQR(){
+  ['A4','A3'].forEach(f=>{ const b=$('orgFmt_'+f); if(b) b.classList.toggle('on', QRORG.fmt===f); });
+  [4,6,8,10].forEach(n=>{ const b=$('orgNpp_'+n); if(b) b.classList.toggle('on', QRORG.npp===n); });
+  const grupos=orgGrupos(); let html='';
+  if(!grupos.length) html='<div class="org-hint">Nenhuma prancha com QR neste empreendimento.</div>';
+  grupos.forEach(([nome,ds])=>{
+    const ids=ds.map(d=>d.id), marc=ids.filter(i=>QRORG.sel.has(i)).length, todos=marc===ids.length;
+    html+=`<div class="org-grp"><label class="org-grp-h"><input type="checkbox" ${todos?'checked':''} onchange="orgToggleGrupo('${ids.join(',')}')"><span class="org-grp-nm">${esc(nome)}</span><span class="org-grp-ct">${marc}/${ids.length}</span></label>`;
+    ds.forEach(d=>{ const on=QRORG.sel.has(d.id), t=(d.titulo&&d.titulo!==d.codigo)?d.titulo:'';
+      html+=`<label class="org-row ${on?'on':''}"><input type="checkbox" ${on?'checked':''} onchange="orgToggle('${d.id}')"><span class="org-cod">${esc(d.codigo||'—')}</span><span class="org-disc">${esc(discLabel(d.disciplina))}</span><span class="org-tit">${esc(t)}</span></label>`; });
+    html+='</div>';
+  });
+  $('orgList').innerHTML=html;
+  const n=QRORG.sel.size, pg=Math.max(1,Math.ceil(n/QRORG.npp));
+  $('orgResumo').textContent = n? `${n} prancha(s) · ${pg} página(s) ${QRORG.fmt} paisagem` : 'Nenhuma prancha selecionada';
+  $('orgGerar').disabled = n===0;
+}
+async function orgGerarPDF(){
+  if(!QRORG.sel.size) return;
+  const ordem=[]; orgGrupos().forEach(([_,ds])=>ds.forEach(d=>{ if(QRORG.sel.has(d.id)) ordem.push(d); }));
+  const btn=$('orgGerar'), bt=btn.textContent, tit=document.title;
+  try{
+    btn.disabled=true; document.title='⏳ Gerando QR…';
+    const perPage=QRORG.npp, cols=QRORG.npp/2, rows=2, DPI=150;
+    const mm = QRORG.fmt==='A3' ? [420,297] : [297,210];               // paisagem [w,h]
+    const W=Math.round(mm[0]/25.4*DPI), H=Math.round(mm[1]/25.4*DPI);
+    const ptW=mm[0]/25.4*72, ptH=mm[1]/25.4*72;
+    let logo=null; try{ logo=await _carregarImg('logo_full.png'); }catch(_){}
+    const PDFmod=await import('https://esm.sh/pdf-lib@1.17.1'); const { PDFDocument }=PDFmod;
+    const pdf=await PDFDocument.create();
+    for(let p=0;p<ordem.length;p+=perPage){
+      btn.textContent='Gerando… '+Math.min(p+perPage,ordem.length)+'/'+ordem.length;
+      const cv=await _orgRenderPagina(ordem.slice(p,p+perPage), W, H, cols, rows, logo);
+      const png=await pdf.embedPng(_dataUrlToBytes(cv.toDataURL('image/png')));
+      pdf.addPage([ptW,ptH]).drawImage(png,{ x:0, y:0, width:ptW, height:ptH });
+    }
+    const nomeEmp=((EMP&&EMP.nome)||'obra').replace(/[^\w\-]+/g,'_').slice(0,40);
+    _baixarBytes(await pdf.save(), 'QR_'+nomeEmp+'_'+QRORG.fmt+'.pdf', 'application/pdf');
+  }catch(e){ alert('Não foi possível gerar o PDF: '+((e&&e.message)||e)); console.warn('orgQR',e); }
+  finally{ document.title=tit; btn.disabled=false; btn.textContent=bt; }
+}
+// Uma página: cabeçalho (logo única + empreendimento) + grade de cards.
+async function _orgRenderPagina(grupo, W, H, cols, rows, logo){
+  const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
+  const ACC='#e8960a', NAVY='#152036', SLATE='#475569', MUT='#94a3b8';
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#eef2f7'; ctx.lineWidth=Math.max(2,W*0.0016);
+  _roundRect(ctx, W*0.012, H*0.016, W-W*0.024, H-H*0.032, 22); ctx.stroke();
+  // cabeçalho
+  const headH=Math.round(H*0.135); ctx.textAlign='center'; ctx.textBaseline='top';
+  const lgH=Math.round(headH*0.44), lgW=logo?lgH*((logo.width/logo.height)||3.1):0;
+  const hy=Math.round(H*0.028);
+  if(logo) ctx.drawImage(logo,(W-lgW)/2,hy,lgW,lgH);
+  const nm=(EMP&&EMP.nome)||''; if(nm){ ctx.fillStyle=SLATE; ctx.font='600 '+Math.round(headH*0.19)+'px '+FONT; ctx.fillText(nm, W/2, hy+lgH+Math.round(headH*0.11)); }
+  ctx.fillStyle=ACC; _roundRect(ctx,(W-W*0.05)/2, headH, W*0.05, Math.max(3,H*0.004), 3); ctx.fill();
+  // grade
+  const mL=W*0.03, mR=W*0.03, gap=W*0.016, gridY=headH+Math.round(H*0.018), mB=H*0.025;
+  const cellW=(W-mL-mR-gap*(cols-1))/cols, cellH=(H-gridY-mB-gap*(rows-1))/rows;
+  const qrPx=Math.round(Math.min(cellW,cellH)*0.66);
+  const qrs=await Promise.all(grupo.map(d=> _qrComLogoCanvas(location.origin+'/v.html?p='+d.qr_token, qrPx)));
+  grupo.forEach((d,i)=>{ const c=i%cols, r=Math.floor(i/cols);
+    _orgCard(ctx, mL+c*(cellW+gap), gridY+r*(cellH+gap), cellW, cellH, d, qrs[i], FONT, {ACC,NAVY,SLATE,MUT}); });
+  return cv;
+}
+// Um card (SEM logo — a logo é única no topo da página).
+function _orgCard(ctx, x, y, w, h, d, qrCv, FONT, C){
+  ctx.save();
+  ctx.fillStyle='#fff'; ctx.strokeStyle='#eef2f7'; ctx.lineWidth=Math.max(1.5,w*0.005);
+  _roundRect(ctx, x, y, w, h, w*0.045); ctx.fill(); ctx.stroke();
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  const cx=x+w/2; let yy=y+h*0.05;
+  // disciplina
+  const discF=Math.round(h*0.063); ctx.fillStyle=C.SLATE;
+  _textoCentro(ctx, discLabel(d.disciplina)||'', cx, yy, w*0.86, '700', discF, FONT); yy+=discF+h*0.012;
+  // título (1-2 linhas) — some se vazio
+  const titulo=(d.titulo&&d.titulo!==d.codigo)?String(d.titulo).trim():'';
+  if(titulo){
+    const T=_tituloLinhas(ctx, titulo, w*0.84, Math.round(h*0.042), FONT), lh=Math.round(T.size*1.26);
+    ctx.fillStyle='#64748b'; ctx.font='500 '+T.size+'px '+FONT;
+    for(const ln of T.lines){ ctx.fillText(ln, cx, yy); yy+=lh; }
+    yy+=h*0.012;
+  } else { yy+=h*0.010; }
+  // badge do código
+  const cod=d.codigo||''; let cs=Math.round(h*0.06); ctx.font='800 '+cs+'px '+FONT;
+  const maxCodW=w*0.84; while(cs>Math.round(h*0.032) && ctx.measureText(cod).width>maxCodW){ cs-=2; ctx.font='800 '+cs+'px '+FONT; }
+  const tw=ctx.measureText(cod).width, bw=Math.min(w*0.9, tw+w*0.11), bh=cs+h*0.05, bx=cx-bw/2;
+  ctx.fillStyle=C.NAVY; _roundRect(ctx,bx,yy,bw,bh,bh*0.28); ctx.fill();
+  ctx.fillStyle=C.ACC; _roundRect(ctx,bx,yy,Math.max(5,w*0.013),bh,bh*0.28); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.textBaseline='middle'; ctx.fillText(cod, cx, yy+bh/2+1); ctx.textBaseline='top';
+  yy+=bh+h*0.028;
+  // QR (símbolo no centro) sobre painel claro — escala p/ caber deixando espaço ao rodapé
+  const restante=(y+h)-yy-h*0.07, side=Math.max(10, Math.min(w*0.6, restante)), pad=side*0.06;
+  const qx=cx-side/2, qy=yy;
+  ctx.fillStyle='#f8fafc'; ctx.strokeStyle='#e6ebf2'; ctx.lineWidth=Math.max(1,w*0.004);
+  _roundRect(ctx, qx-pad, qy-pad, side+pad*2, side+pad*2, side*0.06); ctx.fill(); ctx.stroke();
+  ctx.drawImage(qrCv, qx, qy, side, side);
+  yy=qy+side+pad+h*0.02;
+  ctx.fillStyle=C.MUT; ctx.font='500 '+Math.max(9,Math.round(h*0.03))+'px '+FONT;
+  ctx.fillText('Escaneie para ver a revisão liberada', cx, yy);
+  ctx.restore();
 }
 function _dataUrlToBytes(dataUrl){ const b=atob(dataUrl.split(',')[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
 function _baixarBytes(bytes, nome, mime){ _baixarBlob(new Blob([bytes],{type:mime||'application/octet-stream'}), nome); }
