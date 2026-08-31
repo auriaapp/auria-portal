@@ -699,6 +699,15 @@
   </div>
 </div>
 
+<!-- Ficha do empreendimento — janela flutuante arrastável -->
+<div id="fichaWin" style="display:none;position:fixed;z-index:9500;width:min(920px,94vw);height:82vh;left:80px;top:82px;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.42);flex-direction:column;overflow:hidden">
+  <div id="fichaWinBar" onmousedown="fichaDragStart(event)" style="cursor:move;user-select:none;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--navy);color:#fff">
+    <b style="font-size:14px;flex:1;pointer-events:none">📋 Ficha do empreendimento</b>
+    <button onclick="fecharFicha()" title="Fechar" style="border:none;background:rgba(255,255,255,.16);color:#fff;border-radius:7px;width:28px;height:28px;font-size:17px;line-height:1;cursor:pointer">×</button>
+  </div>
+  <iframe id="fichaIframe" style="border:0;flex:1;width:100%"></iframe>
+</div>
+
 <!-- Detalhe do documento -->
 <div class="ov" id="ovDoc" onclick="if(event.target===this)fecharDoc()">
   <div class="modal">
@@ -2195,19 +2204,24 @@ function orgGrupos(){ return orgGruposDe(orgDocsFiltrados()); }        // p/ a l
 function orgGruposSelecionados(){ return orgGruposDe(orgDocsElegiveis().filter(d=>QRORG.sel.has(d.id))); } // p/ gerar (TODA a seleção)
 function abrirFicha(){
   if(!EMP_ID){ alert('Empreendimento não identificado.'); return; }
-  let box=document.getElementById('fichaOverlay');
-  if(!box){
-    box=document.createElement('div'); box.id='fichaOverlay';
-    box.style.cssText='position:absolute;inset:0;z-index:45;background:var(--bg,#EEF2F7);display:flex;flex-direction:column';
-    box.innerHTML='<button onclick="fecharFicha()" title="Fechar a ficha" '
-      +'style="position:absolute;top:10px;right:14px;z-index:2;border:1px solid var(--line,#E2E8F0);background:var(--panel,#fff);color:var(--txt,#0F172A);border-radius:8px;padding:5px 13px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18)">✕ Fechar</button>'
-      +'<iframe id="fichaIframe" style="flex:1;border:0;width:100%;height:100%"></iframe>';
-    (document.querySelector('.viewer')||document.body).appendChild(box);
-  }
-  document.getElementById('fichaIframe').src='ficha.html?emp='+encodeURIComponent(EMP_ID);
-  box.style.display='flex';
+  const w=$('fichaWin'); if(!w) return;
+  const f=$('fichaIframe'), src='ficha.html?emp='+encodeURIComponent(EMP_ID);
+  if(f && f.getAttribute('src')!==src) f.src=src;   // carrega uma vez
+  w.style.display='flex';
+  if(!w.dataset.pos){ w.style.left=Math.max(12,(window.innerWidth-w.offsetWidth)/2)+'px'; w.style.top='82px'; w.dataset.pos='1'; }
 }
-function fecharFicha(){ const b=document.getElementById('fichaOverlay'); if(b) b.style.display='none'; }
+function fecharFicha(){ const w=$('fichaWin'); if(w) w.style.display='none'; }
+// Arrastar a janela da ficha pela barra de título.
+function fichaDragStart(ev){
+  const w=$('fichaWin'); if(!w) return; ev.preventDefault();
+  const r=w.getBoundingClientRect(), ox=ev.clientX-r.left, oy=ev.clientY-r.top;
+  const fr=$('fichaIframe'); if(fr) fr.style.pointerEvents='none';   // deixa o mouse passar pelo iframe durante o arrasto
+  function mv(e){ let x=e.clientX-ox, y=e.clientY-oy;
+    x=Math.max(0,Math.min(x,window.innerWidth-80)); y=Math.max(0,Math.min(y,window.innerHeight-40));
+    w.style.left=x+'px'; w.style.top=y+'px'; w.dataset.pos='1'; }
+  function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); if(fr) fr.style.pointerEvents=''; }
+  document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+}
 function abrirOrganizadorQR(){
   QRORG.sel=new Set(); QRORG.busca=''; QRORG.pav='__all__';
   const bi=$('orgBusca'); if(bi) bi.value='';
