@@ -457,6 +457,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <a class="sb-item" data-page="fornecedores" onclick="goPage('fornecedores')">
           <span class="sb-item-icon">&#127970;</span> Fornecedores
         </a>
+        <div class="sb-section">Padrões</div>
+        <a class="sb-item" data-page="disciplinas" onclick="goPage('disciplinas')">
+          <span class="sb-item-icon">&#128209;</span> Disciplinas
+          <span id="discNotifBadge" style="display:none;margin-left:auto;background:var(--orange);color:#fff;font-size:10px;font-weight:800;border-radius:20px;padding:1px 7px"></span>
+        </a>
         <div class="sb-section">Financeiro</div>
         <a class="sb-item" data-page="financeiro" onclick="goPage('financeiro')">
           <span class="sb-item-icon">&#128176;</span> Custos &amp; NFs
@@ -631,6 +636,23 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             Empresas projetistas e seus profissionais (com disciplinas). Acessível a todos os analistas e ao gestor.
           </div>
           <div id="fornList"><div class="loading-spinner"><div class="spinner"></div></div></div>
+        </div>
+
+        <!-- ══ PAGE: DISCIPLINAS (padrão de nomenclatura por construtora) ══ -->
+        <div class="page" id="pageDisciplinas">
+          <div class="toolbar">
+            <div class="toolbar-title">Disciplinas</div>
+          </div>
+          <div style="font-size:13px;color:var(--text-soft);margin-bottom:14px">
+            Código e nome das disciplinas do <b>padrão de nomenclatura</b>. É compartilhado por
+            todos os empreendimentos da construtora escolhida (não é por empreendimento).
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+            <span style="font-size:13px;color:var(--text-mid);font-weight:600">Construtora:</span>
+            <select id="discEscopo" onchange="discCarregar()" style="min-width:240px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;background:#fff;outline:none"></select>
+          </div>
+          <div id="discNovidades"></div>
+          <div id="discBody"><div class="loading-spinner"><div class="spinner"></div></div></div>
         </div>
 
         <!-- ══ PAGE: FINANCEIRO (resumo, somente leitura) ═══════════════ -->
@@ -1227,6 +1249,7 @@ async function afterLogin(user){
   document.getElementById('sbUserEmail').textContent = user.email;
   hide('loginWrap'); show('app');
   await loadAll();
+  discCarregarNotifs();   // badge de disciplinas adicionadas por analistas
 }
 
 async function doLogout(){
@@ -2893,6 +2916,75 @@ async function salvarComoModelo(){
   }catch(e){ showToast('Erro ao salvar modelo: '+(e.message||e),'red'); }
 }
 
+// ═══ DISCIPLINAS (padrão de nomenclatura por construtora) — gestor edita ═══
+let DISC_DOM=[], DISC_NOTIFS=[];
+function discEscopoAtual(){ const v=(document.getElementById('discEscopo')||{}).value||'g';
+  return v==='g' ? {construtora:null, grupo:EMPRESA&&EMPRESA.id} : {construtora:v.slice(2), grupo:null}; }
+function renderDisciplinasPage(){
+  const sel=document.getElementById('discEscopo');
+  if(sel && !sel.dataset.pronto){ sel.innerHTML='<option value="g">Grupo (padrão geral)</option>'+(CONSTRUTORAS||[]).map(c=>`<option value="c:${c.id}">${esc(c.nome)}</option>`).join(''); sel.dataset.pronto='1'; }
+  discCarregarNotifs(); discCarregar();
+}
+async function discCarregar(){
+  const body=document.getElementById('discBody'); if(!body) return;
+  body.innerHTML='<div class="loading-spinner"><div class="spinner"></div></div>';
+  const e=discEscopoAtual();
+  let q=sb.from('cde_convencao_auria').select('*');
+  q = e.construtora ? q.eq('construtora_id',e.construtora) : q.eq('grupo_id',e.grupo);
+  let data=null; try{ const r=await q.maybeSingle(); data=r.data; }catch(err){}
+  if(!data){ DISC_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">Esta construtora ainda não tem <b>padrão de codificação</b>. Defina em <a href="cde.html" style="color:var(--blue)">Padrão de codificação</a> antes de gerenciar as disciplinas.</div>'; return; }
+  const campos=data.campos||[]; const f=campos.find(c=>c.mapeia==='disciplina');
+  if(!f){ DISC_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">A convenção desta construtora não tem um campo de <b>disciplina</b>.</div>'; return; }
+  DISC_DOM=(f.dominio||[]).map(d=> (typeof d==='object')?{v:d.v||'',rotulo:d.rotulo||''}:{v:d,rotulo:''});
+  body.innerHTML='<div style="background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:16px">'
+    +'<div id="discRows"></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px"><button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discAdd()">+ Disciplina</button>'
+    +'<button class="btn-primary" style="padding:6px 14px;font-size:12px;margin-left:auto" onclick="discSalvar()">Salvar disciplinas</button></div></div>';
+  discRenderRows();
+}
+function discRenderRows(){
+  const box=document.getElementById('discRows'); if(!box) return;
+  box.innerHTML = DISC_DOM.length ? DISC_DOM.map((d,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+      <input value="${_escAttr(d.v)}" oninput="discSet(${i},'v',this.value)" placeholder="COD" maxlength="8"
+        style="width:92px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
+      <input value="${_escAttr(d.rotulo)}" oninput="discSet(${i},'rotulo',this.value)" placeholder="Nome da disciplina"
+        style="flex:1;min-width:140px;padding:7px 10px;border:1px solid var(--gray-border);border-radius:7px;font-size:13px;outline:none">
+      <button type="button" onclick="discDel(${i})" title="Remover" style="border:none;background:none;color:#94a3b8;font-size:17px;cursor:pointer;padding:2px 6px">&#215;</button>
+    </div>`).join('') : '<div style="color:var(--text-mid);font-size:12px">Nenhuma disciplina ainda. Use "+ Disciplina".</div>';
+}
+function discSet(i,f,v){ if(DISC_DOM[i]) DISC_DOM[i][f]=v; }
+function discAdd(){ DISC_DOM.push({v:'',rotulo:''}); discRenderRows();
+  const box=document.getElementById('discRows'); const ins=box&&box.querySelectorAll('input'); if(ins&&ins.length) ins[ins.length-2].focus(); }
+function discDel(i){ DISC_DOM.splice(i,1); discRenderRows(); }
+function _discMsg(c){ return ({sem_permissao:'Sem permissão para editar.',sem_convencao:'Construtora sem convenção — defina o padrão primeiro.',sem_campo_disciplina:'A convenção não tem campo de disciplina.',erro_escopo:'Escopo inválido.',invalido:'Preencha código e nome.'})[c]||('Falha: '+c); }
+async function discSalvar(){
+  const seen=new Set(), dom=[];
+  for(const d of DISC_DOM){ const v=(d.v||'').trim().toUpperCase(), r=(d.rotulo||'').trim();
+    if(!v) continue; if(seen.has(v)){ showToast('Código repetido: '+v,'red'); return; } seen.add(v); dom.push({v, rotulo:r||v}); }
+  const e=discEscopoAtual();
+  const { data, error } = await sb.rpc('cde_disc_salvar',{ p_construtora:e.construtora, p_grupo:e.grupo, p_dominio:dom });
+  if(error){ showToast('Erro: '+error.message,'red'); return; }
+  if(data!=='ok'){ showToast(_discMsg(data),'red'); return; }
+  showToast('Disciplinas salvas.','green'); discCarregar();
+}
+async function discCarregarNotifs(){
+  if(!EMPRESA||!EMPRESA.id) return;
+  let data=[]; try{ const r=await sb.from('cde_disc_notif_auria').select('*').eq('grupo_id',EMPRESA.id).eq('lida',false).order('criado_em',{ascending:false}); data=r.data||[]; }catch(e){}
+  DISC_NOTIFS=data;
+  const badge=document.getElementById('discNotifBadge'); if(badge){ badge.style.display=data.length?'':'none'; badge.textContent=data.length; }
+  const nv=document.getElementById('discNovidades'); if(nv){
+    nv.innerHTML = data.length ? '<div style="background:var(--orange-light);border:1px solid #f0dcc0;border-radius:10px;padding:11px 13px;margin-bottom:14px">'
+      +'<div style="font-size:12px;font-weight:700;color:#8a5a12;margin-bottom:7px">&#128276; Disciplinas adicionadas por analistas</div>'
+      + data.map(n=>`<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;padding:3px 0">
+          <span style="font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700">${esc(n.codigo)}</span><span>${esc(n.nome||'')}</span>
+          <span style="color:var(--text-soft)">&middot; ${esc(n.autor_nome||'analista')}</span>
+          <button type="button" onclick="discNotifLida('${n.id}')" style="margin-left:auto;border:none;background:none;color:var(--blue);font-size:12px;font-weight:600;cursor:pointer">ok, li</button></div>`).join('')
+      + '</div>' : '';
+  }
+}
+async function discNotifLida(id){ try{ await sb.from('cde_disc_notif_auria').update({lida:true}).eq('id',id); }catch(e){} discCarregarNotifs(); }
+
 function previewLogo(input){
   const file = input.files?.[0];
   if(!file) return;
@@ -3420,6 +3512,7 @@ function goPage(name){
   if(name==='empreendimentos') renderEmpreendimentosPage();
   if(name==='fornecedores')    renderFornecedoresPage();
   if(name==='financeiro')      finCarregar();
+  if(name==='disciplinas')     renderDisciplinasPage();
 }
 
 // ═══════════════════════════════════════════════════════

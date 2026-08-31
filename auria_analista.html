@@ -283,6 +283,7 @@ table.cde-ac tr.cde-ac-forn td{background:#F8FAFC;color:#1A2F4A;font-weight:800;
       <div class="nav-item" id="nav-app" onclick="location.href='app.html'">📐 Auria App</div>
       <div class="nav-item" id="nav-msg" onclick="goPage('msg')">✉ Mensagens</div>
       <div class="nav-item" id="nav-forn" onclick="goPage('forn')">🏢 Fornecedores</div>
+      <div class="nav-item" id="nav-disc" onclick="goPage('disc')">📑 Disciplinas</div>
       <div class="nav-sec">Pessoal (todos os empreendimentos)</div>
       <div class="nav-item" id="nav-agenda" onclick="goPage('agenda')">📅 Agenda</div>
       <div class="nav-item" id="nav-kanban" onclick="goPage('kanban')">📋 Kanban</div>
@@ -503,14 +504,67 @@ async function loadEmpreendimentos(){
 
 function goPage(p){
   PAGE=p;
-  ['inicio','emp','msg','forn','agenda','kanban'].forEach(x=>{var el=document.getElementById('nav-'+x); if(el) el.classList.toggle('active',x===p);});
-  document.getElementById('pageTitle').textContent={inicio:'Início',emp:'Meus Empreendimentos',msg:'Mensagens',forn:'Fornecedores',agenda:'Agenda',kanban:'Kanban'}[p];
+  ['inicio','emp','msg','forn','agenda','kanban','disc'].forEach(x=>{var el=document.getElementById('nav-'+x); if(el) el.classList.toggle('active',x===p);});
+  document.getElementById('pageTitle').textContent={inicio:'Início',emp:'Meus Empreendimentos',msg:'Mensagens',forn:'Fornecedores',agenda:'Agenda',kanban:'Kanban',disc:'Disciplinas'}[p];
   if(p==='inicio')renderInicio();
   else if(p==='emp')renderHome();
   else if(p==='msg')renderMensagens();
   else if(p==='forn')renderFornecedoresPage();
   else if(p==='agenda')renderAgenda();
   else if(p==='kanban')renderKanban();
+  else if(p==='disc')renderDiscAnalista();
+}
+// ── Disciplinas (analista: vê o padrão e só ADICIONA novas; não edita/remove) ──
+let DISC_AN_EMP=null;
+function renderDiscAnalista(){
+  const c=document.getElementById('content');
+  if(!EMPS.length){ c.innerHTML='<div class="empty"><div class="emoji">📑</div><h3>Nenhum empreendimento atribuído</h3></div>'; return; }
+  const opts=EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('');
+  c.innerHTML=`<div style="max-width:720px">
+    <div style="font-size:13px;color:#64748B;margin-bottom:12px">Disciplinas do <b>padrão de nomenclatura</b> da construtora. Você pode <b>adicionar</b> novas; editar/remover as existentes é com o gestor (ele é avisado das suas adições).</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <span style="font-size:13px;color:#334155;font-weight:600">Empreendimento:</span>
+      <select id="discAnEmp" onchange="discAnLoad()" style="min-width:240px;padding:8px 10px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;background:#fff;outline:none">${opts}</select>
+    </div>
+    <div id="discAnBody"></div></div>`;
+  discAnLoad();
+}
+async function discAnLoad(){
+  const empId=(document.getElementById('discAnEmp')||{}).value; DISC_AN_EMP=EMPS.find(e=>String(e.id)===String(empId))||null;
+  const body=document.getElementById('discAnBody'); if(!body) return;
+  body.innerHTML='<div style="color:#94A3B8;font-size:13px">Carregando…</div>';
+  let dom=[];
+  try{
+    const { data } = await sb.rpc('cde_convencao',{ p_emp:empId });
+    const conv=(data&&data[0])||null;
+    if(!conv){ body.innerHTML='<div style="padding:16px;border:1px dashed #E2E8F0;border-radius:10px;color:#64748B;font-size:13px">Este empreendimento ainda não tem padrão de codificação definido pela construtora.</div>'; return; }
+    const f=(conv.campos||[]).find(c=>c.mapeia==='disciplina');
+    dom=f?(f.dominio||[]).map(d=>(typeof d==='object')?{v:d.v||'',rotulo:d.rotulo||''}:{v:d,rotulo:''}):[];
+  }catch(e){ body.innerHTML='<div style="color:#A32D2D;font-size:13px">Erro ao carregar: '+esc(e.message||e)+'</div>'; return; }
+  body.innerHTML=`<div style="background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:16px">
+    <div style="font-size:12px;color:#64748B;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:9px">Disciplinas existentes</div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px">${dom.length?dom.map(d=>`<span style="background:#EEF2F7;border-radius:20px;padding:3px 11px;font-size:12px"><b style="font-family:ui-monospace,Menlo,Consolas,monospace">${esc(d.v)}</b> · ${esc(d.rotulo||d.v)}</span>`).join(''):'<span style="color:#94A3B8;font-size:12px">Nenhuma ainda.</span>'}</div>
+    <div style="border-top:1px dashed #E2E8F0;padding-top:12px">
+      <div style="font-size:12px;color:#334155;font-weight:600;margin-bottom:7px">Adicionar disciplina</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="discAnCod" placeholder="COD" maxlength="8" style="width:96px;padding:8px 9px;border:1px solid #E2E8F0;border-radius:8px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
+        <input id="discAnNome" placeholder="Nome da disciplina" style="flex:1;min-width:160px;padding:8px 10px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none">
+        <button onclick="discAnAdd()" style="background:#1D4ED8;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">Adicionar</button>
+      </div>
+      <div style="font-size:11px;color:#94A3B8;margin-top:6px">Só adição — as disciplinas existentes não podem ser alteradas por aqui.</div>
+    </div></div>`;
+}
+async function discAnAdd(){
+  if(!DISC_AN_EMP){ return; }
+  const cod=(document.getElementById('discAnCod').value||'').trim(), nome=(document.getElementById('discAnNome').value||'').trim();
+  if(!cod||!nome){ alert('Preencha código e nome.'); return; }
+  const construtora=DISC_AN_EMP.construtora_id||null;
+  const args = construtora ? {p_construtora:construtora,p_grupo:null,p_codigo:cod,p_nome:nome} : {p_construtora:null,p_grupo:(USER&&USER.empresa_id)||null,p_codigo:cod,p_nome:nome};
+  const { data, error } = await sb.rpc('cde_disc_add', args);
+  if(error){ alert('Erro: '+error.message); return; }
+  const msg={ok:'Disciplina adicionada! O gestor foi avisado.',exists:'Esse código já existe no padrão.',sem_permissao:'Sem permissão.',sem_convencao:'Construtora sem convenção — peça ao gestor para definir o padrão.',sem_campo_disciplina:'A convenção não tem campo de disciplina.',invalido:'Preencha código e nome.',erro_escopo:'Escopo inválido.'}[data]||('Falha: '+data);
+  alert(msg);
+  if(data==='ok'){ document.getElementById('discAnCod').value=''; document.getElementById('discAnNome').value=''; discAnLoad(); }
 }
 
 function renderHome(){
