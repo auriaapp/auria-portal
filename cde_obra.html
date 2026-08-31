@@ -533,6 +533,7 @@
   <a class="hbtn" id="lnkPadrao" href="cde.html" title="Padrão de codificação (gestão)">⚙ Padrão</a>
   <a class="hbtn" href="portal.html">← Portal</a>
   <button class="hbtn" id="btnFicha" onclick="abrirFicha()" style="display:none" title="Ficha do empreendimento (características, viabilidades, documentação)">📋 Ficha</button>
+  <button class="hbtn" id="btnIndexar" onclick="indexarPdfs()" style="display:none" title="Extrair o texto dos PDFs para a busca por conteúdo (roda uma vez; pode repetir para pegar novos)">🔎 Indexar PDFs</button>
   <button class="hbtn" id="btnOrgQR" onclick="abrirOrganizadorQR()" style="display:none" title="Organizar vários QR para impressão (A4/A3 paisagem)">🖨 Organizar QR</button>
   <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Receber arquivos</button>
 </header>
@@ -606,6 +607,7 @@
       <button id="btnOrdem" class="navTool" onclick="toggleOrdemPop(event)" title="Ordenar arquivos">
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3v10M4 13l-2-2M4 13l2-2M9 4h5M9 8h4M9 12h3"/></svg>
       </button>
+      <button id="btnConteudo" class="navTool" onclick="toggleConteudo()" title="Buscar DENTRO do texto dos PDFs (liga/desliga)" style="font-weight:800;font-size:12px">Aa</button>
       <div id="filtroPop" class="navPop" style="display:none"></div>
       <div id="ordemPop" class="navPop navPop-sm" style="display:none"></div>
     </div>
@@ -801,6 +803,7 @@ const EMP_ID = new URLSearchParams(location.search).get('emp') || '';
 let USER=null, EMP=null, CONV=null, STMAP={}, DOCS=[], LOTE=[];
 let SEL_DISC=null;
 let BUSCA='';   // texto da barra de busca de arquivos (coluna direita)
+let BUSCA_CONTEUDO=false, BUSCA_IDS=null, _bcTimer=null;   // busca no TEXTO dos PDFs (toggle Aa)
 let FILTROS={ disc:new Set(), etapa:new Set(), status:new Set(), formato:new Set() };  // filtros ativos (E entre dimensões, OU dentro)
 let ORDEM='prancha';   // ordenação da lista: 'prancha' (default) | 'envio' | 'liberacao'
 // ATENÇÃO: DOC_SEL NÃO é declarado com let/const aqui de propósito. Ele é um
@@ -864,7 +867,7 @@ async function boot(){
       + '<a href="cde.html" style="color:var(--accent)">Defina o padrão do grupo/empresa</a> antes de receber arquivos.';
     return;
   }
-  if(!READONLY) $('btnReceber').style.display='';
+  if(!READONLY){ $('btnReceber').style.display=''; const bi=$('btnIndexar'); if(bi) bi.style.display=''; }
   // Organizador de QR: perfil Obra (e gestão/admin, p/ preparar as folhas). Setor não.
   if(USER_ROLE==='obra' || !READONLY){ const b=$('btnOrgQR'); if(b) b.style.display=''; }
   await carregarDocs();
@@ -1242,24 +1245,86 @@ function setNavMode(m){ _zeraBusca(); NAV_MODE=m; GRUPO_SEL=(m==='grupo'?GRUPO_S
 function onBuscaInput(v){
   BUSCA=(v||'').trim();
   const x=$('navBuscaX'); if(x) x.style.display = BUSCA ? 'block' : 'none';
+  if(BUSCA_CONTEUDO){ clearTimeout(_bcTimer); _bcTimer=setTimeout(()=>buscaConteudo(BUSCA),280); renderNav(); return; }
+  renderNav();
+}
+// Toggle "Aa": alterna entre buscar no NOME e no CONTEÚDO (texto dos PDFs).
+function toggleConteudo(){
+  BUSCA_CONTEUDO=!BUSCA_CONTEUDO;
+  const b=$('btnConteudo'); if(b){ b.style.background=BUSCA_CONTEUDO?'var(--accent)':''; b.style.color=BUSCA_CONTEUDO?'#231703':''; b.style.borderColor=BUSCA_CONTEUDO?'var(--accent)':''; }
+  const i=$('navBusca'); if(i) i.placeholder = BUSCA_CONTEUDO ? 'Buscar no conteúdo dos PDFs…' : 'Buscar arquivo pelo nome…';
+  BUSCA_IDS=null;
+  if(BUSCA_CONTEUDO && BUSCA) buscaConteudo(BUSCA); else renderNav();
+}
+// Busca full-text no servidor (índice GIN), devolve ids que casam. Instantâneo.
+async function buscaConteudo(q){
+  q=(q||'').trim();
+  if(q.length<2){ BUSCA_IDS=new Set(); renderNav(); return; }
+  try{
+    const { data, error } = await sb.from('cde_documento_auria').select('id')
+      .eq('empreendimento_id',EMP_ID).eq('arquivado',false)
+      .textSearch('texto_busca', q, { type:'websearch', config:'portuguese' });
+    if(error) throw error;
+    BUSCA_IDS=new Set((data||[]).map(r=>r.id));
+  }catch(e){ BUSCA_IDS=new Set(); console.warn('busca conteúdo:', e.message||e); }
   renderNav();
 }
 function limparBusca(){
-  BUSCA=''; const i=$('navBusca'); if(i){ i.value=''; i.focus(); }
+  BUSCA=''; BUSCA_IDS=null; const i=$('navBusca'); if(i){ i.value=''; i.focus(); }
   const x=$('navBuscaX'); if(x) x.style.display='none';
   renderNav();
+}
+// PDF principal de uma revisão (pdf.eh_principal, senão o 1º PDF).
+function _pdfPrincipal(rev){ const fs=((rev&&rev.arqs)||[]).filter(a=>(a.extensao||'').toLowerCase()==='pdf'); return fs.find(a=>a.eh_principal)||fs[0]||null; }
+// Extrai o texto de um PDF (pdf.js) — limita páginas e tamanho p/ não inchar.
+async function _extrairTextoPdf(bytes){
+  const doc=await pdfjsLib.getDocument({data:bytes}).promise;
+  const n=Math.min(doc.numPages, 80); const parts=[];
+  for(let i=1;i<=n;i++){ try{ const pg=await doc.getPage(i); const tc=await pg.getTextContent(); parts.push(tc.items.map(it=>it.str).join(' ')); }catch(e){} }
+  try{ doc.destroy&&doc.destroy(); }catch(e){}
+  return parts.join(' ').replace(/\s+/g,' ').trim().slice(0,20000);
+}
+// Backfill: extrai o texto dos PDFs ainda não indexados (roda 1×; pode repetir p/ novos).
+async function indexarPdfs(){
+  const alvos=DOCS.filter(d=> !d.texto_busca && d.atual && _pdfPrincipal(d.atual));
+  if(!alvos.length){ alert('Todos os PDFs com texto já estão indexados.'); return; }
+  if(!confirm('Indexar o texto de '+alvos.length+' PDF(s)?\n\nÉ uma vez só (pode repetir depois para pegar novos). Pode levar alguns minutos — mantenha esta aba aberta.')) return;
+  const btn=$('btnIndexar'); const t0=btn.textContent; btn.disabled=true;
+  let ok=0, fail=0;
+  for(let i=0;i<alvos.length;i++){
+    const d=alvos[i]; btn.textContent='Indexando '+(i+1)+'/'+alvos.length+'…';
+    try{
+      const arq=_pdfPrincipal(d.atual);
+      const r=await cdePdfBytes(arq.storage_path, arq.storage_provider);
+      const txt=await _extrairTextoPdf(r.bytes);
+      const { error }=await sb.rpc('cde_texto_set',{ p_doc:d.id, p_texto:(txt||' ') });
+      if(error) throw error;
+      d.texto_busca=txt||' '; ok++;
+    }catch(e){ fail++; console.warn('indexar',d.codigo,e.message||e); }
+  }
+  btn.disabled=false; btn.textContent=t0;
+  alert('Indexação concluída: '+ok+' PDF(s) indexado(s)'+(fail?(' · '+fail+' falha(s)'):'')+'.\nA busca por conteúdo (Aa) já funciona.');
 }
 // Zera a busca SEM re-renderizar (quem chama já re-renderiza).
 function _zeraBusca(){ if(!BUSCA) return; BUSCA=''; const i=$('navBusca'); if(i) i.value=''; const x=$('navBuscaX'); if(x) x.style.display='none'; }
 function navBuscaResultados(){
   const q=BUSCA.toLowerCase();
-  const bate = d => (d.codigo||'').toLowerCase().includes(q)
-    || (d.titulo||'').toLowerCase().includes(q)
-    || (d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
-  const achados = DOCS.filter(d=> bate(d) && docPassaFiltro(d));
-  if(!achados.length) return '<div class="nav-hint">Nenhum arquivo encontrado para <b>“'+esc(BUSCA)+'”</b>.</div>';
+  let achados, ondeTxt;
+  if(BUSCA_CONTEUDO){
+    if(BUSCA.length<2) return '<div class="nav-hint">Digite ao menos 2 letras para buscar no conteúdo dos PDFs.</div>';
+    if(BUSCA_IDS===null) return '<div class="nav-hint">Buscando no conteúdo…</div>';
+    achados = DOCS.filter(d=> BUSCA_IDS.has(d.id) && docPassaFiltro(d));
+    ondeTxt = ' no <b>conteúdo</b>';
+  }else{
+    const bate = d => (d.codigo||'').toLowerCase().includes(q)
+      || (d.titulo||'').toLowerCase().includes(q)
+      || (d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
+    achados = DOCS.filter(d=> bate(d) && docPassaFiltro(d));
+    ondeTxt = '';
+  }
+  if(!achados.length) return '<div class="nav-hint">Nenhum arquivo encontrado'+ondeTxt+' para <b>“'+esc(BUSCA)+'”</b>.'+(BUSCA_CONTEUDO?'<br><span style="font-size:11px">Só encontra PDFs já <b>indexados</b> (e com texto — escaneados não contam).</span>':'')+'</div>';
   const porDisc={}; achados.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
-  let out='<div class="nav-hint" style="padding:2px 4px 9px">'+achados.length+' arquivo(s) para <b>“'+esc(BUSCA)+'”</b>:</div>';
+  let out='<div class="nav-hint" style="padding:2px 4px 9px">'+achados.length+' arquivo(s)'+ondeTxt+' para <b>“'+esc(BUSCA)+'”</b>:</div>';
   Object.keys(porDisc).sort().forEach(k=>{
     const ds=ordenarDocs(porDisc[k]);
     out+=`<div class="folder open"><div class="folder-h" style="cursor:default">
