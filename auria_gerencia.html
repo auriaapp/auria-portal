@@ -765,6 +765,18 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       </div>
     </div>
 
+    <!-- ══ Importar de modelo / empreendimento (só na criação) ══ -->
+    <div id="empImportBox" style="display:none;background:var(--orange-light);border:1px solid #f0dcc0;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#8a5a12">&#128229; Começar a partir de</span>
+        <select id="empImportSel" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;background:#fff;outline:none">
+          <option value="">— do zero —</option>
+        </select>
+        <button type="button" class="btn-secondary" style="padding:7px 14px;font-size:12px" onclick="aplicarImportSel()">Aplicar</button>
+      </div>
+      <div style="font-size:11px;color:#94742a;margin-top:6px">Copia convenção/pavimentos/config e ficha para você só editar as diferenças. Não afeta a origem.</div>
+    </div>
+
     <!-- ══ SEÇÃO: Identificação ══ -->
     <div style="margin-bottom:18px">
       <div style="display:flex;align-items:center;gap:8px;background:var(--blue);color:#fff;border-radius:8px 8px 0 0;padding:8px 14px;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase">
@@ -968,6 +980,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     </div>
 
     <div class="modal-footer" style="margin-top:0">
+      <button type="button" class="btn-secondary" onclick="salvarComoModelo()" style="margin-right:auto" title="Salvar convenção + pavimentos + config como um modelo reutilizável">&#128190; Salvar como modelo</button>
       <button class="btn-secondary" onclick="closeModal('modalNovoEmp')">Cancelar</button>
       <button class="btn-primary" id="btnCriarEmp" onclick="submitEmp()">&#43; Criar Empreendimento</button>
     </div>
@@ -2796,6 +2809,90 @@ async function salvarBriefing(){
   finally{ btn.disabled=false; btn.textContent=t0; }
 }
 
+// ═══ MODELOS DE EMPREENDIMENTO (templates: convenção + pavimentos + config + ficha) ═══
+let MODELOS_SALVOS=[];
+async function carregarModelos(){
+  MODELOS_SALVOS=[];
+  if(!EMPRESA||!EMPRESA.id) return;
+  try{ const { data } = await sb.from('cde_modelo_auria').select('id,nome,tipo,payload').eq('grupo_id',EMPRESA.id).order('nome'); MODELOS_SALVOS=data||[]; }
+  catch(e){ MODELOS_SALVOS=[]; }
+}
+function preencherImportSel(){
+  const sel=document.getElementById('empImportSel'); if(!sel) return;
+  let h='<option value="">— do zero —</option>';
+  if(MODELOS_SALVOS.length) h+='<optgroup label="Modelos salvos">'+MODELOS_SALVOS.map(m=>`<option value="m:${m.id}">${esc(m.nome)}${m.tipo!=='completo'?' ('+esc(m.tipo)+')':''}</option>`).join('')+'</optgroup>';
+  const emps=(EMPS||[]).slice().sort((a,b)=>String(a.nome||'').localeCompare(b.nome||'','pt'));
+  if(emps.length) h+='<optgroup label="Copiar de empreendimento">'+emps.map(e=>`<option value="e:${e.id}">${esc(e.nome)}</option>`).join('')+'</optgroup>';
+  sel.innerHTML=h; sel.value='';
+}
+function _coletarConfigAtual(){
+  const _grupo=(document.getElementById('empTipoGrupo')?.value||'').trim()||'Pavimentos Tipo';
+  const _etapas=(document.getElementById('empEtapas')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  return { tipo_empreendimento:document.getElementById('empTipo')?.value||'Residencial',
+    tipologia:document.getElementById('empTipologia')?.value||'Vertical',
+    n_pavimentos:_getPav(), tipo_de:_getDe(), tipo_ate:_getAte(), tipo_grupo_nome:_grupo,
+    n_subsolo:document.getElementById('chkGaragem')?.checked?_getSub():0,
+    n_sobressolo:document.getElementById('chkSobressolo')?.checked?_getSbs():0,
+    n_edicula:document.getElementById('chkEdicula')?.checked?_getEdi():0,
+    etapas:_etapas };
+}
+function _aplicarConfigNoForm(cfg){
+  cfg=cfg||{};
+  const sv=(id,val)=>{ const e=document.getElementById(id); if(e&&val!=null) e.value=val; };
+  const spin=(id,valId,val)=>{ if(val==null) return; sv(id,val); const v2=document.getElementById(valId); if(v2) v2.textContent=val; };
+  if(cfg.tipo_empreendimento){ sv('empTipo',cfg.tipo_empreendimento); document.querySelectorAll('#grupoTipo .tipo-btn').forEach(b=>b.classList.toggle('sel',b.textContent.trim()===cfg.tipo_empreendimento)); }
+  if(cfg.tipologia){ sv('empTipologia',cfg.tipologia); document.querySelectorAll('#grupoTipologia .tipo-btn').forEach(b=>b.classList.toggle('sel',b.textContent.trim()===cfg.tipologia)); }
+  spin('empPavimentos','pavVal',cfg.n_pavimentos); spin('tipoDe','tipoDeVal',cfg.tipo_de); spin('tipoAte','tipoAteVal',cfg.tipo_ate); _updTipoCount();
+  if(cfg.tipo_grupo_nome) sv('empTipoGrupo',cfg.tipo_grupo_nome);
+  if(cfg.etapas&&cfg.etapas.length) sv('empEtapas',cfg.etapas.join(', '));
+  const cg=document.getElementById('chkGaragem'); if(cg){ cg.checked=!!cfg.n_subsolo; toggleSub(); spin('nSubsolo','nSubVal',cfg.n_subsolo); }
+  const cs=document.getElementById('chkSobressolo'); if(cs){ cs.checked=!!cfg.n_sobressolo; toggleSbs(); spin('nSobressolo','nSbsVal',cfg.n_sobressolo); }
+  const ce=document.getElementById('chkEdicula'); if(ce){ ce.checked=!!cfg.n_edicula; toggleEdi(); spin('nEdicula','nEdiVal',cfg.n_edicula); }
+}
+async function aplicarImportSel(){
+  const val=(document.getElementById('empImportSel')||{}).value||'';
+  if(!val) return;
+  let cfg=null, pavs=null, brief=null, conv=null;
+  if(val.charAt(0)==='m'){
+    const m=MODELOS_SALVOS.find(x=>x.id===val.slice(2)); if(!m) return;
+    const p=m.payload||{}; cfg=p.config; pavs=p.pavimentos; brief=p.briefing; conv=p.convencao;
+  }else{
+    const empId=val.slice(2), emp=EMPS.find(e=>e.id===empId); if(!emp) return;
+    cfg=emp.config; brief=(emp.config&&emp.config.briefing)||null;
+    try{ const { data:pv }=await sb.from('cde_pavimento_auria').select('codigo,nome,tipo,ordem,membros').eq('empreendimento_id',empId).eq('ativo',true).order('ordem'); pavs=pv||[]; }catch(e){ pavs=[]; }
+  }
+  if(cfg) _aplicarConfigNoForm(cfg);
+  if(Array.isArray(pavs)){ PAV_BOX='pavRows'; PAV_ROWS=pavs.map(p=>({codigo:p.codigo,nome:p.nome,tipo:p.tipo,membros:p.membros||[]})); _pavGrpOpen=-1; renderPavRows(); }
+  if(brief){ BRIEF=briefFromConfig({briefing:brief}); renderBrief(); }
+  // Convenção (bundle completo): aplica à construtora selecionada só se ela ainda não tiver.
+  const construtoraId=v('empEmpresa')||null;
+  if(conv && construtoraId){
+    try{ const { data:ex }=await sb.from('cde_convencao_auria').select('id').eq('construtora_id',construtoraId).maybeSingle();
+      if(!ex && confirm('Este modelo inclui uma convenção de nomenclatura. Aplicá-la à construtora selecionada (que ainda não tem convenção própria)?')){
+        await sb.from('cde_convencao_auria').insert({ construtora_id:construtoraId, nome:conv.nome||'Padrão', separador:conv.separador||'-', campos:conv.campos||[], exemplo:conv.exemplo||'' });
+        showToast('Convenção aplicada à construtora.','success');
+      }
+    }catch(e){}
+  }
+  showToast('Modelo aplicado — ajuste o que precisar antes de criar.','success');
+}
+async function salvarComoModelo(){
+  if(!EMPRESA||!EMPRESA.id){ showToast('Empresa não vinculada.','red'); return; }
+  const nome=prompt('Nome do modelo (ex.: "Residencial vertical padrão"):',''); if(nome===null) return;
+  const n=(nome||'').trim(); if(!n){ showToast('Informe um nome para o modelo.','red'); return; }
+  _pavSync();
+  const payload={ config:_coletarConfigAtual(), pavimentos:pavParaSalvar(), briefing:briefParaSalvar() };
+  const construtoraId=v('empEmpresa')||null;
+  if(construtoraId){ try{ const { data:cv }=await sb.from('cde_convencao_auria').select('nome,separador,campos,exemplo').eq('construtora_id',construtoraId).maybeSingle(); if(cv) payload.convencao=cv; }catch(e){} }
+  try{
+    const { error } = await sb.from('cde_modelo_auria').upsert(
+      { grupo_id:EMPRESA.id, nome:n, tipo:'completo', payload, criado_por:USER.id }, { onConflict:'grupo_id,nome' });
+    if(error) throw error;
+    await carregarModelos(); preencherImportSel();
+    showToast('Modelo "'+n+'" salvo'+(payload.convencao?' (com convenção)':'')+'.','green');
+  }catch(e){ showToast('Erro ao salvar modelo: '+(e.message||e),'red'); }
+}
+
 function previewLogo(input){
   const file = input.files?.[0];
   if(!file) return;
@@ -2823,6 +2920,7 @@ function resetFormEmp(){
   EMP_EDIT_ID=null;
   const _tt=document.querySelector('#modalNovoEmp .modal-title'); if(_tt) _tt.textContent='Novo Empreendimento';
   const _bt=document.getElementById('btnCriarEmp'); if(_bt) _bt.innerHTML='&#43; Criar Empreendimento';
+  const _ib=document.getElementById('empImportBox'); if(_ib) _ib.style.display='none';   // import só na criação
   ['empNome','empCidade','empEstado'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
@@ -3420,7 +3518,10 @@ function finRender(){
 // MODAIS
 // ═══════════════════════════════════════════════════════
 function openModalConvite(){ document.getElementById('modalConvite').classList.add('open'); }
-function openModalNovoEmp(){ PAV_BOX='pavRows'; resetFormEmp(); preencherFiltroEmpresas(); document.getElementById('modalNovoEmp').classList.add('open'); }
+function openModalNovoEmp(){ PAV_BOX='pavRows'; resetFormEmp(); preencherFiltroEmpresas();
+  const ib=document.getElementById('empImportBox'); if(ib) ib.style.display='';
+  carregarModelos().then(preencherImportSel);
+  document.getElementById('modalNovoEmp').classList.add('open'); }
 function closeModal(id){ document.getElementById(id).classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════════
