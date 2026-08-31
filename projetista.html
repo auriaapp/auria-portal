@@ -2051,6 +2051,33 @@ function cdeLoteTitInput(el){
 
 async function cdeSha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return Array.prototype.map.call(new Uint8Array(h),function(b){ return b.toString(16).padStart(2,'0'); }).join(''); }catch(e){ return null; } }
 
+// ── Indexação do texto do PDF em SEGUNDO PLANO (busca por conteúdo no CDE) ──
+// Carrega o pdf.js sob demanda (não pesa a página); nunca bloqueia/quebra o upload.
+let _PDFJS=null;
+function _cdeCarregarPdfjs(){
+  if(_PDFJS) return Promise.resolve(_PDFJS);
+  if(window.pdfjsLib){ _PDFJS=window.pdfjsLib; try{_PDFJS.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';}catch(_){} return Promise.resolve(_PDFJS); }
+  return new Promise(function(resolve,reject){
+    const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+    s.onload=function(){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'; }catch(_){} _PDFJS=window.pdfjsLib; resolve(_PDFJS); };
+    s.onerror=function(){ reject(new Error('pdfjs load falhou')); };
+    document.head.appendChild(s);
+  });
+}
+async function _cdeIndexarPdf(docId, file){
+  try{
+    if(!docId || !file) return;
+    const lib=await _cdeCarregarPdfjs();
+    const buf=await file.arrayBuffer();
+    const doc=await lib.getDocument({data:new Uint8Array(buf)}).promise;
+    const n=Math.min(doc.numPages,80); const parts=[];
+    for(let i=1;i<=n;i++){ try{ const pg=await doc.getPage(i); const tc=await pg.getTextContent(); parts.push(tc.items.map(function(it){return it.str;}).join(' ')); }catch(_){} }
+    try{ doc.destroy&&doc.destroy(); }catch(_){}
+    const txt=parts.join(' ').replace(/\s+/g,' ').trim().slice(0,20000);
+    await sb.rpc('cde_texto_set',{ p_doc:docId, p_texto:(txt||' ') });
+  }catch(e){ console.warn('indexar pdf (bg):', e&&(e.message||e)); }
+}
+
 async function cdeConfirmar(){
   const alvos=CDE_LOTE.filter(function(g){ return g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'); }); if(!alvos.length) return;
   const b=cdeEl('cde-btn-enviar'); b.disabled=true;
@@ -2102,6 +2129,8 @@ async function cdeConfirmar(){
       enviados.push({ codigo:g.parse.codigoDoc, disciplina:g.parse.disciplina,
         disciplinaLabel:g.parse.disciplina?(g.parse.disciplina+' — '+cdeDiscLabel(g.parse.disciplina)):'—',
         revisao:g.parse.revisao||'R00', novo:(g.acao.tipo==='novo') });
+      // indexa o texto do PDF em segundo plano — fire-and-forget, não bloqueia o envio
+      try{ const pdfF=g.arquivos.find(function(f){ return /\.pdf$/i.test(f.name||''); }); if(pdfF) _cdeIndexarPdf(docId, pdfF); }catch(_){}
       feito++;
     }catch(e){ falhas++; done+=g.arquivos.length; prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
