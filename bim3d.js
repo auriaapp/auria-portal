@@ -1210,7 +1210,10 @@ export async function isolarDisciplina(V, codesCsv){
 // CLASSES estruturais — RÁPIDO (só getItemsOfCategories, SEM ler Pset). Paredes
 // não entram (evita varrer milhares de Psets p/ achar LoadBearing, que travava);
 // se `comParedesEstr` vier true, aí sim lê o Pset das paredes (modo lento opt-in).
-const _EST_CLS=[/^IFCCOLUMN$/,/^IFCBEAM$/,/^IFCSLAB$/,/^IFCFOOTING$/,/^IFCPILE$/,/^IFCMEMBER$/,/^IFCPLATE$/];
+// Só classes ESTRUTURAIS "puras". IFCMEMBER/IFCPLATE ficam FORA: na arquitetura
+// são os montantes e painéis do curtain-wall (fachada), e entravam como se fossem
+// estrutura (o "azul" que aparecia ao isolar sem a EST federada).
+const _EST_CLS=[/^IFCCOLUMN$/,/^IFCBEAM$/,/^IFCSLAB$/,/^IFCFOOTING$/,/^IFCPILE$/];
 function _ehLoadBearing(d){
   const v=_achaValorQualquer(d, /loadbearing|load.?bearing|porta.?carga|portante|estrutural/i);
   if(v===true) return true;
