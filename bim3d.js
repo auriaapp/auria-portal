@@ -829,11 +829,28 @@ export function limparMarcas(V){
 export async function marcarIds(V, porMod){
   limparMarcas(V);
   const T=V.THREE; const caixas=[];
+  // getBoxes do Fragments VARIA com os tiles carregados: uma peça ainda não
+  // streamada devolve caixa fora do prédio (marca laranja flutuando no vazio).
+  // Guarda: só aceita caixas cujo CENTRO cai dentro do modelo (V.caixa + margem)
+  // e cujo tamanho não estoura a diagonal do modelo. Sem V.caixa, não filtra.
+  const uni=new T.Box3();
+  V.modelos.forEach(x=>{ const b=x.model&&x.model.box; if(b && !b.isEmpty()) uni.union(b); });
+  const lim = uni.isEmpty()? null : uni;
+  let diag = Infinity;
+  if(lim){ const s=lim.getSize(new T.Vector3()); diag=s.length();
+    lim.expandByVector(s.multiplyScalar(0.05)); }
+  const _c=new T.Vector3();
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi]; const ids=(porMod&&porMod[mi])||[];
     if(!ids.length) continue;
     let bs=[]; try{ bs=await x.model.getBoxes(ids); }catch(_){}
-    (bs||[]).forEach(b=>{ if(b&&b.min&&b.max&&isFinite(b.max.x)) caixas.push(b); });
+    (bs||[]).forEach(b=>{
+      if(!(b&&b.min&&b.max&&isFinite(b.max.x)&&isFinite(b.min.x))) return;
+      _c.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
+      if(lim && !lim.containsPoint(_c)) return;                                  // fora do prédio = caixa errada
+      if(Math.max(b.max.x-b.min.x, b.max.y-b.min.y, b.max.z-b.min.z) > diag) return; // maior que o modelo = lixo
+      caixas.push(b);
+    });
   }
   if(!caixas.length) return 0;
   const geo=new T.BoxGeometry(1,1,1);
