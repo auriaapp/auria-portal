@@ -1218,6 +1218,15 @@ function _ehLoadBearing(d){
 }
 export async function isolarEstrutural(V, comParedesEstr){
   V._cancelar=false;
+  // Se há modelo de ESTRUTURA federado à parte, isolar POR DISCIPLINA é o correto:
+  // o modo por classe pega IFCPLATE/IFCMEMBER, que na ARQUITETURA são os painéis e
+  // montantes do curtain-wall (o "azul" que não é estrutura). Só cai no modo por
+  // classe quando a estrutura está embutida no ARQ (sem EST separado).
+  const estDiscs=[...new Set(V.modelos.map(m=>String(m.disciplina||'').trim()).filter(d=>/^(est|estr|struc)/i.test(d)))];
+  if(estDiscs.length){
+    const r=await isolarDisciplina(V, estDiscs.join(','));
+    if(r && r.n>0) return r;
+  }
   const porMod={}; let total=0;
   for(let mi=0; mi<V.modelos.length; mi++){
     if(V._cancelar) throw new Error('CANCELADO');
