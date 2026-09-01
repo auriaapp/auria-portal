@@ -2926,13 +2926,14 @@ async function iaRegEnd(e){
   const s=_iaSel; _iaSel=null; const mq=$('iaMarquee'); if(mq) mq.style.display='none';
   if(!s) return;
   const r=$('stage').getBoundingClientRect();
-  const a=screenToPage(s.x,s.y), b=screenToPage(e.clientX-r.left, e.clientY-r.top);
+  const ex=e.clientX-r.left, ey=e.clientY-r.top;
   IA_REGIAO=false; const bt=$('btnIARegiao'); if(bt) bt.classList.remove('on');
   $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
   $('modoHint').textContent='arraste para navegar';
-  const nx0=Math.min(a.nx,b.nx), ny0=Math.min(a.ny,b.ny), nx1=Math.max(a.nx,b.nx), ny1=Math.max(a.ny,b.ny);
-  if((nx1-nx0)<0.01 || (ny1-ny0)<0.01){ return; }   // seleção muito pequena
-  const b64=await capturarRegiao({x0:nx0,y0:ny0,x1:nx1,y1:ny1});
+  // retângulo da seleção em coords de CLIENTE (tela) — recorta direto do canvas exibido
+  const cl=Math.min(s.x,ex)+r.left, ct=Math.min(s.y,ey)+r.top, cw=Math.abs(ex-s.x), ch=Math.abs(ey-s.y);
+  if(cw<8 || ch<8){ return; }   // seleção muito pequena
+  const b64=capturarRegiao({left:cl, top:ct, w:cw, h:ch});
   if(!b64){ alert('Não consegui capturar a região.'); return; }
   const L=_iaLayerSel(); const disc=(L&&(L.prancha.disciplina||deduzDisc(L.nome)))||'—';
   explicarRegiao(b64, disc);
@@ -2971,15 +2972,18 @@ async function explicarRegiao(b64, disc){
 // Renderiza SÓ a região selecionada, em ALTA resolução (a região preenchendo
 // ~1600px). Usa o offset do viewport do pdf.js — não rasteriza a página inteira,
 // então um trecho pequeno sai nítido (ao contrário de recortar um render de página).
-async function capturarRegiao(nr){
-  // Recorta do CANVAS COMPOSTO (#pdfCanvas), que já tem TODAS as camadas visíveis
-  // sobrepostas exatamente como o usuário vê — antes re-renderizava uma camada só,
-  // e a região caía em branco quando o desenho estava em OUTRA disciplina.
+// Recorta do CANVAS COMPOSTO (#pdfCanvas — todas as camadas visíveis, como o
+// usuário vê) usando a posição REAL do canvas na tela (getBoundingClientRect).
+// `rect` vem em coords de CLIENTE {left,top,w,h}. Imune a pan/zoom/escala.
+function capturarRegiao(rect){
   const cv=$('pdfCanvas'); if(!cv || !cv.width) return null;
-  const mgx=(nr.x1-nr.x0)*0.10, mgy=(nr.y1-nr.y0)*0.10;   // 10% de contexto
-  const rx0=Math.max(0,nr.x0-mgx), ry0=Math.max(0,nr.y0-mgy), rx1=Math.min(1,nr.x1+mgx), ry1=Math.min(1,nr.y1+mgy);
-  const sx=Math.round(rx0*cv.width), sy=Math.round(ry0*cv.height);
-  const sw=Math.max(4,Math.round((rx1-rx0)*cv.width)), sh=Math.max(4,Math.round((ry1-ry0)*cv.height));
+  const cr=cv.getBoundingClientRect(); if(!cr.width || !cr.height) return null;
+  const mgx=rect.w*0.10, mgy=rect.h*0.10;   // 10% de contexto
+  const L=rect.left-mgx, T=rect.top-mgy, R=rect.left+rect.w+mgx, B=rect.top+rect.h+mgy;
+  const fr=(v,a,len)=>Math.max(0,Math.min(1,(v-a)/len));
+  const fx0=fr(L,cr.left,cr.width), fy0=fr(T,cr.top,cr.height), fx1=fr(R,cr.left,cr.width), fy1=fr(B,cr.top,cr.height);
+  const sx=Math.round(fx0*cv.width), sy=Math.round(fy0*cv.height);
+  const sw=Math.max(4,Math.round((fx1-fx0)*cv.width)), sh=Math.max(4,Math.round((fy1-fy0)*cv.height));
   let up=Math.min(1600/sw, 1600/sh); up=Math.max(1, Math.min(up, 3));   // amplia p/ nitidez (até 3×)
   const ow=Math.max(8,Math.round(sw*up)), oh=Math.max(8,Math.round(sh*up));
   const t=document.createElement('canvas'); t.width=ow; t.height=oh;
