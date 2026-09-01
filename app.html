@@ -3648,10 +3648,25 @@ async function f3dPavimentosPrepara(){
 //  E identifica o modelo pelo ARQUIVO DO CDE, não pelo projeto do Auria BIM —
 //  é o que amarra o apontamento à revisão de onde ele saiu.
 function f3dPonto(hit, m){
+  // Âncora LOCAL (no espaço do model.object): imune à ordem de carga — o Fragments
+  // desloca a origem pela 1ª disciplina federada, e a coord de MUNDO andava junto.
+  const o=m&&m.model&&m.model.object; let L=null;
+  if(o){ try{ o.updateMatrixWorld(); L=o.worldToLocal(new F3D.THREE.Vector3(hit.point.x,hit.point.y,hit.point.z)); }catch(_){} }
   return { k3d:1,
     x:hit.point.x, y:hit.point.y, z:hit.point.z,
+    lx:L?L.x:undefined, ly:L?L.y:undefined, lz:L?L.z:undefined,
     cde_arquivo_id:m.arquivoId, cde_doc:m.documentoId, cde_rev:m.revisaoId,
     localId:hit.localId, mdisc:m.disciplina||m.nome||'' };
+}
+// Reconstrói o ponto no MUNDO a partir da âncora LOCAL (usa o transform atual do
+// modelo). Pin antigo sem lx cai na coord de mundo salva (comportamento anterior).
+function f3dPinWorld(E, pt){
+  if(pt.lx!=null && pt.ly!=null && pt.lz!=null){
+    const m=E.modelos.find(x=>x.arquivoId===pt.cde_arquivo_id);
+    const o=m&&m.model&&m.model.object;
+    if(o){ try{ o.updateMatrixWorld(); const w=o.localToWorld(new E.THREE.Vector3(pt.lx,pt.ly,pt.lz)); return {x:w.x,y:w.y,z:w.z}; }catch(_){} }
+  }
+  return {x:pt.x,y:pt.y,z:pt.z};
 }
 function f3dWorldToScreen(E, x, y, z){
   const el=E.renderer.domElement;
@@ -3680,7 +3695,7 @@ function f3dRenderPins(E, svg){
     if(a.id===editId) return;
     (a.pontos_json||[]).forEach(pt=>{
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
-      const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
+      const w=f3dPinWorld(E, pt); const p=f3dWorldToScreen(E, w.x,w.y,w.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       // pinSvg desenha o círculo 25px acima da âncora (a ponta = p.y)
       E._pinHits.push({ ai, cx:p.x, cy:p.y-25, ty:p.y });
@@ -3690,7 +3705,7 @@ function f3dRenderPins(E, svg){
   if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
-      const p=f3dWorldToScreen(E, pt.x,pt.y,pt.z); if(!p) return;
+      const w=f3dPinWorld(E, pt); const p=f3dWorldToScreen(E, w.x,w.y,w.z); if(!p) return;
       out+=pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true);
     });
   }
