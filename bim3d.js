@@ -123,6 +123,15 @@ export async function criar(cont, opts={}){
   };
 
   ligarEntrada(V);
+  // Streaming/culling do Fragments SEGUE a câmera. Sem isto, ao orbitar/zoom com
+  // vários modelos federados o culling fica congelado na posição anterior e peças
+  // SOMEM durante o movimento. change = enquanto move (throttle); end = ao soltar.
+  let _fragT=0;
+  controls.addEventListener('change', ()=>{
+    const now=performance.now();
+    if(now-_fragT>120){ _fragT=now; try{ V.fragments.update().catch(()=>{}); }catch(_){} }
+  });
+  controls.addEventListener('end', ()=>{ try{ V.fragments.update(true).catch(()=>{}); }catch(_){} });
   V.ro = new ResizeObserver(()=> redimensionar(V));
   V.ro.observe(cont);
   laco(V);
@@ -277,8 +286,11 @@ function _fitBox(V, cx){
   const dist=(raio/Math.sin((V.camera.fov*Math.PI/180)/2))*1.4;
   V.camera.position.set(centro.x+dist*0.7, centro.y+dist*0.55, centro.z+dist*0.7);
   const modeloDiag = V.caixa ? V.caixa.getSize(new T.Vector3()).length() : dist*4;
-  V.camera.near=Math.max(raio/1000, 0.02);
-  V.camera.far =Math.max(raio*50, dist*4, modeloDiag*1.2);   // não clipa o resto se visível
+  // O far cobre o resto do modelo (não clipa ao isolar); o near é DERIVADO do far
+  // com razão presa em 8000 (igual ao enquadrar()) — antes o near saía do raio da
+  // seleção e a razão far/near estourava, causando z-fighting (piscar/fantasma).
+  V.camera.far =Math.max(raio*50, dist*4, modeloDiag*1.2);
+  V.camera.near=Math.max(V.camera.far/8000, 0.02);
   V.camera.updateProjectionMatrix();
   V.controls.target.copy(centro);
   V.controls.minDistance=Math.max(raio/5000, 0.02);
