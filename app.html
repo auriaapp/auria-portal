@@ -2942,9 +2942,13 @@ async function iaRegEnd(e){
 // raciocínio), tira só as tags e mantém o texto, para não sumir com tudo.
 function _iaLimpo(t){
   if(!t) return t;
-  let s=String(t).replace(/<think>[\s\S]*?<\/think>/gi,'');
-  s=s.replace(/<\/?think>/gi,'').trim();
-  return s || String(t).trim();
+  let s=String(t);
+  // <think> aberto e SEM fechar = a resposta foi cortada no meio do raciocínio
+  // (não sobrou resposta real). Devolve vazio p/ o caller usar o fallback — nunca
+  // mostra o raciocínio cru.
+  if(/<think>/i.test(s) && !/<\/think>/i.test(s)) return '';
+  s=s.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<\/?think>/gi,'').trim();
+  return s;
 }
 // Análise por região = EXPLICAÇÃO do que a IA vê (com contexto), sem sugerir apontamentos.
 async function explicarRegiao(b64, disc){
@@ -2956,9 +2960,10 @@ async function explicarRegiao(b64, disc){
   const messages=[{role:'system',content:system},{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:user}]}];
   let resp;
   try{
-    const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:true, max_tokens:900 } });
+    const { data, error }=await sb.functions.invoke(IA_FN,{ body:{ messages, hasImage:true, max_tokens:2200 } });
     if(error) throw new Error(await _iaErr(error));
-    resp=_iaLimpo(data&&data.content)||('⚠ '+((data&&data.error)||'Não consegui explicar agora.'));
+    const raw=data&&data.content;
+    resp=_iaLimpo(raw) || (raw ? 'A IA se perdeu no raciocínio e não concluiu a resposta — tente de novo.' : ('⚠ '+((data&&data.error)||'Não consegui explicar agora.')));
   }catch(e){ resp='⚠ Erro ao consultar a IA: '+(e.message||e); }
   IA_CONV[IA_CONV.length-1]={role:'assistant',content:resp};   // substitui o "analisando…"
   renderIA('lastUser');
