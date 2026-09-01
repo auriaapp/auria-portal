@@ -2967,20 +2967,20 @@ async function explicarRegiao(b64, disc){
 // ~1600px). Usa o offset do viewport do pdf.js — não rasteriza a página inteira,
 // então um trecho pequeno sai nítido (ao contrário de recortar um render de página).
 async function capturarRegiao(nr){
-  const L=_iaLayerSel(); if(!L||!L.page) return null;
-  const _d=pageWH(L.page), pw=_d.w, ph=_d.h;   // dimensões pós-rotação (mesma norma dos pins)
-  // margem de contexto: expande um pouco a seleção (10%) para a IA ter arredores
-  const mgx=(nr.x1-nr.x0)*0.10, mgy=(nr.y1-nr.y0)*0.10;
+  // Recorta do CANVAS COMPOSTO (#pdfCanvas), que já tem TODAS as camadas visíveis
+  // sobrepostas exatamente como o usuário vê — antes re-renderizava uma camada só,
+  // e a região caía em branco quando o desenho estava em OUTRA disciplina.
+  const cv=$('pdfCanvas'); if(!cv || !cv.width) return null;
+  const mgx=(nr.x1-nr.x0)*0.10, mgy=(nr.y1-nr.y0)*0.10;   // 10% de contexto
   const rx0=Math.max(0,nr.x0-mgx), ry0=Math.max(0,nr.y0-mgy), rx1=Math.min(1,nr.x1+mgx), ry1=Math.min(1,nr.y1+mgy);
-  const rwPt=Math.max(1,(rx1-rx0)*pw), rhPt=Math.max(1,(ry1-ry0)*ph);
-  let scale=Math.min(1600/rwPt, 1600/rhPt);            // região ~1600px no maior lado
-  scale=Math.max(0.2, Math.min(scale, 8));
-  const cw=Math.max(8,Math.round(rwPt*scale)), ch=Math.max(8,Math.round(rhPt*scale));
-  const vp=L.page.getViewport({ scale, offsetX:-rx0*pw*scale, offsetY:-ry0*ph*scale });
-  const c=document.createElement('canvas'); c.width=cw; c.height=ch;
-  const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cw,ch);
-  await L.page.render({ canvasContext:ctx, viewport:vp, background:'#FFFFFF' }).promise;
-  return c.toDataURL('image/jpeg',0.92).split(',')[1];
+  const sx=Math.round(rx0*cv.width), sy=Math.round(ry0*cv.height);
+  const sw=Math.max(4,Math.round((rx1-rx0)*cv.width)), sh=Math.max(4,Math.round((ry1-ry0)*cv.height));
+  let up=Math.min(1600/sw, 1600/sh); up=Math.max(1, Math.min(up, 3));   // amplia p/ nitidez (até 3×)
+  const ow=Math.max(8,Math.round(sw*up)), oh=Math.max(8,Math.round(sh*up));
+  const t=document.createElement('canvas'); t.width=ow; t.height=oh;
+  const c=t.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,ow,oh);
+  try{ c.drawImage(cv, sx,sy,sw,sh, 0,0,ow,oh); }catch(_){ return null; }
+  return t.toDataURL('image/jpeg',0.92).split(',')[1];
 }
 // Cria um apontamento a partir de uma sugestão da IA (pino no centro da vista).
 function criarApontamentoIA(i){
