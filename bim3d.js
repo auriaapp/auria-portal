@@ -1321,6 +1321,23 @@ export async function destacarCategoria(V, regexes, termos, pavim){
   if(total>0) await enquadrarIds(V, porMod);   // zoom-extend na seleção
   return total;
 }
+// Destaca (isola + laranja) em TODAS as categorias visíveis o que casa os termos —
+// p/ "destacar elementos em vidro" (MATERIAL, sem citar a classe). Mesmo casamento
+// do colorir-por-material (acharTudo), só que isolando em vez de colorir.
+export async function destacarTudo(V, termos, pavim){
+  const porMod = await acharTudo(V, termos, pavim);
+  const T=V.THREE; let total=0;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi]; if(!ids||!ids.length) continue; total+=ids.length;
+    try{ await x.model.setVisible(ids, true); }catch(_){}
+    try{ await x.model.highlight(ids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+  }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
+  else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined, true); }catch(_){} } }
+  try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);
+  return total;
+}
 // ── COLORIR (Round 3): recolore subconjuntos SEM esconder o resto ──────────
 export const PALETA=[0xE8960A,0x22D3EE,0x8B5CF6,0x10B981,0xEF4444,0xF59E0B,0x3B82F6,0xEC4899,0x84CC16,0x14B8A6,0xA855F7,0xF97316,0x0EA5E9,0x64748B];
 async function _reaplicarCores(V){

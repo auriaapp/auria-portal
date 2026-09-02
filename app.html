@@ -3141,6 +3141,13 @@ function f3dRegras(q){
     if(/(destac|mostr|isol|selecion|exib|ver\b|s[óo]\s|apenas|somente)/.test(s)){
       for(const [rx,codes] of DISC_CONC){ if(rx.test(s)) return {tipo:'isolardisc', arg:codes}; }
     }
+    // "destacar/mostrar/isolar elementos EM VIDRO" (por MATERIAL, sem citar a classe) →
+    //  destaca em TODAS as categorias filtrando pelo material (mesmo caminho do colorir-material).
+    if(/(destac|mostr|isol|selecion|exib|ache|acha|encontr|localiz|apenas|somente|s[óo]\b|todos os|todas as)/.test(s) && !querColor){
+      const MATd={madeira:'mad,madeira',aluminio:'alu,aluminio',vidro:'vid,vidro,glass,glazing,cristal',ferro:'fer,ferro',metal:'met,metal',aco:'aco',veneziana:'ven,veneziana',alvenaria:'alv,alvenaria',concreto:'conc,concreto',pvc:'pvc',gesso:'ges,gesso',acm:'acm'};
+      const hit=tok.filter(t=>MATd[t]);
+      if(hit.length) return {tipo:'destacartudo', arg: hit.map(t=>MATd[t]).join(',')};
+    }
     // "colorir elementos de vidro de branco" (material, sem citar a classe) →
     //  colore em TODAS as categorias filtrando pelo material.
     if(querColor && cor){
@@ -3320,6 +3327,14 @@ async function execDiretiva(tipo, arg, cor){
     else if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); out={content:r.msg}; }
     else if(tipo==='contar'){      const r=await f3dExecContar(arg);      out={content:r.msg||'', html:r.html}; }
     else if(tipo==='contarfiltro'){ const r=await f3dExecContarFiltro(arg); out={content:r.msg}; }
+    else if(tipo==='destacartudo'){
+      const r=await f3dExecDestaqueMat(arg);
+      let msg;
+      if(r && r.erro==='3d') msg='Abra o modelo 3D para eu destacar os elementos.';
+      else if(r && r.n>0) msg='✓ Isolei **'+r.n+'** elemento(s) com esse material. Clique numa peça para inspecionar — o botão **↩ Voltar ao modelo completo** desfaz.';
+      else msg='Não encontrei elementos com esse material no(s) modelo(s) carregado(s). (O material precisa estar no nome/tipo ou nas propriedades do elemento.)';
+      out={content:msg};
+    }
     else if(tipo==='destacar'){
       const res=await f3dExecDestaque(arg);
       const rot = res && res.filtrado ? 'elemento(s) com o filtro pedido' : _rotuloClasse(arg);
@@ -4961,6 +4976,21 @@ async function f3dExecDestaque(arg){
               : 'Não encontrei elementos com esse filtro no modelo.');
     return { n, filtrado: (termos.length>0 || !!pavim) };
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; console.warn('destaque IA:', e); return { erro:String(e) }; }
+}
+// Destaca por MATERIAL em todas as categorias (ex.: "destacar elementos em vidro").
+async function f3dExecDestaqueMat(arg){
+  if(!F3D || !B3){ return { erro:'3d' }; }
+  const [termosRaw, pavimRaw] = (arg||'').split('|');
+  const termos=(termosRaw||'').split(',').map(t=> t.trim()).filter(Boolean);
+  if(!termos.length) return { n:0 };
+  const pavim=(pavimRaw||'').trim();
+  try{
+    f3dDica('Procurando pelo material…');
+    const n=await B3.destacarTudo(F3D, termos, pavim);
+    f3dDica(n ? (n+' elemento(s) destacado(s). Peça "limpar destaque" ou clique numa peça para voltar.')
+              : 'Não encontrei elementos com esse material no modelo.');
+    return { n };
+  }catch(e){ if(String(e&&e.message).includes('CANCELADO')) throw e; console.warn('destaque material:', e); return { erro:String(e) }; }
 }
 // Normaliza um comprimento para CENTÍMETROS inteiros (para comparar "70cm",
 // "0,70 m", "70 cm", "700 mm"). Retorna null se não for número.
