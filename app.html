@@ -1622,10 +1622,10 @@ function renderCamadas(){
   updateFoco();
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
-function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); renderPins(); renderListaApts(); }
 function camOpac(i,v,inp){ LAYERS[i].opacity=+v; if(inp&&inp.nextElementSibling) inp.nextElementSibling.textContent=Math.round(+v*100)+'%'; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
 function camCor(i,cor){ LAYERS[i].cor=cor; if(i>0) salvarEstadoCamada(LAYERS[i]); renderCamadas(); F.valido=false; render(); }
-function camRemover(i){ if(i<=0) return; LAYERS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); }
+function camRemover(i){ if(i<=0) return; LAYERS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); renderPins(); renderListaApts(); }
 
 // Popup de paleta de cores (abre ao lado do botão 🎨)
 function abrirCorPopup(i,ev){
@@ -2226,6 +2226,13 @@ function pinSvg(px, py, num, cor, destaque){
     `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="800" fill="#fff" style="pointer-events:none">${esc(String(num||''))}</text>`;
 }
 
+// Camada (prancha) carregada e VISÍVEL a que um apontamento pertence — base ou
+// overlay. É null se a prancha do apontamento não está aberta ou está oculta;
+// assim o pin aparece em QUALQUER prancha visível e SOME ao remover/ocultar ela.
+function _layerDoApt(a){
+  if(!a) return null;
+  return LAYERS.find(L=>L&&L.prancha&&L.prancha.id===a.prancha_id&&L.visible!==false)||null;
+}
 function renderPins(){
   const svg=$('pinsSvg'); if(!svg) return;
   if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
@@ -2234,7 +2241,7 @@ function renderPins(){
   const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
   let out='';
   APTS.forEach((a,ai)=>{
-    if(a.prancha_id!==PRANCHA.id) return;
+    if(!_layerDoApt(a)) return;   // só mostra se a prancha do apontamento está aberta e visível
     if(a.id===editId) return;                    // o em edição é desenhado do APT_EDIT (ao vivo)
     (a.pontos_json||[]).forEach((pt,pi)=>{
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
@@ -2534,7 +2541,7 @@ function renderDrawings(){
   // Desenhos de OUTROS apontamentos desta prancha (somente leitura)
   APTS.forEach(a=>{
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
-    if(!(a.prancha_id===PRANCHA.id)) return;
+    if(!_layerDoApt(a)) return;   // desenhos de qualquer prancha aberta e visível (base ou overlay)
     (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
   });
   // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
@@ -6096,7 +6103,13 @@ function locaisDoEmp(){
 }
 
 function novoApontamento(nx,ny){
-  const disc=discAtiva()||(PRANCHA&&PRANCHA.disciplina)||discsEd()[0]||'Arquitetura';
+  // O apontamento pertence à prancha em FOCO (a que o usuário está analisando),
+  // NÃO à base. Ao federar (ex.: Estrutura base + Instalações por cima), apontar
+  // na de Instalações precisa gravar prancha_id/revisão de Instalações — senão o
+  // mapa reabre a base errada e o pin fica órfão dela.
+  const Lf=LAYERS[FOCO_LI]||LAYERS[0];
+  const pr=(Lf&&Lf.prancha)||PRANCHA;
+  const disc=discAtiva()||(pr&&pr.disciplina)||discsEd()[0]||'Arquitetura';
   const g=proximoId(disc);
   const fornEmails=(FORN_DISC[disc]&&FORN_DISC[disc].emails.join(', '))||'';
   APT_EDIT={
@@ -6107,8 +6120,8 @@ function novoApontamento(nx,ny){
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
     pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
     drawings_json:[],
-    prancha_id:PRANCHA?PRANCHA.id:null,
-    cde_revisao_id: (PRANCHA && PRANCHA._cde_revisao_id) || null,
+    prancha_id: pr ? pr.id : null,
+    cde_revisao_id: (pr && pr._cde_revisao_id) || null,
     _novo:true
   };
   APT_IMGS=[];
@@ -6516,7 +6529,7 @@ async function focarPin(){
   if(!APT_EDIT||!V.page) return;
   const pts=APT_EDIT.pontos_json||[];
   if(!pts.length){ alert('Este apontamento não tem pin nesta prancha.'); return; }
-  if(PRANCHA && APT_EDIT.prancha_id && APT_EDIT.prancha_id!==PRANCHA.id){
+  if(PRANCHA && APT_EDIT.prancha_id && !_layerDoApt(APT_EDIT)){
     alert('O pin deste apontamento está em OUTRA prancha ('+(APT_EDIT.prancha_nome||'')+'). Abra o PDF dela para visualizar.');
     return;
   }
@@ -6612,7 +6625,7 @@ function renderListaApts(){
   if(!rows.length){ el.innerHTML='<div class="hint">Nenhum apontamento'+(filtrando?' no filtro':'')+'.</div>'; return; }
   const aptCardHtml=(a)=>{
     const i=APTS.indexOf(a);
-    const nesta=PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
+    const nesta=(a.pontos_json||[]).length && _layerDoApt(a);   // em alguma prancha aberta e visível
     const late=estaAtrasado(a);
     const orig=aptOrigem(a);   // obra/projetista → destaque de origem externa
     // Cores do desktop: atrasado #FADBD8, resolvido #D5F5E3, texto escuro (resolvido vence).
@@ -6655,7 +6668,7 @@ function renderListaApts(){
   const discAberta = PRANCHA ? discFullName(discAtiva()||PRANCHA.disciplina||'') : '';
   let html='';
   if(PRANCHA && !disc){
-    const nestaFn=(a)=>a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
+    const nestaFn=(a)=>!!_layerDoApt(a)&&(a.pontos_json||[]).length;
     const A=ordena(rows.filter(a=>nestaFn(a)));
     const B=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)===discAberta));
     const C=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)!==discAberta));
