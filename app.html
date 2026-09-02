@@ -6357,7 +6357,7 @@ function rmPartRow(i){
 // ── Imagens (Ctrl+V no modal → bucket apontamentos/<uid>/<id>/) ─────────────
 function renderImgs(){
   $('apImgs').innerHTML=APT_IMGS.map((im,i)=>`<div class="th">
-    <img src="${im.url||im.data}" onclick="window.open('${im.url||im.data}','_blank')">
+    <img src="${im.url||im.data}" style="cursor:zoom-in" onclick="abrirImg(this.src)">
     <button class="rm" onclick="APT_IMGS.splice(${i},1);renderImgs()">×</button></div>`).join('')
     ||'<span style="font-size:11px;color:#94A3B8">Nenhum print. Ctrl+V cola aqui.</span>';
 }
@@ -6621,20 +6621,24 @@ function renderListaApts(){
     const pillAtr=late?`<span class="ap-st" style="background:#E74C3C22;color:#E74C3C;margin-left:4px">Em atraso</span>`:'';
     const pillOrig=orig?`<span class="ap-st" style="background:#5B9BD522;color:#2E6DA4;margin-left:4px">${esc(orig.rot)}</span>`:'';
     const tags=pillSt+pillAtr+pillOrig;
+    // 🗺 no canto superior direito: abre o documento/modelo original onde estão os pins.
+    const mapBtn=`<button onclick="event.stopPropagation();irParaApt(${i})" title="Abrir o documento/modelo onde estão os pins" style="position:absolute;top:5px;right:6px;background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:2px;opacity:.8">🗺️</button>`;
     if(APT_VIEW==='estendido'){
-      const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line)">`).join('');
+      const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" onclick="event.stopPropagation();abrirImg(this.src)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:zoom-in">`).join('');
       const prazo=a.prazo_min?('📅 '+_dispData(a.prazo_min)):'';
       const local=a.local_txt?(' · 📍 '+esc(a.local_txt)):'';
-      return `<div class="ap-card" style="${cs}" onclick="clicarAptLista(${i})">
-        <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+      return `<div class="ap-card" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+        ${mapBtn}
+        <div class="t" style="padding-right:26px">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
         <div class="m" style="color:${mc};margin-top:3px">${tags} ${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade.replace(/^[^\wÀ-ÿ]+/,'')):''}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
         ${(prazo||local||nesta)?`<div style="font-size:10.5px;color:${mc};margin-top:5px;opacity:.9">${prazo}${local}${nesta?' · 📌 nesta prancha':''}</div>`:''}
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
       </div>`;
     }
-    return `<div class="ap-card" style="${cs}" onclick="clicarAptLista(${i})">
-      <div class="t">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+    return `<div class="ap-card" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+      ${mapBtn}
+      <div class="t" style="padding-right:26px">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
       <div class="m" style="color:${mc}">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</div>
     </div>`;
   }).join('');
@@ -6665,6 +6669,57 @@ async function clicarAptLista(i){
     }
   }
   abrirAptIdx(i);
+}
+
+// 🗺 do card: só NAVEGA até os pins (não abre o editor). 2D → abre o documento
+// original do CDE e centraliza no pin; 3D → entra no modo 3D federando o modelo
+// do apontamento (F3D) ou acorda o viewer legado (xeokit).
+async function irParaApt(i){
+  const a=APTS[i]; if(!a) return;
+  const p3=(a.pontos_json||[]).find(pt=>pt.k3d);
+  if(p3){                                   // apontamento 3D → abre o MODELO
+    if(p3.cde_arquivo_id){ try{ await f3dModo(true, [p3.cde_arquivo_id]); }catch(e){ console.warn('irParaApt 3D:', e.message||e); } }
+    else if(p3.model){ if(!BIM_ON){ try{ await bimToggle(); }catch(_){}; try{ bimEnsure(p3.model); }catch(_){} } else { try{ bimEnsure(p3.model); }catch(_){} } }
+    return;
+  }
+  // apontamento 2D → abre o documento do CDE (se não estiver aberto) e vai ao pin
+  const jaBase = PRANCHA && a.prancha_id && a.prancha_id===PRANCHA.id;
+  if(!jaBase && a.prancha_id){
+    try{
+      const { data:pr } = await sb.from('pranchas_auria')
+        .select('cde_documento_id').eq('id',a.prancha_id).maybeSingle();
+      if(pr && pr.cde_documento_id){ await abrirDoCDE(pr.cde_documento_id, a.cde_revisao_id||null, false); }
+    }catch(e){ console.warn('irParaApt prancha:', e.message||e); }
+  }
+  if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
+    const pt=a.pontos_json[0];
+    if((pt.pg||1)===V.pageNum){
+      const d=pageDims(), stage=$('stage');
+      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      updateCss(); scheduleRender(0);
+    }
+  }
+}
+
+// Lightbox simples: abre um print em POP-UP dentro da própria página (não em
+// nova aba). Clique fora ou ESC fecha. Serve prints por URL e por data-URL.
+function abrirImg(src){
+  if(!src) return;
+  let ov=$('imgLightbox');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='imgLightbox';
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.82);cursor:zoom-out';
+    const img=document.createElement('img');
+    img.style.cssText='max-width:92vw;max-height:92vh;border-radius:8px;box-shadow:0 12px 44px rgba(0,0,0,.6)';
+    ov.appendChild(img);
+    ov.addEventListener('click', ()=>{ ov.style.display='none'; });
+    document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && ov.style.display==='flex') ov.style.display='none'; });
+    document.body.appendChild(ov);
+  }
+  ov.firstChild.src=src;
+  ov.style.display='flex';
 }
 
 // ═══ JANELAS FLUTUANTES: abrir / fechar / minimizar / arrastar ══════════════
