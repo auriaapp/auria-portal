@@ -977,6 +977,7 @@ const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
 let USER=null, EMPS=[], EMP=null, PRANCHA=null;
+let CDE_PAVS=[];   // pavimentos CADASTRADOS do empreendimento (cde_pavimento_auria) — Local/Pavimento do apontamento
 // Estado do visualizador — render por VIEWPORT com double-buffering:
 //  • V = vista atual (zoom/pan que o usuário quer ver AGORA)
 //  • F = último quadro rasterizado (com MARGEM além da janela)
@@ -1118,6 +1119,25 @@ function trocarEmp(){
   carregarApts();
   carregarFornecedores();
   carregarAnalises();
+  carregarCdePavs();
+}
+
+// Pavimentos CADASTRADOS pelo gestor (mesma fonte do upload/F2: cde_pavimento_auria).
+// Fire-and-forget: se ainda não chegou quando o modal abre, cai no locaisDoEmp().
+async function carregarCdePavs(){
+  CDE_PAVS=[];
+  if(!EMP) return;
+  try{
+    const { data }=await sb.from('cde_pavimento_auria')
+      .select('id,codigo,nome,tipo,ordem,membros').eq('empreendimento_id',EMP.id).eq('ativo',true).order('ordem');
+    CDE_PAVS=data||[];
+  }catch(_){ CDE_PAVS=[]; }
+}
+// Rótulo legível do pavimento: "CÓDIGO — Nome" (Grupo … nos grupos).
+function cdePavLabel(p){
+  const nome=(p.nome||'').trim(), cod=(p.codigo||'').trim();
+  const base=(nome && cod && nome.toUpperCase()!==cod.toUpperCase()) ? (cod+' — '+nome) : (nome||cod);
+  return (p.tipo==='grupo'?'Grupo ':'')+base;
 }
 
 // ── Abrir PDF local: hash → registro → render ────────────────────────────────
@@ -4094,6 +4114,7 @@ async function f3dAbrirSelecionados(){
   // Esconde o canvas do xeokit: um canvas só aceita UM contexto WebGL, e com
   // os dois visíveis o de baixo aparece por trás do modelo do CDE.
   const cvAntigo=$('bimCanvas'); if(cvAntigo) cvAntigo.style.display='none';
+  _bimSpinner(false);   // some com o círculo de carregamento NATIVO do xeokit (é um DOM à parte do canvas; ficava preso atrás do F3D)
   cv.style.display='block';
   try{
     F3D = await f3dCarregar(escolhidos, cv, msg);
@@ -5678,6 +5699,10 @@ let BIM_V=null, BIM_XKT=null, BIM_SDK=null, BIM_FSEL=new Set(), BIM_APONTAR=fals
 function _fold(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function _bimMsg(t){ const m=$('bimMsg'); if(m){ m.textContent=t; m.style.display='flex'; } }
 function _bimShow(){ const m=$('bimMsg'); if(m) m.style.display='none'; const c=$('bimCanvas'); if(c) c.style.display='block'; }
+// Liga/desliga o spinner NATIVO do xeokit (círculo de dots no topo-esquerdo do
+// canvas). É um elemento DOM à parte, então esconder o canvas não o some — no
+// modo F3D ele ficava preso atrás do modelo. No caminho legado, deixamos ligado.
+function _bimSpinner(on){ try{ const sp=BIM_V&&BIM_V.scene&&BIM_V.scene.canvas&&BIM_V.scene.canvas.spinner; if(sp&&sp.element) sp.element.style.display = on?'':'none'; }catch(_){} }
 async function bimToggle(){
   BIM_ON=!BIM_ON;
   $('bimPane').classList.toggle('on', BIM_ON);
@@ -5761,6 +5786,7 @@ async function _bimInit(){
 }
 async function _bimLoadModel(){
   await _bimInit();
+  _bimSpinner(true);   // caminho legado (xeokit) volta a mostrar o círculo de carregamento
   const seq=++BIM_LOADSEQ;
   Object.values(BIM_V.scene.models||{}).forEach(m=>{ try{ m.destroy(); }catch(e){} });
   if(!BIM_PROJ||!BIM_PROJ.xkt_url){ _bimMsg('Este modelo não tem arquivo .xkt.'); return; }
@@ -6112,8 +6138,9 @@ function abrirEditor(){
   $('apPrio').value=a.prioridade||'';
   $('apStatus').value=a.status||'Em aberto';
   _apStatusAntes=a.status||'Em aberto';   // base para reverter se a justificativa for cancelada
-  // Local/Pavimento = lista PRÉ-DEFINIDA do empreendimento (não texto livre)
-  const locais=locaisDoEmp();
+  // Local/Pavimento = pavimentos CADASTRADOS do empreendimento (cde_pavimento_auria).
+  // Só cai na lista genérica antiga (locaisDoEmp) se o empreendimento não tiver cadastro.
+  const locais=(CDE_PAVS && CDE_PAVS.length) ? CDE_PAVS.map(cdePavLabel) : locaisDoEmp();
   if(a.local_txt && !locais.includes(a.local_txt)) locais.unshift(a.local_txt);
   $('apLocal').innerHTML='<option value="">— selecione —</option>'+
     locais.map(l=>`<option${l===a.local_txt?' selected':''}>${esc(l)}</option>`).join('');

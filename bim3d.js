@@ -886,8 +886,13 @@ export async function destacar(V, modelo, ids){
   //  inspecionar as peças isoladas sem perder o contexto. Voltar = botão/limpar.
   if(V._isolado){
     for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
-    // repinta o conjunto isolado de laranja — só se for pequeno; um andar inteiro
-    //  ficaria todo laranja, então aí mantém cores naturais e só a clicada acende.
+    // Clique no VAZIO (sem peça): só tira o realce e mantém as cores naturais do
+    //  conjunto isolado — NÃO repinta de laranja (senão a laje isolada inteira
+    //  fica laranja ao clicar fora dela).
+    if(!(modelo && ids && ids.length)){ try{ await V.fragments.update(true); }catch(_){} return; }
+    // Com peça clicada: repinta o conjunto isolado de laranja (contexto) — só se
+    //  for pequeno; um andar inteiro ficaria todo laranja, então aí mantém cores
+    //  naturais e só a clicada acende em ciano.
     const tot=Object.values(V._isoladoPorMod||{}).reduce((a,l)=>a+(l?l.length:0),0);
     if(tot>0 && tot<=250){
       for(const [mi, lids] of Object.entries(V._isoladoPorMod||{})){
@@ -895,9 +900,7 @@ export async function destacar(V, modelo, ids){
         try{ await x.model.highlight(lids, { color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
       }
     }
-    if(modelo && ids && ids.length){
-      try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
-    }
+    try{ await modelo.model.highlight(ids, { color:new T.Color(SELECAO), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
     try{ await V.fragments.update(true); }catch(_){}
     return;
   }
