@@ -1283,6 +1283,8 @@ function toggleConteudo(){
   const b=$('btnConteudo'); if(b){ b.style.background=BUSCA_CONTEUDO?'var(--accent)':''; b.style.color=BUSCA_CONTEUDO?'#231703':''; b.style.borderColor=BUSCA_CONTEUDO?'var(--accent)':''; }
   const i=$('navBusca'); if(i) i.placeholder = BUSCA_CONTEUDO ? 'Buscar no conteúdo dos PDFs…' : 'Buscar arquivo pelo nome…';
   BUSCA_IDS=null;
+  // 1ª vez que liga o "Aa": indexa em 2º plano os PDFs ainda sem texto (auto-cura).
+  if(BUSCA_CONTEUDO && !_bcBackfillFeito){ _bcBackfillFeito=true; cdeIndexarPendentes(); }
   if(BUSCA_CONTEUDO && BUSCA) buscaConteudo(BUSCA); else renderNav();
 }
 // Busca full-text no servidor (índice GIN), devolve ids que casam. Instantâneo.
@@ -5521,6 +5523,66 @@ async function cdeUpload(path, file){
   return 'r2';
 }
 
+// Indexa o TEXTO do PDF (cde_documento_auria.texto_busca) p/ a busca por conteúdo.
+// Roda em segundo plano no upload — reaproveita o pdfjsLib já carregado (linha 9).
+// PDFs sem camada de texto (CAD vetorizado/escaneado) devolvem vazio (nada a indexar).
+async function _cdeIndexarPdf(docId, file){
+  try{
+    if(!docId || !file || !window.pdfjsLib) return;
+    const buf=await file.arrayBuffer();
+    const doc=await pdfjsLib.getDocument({ data:new Uint8Array(buf) }).promise;
+    const n=Math.min(doc.numPages,80); const parts=[];
+    for(let i=1;i<=n;i++){ try{ const pg=await doc.getPage(i); const tc=await pg.getTextContent(); parts.push(tc.items.map(function(it){return it.str;}).join(' ')); }catch(_){} }
+    try{ doc.destroy&&doc.destroy(); }catch(_){}
+    const txt=parts.join(' ').replace(/\s+/g,' ').trim().slice(0,20000);
+    await sb.rpc('cde_texto_set',{ p_doc:docId, p_texto:(txt||' ') });
+  }catch(e){ console.warn('indexar pdf (bg):', e&&(e.message||e)); }
+}
+
+// AUTO-CURA da busca por conteúdo: indexa em 2º plano os documentos que ainda
+// NÃO têm texto (texto_busca null) — ex.: enviados antes do auto-index existir, ou
+// por outra tela. Baixa o PDF principal da revisão mais recente, extrai e grava.
+// Roda uma vez ao ligar o "Aa"; docs já indexados são pulados. PDFs sem camada de
+// texto (CAD vetorizado/escaneado) ficam com texto vazio (nada a achar).
+let _bcBackfillFeito=false, _bcIndexando=false;
+async function cdeIndexarPendentes(){
+  if(_bcIndexando || !window.pdfjsLib) return; _bcIndexando=true;
+  let ok=0; const inp=$('navBusca'); const phAntes=inp?inp.placeholder:'';
+  try{
+    const { data:docs, error } = await sb.from('cde_documento_auria')
+      .select('id').eq('empreendimento_id',EMP_ID).is('texto_busca',null);
+    if(error) throw error;
+    for(let k=0;k<(docs||[]).length;k++){
+      if(inp) inp.placeholder='Indexando PDFs… '+(k+1)+'/'+docs.length;
+      const d=docs[k];
+      try{
+        const { data:revs } = await sb.from('cde_revisao_auria')
+          .select('id,revisao').eq('documento_id',d.id).order('revisao',{ascending:false}).limit(1);
+        const rev=revs&&revs[0]; if(!rev) continue;
+        const { data:arqs } = await sb.from('cde_arquivo_auria')
+          .select('storage_path,storage_provider,extensao,eh_principal').eq('revisao_id',rev.id);
+        const pdf=(arqs||[]).find(a=>(a.extensao||'').toLowerCase()==='pdf'&&a.eh_principal)
+               || (arqs||[]).find(a=>(a.extensao||'').toLowerCase()==='pdf');
+        if(!pdf) continue;
+        const url=await cdeSignedUrl(pdf.storage_path, pdf.storage_provider);
+        const bytes=new Uint8Array(await (await fetch(url)).arrayBuffer());
+        const doc=await pdfjsLib.getDocument({ data:bytes }).promise;
+        const n=Math.min(doc.numPages,80); const parts=[];
+        for(let i=1;i<=n;i++){ try{ const pg=await doc.getPage(i); const tc=await pg.getTextContent(); parts.push(tc.items.map(function(it){return it.str;}).join(' ')); }catch(_){} }
+        try{ doc.destroy&&doc.destroy(); }catch(_){}
+        const txt=parts.join(' ').replace(/\s+/g,' ').trim().slice(0,20000);
+        await sb.rpc('cde_texto_set',{ p_doc:d.id, p_texto:(txt||' ') });
+        ok++;
+      }catch(e){ console.warn('backfill doc:', e&&(e.message||e)); }
+    }
+  }catch(e){ console.warn('backfill:', e&&(e.message||e)); }
+  finally{
+    _bcIndexando=false;
+    if(inp) inp.placeholder=phAntes||'Buscar no conteúdo dos PDFs…';
+    if(ok && BUSCA_CONTEUDO && BUSCA) buscaConteudo(BUSCA);   // reexibe a busca com os recém-indexados
+  }
+}
+
 // Devolve uma URL curta para o browser abrir/baixar — sem se importar com o
 // provedor. Aceita opções { download: 'nome.ext' }.
 async function cdeSignedUrl(path, provider, opts){
@@ -5766,6 +5828,8 @@ async function confirmarLote(){
       recebidos.push({ codigo:g.parse.codigoDoc, disciplina:g.parse.disciplina,
         disciplinaLabel:g.parse.disciplina?(g.parse.disciplina+' — '+discLabel(g.parse.disciplina)):'—',
         revisao:g.parse.revisao||'R00', novo:(g.acao.tipo==='novo') });
+      // indexa o texto do PDF em segundo plano (busca por conteúdo) — não bloqueia
+      try{ const pdfF=g._upload.find(function(f){ return /\.pdf$/i.test(f.name||''); }); if(pdfF) _cdeIndexarPdf(docId, pdfF); }catch(_){}
       feito++;
     }catch(e){ falhas++; done+=g._upload.length; prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
