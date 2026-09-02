@@ -325,6 +325,8 @@
   .ap-card:hover{border-color:var(--accent)}
   .ap-card .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ap-card .m{font-size:10.5px;color:var(--mut);margin-top:2px}
+  .ap-sec{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:.9;margin:12px 2px 6px;padding-top:8px;border-top:1px solid var(--line)}
+  .ap-sec:first-child{margin-top:0;padding-top:0;border-top:none}
   .pin-balao{position:fixed;z-index:200;width:232px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:0 14px 44px rgba(0,0,0,.5);font-size:12px;color:var(--txt)}
   .pin-balao::after{content:'';position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);border:8px solid transparent;border-top-color:var(--panel)}
   .pin-balao.below::after{bottom:auto;top:-8px;border-top-color:transparent;border-bottom-color:var(--panel)}
@@ -6597,10 +6599,10 @@ function renderListaApts(){
     if(disc && discFullName(a.disciplina)!==disc) return false;
     if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+discFullName(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
     return true;
-  }).sort((a,b)=>{
-    // Apontamentos recebidos de obra/projetista (origem externa) vão para o
-    // TOPO — é o que o analista precisa triar primeiro. Entre externos, os mais
-    // recentes primeiro; o resto segue a ordem de código.
+  });
+  // Ordem DENTRO de cada grupo: externos (obra/projetista) no topo p/ triagem;
+  // depois por código.
+  const ordena=(arr)=>arr.slice().sort((a,b)=>{
     const ea=aptOrigem(a)?1:0, eb=aptOrigem(b)?1:0;
     if(ea!==eb) return eb-ea;
     if(ea) return String(b.id).localeCompare(String(a.id));
@@ -6608,7 +6610,7 @@ function renderListaApts(){
   });
   const filtrando=APT_FILT.size||txt||prio||disc;
   if(!rows.length){ el.innerHTML='<div class="hint">Nenhum apontamento'+(filtrando?' no filtro':'')+'.</div>'; return; }
-  el.innerHTML=rows.map(a=>{
+  const aptCardHtml=(a)=>{
     const i=APTS.indexOf(a);
     const nesta=PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
     const late=estaAtrasado(a);
@@ -6645,7 +6647,25 @@ function renderListaApts(){
       <div class="t" style="padding-right:26px">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
       <div class="m" style="color:${mc}">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</div>
     </div>`;
-  }).join('');
+  };
+  // ORGANIZAÇÃO: com uma prancha aberta e SEM filtro de disciplina específico,
+  // separa em 3 blocos — (1) desta prancha, (2) outros da mesma disciplina,
+  // (3) "Demais Apontamentos" (outras disciplinas). Fora disso, lista plana.
+  const sec=(t)=>`<div class="ap-sec">${esc(t)}</div>`;
+  const discAberta = PRANCHA ? discFullName(discAtiva()||PRANCHA.disciplina||'') : '';
+  let html='';
+  if(PRANCHA && !disc){
+    const nestaFn=(a)=>a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length;
+    const A=ordena(rows.filter(a=>nestaFn(a)));
+    const B=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)===discAberta));
+    const C=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)!==discAberta));
+    if(A.length) html+=sec('📍 Apontamentos desta prancha')+A.map(aptCardHtml).join('');
+    if(B.length) html+=sec('Outros de '+(discAberta||'—'))+B.map(aptCardHtml).join('');
+    if(C.length) html+=sec('Demais Apontamentos')+C.map(aptCardHtml).join('');
+  } else {
+    html=ordena(rows).map(aptCardHtml).join('');
+  }
+  el.innerHTML=html;
 }
 async function clicarAptLista(i){
   const a=APTS[i]; if(!a) return;
