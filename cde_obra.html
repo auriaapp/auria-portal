@@ -2989,6 +2989,29 @@ class CdeWin {
     }
     atualizarTaskbar();
   }
+  // ── Adormecer / despertar ────────────────────────────────────────────────
+  //  A prancha COBERTA (outra maximizada por cima) ou MINIMIZADA solta o bitmap
+  //  de página inteira + os ladrilhos, liberando memória — SEM fechar a janela.
+  //  Ao voltar o foco, re-renderiza no mesmo zoom/pan (o doc continua carregado).
+  //  Só p/ PDF simples: comparação (cmp) e 3D (B3) não adormecem, p/ não quebrar.
+  _adormecivel(){ return !!(this.V && this.V.doc && this.V.page && !this.cmp && !this.B3 && this.B && this.B.valido && !this._slept); }
+  _adormecer(){
+    if(!this._adormecivel()) return;
+    this._renderJob++; try{ this._cancelarRender(); }catch(_){}
+    try{ this._tilesLimpar(); }catch(_){}
+    try{ this.canvas.width=1; this.canvas.height=1; }catch(_){}
+    try{ this.canvasB.width=1; this.canvasB.height=1; }catch(_){}
+    this.B.valido=false;
+    this._slept=true;
+  }
+  _despertar(){
+    if(!this._slept) return;
+    this._slept=false;
+    if(this.V && this.V.page){
+      try{ this.msg('Reabrindo prancha…'); this._renderBase().then(()=>this.hideMsg(), ()=>this.hideMsg()); }
+      catch(_){ try{ this.hideMsg(); }catch(__){} }
+    }
+  }
   fechar(){
     clearTimeout(this._baseTimer); clearTimeout(this._detTimer);
     if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
@@ -4990,7 +5013,18 @@ function mostrarSnapPreview(zona){
 function focar(w){
   if(!w) return;
   WIN_STATE.act = w;
-  w._lastFocus = Date.now();   // p/ o limite LRU de janelas abertas (evita acúmulo)
+  w._lastFocus = Date.now();
+  // Memória: se a ativa está MAXIMIZADA, ela cobre as demais → pode adormecê-las.
+  //  Senão (restored/lado a lado), só adormece as MINIMIZADAS — as visíveis ficam.
+  //  A ativa sempre desperta. Nada fecha.
+  try{
+    const cobreTudo = (w.state === 'max');
+    for(const o of WIN_STATE.list){
+      if(o === w) continue;
+      if((cobreTudo || o.state === 'min') && o._adormecer) o._adormecer();
+    }
+    if(w._despertar) w._despertar();
+  }catch(_){}
   w.el.style.zIndex = ++WIN_STATE.zTop;
   // Teto de segurança: numa sessão longa com muita troca de foco, este
   // contador só cresce e eventualmente alcançaria a faixa reservada pros
@@ -5175,7 +5209,26 @@ async function openDocInWindow(docId, preferFmt){
   const w = new CdeWin();
   focar(w);
   atualizarVempty(); atualizarTaskbar();
+  _checarMuitasPranchas();
   await w.setDoc(doc, preferFmt);
+}
+// Aviso (não fecha nada) quando há muitas pranchas abertas ao mesmo tempo.
+let _avisouMuitas = false;
+function _checarMuitasPranchas(){
+  const n = WIN_STATE.list.filter(w => w.DOC_SEL && !w.isCmp && !w.isFed).length;
+  if(n >= 15){ if(!_avisouMuitas){ _avisouMuitas = true;
+      _cdeToast('Você tem muitas pranchas abertas; feche as que não usa para não sobrecarregar a memória do computador.'); } }
+  else _avisouMuitas = false;
+}
+function _cdeToast(msg){
+  let t = document.getElementById('cdeToast');
+  if(!t){ t = document.createElement('div'); t.id = 'cdeToast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:9600;max-width:460px;' +
+      'background:#152036;color:#fff;border:1px solid #E8960A;border-radius:10px;padding:11px 16px;font-size:13px;' +
+      'line-height:1.4;box-shadow:0 10px 30px rgba(0,0,0,.42);text-align:center';
+    document.body.appendChild(t); }
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._tm); t._tm = setTimeout(() => { t.style.display = 'none'; }, 6500);
 }
 
 // Delegações: as funções antigas que a toolbar já chama por onclick continuam
