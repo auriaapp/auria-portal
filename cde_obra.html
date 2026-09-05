@@ -4990,6 +4990,7 @@ function mostrarSnapPreview(zona){
 function focar(w){
   if(!w) return;
   WIN_STATE.act = w;
+  w._lastFocus = Date.now();   // p/ o limite LRU de janelas abertas (evita acúmulo)
   w.el.style.zIndex = ++WIN_STATE.zTop;
   // Teto de segurança: numa sessão longa com muita troca de foco, este
   // contador só cresce e eventualmente alcançaria a faixa reservada pros
@@ -5173,8 +5174,27 @@ async function openDocInWindow(docId, preferFmt){
   }
   const w = new CdeWin();
   focar(w);
+  _capOpenWindows();                 // fecha as pranchas mais antigas se passar do limite
   atualizarVempty(); atualizarTaskbar();
   await w.setDoc(doc, preferFmt);
+}
+// Teto de janelas de PRANCHA abertas ao mesmo tempo. Cada janela segura um doc
+// do PDF.js + bitmap de página inteira (e, se aberta em 3D, um contexto WebGL).
+// Sem teto, abrir/navegar por várias pranchas acumula memória até travar o
+// navegador. Ao passar do teto, fechamos as MENOS usadas recentemente (o
+// fechar() já libera doc, DXF, 3D/WebGL e DOM). A ativa nunca é fechada.
+const MAX_DOC_WINS = 5;
+function _capOpenWindows(){
+  const abertas = WIN_STATE.list.filter(w=> w.DOC_SEL && !w.isCmp && !w.isFed);
+  let excesso = abertas.length - MAX_DOC_WINS;
+  if(excesso <= 0) return;
+  abertas.sort((a,b)=> (a._lastFocus||0) - (b._lastFocus||0));   // mais antiga primeiro
+  for(const w of abertas){
+    if(excesso <= 0) break;
+    if(w === WIN_STATE.act) continue;   // nunca fecha a prancha em foco
+    try{ w.fechar(); }catch(_){}
+    excesso--;
+  }
 }
 
 // Delegações: as funções antigas que a toolbar já chama por onclick continuam
