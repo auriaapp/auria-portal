@@ -1665,6 +1665,37 @@ export function cotaVertical(V, x, yA, yB, z, texto, tag){
   M.medidas.push(medida);
   return medida;
 }
+// ── Nível (cota Z) ──────────────────────────────────────────────────────────
+// Formata uma elevação como cota de projeto: sinal explícito, 2 casas, "m".
+//  +1,55 m · −0,53 m · ±0,00 m (menos tipográfico e ± p/ ficar limpo).
+export function fmtCotaZ(v){
+  const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
+}
+// Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
+// normal (aparece na lista, some/reaparece, apagável no ×). A cota é a elevação
+// do ponto (three Y = Z do IFC) relativa ao nível zero (V.nivelZero, default 0 =
+// origem do modelo, que no TQS costuma ser o zero de projeto).
+export function marcarNivel(V, ponto){
+  const T=V.THREE, M=V.medida;
+  const p=ponto.clone();
+  const cota=p.y-(V.nivelZero||0);
+  const esf=new T.Mesh(new T.SphereGeometry(1,12,12), new T.MeshBasicMaterial({color:0x2563EB,depthTest:false}));
+  esf.position.copy(p); esf.renderOrder=999; V.scene.add(esf);
+  const texto=fmtCotaZ(cota);
+  const el=document.createElement('div'); el.className='bim3dNivel';
+  el.style.cssText='position:absolute;z-index:3;transform:translate(-50%,-135%);pointer-events:auto;'
+    +'background:rgba(37,99,235,.96);color:#fff;font-size:12px;font-weight:800;padding:2px 5px 2px 7px;'
+    +'border-radius:5px;white-space:nowrap;box-shadow:0 1px 5px rgba(0,0,0,.45);display:flex;align-items:center;gap:5px';
+  el.innerHTML='<span style="opacity:.9;font-size:11px">▽</span><span>'+texto+'</span>'
+    +'<span class="x" title="Apagar esta cota" style="cursor:pointer;font-weight:800;font-size:13px;line-height:1;opacity:.7;padding:0 1px">×</span>';
+  V.cont.appendChild(el);
+  const medida={ id:(++M._seq), marks:[esf], line:null, el, meio:p.clone(), dist:0, texto, cotaZ:cota, visivel:true, _nivel:true };
+  el.querySelector('.x').addEventListener('click',(e)=>{ e.stopPropagation(); removerMedida(V, medida); if(V.on.medidas) V.on.medidas(V); });
+  M.medidas.push(medida);
+  if(V.on.medidas) V.on.medidas(V);
+  return medida;
+}
 export async function limparPeDireito(V){
   (V.medida.medidas||[]).slice().forEach(md=>{ if(md._peDireito) removerMedida(V, md); });
   if(V.on.medidas) V.on.medidas(V);

@@ -228,6 +228,7 @@
   .cdeWin-bim .bimCota{position:absolute;z-index:3;transform:translate(-50%,-50%);pointer-events:none;
     background:rgba(232,150,10,.95);color:#231703;font-size:11px;font-weight:700;
     padding:2px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .cdeWin-bim .bimNivel{transform:translate(-50%,-135%);background:rgba(37,99,235,.96);color:#fff;font-weight:800;font-size:12px}
   /* Lista de cotas (estilo Solibri): painel transparente como o de propriedades,
      azul do IFC no título, olho SVG claro. Arrastável pelo cabeçalho. */
   .cdeWin-bim .bimCotas{position:absolute;top:46px;right:8px;z-index:6;width:210px;max-height:55%;overflow:auto;
@@ -3330,6 +3331,9 @@ class CdeWin {
           }).catch(err=>console.warn('3D corte:', err));
           return;
         }
+        // Modo Nível (cota Z): ferramenta dedicada — fixa um símbolo de nível
+        // no ponto clicado (não seleciona/abre propriedades).
+        if(this.bimCotaOn){ this.bimMarcarNivelEm(e).catch(err=>console.warn('3D nivel:', err)); return; }
         this.bimSelecionarEm(e).catch(err=>console.warn('3D:', err));
       });
 
@@ -3885,14 +3889,41 @@ class CdeWin {
     this.bimCotaOn = !this.bimCotaOn;
     const b = this.bimToolsEl && this.bimToolsEl.querySelector('[data-t=cota]');
     if(b) b.classList.toggle('on', this.bimCotaOn);
+    const B=this.B3; if(B) B.renderer.domElement.style.cursor = this.bimCotaOn ? 'crosshair' : '';
     this.bimMsgDica(this.bimCotaOn
-      ? 'Cota Z ligada — clique numa peça para ver base, topo e altura.'
+      ? '📐 Nível ligado — clique numa superfície (laje, rua…) para fixar a cota.'
       : 'Arraste para girar · roda para zoom · clique da roda para deslocar');
   }
-  bimCotaMostrar(cx){
-    if(!(cx && cx.min && cx.max && isFinite(cx.max.y))){ this.bimMsgDica('Não consegui ler a cota desta peça.'); return; }
-    const f = v => (Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-    this.bimMsgDica('📐 Cota (Z) — base '+f(cx.min.y)+' m · topo '+f(cx.max.y)+' m · altura '+f(cx.max.y-cx.min.y)+' m');
+  // Formata elevação como cota de projeto: sinal explícito, 2 casas, "m".
+  bimFmtCotaZ(v){
+    const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
+  }
+  // Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
+  // normal (entra na lista, some/reaparece, apagável). A cota é a elevação do
+  // ponto (three Y = Z do IFC) relativa ao nível zero (B.nivelZero, default 0 =
+  // origem do modelo).
+  async bimMarcarNivelEm(ev){
+    const B=this.B3; if(!B) return;
+    let pt=null;
+    const s=await this.bimSnap(ev); if(!B.vivo) return; if(s&&s.point) pt=s.point.clone();
+    if(!pt){ const h=await this.bimRaycast(ev); if(!B.vivo) return; if(h&&h.point) pt=h.point.clone(); }
+    if(!pt){ this.bimMsgDica('Clique sobre uma superfície do modelo.'); return; }
+    this.bimMarcarNivel(pt);
+  }
+  bimMarcarNivel(ponto){
+    const B=this.B3, T=B.THREE, M=B.medida;
+    const p=ponto.clone();
+    const cota=p.y-(B.nivelZero||0);
+    const esf=this.bimMkEsf(p); esf.material.color.set(0x2563EB);
+    const texto=this.bimFmtCotaZ(cota);
+    const el=document.createElement('div'); el.className='bimCota bimNivel';
+    el.innerHTML='<span style="opacity:.9;font-size:10px">▽</span> '+texto;
+    this.bimWrap.appendChild(el);
+    M.medidas.push({ id:++M._seq, esferas:[esf], linha:null, el,
+                     meio:p.clone(), texto, cotaZ:cota, visivel:true, _nivel:true });
+    this.bimMsgDica('Nível '+texto+' marcado. Clique em outra superfície para mais cotas.');
+    this.bimRenderCotas();
   }
   // Cria um marcador esférico (raio 1; o tamanho real é dado por escala, ver
   // bimEscalarMarcas) e já o adiciona à cena.
@@ -4024,7 +4055,7 @@ class CdeWin {
     const B=this.B3; if(!B) return;
     const md=B.medida.medidas.find(m=>m.id===id); if(!md) return;
     md.visivel=!md.visivel;
-    md.linha.visible=md.visivel;
+    if(md.linha) md.linha.visible=md.visivel;
     md.esferas.forEach(e=> e.visible=md.visivel);
     if(!md.visivel) md.el.style.display='none';
     this.bimRenderCotas();
@@ -4496,7 +4527,6 @@ class CdeWin {
       });
       let cx=null;
       try{ const bs=await melhor.fragments.getBoxes([melhor.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
-      if(this.bimCotaOn) this.bimCotaMostrar(cx);
       this.bpConteudo.innerHTML = bimPropsHtml(dados && dados[0], melhor, cx);
     }catch(e){
       this.bpConteudo.innerHTML='<div class="bpVazio">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
