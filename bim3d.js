@@ -107,6 +107,12 @@ export async function criar(cont, opts={}){
   const fill = new THREE.DirectionalLight(0xcfe0ff, 0.55); fill.position.set(-1.4,0.7,-1.1); scene.add(fill);
 
   const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
+  // autoCoordinate (ligado por padrão) reposiciona cada modelo RELATIVO ao 1º
+  // carregado — desloca as coordenadas do mundo e faz a cota depender da ordem de
+  // carga (App e CDE divergiam por isso). Os modelos do projeto já compartilham o
+  // 0,0,0, então desligamos e o Fragments carrega nas COORDENADAS NATIVAS do IFC:
+  // a cota do ponto vira a coordenada real do modelo, igual em qualquer viewer.
+  try{ fragments.settings.autoCoordinate = false; }catch(_){}
 
   const V = {
     THREE, FRAGS, cont, canvas, renderer, scene, camera, controls, fragments,
@@ -157,7 +163,6 @@ export async function carregar(V, modelos, msg){
   }
   redimensionar(V);
   enquadrar(V);
-  _reposicionarGrade(V);
   aplicarFaces(V, true);
   await V.fragments.update(true);
   // Modelo carregado: só a partir daqui a sombra (SAO) e os pins entram — durante
@@ -201,7 +206,6 @@ export async function adicionarModelo(V, m, msg){
   // Só enquadra no PRIMEIRO modelo — nos subsequentes, preserva a câmera
   // atual do usuário (não teleporta a vista quando marca outra disciplina).
   if(eraVazio) enquadrar(V);
-  if(eraVazio) _reposicionarGrade(V);   // 1º modelo define o offset da origem federada
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
@@ -395,10 +399,10 @@ export function visualGrade(V, lig){
     // three porque Fragments converte Z-up→Y-up). Antes eu colocava no piso
     // da caixa (min.y), o que fazia a grade "subir" no meio de subsolos e
     // ficar acima do térreo. O -0.005 evita z-fighting com uma laje que
-    // esteja exatamente em cota zero. IMPORTANTE: o Fragments desloca a origem
-    // pela 1ª disciplina, então o Z=0 do projeto está em (offset do modelo) no
-    // MUNDO — sem somar isso, a malha caía numa cota errada (e diferente do CDE).
-    grade.position.y = _offsetModeloY(V, _modeloRef(V)) - 0.005;
+    // esteja exatamente em cota zero. Com autoCoordinate DESLIGADO (ver criar()),
+    // o mundo está nas coordenadas nativas do IFC, então Z=0 do projeto = Y=0 do
+    // mundo — a malha vai direto no zero.
+    grade.position.y = -0.005;
     grade.renderOrder = -1;    // sempre atrás do modelo
     V._grade = grade; V.scene.add(grade);
   }
@@ -1676,34 +1680,12 @@ export function fmtCotaZ(v){
   const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
   return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
 }
-// Deslocamento VERTICAL que o Fragments aplicou ao modelo (a "origem federada").
-//  O Fragments empurra a origem do mundo pela 1ª disciplina carregada, então o Y
-//  de mundo NÃO é a cota do projeto — varia com a ordem/contexto de carga (o App
-//  e o CDE davam cotas diferentes por isso). Descontando esta translação, sobra o
-//  Z real do IFC — estável entre viewers e igual ao modelo. Ver f3dPonto (âncora
-//  local dos pins), que resolve o mesmo problema para os apontamentos.
-function _offsetModeloY(V, modelo){
-  const o=modelo && modelo.model && modelo.model.object;
-  if(o){ try{ o.updateMatrixWorld(); return o.getWorldPosition(new V.THREE.Vector3()).y; }catch(_){} }
-  return 0;
-}
-// Modelo de referência p/ ancorar a malha no Z=0 do projeto: o 1º carregado é o
-// que definiu o deslocamento da origem federada.
-function _modeloRef(V){ return (V.modelos && V.modelos[0]) || null; }
-// Reancora a malha no Z=0 do projeto depois que o modelo carregou (a config pode
-// tê-la criado antes, quando o offset ainda era 0). Barato: só move o objeto.
-function _reposicionarGrade(V){
-  if(V._grade){ try{ V._grade.position.y = _offsetModeloY(V, _modeloRef(V)) - 0.005; }catch(_){} }
-}
-// Cota Z (elevação) de um ponto. Os modelos federados ficam ALINHADOS no espaço de
-// mundo (confirma-se no Solibri/BIMcollab e na federação: um ponto físico tem UM Y
-// de mundo, igual em qualquer disciplina). Então o referencial é ÚNICO para a cena
-// — o do 1º modelo (que define a origem federada), o MESMO que a malha usa. NUNCA
-// descontar o offset do modelo CLICADO: isso empurrava cada disciplina por um valor
-// diferente e quebrava a consistência (est parecia ter o zero na base e arq acima).
-// nivelZero = ajuste manual opcional do usuário (default 0).
+// Cota Z (elevação) de um ponto = a própria coordenada do modelo. Com o
+// autoCoordinate DESLIGADO (ver criar()), o Fragments carrega nas coordenadas
+// nativas do IFC, então o Y de MUNDO do ponto JÁ é a cota do projeto — nada a
+// calcular. nivelZero = ajuste manual opcional do usuário (default 0).
 export function cotaZ(V, ponto, modelo){
-  return ponto.y - _offsetModeloY(V, _modeloRef(V)) - (V.nivelZero||0);
+  return ponto.y - (V.nivelZero||0);
 }
 // Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
 // normal (aparece na lista, some/reaparece, apagável no ×). A cota é o Z real do

@@ -3160,6 +3160,12 @@ class CdeWin {
       scene.add(preench);
 
       const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
+      // autoCoordinate (padrão ligado) reposiciona os modelos RELATIVO ao 1º
+      // carregado, deslocando as coordenadas do mundo e fazendo a cota depender da
+      // ordem de carga (App×CDE divergiam). Os modelos já compartilham o 0,0,0, então
+      // desligamos: o Fragments carrega nas COORDENADAS NATIVAS do IFC e a cota vira
+      // a coordenada real do modelo, igual em qualquer viewer. (idêntico ao bim3d.js)
+      try{ fragments.settings.autoCoordinate = false; }catch(_){}
       const carregados = [];
       for(const {m, bytes} of baixados){
         this.bimMsg(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
@@ -3903,19 +3909,12 @@ class CdeWin {
   // normal (entra na lista, some/reaparece, apagável). A cota é a elevação do
   // ponto (three Y = Z do IFC) relativa ao nível zero (B.nivelZero, default 0 =
   // origem do modelo).
-  // Deslocamento VERTICAL que o Fragments aplicou ao modelo (origem federada) —
-  //  mesmo problema resolvido no App (bim3d.js). Descontando isso, a cota vira o
-  //  Z real do IFC, igual entre CDE e App e igual ao modelo TQS.
-  bimOffsetModeloY(modelo){
-    const o=modelo && modelo.model && modelo.model.object;
-    if(o){ try{ o.updateMatrixWorld(); return o.getWorldPosition(new this.B3.THREE.Vector3()).y; }catch(_){} }
-    return 0;
-  }
-  // Referencial ÚNICO da cena (1º modelo), o MESMO que a malha usa — NÃO por
-  // modelo clicado (isso desalinhava est×arq). Ver bim3d.js cotaZ.
+  // Cota Z = a própria coordenada do modelo. Com autoCoordinate DESLIGADO (ver
+  // openBIM), o mundo está nas coordenadas nativas do IFC — o Y do ponto JÁ é a
+  // cota do projeto, nada a calcular. nivelZero = ajuste manual opcional.
   bimCotaZ(ponto){
     const B=this.B3;
-    return ponto.y - this.bimOffsetModeloY(B.modelos && B.modelos[0]) - (B.nivelZero||0);
+    return ponto.y - (B.nivelZero||0);
   }
   async bimMarcarNivelEm(ev){
     const B=this.B3; if(!B) return;
@@ -4162,9 +4161,9 @@ class CdeWin {
           'diffuseColor.a *= _fa;\n'+
           '#include <opaque_fragment>');
     };
-    // Z=0 do PROJETO no mundo = deslocamento da origem federada (1º modelo). Sem
-    // somar isso, a malha caía numa cota errada e diferente da do App.
-    grade.position.y = this.bimOffsetModeloY(B.modelos && B.modelos[0]) - 0.005;
+    // Com autoCoordinate DESLIGADO, o mundo está nas coordenadas nativas do IFC:
+    // Z=0 do projeto = Y=0 do mundo. A malha vai direto no zero.
+    grade.position.y = -0.005;
     grade.renderOrder = -1;      // sempre atrás do modelo
     B.grade=grade; B.scene.add(grade);
   }
