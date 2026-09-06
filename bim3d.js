@@ -157,6 +157,7 @@ export async function carregar(V, modelos, msg){
   }
   redimensionar(V);
   enquadrar(V);
+  _reposicionarGrade(V);
   aplicarFaces(V, true);
   await V.fragments.update(true);
   // Modelo carregado: só a partir daqui a sombra (SAO) e os pins entram — durante
@@ -200,6 +201,7 @@ export async function adicionarModelo(V, m, msg){
   // Só enquadra no PRIMEIRO modelo — nos subsequentes, preserva a câmera
   // atual do usuário (não teleporta a vista quando marca outra disciplina).
   if(eraVazio) enquadrar(V);
+  if(eraVazio) _reposicionarGrade(V);   // 1º modelo define o offset da origem federada
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
@@ -393,8 +395,10 @@ export function visualGrade(V, lig){
     // three porque Fragments converte Z-up→Y-up). Antes eu colocava no piso
     // da caixa (min.y), o que fazia a grade "subir" no meio de subsolos e
     // ficar acima do térreo. O -0.005 evita z-fighting com uma laje que
-    // esteja exatamente em cota zero.
-    grade.position.y = -0.005;
+    // esteja exatamente em cota zero. IMPORTANTE: o Fragments desloca a origem
+    // pela 1ª disciplina, então o Z=0 do projeto está em (offset do modelo) no
+    // MUNDO — sem somar isso, a malha caía numa cota errada (e diferente do CDE).
+    grade.position.y = _offsetModeloY(V, _modeloRef(V)) - 0.005;
     grade.renderOrder = -1;    // sempre atrás do modelo
     V._grade = grade; V.scene.add(grade);
   }
@@ -1672,14 +1676,37 @@ export function fmtCotaZ(v){
   const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
   return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
 }
+// Deslocamento VERTICAL que o Fragments aplicou ao modelo (a "origem federada").
+//  O Fragments empurra a origem do mundo pela 1ª disciplina carregada, então o Y
+//  de mundo NÃO é a cota do projeto — varia com a ordem/contexto de carga (o App
+//  e o CDE davam cotas diferentes por isso). Descontando esta translação, sobra o
+//  Z real do IFC — estável entre viewers e igual ao modelo. Ver f3dPonto (âncora
+//  local dos pins), que resolve o mesmo problema para os apontamentos.
+function _offsetModeloY(V, modelo){
+  const o=modelo && modelo.model && modelo.model.object;
+  if(o){ try{ o.updateMatrixWorld(); return o.getWorldPosition(new V.THREE.Vector3()).y; }catch(_){} }
+  return 0;
+}
+// Modelo de referência p/ ancorar a malha no Z=0 do projeto: o 1º carregado é o
+// que definiu o deslocamento da origem federada.
+function _modeloRef(V){ return (V.modelos && V.modelos[0]) || null; }
+// Reancora a malha no Z=0 do projeto depois que o modelo carregou (a config pode
+// tê-la criado antes, quando o offset ainda era 0). Barato: só move o objeto.
+function _reposicionarGrade(V){
+  if(V._grade){ try{ V._grade.position.y = _offsetModeloY(V, _modeloRef(V)) - 0.005; }catch(_){} }
+}
+// Cota Z (elevação REAL, do IFC) de um ponto: Y de mundo menos o deslocamento do
+// modelo, menos o nível zero do usuário (V.nivelZero, default 0).
+export function cotaZ(V, ponto, modelo){
+  return ponto.y - _offsetModeloY(V, modelo) - (V.nivelZero||0);
+}
 // Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
-// normal (aparece na lista, some/reaparece, apagável no ×). A cota é a elevação
-// do ponto (three Y = Z do IFC) relativa ao nível zero (V.nivelZero, default 0 =
-// origem do modelo, que no TQS costuma ser o zero de projeto).
-export function marcarNivel(V, ponto){
+// normal (aparece na lista, some/reaparece, apagável no ×). A cota é o Z real do
+// IFC (ver cotaZ), então bate entre App e CDE e com o modelo TQS.
+export function marcarNivel(V, ponto, modelo){
   const T=V.THREE, M=V.medida;
   const p=ponto.clone();
-  const cota=p.y-(V.nivelZero||0);
+  const cota=cotaZ(V, p, modelo);
   const esf=new T.Mesh(new T.SphereGeometry(1,12,12), new T.MeshBasicMaterial({color:0x2563EB,depthTest:false}));
   esf.position.copy(p); esf.renderOrder=999; V.scene.add(esf);
   const texto=fmtCotaZ(cota);
