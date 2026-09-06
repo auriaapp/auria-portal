@@ -107,12 +107,11 @@ export async function criar(cont, opts={}){
   const fill = new THREE.DirectionalLight(0xcfe0ff, 0.55); fill.position.set(-1.4,0.7,-1.1); scene.add(fill);
 
   const fragments = new FRAGS.FragmentsModels(await FRAGS.FragmentsModels.getWorker());
-  // autoCoordinate (ligado por padrão) reposiciona cada modelo RELATIVO ao 1º
-  // carregado — desloca as coordenadas do mundo e faz a cota depender da ordem de
-  // carga (App e CDE divergiam por isso). Os modelos do projeto já compartilham o
-  // 0,0,0, então desligamos e o Fragments carrega nas COORDENADAS NATIVAS do IFC:
-  // a cota do ponto vira a coordenada real do modelo, igual em qualquer viewer.
-  try{ fragments.settings.autoCoordinate = false; }catch(_){}
+  // autoCoordinate (ligado por padrão) é o que ALINHA os modelos federados: eles
+  // não compartilham um 0,0,0 cru no .frag — carregam a georreferência, e o
+  // Fragments os coloca no mesmo referencial (recentrando pelo 1º modelo). Desligar
+  // separa as disciplinas. Fica LIGADO. A cota real se obtém compensando o
+  // recentro (fragments.baseCoordinates), não mexendo aqui — ver cotaZ.
 
   const V = {
     THREE, FRAGS, cont, canvas, renderer, scene, camera, controls, fragments,
@@ -1680,10 +1679,11 @@ export function fmtCotaZ(v){
   const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
   return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
 }
-// Cota Z (elevação) de um ponto = a própria coordenada do modelo. Com o
-// autoCoordinate DESLIGADO (ver criar()), o Fragments carrega nas coordenadas
-// nativas do IFC, então o Y de MUNDO do ponto JÁ é a cota do projeto — nada a
-// calcular. nivelZero = ajuste manual opcional do usuário (default 0).
+// Cota Z (elevação) de um ponto. PROVISÓRIO: com autoCoordinate LIGADO o Y de mundo
+// está recentrado pelo 1º modelo (fragments.baseCoordinates), então este valor NÃO
+// é a cota absoluta e depende da ordem de carga — falta compensar o recentro. A
+// compensação certa (worldY + baseCoordinates vertical) está sendo calibrada com o
+// usuário antes de ligar. nivelZero = ajuste manual opcional (default 0).
 export function cotaZ(V, ponto, modelo){
   return ponto.y - (V.nivelZero||0);
 }
