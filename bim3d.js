@@ -1695,10 +1695,15 @@ function _modeloRef(V){ return (V.modelos && V.modelos[0]) || null; }
 function _reposicionarGrade(V){
   if(V._grade){ try{ V._grade.position.y = _offsetModeloY(V, _modeloRef(V)) - 0.005; }catch(_){} }
 }
-// Cota Z (elevação REAL, do IFC) de um ponto: Y de mundo menos o deslocamento do
-// modelo, menos o nível zero do usuário (V.nivelZero, default 0).
+// Cota Z (elevação) de um ponto. Os modelos federados ficam ALINHADOS no espaço de
+// mundo (confirma-se no Solibri/BIMcollab e na federação: um ponto físico tem UM Y
+// de mundo, igual em qualquer disciplina). Então o referencial é ÚNICO para a cena
+// — o do 1º modelo (que define a origem federada), o MESMO que a malha usa. NUNCA
+// descontar o offset do modelo CLICADO: isso empurrava cada disciplina por um valor
+// diferente e quebrava a consistência (est parecia ter o zero na base e arq acima).
+// nivelZero = ajuste manual opcional do usuário (default 0).
 export function cotaZ(V, ponto, modelo){
-  return ponto.y - _offsetModeloY(V, modelo) - (V.nivelZero||0);
+  return ponto.y - _offsetModeloY(V, _modeloRef(V)) - (V.nivelZero||0);
 }
 // Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
 // normal (aparece na lista, some/reaparece, apagável no ×). A cota é o Z real do
