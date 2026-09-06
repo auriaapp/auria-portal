@@ -2575,6 +2575,7 @@ class CdeWin {
       +         '<button data-t="mLista" title="Lista de cotas (mostrar/ocultar)">☰</button>'
       +         '<button data-t="mLimpar" title="Apagar todas as cotas">🗑</button>'
       +       '</div>'
+      +       '<button data-t="cota" title="Cota Z: ligue e clique numa peça para ver base, topo e altura"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M12 20V7"/><path d="M8.5 10.5 12 7l3.5 3.5"/></svg></button>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
       +       '<button data-t="xray" title="Raio-X: passe o mouse — a peça sob o cursor fica transparente">◎</button>'
@@ -2749,6 +2750,7 @@ class CdeWin {
     andarEl.querySelector('[data-t=sobe]') .addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel+1); });
     andarEl.querySelector('[data-t=desce]').addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel-1); });
     andarEl.querySelector('[data-t=saiAndar]').addEventListener('click', ()=> this.bimModoAndar(false));
+    tools.querySelector('[data-t=cota]').addEventListener('click', ()=> this.bimCotaToggle());
     tools.querySelector('[data-t=mLivre]').addEventListener('click', ()=> this.bimMedirModo('livre'));
     tools.querySelector('[data-t=mEixo]') .addEventListener('click', ()=> this.bimMedirModo('eixo'));
     tools.querySelector('[data-t=mLista]').addEventListener('click', ()=> this.bimCotasToggle());
@@ -3889,6 +3891,22 @@ class CdeWin {
   bimMsgDica(t){
     const d=this.bimWrap.querySelector('.bimDica'); if(d) d.textContent=t;
   }
+  // Cota Z (botão dedicado): ligado, mostra a cota da peça clicada (base/topo/
+  // altura), lida da caixa 3D (eixo vertical = y). Cota relativa à origem do
+  // modelo; a altura é sempre exata.
+  bimCotaToggle(){
+    this.bimCotaOn = !this.bimCotaOn;
+    const b = this.bimToolsEl && this.bimToolsEl.querySelector('[data-t=cota]');
+    if(b) b.classList.toggle('on', this.bimCotaOn);
+    this.bimMsgDica(this.bimCotaOn
+      ? 'Cota Z ligada — clique numa peça para ver base, topo e altura.'
+      : 'Arraste para girar · roda para zoom · clique da roda para deslocar');
+  }
+  bimCotaMostrar(cx){
+    if(!(cx && cx.min && cx.max && isFinite(cx.max.y))){ this.bimMsgDica('Não consegui ler a cota desta peça.'); return; }
+    const f = v => (Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    this.bimMsgDica('📐 Cota (Z) — base '+f(cx.min.y)+' m · topo '+f(cx.max.y)+' m · altura '+f(cx.max.y-cx.min.y)+' m');
+  }
   // Cria um marcador esférico (raio 1; o tamanho real é dado por escala, ver
   // bimEscalarMarcas) e já o adiciona à cena.
   bimMkEsf(p){
@@ -4491,6 +4509,7 @@ class CdeWin {
       });
       let cx=null;
       try{ const bs=await melhor.fragments.getBoxes([melhor.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
+      if(this.bimCotaOn) this.bimCotaMostrar(cx);
       this.bpConteudo.innerHTML = bimPropsHtml(dados && dados[0], melhor, cx);
     }catch(e){
       this.bpConteudo.innerHTML='<div class="bpVazio">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';

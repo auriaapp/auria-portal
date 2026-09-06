@@ -591,6 +591,7 @@
             <button id="f3dMLista" class="bim-tb ico" onclick="f3dCotasToggle()" title="Lista de cotas (mostrar/ocultar)">☰</button>
             <button id="f3dMLimpar" class="bim-tb ico" onclick="f3dMedirLimpar()" title="Apagar todas as cotas">🗑</button>
           </span>
+          <button id="f3dBtnCota" class="bim-tb ico f3donly" onclick="f3dCotaToggle()" title="Cota Z: ligue e clique numa peça para ver a cota (base, topo e altura)" style="display:inline-flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18"/><path d="M12 20V7"/><path d="M8.5 10.5 12 7l3.5 3.5"/></svg></button>
           <button id="f3dBtnCorte" class="bim-tb ico f3donly" onclick="f3dTool('corte')" title="Plano de corte: clique numa superfície e arraste para deslocar">✂</button>
           <span id="f3dCorteOpc" class="f3dsub">
             <button class="bim-tb ico" onclick="f3dCorteInverter()" title="Inverter o lado cortado">⇄</button>
@@ -4798,10 +4799,25 @@ async function f3dProps(hit, m){
     let cx=null;
     try{ const bs=await m.model.getBoxes([hit.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
     F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // sempre → contexto da IA
+    if(F3D_COTA) f3dCotaMostrar(cx);                              // modo Cota Z ligado → mostra a cota
     if(showPanel) el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
   }catch(e){
     if(showPanel) el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
   }
+}
+// ── Cota Z: botão dedicado. Ligado, mostra a cota (base/topo/altura) da peça
+//  clicada, lida da caixa 3D (eixo vertical = y). A cota é relativa à origem do
+//  modelo; a altura é sempre exata. ─────────────────────────────────────────
+let F3D_COTA=false;
+function f3dCotaToggle(){
+  F3D_COTA=!F3D_COTA;
+  const b=$('f3dBtnCota'); if(b) b.classList.toggle('on', F3D_COTA);
+  f3dDica(F3D_COTA ? 'Cota Z ligada — clique numa peça para ver base, topo e altura.' : '');
+}
+function f3dCotaMostrar(cx){
+  if(!(cx && cx.min && cx.max && isFinite(cx.max.y))){ f3dDica('Não consegui ler a cota desta peça.'); return; }
+  const f=v=> (Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  f3dDica('📐 Cota (Z) — base '+f(cx.min.y)+' m · topo '+f(cx.max.y)+' m · altura '+f(cx.max.y-cx.min.y)+' m');
 }
 // O ItemData do Fragments é genérico: cada chave é um atributo ({value}) OU
 // uma lista de blocos aninhados (conjuntos de propriedades vindos das relações
