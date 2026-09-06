@@ -2991,28 +2991,15 @@ class CdeWin {
     }
     atualizarTaskbar();
   }
-  // ── Adormecer / despertar ────────────────────────────────────────────────
-  //  A prancha COBERTA (outra maximizada por cima) ou MINIMIZADA solta o bitmap
-  //  de página inteira + os ladrilhos, liberando memória — SEM fechar a janela.
-  //  Ao voltar o foco, re-renderiza no mesmo zoom/pan (o doc continua carregado).
-  //  Só p/ PDF simples: comparação (cmp) e 3D (B3) não adormecem, p/ não quebrar.
-  _adormecivel(){ return !!(this.V && this.V.doc && this.V.page && !this.cmp && !this.B3 && this.B && this.B.valido && !this._slept); }
-  _adormecer(){
-    if(!this._adormecivel()) return;
+  // ── Economia de memória "leve" ───────────────────────────────────────────
+  //  Solta SÓ os ladrilhos de detalhe (o refinamento de alta resolução que
+  //  cresce com o zoom² e vai acumulando). O bitmap-BASE continua visível, então
+  //  trocar de prancha é INSTANTÂNEO (nada reabre nem pisca). O detalhe volta
+  //  sozinho quando o usuário dá zoom/pan/navega. Só p/ PDF simples (não cmp/3D).
+  _soltarDetalhe(){
+    if(this.cmp || this.B3) return;
     this._renderJob++; try{ this._cancelarRender(); }catch(_){}
     try{ this._tilesLimpar(); }catch(_){}
-    try{ this.canvas.width=1; this.canvas.height=1; }catch(_){}
-    try{ this.canvasB.width=1; this.canvasB.height=1; }catch(_){}
-    this.B.valido=false;
-    this._slept=true;
-  }
-  _despertar(){
-    if(!this._slept) return;
-    this._slept=false;
-    if(this.V && this.V.page){
-      try{ this.msg('Reabrindo prancha…'); this._renderBase().then(()=>this.hideMsg(), ()=>this.hideMsg()); }
-      catch(_){ try{ this.hideMsg(); }catch(__){} }
-    }
   }
   fechar(){
     clearTimeout(this._baseTimer); clearTimeout(this._detTimer);
@@ -5033,16 +5020,16 @@ function focar(w){
   if(!w) return;
   WIN_STATE.act = w;
   w._lastFocus = Date.now();
-  // Memória: se a ativa está MAXIMIZADA, ela cobre as demais → pode adormecê-las.
-  //  Senão (restored/lado a lado), só adormece as MINIMIZADAS — as visíveis ficam.
-  //  A ativa sempre desperta. Nada fecha.
+  // Memória: mantém os ladrilhos de detalhe só nas 5 pranchas MAIS RECENTES; as
+  //  demais soltam o detalhe (o bitmap-base fica visível → troca instantânea, e o
+  //  detalhe volta ao dar zoom/pan/navegar). Nada fecha, nada reabre ao focar.
   try{
-    const cobreTudo = (w.state === 'max');
-    for(const o of WIN_STATE.list){
-      if(o === w) continue;
-      if((cobreTudo || o.state === 'min') && o._adormecer) o._adormecer();
+    const KEEP = 5;
+    const pdfs = WIN_STATE.list.filter(o => o.DOC_SEL && !o.isCmp && !o.isFed && !o.B3);
+    if(pdfs.length > KEEP){
+      const manter = new Set(pdfs.slice().sort((a,b)=>(b._lastFocus||0)-(a._lastFocus||0)).slice(0, KEEP));
+      for(const o of pdfs){ if(o !== w && !manter.has(o) && o._soltarDetalhe) o._soltarDetalhe(); }
     }
-    if(w._despertar) w._despertar();
   }catch(_){}
   w.el.style.zIndex = ++WIN_STATE.zTop;
   // Teto de segurança: numa sessão longa com muita troca de foco, este
