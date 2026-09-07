@@ -2573,10 +2573,10 @@ class CdeWin {
       +       '<div class="bimMedeOpc">'
       +         '<button data-t="mLivre" title="Cota livre: distância direta entre os dois pontos, mesmo inclinada">↗</button>'
       +         '<button data-t="mEixo" class="on" title="Cota ortogonal: mede só ao longo de X, Y ou Z">⟂</button>'
+      +         '<button data-t="mNivel" title="Nível (cota Z): clique numa superfície para fixar a cota (ex.: +1,55 m)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 8h14l-7 10z"/></svg></button>'
       +         '<button data-t="mLista" title="Lista de cotas (mostrar/ocultar)">☰</button>'
       +         '<button data-t="mLimpar" title="Apagar todas as cotas">🗑</button>'
       +       '</div>'
-      +       '<button data-t="cota" title="Nível (cota Z): ligue e clique numa superfície para fixar a cota (ex.: +1,55 m)"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 8h14l-7 10z"/></svg></button>'
       +       '<button data-t="corte" title="Plano de corte">✂</button>'
       +       '<button data-t="andar" title="Caminhar pelo modelo">🚶</button>'
       +       '<button data-t="xray" title="Raio-X: passe o mouse — a peça sob o cursor fica transparente">◎</button>'
@@ -2751,9 +2751,9 @@ class CdeWin {
     andarEl.querySelector('[data-t=sobe]') .addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel+1); });
     andarEl.querySelector('[data-t=desce]').addEventListener('click', ()=>{ const B=this.B3; if(B) this.bimIrNivel(B.andar.nivel-1); });
     andarEl.querySelector('[data-t=saiAndar]').addEventListener('click', ()=> this.bimModoAndar(false));
-    tools.querySelector('[data-t=cota]').addEventListener('click', ()=> this.bimCotaToggle());
     tools.querySelector('[data-t=mLivre]').addEventListener('click', ()=> this.bimMedirModo('livre'));
     tools.querySelector('[data-t=mEixo]') .addEventListener('click', ()=> this.bimMedirModo('eixo'));
+    tools.querySelector('[data-t=mNivel]').addEventListener('click', ()=> this.bimMedirModo('nivel'));
     tools.querySelector('[data-t=mLista]').addEventListener('click', ()=> this.bimCotasToggle());
     tools.querySelector('[data-t=mLimpar]').addEventListener('click', ()=> this.bimLimparMedidas());
     this.bimCotasEl   = w.querySelector('.cdeWin-bim .bimCotas');
@@ -3334,9 +3334,6 @@ class CdeWin {
           }).catch(err=>console.warn('3D corte:', err));
           return;
         }
-        // Modo Nível (cota Z): ferramenta dedicada — fixa um símbolo de nível
-        // no ponto clicado (não seleciona/abre propriedades).
-        if(this.bimCotaOn){ this.bimMarcarNivelEm(e).catch(err=>console.warn('3D nivel:', err)); return; }
         this.bimSelecionarEm(e).catch(err=>console.warn('3D:', err));
       });
 
@@ -3878,24 +3875,16 @@ class CdeWin {
     const t=this.bimToolsEl;
     t.querySelector('[data-t=mLivre]').classList.toggle('on', modo==='livre');
     t.querySelector('[data-t=mEixo]') .classList.toggle('on', modo==='eixo');
-    this.bimMsgDica(modo==='eixo'
-      ? 'Cota ortogonal: mede só ao longo de um eixo (X, Y ou Z do projeto).'
-      : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
+    const n=t.querySelector('[data-t=mNivel]'); if(n) n.classList.toggle('on', modo==='nivel');
+    // A trena inteira já usa cursor cruz (bimModoMedir) — medir e nível são cliques.
+    this.bimMsgDica(modo==='nivel'
+      ? '📐 Nível (cota Z): clique numa superfície (laje, rua…) para fixar a cota.'
+      : modo==='eixo'
+        ? 'Cota ortogonal: mede só ao longo de um eixo (X, Y ou Z do projeto).'
+        : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
   }
   bimMsgDica(t){
     const d=this.bimWrap.querySelector('.bimDica'); if(d) d.textContent=t;
-  }
-  // Cota Z (botão dedicado): ligado, mostra a cota da peça clicada (base/topo/
-  // altura), lida da caixa 3D (eixo vertical = y). Cota relativa à origem do
-  // modelo; a altura é sempre exata.
-  bimCotaToggle(){
-    this.bimCotaOn = !this.bimCotaOn;
-    const b = this.bimToolsEl && this.bimToolsEl.querySelector('[data-t=cota]');
-    if(b) b.classList.toggle('on', this.bimCotaOn);
-    const B=this.B3; if(B) B.renderer.domElement.style.cursor = this.bimCotaOn ? 'crosshair' : '';
-    this.bimMsgDica(this.bimCotaOn
-      ? '📐 Nível ligado — clique numa superfície (laje, rua…) para fixar a cota.'
-      : 'Arraste para girar · roda para zoom · clique da roda para deslocar');
   }
   // Formata elevação como cota de projeto: sinal explícito, 2 casas, "m".
   bimFmtCotaZ(v){
@@ -3918,14 +3907,6 @@ class CdeWin {
   bimCotaZ(ponto){
     const B=this.B3;
     return ponto.y - this.bimCotaOffsetBase() - (B.nivelZero||0);
-  }
-  async bimMarcarNivelEm(ev){
-    const B=this.B3; if(!B) return;
-    let pt=null;
-    if(B.medida.snapOn){ const s=await this.bimSnap(ev); if(!B.vivo) return; if(s&&s.point) pt=s.point.clone(); }
-    if(!pt){ const h=await this.bimRaycast(ev); if(!B.vivo) return; if(h&&h.point) pt=h.point.clone(); }
-    if(!pt){ this.bimMsgDica('Clique sobre uma superfície do modelo.'); return; }
-    this.bimMarcarNivel(pt);
   }
   bimMarcarNivel(ponto){
     const B=this.B3, T=B.THREE, M=B.medida;
@@ -3962,6 +3943,9 @@ class CdeWin {
     if(!pt){ const h=await this.bimRaycast(ev); if(!B.vivo) return; if(h&&h.point) pt=h.point.clone(); }
     if(!pt){ this.bimMsgDica('Clique sobre o modelo — não peguei nenhum ponto ali.'); return; }
     const M=B.medida, T=B.THREE;
+    // Modo NÍVEL: fixa um símbolo de nível (▽) no ponto — vira uma "cota" na
+    // lista, apagável. Reusa o snap acima; não faz a medida de 2 pontos.
+    if(M.modo==='nivel'){ this.bimMarcarNivel(pt); return; }
     // 1º ponto: guarda pendente e mostra o marcador.
     if(!M.pend){
       M.pend={ a:pt, esf:this.bimMkEsf(pt) };
@@ -4054,7 +4038,7 @@ class CdeWin {
       bVis.title=md.visivel?'Ocultar':'Mostrar'; bVis.innerHTML=md.visivel?olhoOn:olhoOff;
       bVis.addEventListener('click', ()=> this.bimCotaVis(md.id));
       const v=document.createElement('span'); v.className='v';
-      v.style.color=md.visivel?'#e2e8f0':'#64748b'; v.textContent=md.texto;
+      v.style.color=md.visivel?'#e2e8f0':'#64748b'; v.textContent=(md._nivel?'▽ ':'')+md.texto;
       const bDel=document.createElement('button'); bDel.className='del'; bDel.title='Apagar'; bDel.textContent='×';
       bDel.addEventListener('click', ()=> this.bimCotaDel(md.id));
       row.appendChild(bVis); row.appendChild(v); row.appendChild(bDel);

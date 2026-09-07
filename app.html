@@ -588,10 +588,10 @@
           <span id="f3dMedeOpc" class="f3dsub">
             <button id="f3dMLivre" class="bim-tb ico" onclick="f3dMedirModo('livre')" title="Cota livre: distância direta entre os dois pontos, mesmo inclinada">↗</button>
             <button id="f3dMEixo" class="bim-tb ico on" onclick="f3dMedirModo('eixo')" title="Cota ortogonal: mede só ao longo de X, Y ou Z">⟂</button>
+            <button id="f3dMNivel" class="bim-tb ico" onclick="f3dMedirModo('nivel')" title="Nível (cota Z): clique numa superfície para fixar a cota (ex.: +1,55 m)" style="display:inline-flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-7 10z"/></svg></button>
             <button id="f3dMLista" class="bim-tb ico" onclick="f3dCotasToggle()" title="Lista de cotas (mostrar/ocultar)">☰</button>
             <button id="f3dMLimpar" class="bim-tb ico" onclick="f3dMedirLimpar()" title="Apagar todas as cotas">🗑</button>
           </span>
-          <button id="f3dBtnCota" class="bim-tb ico f3donly" onclick="f3dCotaToggle()" title="Nível (cota Z): ligue e clique numa superfície para fixar a cota (ex.: +1,55 m)" style="display:inline-flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-7 10z"/></svg></button>
           <button id="f3dBtnCorte" class="bim-tb ico f3donly" onclick="f3dTool('corte')" title="Plano de corte: clique numa superfície e arraste para deslocar">✂</button>
           <span id="f3dCorteOpc" class="f3dsub">
             <button class="bim-tb ico" onclick="f3dCorteInverter()" title="Inverter o lado cortado">⇄</button>
@@ -4216,13 +4216,13 @@ function f3dTool(qual, forcar){
   // mas COMPATÍVEL com andar — os dois podem ficar ativos ao mesmo tempo.
   // No modo andar+raio-X, setas ↑↓ mudam de pavimento (ver f3dXrayKey).
   if(lig && F3D_XRAY && qual!=='andar') f3dXrayDesligar();
-  if(F3D_FERR==='medir' && qual!=='medir'){ B3.modoMedir(F3D,false); f3dMedirHoverLigar(false); }
+  if(F3D_FERR==='medir' && qual!=='medir'){ B3.modoMedir(F3D,false); f3dMedirHoverLigar(false); if(F3D.canvas) F3D.canvas.style.cursor=''; }
   if(F3D_FERR==='corte' && qual!=='corte') B3.modoCorte(F3D,false);
   if(F3D_FERR==='andar' && qual!=='andar') B3.modoAndar(F3D,false).catch(()=>{});
   F3D_FERR = lig ? qual : '';
   // A trena SEMPRE aciona em 90° (cota ortogonal ⟂), mesmo que a última
   // medição tenha sido livre — mesmo padrão do CDE.
-  if(qual==='medir'){ B3.modoMedir(F3D, lig); f3dMedirHoverLigar(lig); if(lig) f3dMedirModo('eixo'); }
+  if(qual==='medir'){ B3.modoMedir(F3D, lig); f3dMedirHoverLigar(lig); if(lig) f3dMedirModo('eixo'); else if(F3D.canvas) F3D.canvas.style.cursor=''; }
   if(qual==='corte') B3.modoCorte(F3D, lig);
   if(qual==='andar'){
     B3.modoAndar(F3D, lig).catch(e=>{ console.warn('caminhar:', e); f3dDica('Não consegui achar os pavimentos deste modelo.'); });
@@ -4277,12 +4277,17 @@ function f3dModoLimpar(){
 function f3dMedirModo(modo){
   if(!F3D || !B3) return;
   B3.medirModo(F3D, modo);
-  const l=$('f3dMLivre'), e=$('f3dMEixo');
+  const l=$('f3dMLivre'), e=$('f3dMEixo'), n=$('f3dMNivel');
   if(l) l.classList.toggle('on', modo==='livre');
   if(e) e.classList.toggle('on', modo==='eixo');
-  f3dDica(modo==='eixo'
-    ? 'Cota ortogonal: mede só ao longo de um eixo (X, Y ou Z do projeto).'
-    : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
+  if(n) n.classList.toggle('on', modo==='nivel');
+  // No modo nível o cursor vira cruz (é "carimbar", não arrastar cota).
+  if(F3D.canvas) F3D.canvas.style.cursor = (modo==='nivel') ? 'crosshair' : '';
+  f3dDica(modo==='nivel'
+    ? '📐 Nível (cota Z): clique numa superfície (laje, rua…) para fixar a cota.'
+    : modo==='eixo'
+      ? 'Cota ortogonal: mede só ao longo de um eixo (X, Y ou Z do projeto).'
+      : 'Cota livre: distância direta entre os dois pontos, mesmo inclinada.');
 }
 function f3dMedirLimpar(){
   if(!F3D || !B3) return;
@@ -4310,7 +4315,7 @@ function f3dRenderCotas(){
     '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.06)">'
     + '<button onclick="f3dCotaVis('+c.id+')" title="'+(c.visivel?'Ocultar':'Mostrar')+'" '
       + 'style="background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center">'+(c.visivel?olhoOn:olhoOff)+'</button>'
-    + '<span style="flex:1;color:'+(c.visivel?'#e2e8f0':'#64748b')+';font-size:12px;font-variant-numeric:tabular-nums">'+esc(c.texto)+'</span>'
+    + '<span style="flex:1;color:'+(c.visivel?'#e2e8f0':'#64748b')+';font-size:12px;font-variant-numeric:tabular-nums">'+esc((c.nivel?'▽ ':'')+c.texto)+'</span>'
     + '<button onclick="f3dCotaDel('+c.id+')" title="Apagar" style="background:none;border:none;color:#E74C3C;cursor:pointer;font-size:15px;line-height:1">×</button>'
     + '</div>').join('');
 }
@@ -4771,13 +4776,6 @@ async function f3dClique(ev){
     if(el && F3D_PROPS) el.innerHTML='<div class="bp-empty">Clique num elemento do modelo.</div>';
     return;
   }
-  // Modo Cota Z: ferramenta dedicada — fixa um símbolo de nível no ponto
-  // clicado (não seleciona/abre propriedades), igual à trena.
-  if(F3D_COTA){
-    if(hit.point){ B3.marcarNivel(F3D, hit.point, hit.__modelo); if(F3D_COTAS_LISTA) f3dRenderCotas(); }
-    else f3dDica('Clique sobre uma superfície do modelo.');
-    return;
-  }
   const m=hit.__modelo;
   await B3.destacar(F3D, m, [hit.localId]);
   if(F3D_APONTAR){
@@ -4810,16 +4808,6 @@ async function f3dProps(hit, m){
   }catch(e){
     if(showPanel) el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
   }
-}
-// ── Cota Z: botão dedicado. Ligado, mostra a cota (base/topo/altura) da peça
-//  clicada, lida da caixa 3D (eixo vertical = y). A cota é relativa à origem do
-//  modelo; a altura é sempre exata. ─────────────────────────────────────────
-let F3D_COTA=false;
-function f3dCotaToggle(){
-  F3D_COTA=!F3D_COTA;
-  const b=$('f3dBtnCota'); if(b) b.classList.toggle('on', F3D_COTA);
-  if(F3D && F3D.canvas) F3D.canvas.style.cursor = F3D_COTA ? 'crosshair' : '';
-  f3dDica(F3D_COTA ? '📐 Nível ligado — clique numa superfície (laje, rua…) para fixar a cota.' : '');
 }
 // O ItemData do Fragments é genérico: cada chave é um atributo ({value}) OU
 // uma lista de blocos aninhados (conjuntos de propriedades vindos das relações

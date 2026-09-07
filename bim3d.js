@@ -2246,6 +2246,9 @@ async function medirPonto(V, ev){
   if(!pt){ const hit=await raycast(V,ev); if(!V.vivo) return; if(hit&&hit.point) pt=hit.point.clone(); }
   if(!pt){ dica(V,'Clique sobre o modelo.'); return; }
   const T=V.THREE, M=V.medida;
+  // Modo NÍVEL: em vez da cota de 2 pontos, fixa um símbolo de nível (▽) no ponto
+  // — vira uma "medida" normal (entra na lista, apagável). Reusa o snap acima.
+  if(M.modo==='nivel'){ marcarNivel(V, pt); return; }
   // Raio 1 + escala por quadro: o marcador fica com tamanho constante NA TELA.
   const esf=new T.Mesh(new T.SphereGeometry(1,12,12), new T.MeshBasicMaterial({color:LARANJA, depthTest:false}));
   esf.position.copy(pt); esf.renderOrder=999; V.scene.add(esf);
@@ -2296,7 +2299,7 @@ export function limparMedidas(V){
 }
 // ── API do painel de cotas (lista estilo Solibri) ───────────────────────────
 export function listaMedidas(V){
-  return (V&&V.medida&&V.medida.medidas||[]).map(m=>({ id:m.id, texto:m.texto, visivel:m.visivel!==false }));
+  return (V&&V.medida&&V.medida.medidas||[]).map(m=>({ id:m.id, texto:m.texto, visivel:m.visivel!==false, nivel:!!m._nivel }));
 }
 export function contarMedidas(V){ return (V&&V.medida&&V.medida.medidas)?V.medida.medidas.length:0; }
 export function removerMedidaId(V, id){
