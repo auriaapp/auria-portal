@@ -3906,12 +3906,18 @@ class CdeWin {
   // normal (entra na lista, some/reaparece, apagável). A cota é a elevação do
   // ponto (three Y = Z do IFC) relativa ao nível zero (B.nivelZero, default 0 =
   // origem do modelo).
-  // Cota Z. PROVISÓRIO: com autoCoordinate LIGADO o Y de mundo está recentrado pelo
-  // 1º modelo — falta compensar (worldY + baseCoordinates), sendo calibrado com o
-  // usuário. nivelZero = ajuste manual opcional.
+  // Deslocamento vertical do recentro do Fragments (autoCoordinate): baseCoordinates
+  // [tx,ty,tz,...] do 1º modelo em Y-up; worldY = cotaReal + ty. Subtraindo ty volto
+  // à coordenada NATIVA do IFC (topo do térreo = 0). Ver bim3d.js _cotaOffsetBase.
+  bimCotaOffsetBase(){
+    const B=this.B3;
+    try{ const bc=B && B.fragments && B.fragments.baseCoordinates; if(bc && bc.length>=2 && isFinite(+bc[1])) return +bc[1]; }catch(_){}
+    return 0;
+  }
+  // Cota Z (elevação REAL, coordenada nativa do IFC). nivelZero = ajuste opcional.
   bimCotaZ(ponto){
     const B=this.B3;
-    return ponto.y - (B.nivelZero||0);
+    return ponto.y - this.bimCotaOffsetBase() - (B.nivelZero||0);
   }
   async bimMarcarNivelEm(ev){
     const B=this.B3; if(!B) return;
@@ -4158,9 +4164,9 @@ class CdeWin {
           'diffuseColor.a *= _fa;\n'+
           '#include <opaque_fragment>');
     };
-    // Com autoCoordinate DESLIGADO, o mundo está nas coordenadas nativas do IFC:
-    // Z=0 do projeto = Y=0 do mundo. A malha vai direto no zero.
-    grade.position.y = -0.005;
+    // Com autoCoordinate LIGADO, a cota 0 do projeto fica em baseCoordinates[1] no
+    // MUNDO (recentro do Fragments) — a malha vai lá (igual ao App).
+    grade.position.y = this.bimCotaOffsetBase() - 0.005;
     grade.renderOrder = -1;      // sempre atrás do modelo
     B.grade=grade; B.scene.add(grade);
   }

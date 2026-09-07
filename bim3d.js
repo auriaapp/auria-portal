@@ -162,6 +162,7 @@ export async function carregar(V, modelos, msg){
   }
   redimensionar(V);
   enquadrar(V);
+  _reposicionarGrade(V);   // baseCoordinates já existe após a carga
   aplicarFaces(V, true);
   await V.fragments.update(true);
   // Modelo carregado: só a partir daqui a sombra (SAO) e os pins entram — durante
@@ -205,6 +206,7 @@ export async function adicionarModelo(V, m, msg){
   // Só enquadra no PRIMEIRO modelo — nos subsequentes, preserva a câmera
   // atual do usuário (não teleporta a vista quando marca outra disciplina).
   if(eraVazio) enquadrar(V);
+  if(eraVazio) _reposicionarGrade(V);   // 1º modelo define o baseCoordinates
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
@@ -398,10 +400,9 @@ export function visualGrade(V, lig){
     // three porque Fragments converte Z-up→Y-up). Antes eu colocava no piso
     // da caixa (min.y), o que fazia a grade "subir" no meio de subsolos e
     // ficar acima do térreo. O -0.005 evita z-fighting com uma laje que
-    // esteja exatamente em cota zero. Com autoCoordinate DESLIGADO (ver criar()),
-    // o mundo está nas coordenadas nativas do IFC, então Z=0 do projeto = Y=0 do
-    // mundo — a malha vai direto no zero.
-    grade.position.y = -0.005;
+    // esteja exatamente em cota zero. Com autoCoordinate LIGADO, a cota 0 do projeto
+    // fica em baseCoordinates[1] no MUNDO (recentro do Fragments) — a malha vai lá.
+    grade.position.y = _cotaOffsetBase(V) - 0.005;
     grade.renderOrder = -1;    // sempre atrás do modelo
     V._grade = grade; V.scene.add(grade);
   }
@@ -1679,13 +1680,24 @@ export function fmtCotaZ(v){
   const n=Math.abs(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
   return (Math.abs(v)<0.005 ? '±' : (v>0?'+':'−')) + n + ' m';
 }
-// Cota Z (elevação) de um ponto. PROVISÓRIO: com autoCoordinate LIGADO o Y de mundo
-// está recentrado pelo 1º modelo (fragments.baseCoordinates), então este valor NÃO
-// é a cota absoluta e depende da ordem de carga — falta compensar o recentro. A
-// compensação certa (worldY + baseCoordinates vertical) está sendo calibrada com o
-// usuário antes de ligar. nivelZero = ajuste manual opcional (default 0).
+// Deslocamento vertical do recentro do Fragments (autoCoordinate). baseCoordinates
+// guarda [tx,ty,tz, ...orientação] do 1º modelo em Y-up; o Fragments soma isso ao
+// posicionar, então worldY = cotaReal + ty. Calibrado com o modelo (topo da laje do
+// térreo: worldY = baseCoordinates[1] → cota 0). Subtraindo ty volto à coordenada
+// NATIVA do IFC — igual em App/CDE e independente da ordem de carga.
+function _cotaOffsetBase(V){
+  try{ const bc=V.fragments && V.fragments.baseCoordinates; if(bc && bc.length>=2 && isFinite(+bc[1])) return +bc[1]; }catch(_){}
+  return 0;
+}
+// Cota Z (elevação REAL, coordenada nativa do IFC) de um ponto.
 export function cotaZ(V, ponto, modelo){
-  return ponto.y - (V.nivelZero||0);
+  return ponto.y - _cotaOffsetBase(V) - (V.nivelZero||0);
+}
+// Reancora a malha na cota 0 do projeto (que no mundo fica em baseCoordinates[1],
+// por causa do recentro do Fragments). Chamada após a carga (a config pode ter
+// criado a malha antes de o baseCoordinates existir).
+function _reposicionarGrade(V){
+  if(V._grade){ try{ V._grade.position.y = _cotaOffsetBase(V) - 0.005; }catch(_){} }
 }
 // Fixa um SÍMBOLO DE NÍVEL (▽) no ponto clicado, com a cota. Vira uma "medida"
 // normal (aparece na lista, some/reaparece, apagável no ×). A cota é o Z real do
