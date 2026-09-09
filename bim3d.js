@@ -1359,6 +1359,29 @@ function _classeIfc(valor){
   return NM[_norm(valor).split(' ')[0]]||null;
 }
 function _classeRx(valor){ const ifc=_classeIfc(valor); return ifc?new RegExp('^'+ifc):null; }   // prefixo: pega subtipos
+// Sinônimos de material (PT/EN) — o exportador pode nomear em inglês. Casa se
+// QUALQUER termo bater (o _bateTermos já é OU).
+function _matSyn(v){ const t=_norm(v); const map={
+  madeira:['wood','timber'], vidro:['glass'], concreto:['concrete'], aco:['steel','aço'], 'aço':['steel','aco'],
+  alvenaria:['masonry','brick','tijolo','block','bloco'], aluminio:['aluminum','aluminium'], 'alumínio':['aluminum','aluminium','aluminio'],
+  gesso:['gypsum','plaster','drywall','gesso acartonado'], ceramica:['ceramic','tile'], 'cerâmica':['ceramic','tile'],
+  ferro:['iron'], pvc:['plastic'], pedra:['stone'], granito:['granite'], marmore:['marble'], 'mármore':['marble'] };
+  return [v].concat(map[t]||[]); }
+// Extrai os NOMES de material do elemento a partir do HasAssociations (o material
+// vive aninhado: RelatingMaterial.Name, ou camadas/constituintes/lista). O
+// _textoBusca é raso demais p/ chegar lá, então caminhamos a relação de material.
+function _materiaisDe(d){
+  const out=[]; const rels=d&&d.HasAssociations; if(!Array.isArray(rels)) return out;
+  const walk=(o,depth)=>{ if(o==null||depth>7) return;
+    if(Array.isArray(o)){ for(const x of o) walk(x,depth+1); return; }
+    if(typeof o==='object'){
+      if(o.Name&&o.Name.value!=null&&typeof o.Name.value!=='object') out.push(String(o.Name.value));
+      for(const k in o){ if(k[0]==='_'||k==='Name') continue; walk(o[k],depth+1); } } };
+  for(const rel of rels){ if(!rel||typeof rel!=='object') continue;
+    if('RelatingMaterial' in rel) walk(rel.RelatingMaterial,0);
+    else if(/material/i.test(String((rel._category&&rel._category.value)||''))) walk(rel,0); }
+  return out;
+}
 function _numBR(s){ if(s==null) return NaN; return parseFloat(String(s).replace(/\./g,'').replace(',','.')); }
 // Nome do TIPO do elemento (IsTypedBy → Name; senão ObjectType; senão Name).
 function _tipoNome(d){
@@ -1379,7 +1402,10 @@ function _avaliaCond(c, ctx){
       if(op==='abaixo de'||op==='acima de'){ const ye=ctx.pavY?ctx.pavY(ctx.pav):null, ya=ctx.pavY?ctx.pavY(val):null;
         if(ye==null||ya==null) return false; return op==='abaixo de'?ye<ya:ye>ya; }
       const hit=_batePavim(ctx.pav, _norm(val)); return op==='não é'?!hit:hit; }
-    case 'material':{ const hit=ctx.d?_bateTermos(ctx.d,[val]):false; return op==='não contém'?!hit:hit; }
+    case 'material':{ const syns=_matSyn(val).map(_norm);
+      const mats=(ctx.d?_materiaisDe(ctx.d):[]).map(_norm);
+      const hit=mats.some(m=>syns.some(s=>m.includes(s))) || (ctx.d?_bateTermos(ctx.d,_matSyn(val)):false);
+      return op==='não contém'?!hit:hit; }
     case 'tipo':{ const nome=_norm(_tipoNome(ctx.d)); const b=_norm(val);
       if(op==='começa com') return nome.startsWith(b);
       if(op==='é') return nome===b || (ctx.d?_bateTermos(ctx.d,['='+val]):false);
@@ -1432,17 +1458,19 @@ export async function filtrar(V, filtro){
   // pavimento quando não há membership).
   const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&pavCheap);
   const baratas=conds.filter(ehBarata), caras=conds.filter(c=>!ehBarata(c));
-  const need={pset:false,tipo:false};
-  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento') need.pset=true; if(c.campo==='tipo') need.tipo=true; });
+  const need={pset:false,tipo:false,mat:false};
+  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
   const relations={};
   if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
   if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
+  if(need.mat)  relations.HasAssociations={attributes:true,relations:true};   // material vive aqui (RelatingMaterial.Name)
   const readOpts={attributesDefault:true,relationsDefault:{attributes:false,relations:false}};
   if(Object.keys(relations).length) readOpts.relations=relations;
+  const heavy=need.pset||need.mat;   // pset/associações → ler em LOTES (cancelável), mas só dos sobreviventes
   const lerDados=async(model, lista)=>{ const dOf=new Map(); if(!caras.length||!lista.length) return dOf;
     let dados=[];
-    try{ dados = need.pset ? await _lerDadosEmLotes(V, model, lista, readOpts, 'Filtrando')
-                           : await model.getItemsData(lista, readOpts); }catch(e){ if(String(e&&e.message)==='CANCELADO') throw e; }
+    try{ dados = heavy ? await _lerDadosEmLotes(V, model, lista, readOpts, 'Filtrando')
+                       : await model.getItemsData(lista, readOpts); }catch(e){ if(String(e&&e.message)==='CANCELADO') throw e; }
     (dados||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); }); return dOf; };
   const porMod={};
   for(let mi=0; mi<V.modelos.length; mi++){
