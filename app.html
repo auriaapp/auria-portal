@@ -457,7 +457,10 @@
       <!-- Modelos BIM (modo só-BIM) — ocupa o lugar das pranchas -->
       <div id="secModelosBim" style="display:none">
         <label>Modelos BIM</label>
-        <div class="hint" style="margin:4px 0 6px">Vindos do CDE, revisão vigente. Marque para federar.</div>
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
+          <div class="hint" style="margin:0;flex:1">Vindos do CDE, revisão vigente. Marque para federar.</div>
+          <button id="btnFiltro" onclick="fFiltroToggle()" title="Filtro & Análise do modelo" style="flex:none;display:none;align-items:center;gap:5px;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:11.5px;font-weight:700;cursor:pointer;white-space:nowrap"><span style="font-size:13px">🎛️</span>Filtro</button>
+        </div>
         <div id="modList" style="margin:6px 0"><div class="hint">Carregando…</div></div>
         <!-- Toggle nos checkboxes agora carrega/descarrega sozinho. Este botão
              existe só como escape se algo travar (mostra "Recarregar modelo(s)"
@@ -724,6 +727,95 @@
               <button onclick="f3dMedirLimpar()" onmousedown="event.stopPropagation()" title="Apagar todas as cotas" style="background:none;border:none;color:#7FB3D3;cursor:pointer;font-size:13px">🗑</button>
             </div>
             <div id="f3dCotasList"></div>
+          </div>
+          <!-- Filtro & Análise: pop-up flutuante e ARRASTÁVEL (gatilho no menu
+               "Modelos BIM"). Construtor de condições + IA preenche + salvos. -->
+          <style>
+            #fFiltroPanel{position:absolute;top:58px;right:10px;z-index:7;width:344px;max-height:84%;display:none;flex-direction:column;background:rgba(20,30,52,.97);backdrop-filter:blur(5px);border:1px solid var(--line);border-radius:13px;box-shadow:0 16px 44px rgba(0,0,0,.55);color:var(--txt);overflow:hidden}
+            #fFiltroPanel.on{display:flex}
+            #fFiltroPanel .fhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:move;user-select:none}
+            #fFiltroPanel .fhead b{font-size:13.5px;font-weight:700}
+            #fFiltroPanel .fhead .sub{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:#7FB3D3;font-family:monospace;font-weight:700}
+            #fFiltroPanel .fhead .x{margin-left:auto;background:none;border:0;color:var(--mut);font-size:17px;cursor:pointer;line-height:1;padding:0 2px}
+            #fFiltroPanel .fhead .x:hover{color:var(--txt)}
+            #fFiltroPanel .fbody{overflow:auto;padding:11px 12px 13px}
+            .fai{background:rgba(127,179,211,.08);border:1px solid rgba(127,179,211,.24);border-radius:10px;padding:9px 10px}
+            .fai .r{display:flex;gap:7px}
+            .fai input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--txt);font-size:12.5px;padding:7px 9px}
+            .fai button{flex:none;background:#7FB3D3;color:#0b1622;border:0;border-radius:7px;font-weight:700;font-size:12px;padding:0 12px;cursor:pointer}
+            .fai .h{font-size:10.5px;color:var(--mut);margin-top:7px}
+            .fcomb{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mut);margin-top:13px}
+            .fseg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+            .fseg button{background:transparent;border:0;color:var(--mut);font-size:11.5px;font-weight:700;padding:5px 10px;cursor:pointer}
+            .fseg button.on{background:var(--accent);color:#fff}
+            #fConds{display:flex;flex-direction:column;gap:7px;margin-top:9px}
+            .fcond{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:start}
+            .fcond .fr{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+            .fcond select,.fcond input{background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--txt);font-size:12px;padding:5px 7px;min-width:0}
+            .fcond select.fd{font-weight:700}
+            .fcond .bsdd{font-size:8px;letter-spacing:.05em;color:#0b1622;background:#7FB3D3;padding:2px 5px;border-radius:5px;align-self:center;font-weight:800}
+            .fcond input.fv{width:58px;text-align:right;font-variant-numeric:tabular-nums}
+            .fcond input.ft{flex:1;min-width:66px}
+            .fcond .u{align-self:center;font-size:10.5px;color:var(--mut)}
+            .fcond .x{background:none;border:0;color:var(--mut);font-size:15px;cursor:pointer;line-height:1;padding:2px}
+            .fcond .x:hover{color:#f87171}
+            .fadd{margin-top:8px;width:100%;background:transparent;border:1px dashed var(--line);color:var(--mut);border-radius:8px;padding:7px;font-size:12px;cursor:pointer}
+            .fadd:hover{border-color:#7FB3D3;color:#7FB3D3}
+            .fres{display:flex;align-items:center;gap:9px;margin-top:12px;padding:9px 11px;border-radius:10px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3)}
+            .fres .big{font-size:17px;font-weight:800;color:var(--accent2);font-variant-numeric:tabular-nums}
+            .fres .meta{font-size:11px;color:var(--mut);line-height:1.3}
+            .fact{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:11px}
+            .fact button{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--txt);border-radius:8px;padding:8px;font-size:12px;cursor:pointer}
+            .fact button:hover{background:rgba(255,255,255,.07)}
+            .fact button.prim{background:var(--accent);color:#fff;border-color:transparent;font-weight:700}
+            .fswat{display:flex;gap:6px;margin-top:8px;align-items:center}
+            .fswat .l{font-size:10.5px;color:var(--mut)}
+            .fswat button{width:19px;height:19px;border-radius:6px;border:2px solid transparent;cursor:pointer;padding:0}
+            .fswat button.on{border-color:#fff}
+            .fsv{margin-top:15px}
+            .fsvtabs{display:flex;gap:14px;border-bottom:1px solid var(--line);margin-bottom:8px}
+            .fsvtabs button{background:0;border:0;color:var(--mut);font-size:12px;font-weight:700;padding:5px 1px 7px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+            .fsvtabs button.on{color:var(--txt);border-color:var(--accent)}
+            #fSvList{display:flex;flex-direction:column;gap:5px}
+            .fsvrow{display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:8px;cursor:pointer}
+            .fsvrow:hover{border-color:#7FB3D3}
+            .fsvrow .n{font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+            .fsvrow .del{background:0;border:0;color:var(--mut);font-size:14px;cursor:pointer}
+            .fsvrow .del:hover{color:#f87171}
+            .fsvadd{display:flex;gap:6px;margin-top:8px}
+            .fsvadd input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--txt);font-size:12px;padding:6px 8px}
+            .fsvadd button{flex:none;background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:7px;padding:0 11px;font-size:12px;cursor:pointer;font-weight:700}
+            .fsvadd button:hover{border-color:var(--accent);color:var(--accent2)}
+          </style>
+          <div id="fFiltroPanel">
+            <div class="fhead" onmousedown="fFiltroDrag(event)">
+              <span style="font-size:14px">🎛️</span><b>Filtro</b><span class="sub">Análise</span>
+              <button class="x" onclick="fFiltroToggle()" onmousedown="event.stopPropagation()" title="Fechar">✕</button>
+            </div>
+            <div class="fbody">
+              <div class="fai">
+                <div class="r"><input id="fAiInput" placeholder="Descreva o que quer filtrar…" onkeydown="if(event.key==='Enter')fAiMontar()"><button onclick="fAiMontar()">Montar</button></div>
+                <div class="h">A IA monta as condições — você revê e aplica.</div>
+              </div>
+              <div class="fcomb">Corresponder a
+                <span class="fseg" id="fComb"><button class="on" onclick="fSetComb('all')">Todas (E)</button><button onclick="fSetComb('any')">Qualquer (OU)</button></span>
+              </div>
+              <div id="fConds"></div>
+              <button class="fadd" onclick="fAddCond()">+ condição</button>
+              <div class="fres"><span class="big" id="fCount">—</span><span class="meta" id="fMeta">Monte e clique numa ação.</span></div>
+              <div class="fact">
+                <button class="prim" onclick="fAplicar('iso')">◹ Isolar</button>
+                <button onclick="fAplicar('hide')">⦻ Ocultar</button>
+                <button onclick="fAplicar('color')">◧ Colorir</button>
+                <button onclick="fAplicar('limpar')">↺ Limpar</button>
+              </div>
+              <div class="fswat" id="fSwat" style="display:none"><span class="l">Cor</span></div>
+              <div class="fsv">
+                <div class="fsvtabs" id="fSvTabs"><button class="on" onclick="fSetTab('mine')">Meus</button><button onclick="fSetTab('team')">Da equipe</button></div>
+                <div id="fSvList"></div>
+                <div class="fsvadd"><input id="fSvName" placeholder="Nome do filtro…" onkeydown="if(event.key==='Enter')fSalvar()"><button onclick="fSalvar()">Salvar</button></div>
+              </div>
+            </div>
           </div>
           <!-- Modo caminhar: pavimento atual e subir/descer. Fica embaixo, no
                centro, para não disputar espaço com a barra de ferramentas. -->
@@ -3924,6 +4016,8 @@ async function f3dModo(lig, preSel){
   } else document.body.classList.remove('bimBarraFora');
   $('secPranchas').style.display   = F3D_MODO ? 'none' : '';
   $('secModelosBim').style.display = F3D_MODO ? '' : 'none';
+  { const bf=$('btnFiltro'); if(bf) bf.style.display = F3D_MODO ? 'inline-flex' : 'none'; }
+  if(!F3D_MODO){ const fp=$('fFiltroPanel'); if(fp) fp.classList.remove('on'); const bf=$('btnFiltro'); if(bf) bf.classList.remove('on'); }
   // "＋2D/3D" fica visível NOS DOIS modos: no 2D abre o 3D ao lado; no Só BIM
   // liga/desliga o 2D ao lado (classe .split). "Sair do 3D" só no 3D.
   const bB=$('btnBim'), bS=$('btnSairBim');
@@ -4338,6 +4432,142 @@ function f3dCotasDrag(ev){
 }
 function f3dCorteInverter(){ if(F3D && B3) B3.corteInverter(F3D); }
 function f3dCorteRemover(){ if(F3D && B3) B3.corteRemover(F3D); }
+
+// ══ Filtro & Análise do modelo (Fatia 1) ═══════════════════════════════════
+//  O filtro é UM objeto {comb, conds[]}. Chega-se a ele de 3 formas: montando à
+//  mão, pedindo p/ a IA preencher (revê antes de rodar) ou carregando um salvo.
+const FILT_FIELDS={
+  classe:{label:'Classe',bsdd:true,tipo:'sel',ops:['é','não é'],
+    vals:['Parede (IfcWall)','Laje (IfcSlab)','Pilar (IfcColumn)','Viga (IfcBeam)','Porta (IfcDoor)','Janela (IfcWindow)','Escada (IfcStair)','Cobertura (IfcRoof)','Tubulação (IfcPipeSegment)','Duto (IfcDuctSegment)','Eletroduto (IfcCableCarrierSegment)','Mobiliário (IfcFurnishingElement)']},
+  disciplina:{label:'Disciplina',tipo:'seldyn',ops:['é','não é']},
+  pavimento:{label:'Pavimento',tipo:'txt',ops:['é','não é','abaixo de','acima de'],ph:'ex.: Térreo'},
+  material:{label:'Material',tipo:'txt',ops:['contém','é','não contém'],ph:'ex.: Concreto'},
+  tipo:{label:'Tipo',tipo:'txt',ops:['contém','é','começa com'],ph:'ex.: P25×50'},
+  dimensao:{label:'Dimensão',dim:true,ops:['maior que','menor que','entre'],subs:['Altura','Largura','Espessura','Comprimento','Área','Volume'],unit:{Altura:'m',Largura:'m',Espessura:'cm',Comprimento:'m','Área':'m²','Volume':'m³'}}
+};
+const FILT_ORDER=['classe','disciplina','pavimento','material','tipo','dimensao'];
+const FILT_PALETA=[0x22D3EE,0xE8960A,0x8B5CF6,0x10B981,0xEF4444,0x3B82F6];
+let FILT={comb:'all',conds:[{campo:'classe',op:'é',valor:'Pilar (IfcColumn)'}],cor:0x22D3EE,tab:'mine'};
+
+function fFiltroToggle(){
+  if(!F3D){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
+  const p=$('fFiltroPanel'), b=$('btnFiltro'); if(!p) return;
+  const on=!p.classList.contains('on'); p.classList.toggle('on',on); if(b) b.classList.toggle('on',on);
+  if(on){ fRenderConds(); fRenderSwat(); fRenderSaved(); }
+}
+function fFiltroDrag(ev){
+  const panel=$('fFiltroPanel'); if(!panel) return; ev.preventDefault();
+  const parent=panel.offsetParent||panel.parentElement, pr=parent.getBoundingClientRect(), r=panel.getBoundingClientRect();
+  const offx=ev.clientX-r.left, offy=ev.clientY-r.top;
+  function mv(e){ let x=e.clientX-pr.left-offx,y=e.clientY-pr.top-offy;
+    x=Math.max(0,Math.min(x,pr.width-panel.offsetWidth)); y=Math.max(0,Math.min(y,pr.height-panel.offsetHeight));
+    panel.style.left=x+'px';panel.style.top=y+'px';panel.style.right='auto';panel.style.bottom='auto'; }
+  function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); }
+  document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+}
+function fSetComb(c){ FILT.comb=c; const seg=$('fComb'); if(seg)[...seg.children].forEach((b,i)=>b.classList.toggle('on',(i===0)===(c==='all'))); }
+function _fDiscs(){ try{ return (F3D&&F3D.modelos||[]).map(m=>m.disciplina||m.nome).filter(Boolean); }catch(_){ return []; } }
+function fRenderConds(){
+  const box=$('fConds'); if(!box) return; box.innerHTML='';
+  if(!FILT.conds.length){ box.innerHTML='<div style="font-size:12px;color:var(--mut);padding:5px 2px">Sem condições — clique em “+ condição” ou peça para a IA.</div>'; return; }
+  FILT.conds.forEach((c,i)=>box.appendChild(fCondRow(c,i)));
+}
+function _fOpt(val,txt,sel){ const o=document.createElement('option'); o.value=val; o.textContent=txt; if(sel)o.selected=true; return o; }
+function fCondRow(c,i){
+  const F=FILT_FIELDS[c.campo], row=document.createElement('div'); row.className='fcond';
+  const fr=document.createElement('div'); fr.className='fr';
+  const fs=document.createElement('select'); fs.className='fd';
+  FILT_ORDER.forEach(k=>fs.appendChild(_fOpt(k,FILT_FIELDS[k].label,k===c.campo)));
+  fs.onchange=()=>{ const nf=fs.value,NF=FILT_FIELDS[nf];
+    FILT.conds[i]={campo:nf,op:NF.ops[0],sub:NF.dim?NF.subs[0]:undefined,valor:NF.tipo==='sel'?NF.vals[0]:(NF.tipo==='seldyn'?(_fDiscs()[0]||''):'')}; fRenderConds(); };
+  fr.appendChild(fs);
+  if(F.bsdd){ const b=document.createElement('span'); b.className='bsdd'; b.textContent='bSDD'; fr.appendChild(b); }
+  if(F.dim){ const ss=document.createElement('select'); F.subs.forEach(s=>ss.appendChild(_fOpt(s,s,s===c.sub))); ss.onchange=()=>{ c.sub=ss.value; fRenderConds(); }; fr.appendChild(ss); }
+  const os=document.createElement('select'); F.ops.forEach(op=>os.appendChild(_fOpt(op,op,op===c.op))); os.onchange=()=>{ c.op=os.value; fRenderConds(); }; fr.appendChild(os);
+  if(F.dim){
+    const v1=document.createElement('input'); v1.className='fv'; v1.value=c.valor||''; v1.placeholder='0,00'; v1.oninput=()=>{ c.valor=v1.value; }; fr.appendChild(v1);
+    if(c.op==='entre'){ const e=document.createElement('span'); e.className='u'; e.textContent='e'; fr.appendChild(e);
+      const v2=document.createElement('input'); v2.className='fv'; v2.value=c.valor2||''; v2.placeholder='0,00'; v2.oninput=()=>{ c.valor2=v2.value; }; fr.appendChild(v2); }
+    const u=document.createElement('span'); u.className='u'; u.textContent=F.unit[c.sub]||''; fr.appendChild(u);
+  } else if(F.tipo==='sel'){ const vs=document.createElement('select'); F.vals.forEach(val=>vs.appendChild(_fOpt(val,val,val===c.valor))); vs.onchange=()=>{ c.valor=vs.value; }; fr.appendChild(vs);
+  } else if(F.tipo==='seldyn'){ const vs=document.createElement('select'); const ds=_fDiscs(); if(!ds.length) vs.appendChild(_fOpt('','—',false)); ds.forEach(val=>vs.appendChild(_fOpt(val,val,val===c.valor))); vs.onchange=()=>{ c.valor=vs.value; }; fr.appendChild(vs);
+  } else { const vi=document.createElement('input'); vi.className='ft'; vi.value=c.valor||''; vi.placeholder=F.ph||''; vi.oninput=()=>{ c.valor=vi.value; }; fr.appendChild(vi); }
+  row.appendChild(fr);
+  const x=document.createElement('button'); x.className='x'; x.textContent='×'; x.title='Remover'; x.onclick=()=>{ FILT.conds.splice(i,1); fRenderConds(); }; row.appendChild(x);
+  return row;
+}
+function fAddCond(){
+  const usados=new Set(FILT.conds.map(c=>c.campo)); const k=FILT_ORDER.find(k=>!usados.has(k))||'classe', F=FILT_FIELDS[k];
+  FILT.conds.push({campo:k,op:F.ops[0],sub:F.dim?F.subs[0]:undefined,valor:F.tipo==='sel'?F.vals[0]:(F.tipo==='seldyn'?(_fDiscs()[0]||''):'')}); fRenderConds();
+}
+function fSetTab(t){ FILT.tab=t; const tb=$('fSvTabs'); if(tb)[...tb.children].forEach((b,i)=>b.classList.toggle('on',(i===0)===(t==='mine'))); fRenderSaved(); }
+function fRenderSwat(){
+  const s=$('fSwat'); if(!s||s.dataset.done) return;
+  FILT_PALETA.forEach((col,i)=>{ const b=document.createElement('button'); b.style.background='#'+col.toString(16).padStart(6,'0'); if(i===0)b.classList.add('on');
+    b.onclick=()=>{ FILT.cor=col; [...s.querySelectorAll('button')].forEach(x=>x.classList.remove('on')); b.classList.add('on'); }; s.appendChild(b); });
+  s.dataset.done='1';
+}
+async function fAplicar(kind){
+  if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
+  if(kind==='limpar'){ try{ await B3.limparFiltro(F3D); }catch(_){} $('fCount').textContent='—'; $('fMeta').textContent='Modelo restaurado.'; $('fSwat').style.display='none'; return; }
+  const conds=FILT.conds.filter(c=>c&&c.campo&&c.op);
+  if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
+  f3dProcessando(true); $('fMeta').textContent='Filtrando…';
+  try{
+    const porMod=await B3.filtrar(F3D, {comb:FILT.comb, conds});
+    let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
+    $('fCount').textContent=n.toLocaleString('pt-BR');
+    if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); return; }
+    if(kind==='iso'){ await B3.isolarPorMod(F3D, porMod); $('fMeta').textContent='elementos isolados (zoom na seleção).'; $('fSwat').style.display='none'; }
+    else if(kind==='hide'){ await B3.ocultarPorMod(F3D, porMod); $('fMeta').textContent='elementos ocultados.'; $('fSwat').style.display='none'; }
+    else if(kind==='color'){ try{ F3D._cores=null; }catch(_){} await B3.colorirGrupo(F3D, porMod, FILT.cor); $('fMeta').textContent='elementos coloridos.'; $('fSwat').style.display='flex'; }
+  }catch(e){ console.warn('filtro:',e); $('fMeta').textContent='Erro ao filtrar: '+((e&&e.message)||e); }
+  f3dProcessando(false);
+}
+// IA preenche o painel (Fatia 1: interpretação por palavras-chave; a IA plena — que
+// devolve o filtro estruturado do backend — entra numa próxima rodada).
+function fAiMontar(){
+  const spec=fAiParse($('fAiInput').value||'');
+  if(!spec){ f3dDica('Não entendi — ex.: “pilares de concreto acima de 4 m no subsolo”.'); return; }
+  FILT.comb=spec.comb||'all'; fSetComb(FILT.comb); FILT.conds=spec.conds; fRenderConds();
+  f3dDica('IA montou '+spec.conds.length+' condição(ões) — revise e aplique.');
+}
+function fAiParse(t){
+  t=(t||'').toLowerCase(); const conds=[];
+  const cls=[['parede','Parede (IfcWall)'],['laje','Laje (IfcSlab)'],['pilar','Pilar (IfcColumn)'],['coluna','Pilar (IfcColumn)'],['viga','Viga (IfcBeam)'],['porta','Porta (IfcDoor)'],['janela','Janela (IfcWindow)'],['escada','Escada (IfcStair)']];
+  for(const [k,v] of cls){ if(t.includes(k)){ conds.push({campo:'classe',op:'é',valor:v}); break; } }
+  const mats=[['concreto','Concreto'],['aço','Aço'],['aco','Aço'],['alvenaria','Alvenaria'],['vidro','Vidro'],['madeira','Madeira'],['gesso','Gesso'],['alumínio','Alumínio'],['aluminio','Alumínio']];
+  for(const [k,v] of mats){ if(t.includes(k)){ conds.push({campo:'material',op:'contém',valor:v}); break; } }
+  if(/corta.?fogo|resist.*fogo/.test(t)) conds.push({campo:'tipo',op:'contém',valor:'corta-fogo'});
+  if(/subsolo/.test(t)) conds.push({campo:'pavimento',op:'é',valor:'subsolo'});
+  else if(/t[ée]rreo/.test(t)) conds.push({campo:'pavimento',op:'é',valor:'térreo'});
+  let m=t.match(/(?:acima de|maior que|>)\s*(\d+[.,]?\d*)\s*m/); if(m) conds.push({campo:'dimensao',op:'maior que',sub:'Altura',valor:m[1].replace('.',',')});
+  m=t.match(/(?:abaixo de|menor que|<)\s*(\d+[.,]?\d*)\s*m/); if(m) conds.push({campo:'dimensao',op:'menor que',sub:'Altura',valor:m[1].replace('.',',')});
+  return conds.length?{comb:'all',conds}:null;
+}
+// Salvos por empreendimento (Fatia 1: localStorage; "equipe" vira Supabase na Fatia 2).
+function _fSvKey(){ return 'auriaFiltros_'+(typeof EMP!=='undefined'&&EMP?EMP:'default'); }
+function _fSvLoad(){ try{ return JSON.parse(localStorage.getItem(_fSvKey())||'{}'); }catch(_){ return {}; } }
+function _fSvSave(o){ try{ localStorage.setItem(_fSvKey(), JSON.stringify(o)); }catch(_){} }
+function fRenderSaved(){
+  const list=$('fSvList'); if(!list) return; const arr=(_fSvLoad()[FILT.tab]||[]);
+  list.innerHTML='';
+  if(!arr.length){ list.innerHTML='<div style="font-size:12px;color:var(--mut);padding:5px 2px">'+(FILT.tab==='team'?'Nenhum filtro da equipe ainda. (o compartilhamento real entra na próxima fase)':'Nenhum filtro salvo ainda.')+'</div>'; return; }
+  arr.forEach((s,idx)=>{
+    const row=document.createElement('div'); row.className='fsvrow';
+    const n=document.createElement('span'); n.className='n'; n.textContent=s.nome; n.title=(s.conds||[]).map(c=>FILT_FIELDS[c.campo].label+' '+c.op+' '+(c.valor||'')).join(' · '); row.appendChild(n);
+    const del=document.createElement('button'); del.className='del'; del.textContent='×'; del.title='Apagar';
+    del.onclick=(e)=>{ e.stopPropagation(); const st=_fSvLoad(); (st[FILT.tab]||[]).splice(idx,1); _fSvSave(st); fRenderSaved(); }; row.appendChild(del);
+    row.onclick=()=>{ FILT.comb=s.comb||'all'; fSetComb(FILT.comb); FILT.conds=(s.conds||[]).map(c=>Object.assign({},c)); fRenderConds(); f3dDica('Filtro “'+s.nome+'” carregado.'); };
+    list.appendChild(row);
+  });
+}
+function fSalvar(){
+  const nome=($('fSvName').value||'').trim(); if(!nome){ f3dDica('Dê um nome ao filtro.'); $('fSvName').focus(); return; }
+  const conds=FILT.conds.filter(c=>c&&c.campo); if(!conds.length){ f3dDica('Não há condições para salvar.'); return; }
+  const st=_fSvLoad(); st[FILT.tab]=st[FILT.tab]||[]; st[FILT.tab].unshift({nome,comb:FILT.comb,conds:conds.map(c=>Object.assign({},c))}); _fSvSave(st);
+  $('fSvName').value=''; fRenderSaved(); f3dDica(FILT.tab==='team'?'Filtro salvo (equipe — local por enquanto).':'Filtro salvo em Meus.');
+}
 
 // Timer de throttle do mousemove do raio-X (compartilhado entre chamadas).
 let _xrayTimer=0;

@@ -1346,6 +1346,154 @@ export async function destacarTudo(V, termos, pavim){
   if(total>0) await enquadrarIds(V, porMod);
   return total;
 }
+
+// ── FILTRO ESTRUTURADO (construtor de condições — Fatia 1) ──────────────────
+//  filtro = { comb:'all'|'any', conds:[ {campo, op, valor, sub, valor2} ] }
+//  campos: classe (IFC/bSDD) · disciplina (modelo) · pavimento · material · tipo ·
+//  dimensao (sub=Altura/Largura/…). Devolve porMod (mesmo formato do acharElementos)
+//  para o host aplicar a ação (isolar/ocultar/colorir).
+function _classeIfc(valor){
+  const m=/\(ifc(\w+)\)/i.exec(valor||''); if(m) return 'IFC'+m[1].toUpperCase();
+  const NM={parede:'IFCWALL',laje:'IFCSLAB',pilar:'IFCCOLUMN',viga:'IFCBEAM',porta:'IFCDOOR',
+    janela:'IFCWINDOW',escada:'IFCSTAIR',cobertura:'IFCROOF',tubulacao:'IFCPIPESEGMENT',duto:'IFCDUCTSEGMENT'};
+  return NM[_norm(valor).split(' ')[0]]||null;
+}
+function _classeRx(valor){ const ifc=_classeIfc(valor); return ifc?new RegExp('^'+ifc):null; }   // prefixo: pega subtipos
+function _numBR(s){ if(s==null) return NaN; return parseFloat(String(s).replace(/\./g,'').replace(',','.')); }
+// Nome do TIPO do elemento (IsTypedBy → Name; senão ObjectType; senão Name).
+function _tipoNome(d){
+  if(!d) return '';
+  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||!Array.isArray(v)) continue;
+    for(const t of v){ if(t&&typeof t==='object'&&t.Name&&t.Name.value!=null){
+      const cat=String((t._category&&t._category.value)||''); if(/type|style/i.test(cat)) return String(t.Name.value); } } }
+  if(d.ObjectType&&d.ObjectType.value!=null) return String(d.ObjectType.value);
+  if(d.Name&&d.Name.value!=null) return String(d.Name.value);
+  return '';
+}
+function _avaliaCond(c, ctx){
+  const op=c.op, val=c.valor;
+  switch(c.campo){
+    case 'classe':{ const rx=_classeRx(val); const hit=rx?rx.test(ctx.cat||''):false; return op==='não é'?!hit:hit; }
+    case 'disciplina':{ const hit=ctx.disc.includes(_norm(val)); return op==='não é'?!hit:hit; }
+    case 'pavimento':{
+      if(op==='abaixo de'||op==='acima de'){ const ye=ctx.pavY?ctx.pavY(ctx.pav):null, ya=ctx.pavY?ctx.pavY(val):null;
+        if(ye==null||ya==null) return false; return op==='abaixo de'?ye<ya:ye>ya; }
+      const hit=_batePavim(ctx.pav, _norm(val)); return op==='não é'?!hit:hit; }
+    case 'material':{ const hit=ctx.d?_bateTermos(ctx.d,[val]):false; return op==='não contém'?!hit:hit; }
+    case 'tipo':{ const nome=_norm(_tipoNome(ctx.d)); const b=_norm(val);
+      if(op==='começa com') return nome.startsWith(b);
+      if(op==='é') return nome===b || (ctx.d?_bateTermos(ctx.d,['='+val]):false);
+      return nome.includes(b) || (ctx.d?_bateTermos(ctx.d,[val]):false); }   // contém
+    case 'dimensao':{ const subTermo={Altura:'height',Largura:'width',Espessura:'thickness',Comprimento:'length','Área':'area',Volume:'volume'};
+      const r=ctx.d?_achaValorProfundo(ctx.d,_termoRegex(subTermo[c.sub]||c.sub||'')):null;
+      if(!r||typeof r.val!=='number') return false;
+      let x=r.val; const esp=/esp/i.test(c.sub||''); if(esp) x=x*100;   // espessura: compara em cm (input em cm)
+      const a=_numBR(val); if(isNaN(a)) return false;
+      if(op==='maior que') return x>a;
+      if(op==='menor que') return x<a;
+      if(op==='entre'){ const b=_numBR(c.valor2); if(isNaN(b)) return x>=a; const lo=Math.min(a,b),hi=Math.max(a,b); return x>=lo&&x<=hi; }
+      return false; }
+  }
+  return true;
+}
+// Lê itens em LOTES com opções custom (attrs + relações pedidas), cancelável.
+async function _lerDadosEmLotes(V, model, ids, opts, rotulo){
+  const R=[]; const N=100;
+  for(let i=0;i<ids.length;i+=N){
+    if(V._cancelar) throw new Error('CANCELADO');
+    let da=[]; try{ da=await model.getItemsData(ids.slice(i,i+N), opts); }catch(_){}
+    for(const d of (da||[])) R.push(d);
+    if(V.on&&V.on.dica) V.on.dica((rotulo||'Filtrando')+'… '+Math.min(i+N,ids.length)+'/'+ids.length);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  return R;
+}
+export async function filtrar(V, filtro){
+  V._cancelar=false;
+  const conds=((filtro&&filtro.conds)||[]).filter(c=>c&&c.campo&&c.op);
+  const comb=(filtro&&filtro.comb)||'all';
+  if(!conds.length) return {};
+  // categorias candidatas: em modo E, restringe pela(s) classe(s) positiva(s)
+  const classePos=conds.filter(c=>c.campo==='classe'&&(c.op==='é'||c.op==='é um de'));
+  const regexes=(comb==='all'&&classePos.length)?classePos.map(c=>_classeRx(c.valor)).filter(Boolean):CAT_VISIVEIS;
+  // relações a ler conforme os campos usados
+  const need={pset:false,tipo:false,mat:false};
+  conds.forEach(c=>{ if(c.campo==='pavimento'||c.campo==='dimensao') need.pset=true;
+    if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
+  const relations={};
+  if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
+  if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
+  if(need.mat)  relations.HasAssociations={attributes:true,relations:true};
+  const readOpts={attributesDefault:true,relationsDefault:{attributes:false,relations:false}};
+  if(Object.keys(relations).length) readOpts.relations=relations;
+  const precisaDados=need.pset||need.tipo||need.mat;
+  // pavimento por membership (mais preciso) + ordenação p/ abaixo/acima
+  const temPav=conds.some(c=>c.campo==='pavimento');
+  const st=temPav?await _storeysMapa(V):[];
+  let pavYFn=null;
+  if(conds.some(c=>c.campo==='pavimento'&&(c.op==='abaixo de'||c.op==='acima de'))){
+    const fx=await _faixasPavimento(V);
+    pavYFn=(nome)=>{ const f=(fx||[]).find(f=>_batePavim(_norm(f.nome),_norm(nome))); return f?f.y:null; };
+  }
+  const porMod={};
+  for(let mi=0; mi<V.modelos.length; mi++){
+    if(V._cancelar) break;
+    const x=V.modelos[mi]; const disc=_norm(x.disciplina||x.nome||'');
+    let grp={}; try{ grp=await x.model.getItemsOfCategories(regexes)||{}; }catch(_){}
+    const catOf=new Map(); let ids=[];
+    for(const [cat,arr] of Object.entries(grp)){ (arr||[]).forEach(id=>{ catOf.set(id,cat); ids.push(id); }); }
+    if(!ids.length) continue;
+    let dOf=new Map();
+    if(precisaDados){ let dados=[];
+      try{ dados=await _lerDadosEmLotes(V, x.model, ids, readOpts, 'Filtrando'); }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
+      dados.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); }); }
+    const pavOf=new Map();
+    if(temPav&&st.length){ st.filter(s=>s.mi===mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nomeNorm))); }
+    const okIds=[];
+    for(const id of ids){
+      const d=dOf.get(id);
+      const ctx={ cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn };
+      const res=conds.map(c=>_avaliaCond(c,ctx));
+      if(comb==='all'?res.every(Boolean):res.some(Boolean)) okIds.push(id);
+    }
+    if(okIds.length) porMod[mi]=okIds;
+  }
+  return porMod;
+}
+// Conta quantos casam (sem mexer na cena) — p/ o "resultado" do painel.
+export async function contarFiltro(V, filtro){
+  const porMod=await filtrar(V, filtro); let n=0;
+  for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
+  return { n, porMod };
+}
+// Aplica a AÇÃO sobre um porMod já calculado.
+export async function isolarPorMod(V, porMod){
+  const T=V.THREE; let total=0;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue; total+=ids.length;
+    try{ await x.model.setVisible(ids,true); }catch(_){}
+    try{ await x.model.highlight(ids,{color:new T.Color(LARANJA),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  if(total>0){ V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null; }
+  else { for(const x of V.modelos){ try{ await x.model.setVisible(undefined,true); }catch(_){} } }
+  try{ await V.fragments.update(true); }catch(_){}
+  if(total>0) await enquadrarIds(V, porMod);
+  return total;
+}
+export async function ocultarPorMod(V, porMod){
+  let total=0;
+  for(const [mi,ids] of Object.entries(porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue; total+=ids.length;
+    try{ await x.model.setVisible(ids,false); }catch(_){} }
+  V._isolado=false; V._isoladoPorMod=null; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+  return total;
+}
+// Restaura o modelo cheio (limpa isolar/ocultar/colorir).
+export async function limparFiltro(V){
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
+  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+}
+
 // ── COLORIR (Round 3): recolore subconjuntos SEM esconder o resto ──────────
 export const PALETA=[0xE8960A,0x22D3EE,0x8B5CF6,0x10B981,0xEF4444,0xF59E0B,0x3B82F6,0xEC4899,0x84CC16,0x14B8A6,0xA855F7,0xF97316,0x0EA5E9,0x64748B];
 async function _reaplicarCores(V){
