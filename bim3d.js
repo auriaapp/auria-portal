@@ -1030,15 +1030,24 @@ export async function diagElemento(V, regexes){
 // Parar), mostra progresso e aborta se _cancelar. Ler tudo de uma vez travava
 // em modelos com milhares de elementos (ex.: paredes).
 async function _lerPsetsEmLotes(V, model, ids, rotulo){
-  const R=[]; const N=100;   // lotes menores → o Parar responde mais rápido
-  for(let i=0;i<ids.length;i+=N){
+  return _lerLotesPar(V, model, ids, { attributesDefault:true,
+    relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }, rotulo);
+}
+// Leitor em lotes PARALELO: dispara PAR chamadas getItemsData ao mesmo tempo (a
+// serialização/worker se sobrepõe → bem mais rápido que 1 de cada vez), em lotes
+// maiores. Cancelável entre ondas (o Parar responde a cada onda) e com progresso.
+async function _lerLotesPar(V, model, ids, opts, rotulo){
+  const R=[]; const N=150, PAR=4;             // 4 lotes de 150 por onda
+  for(let i=0;i<ids.length;i+=N*PAR){
     if(V._cancelar) throw new Error('CANCELADO');
-    let da=[]; try{ da=await model.getItemsData(ids.slice(i,i+N), { attributesDefault:true,
-      relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
-    if(V._cancelar) throw new Error('CANCELADO');   // checa também DEPOIS da leitura
-    for(const d of (da||[])) R.push(d);
-    if(V.on && V.on.dica) V.on.dica((rotulo||'Processando')+'… '+Math.min(i+N,ids.length)+'/'+ids.length);
-    await new Promise(r=>setTimeout(r,0));   // cede o thread p/ o clique em Parar rodar
+    const ondas=[];
+    for(let j=0;j<PAR;j++){ const s=i+j*N; if(s>=ids.length) break;
+      ondas.push(model.getItemsData(ids.slice(s,s+N), opts).catch(()=>[])); }
+    const res=await Promise.all(ondas);
+    if(V._cancelar) throw new Error('CANCELADO');
+    for(const da of res) for(const d of (da||[])) R.push(d);
+    if(V.on && V.on.dica) V.on.dica((rotulo||'Processando')+'… '+Math.min(i+N*PAR,ids.length)+'/'+ids.length);
+    await new Promise(r=>setTimeout(r,0));     // cede o thread p/ o Parar
   }
   return R;
 }
@@ -1306,11 +1315,22 @@ export async function acharTudo(V, termos, pavim){ return acharElementos(V, CAT_
 export async function somarIds(V, porMod, termoProp){
   V._cancelar=false;
   const rx=_termoRegex(termoProp);
+  const chave=String(termoProp||'').toLowerCase();   // cache por propriedade
   let n=0, comValor=0, soma=0; const nomes=new Set();
   for(const [mi,ids] of Object.entries(porMod||{})){
     const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue; n+=ids.length;
-    const dd=await _lerPsetsEmLotes(V, x.model, ids, 'Somando');
-    (dd||[]).forEach(d=>{ const r=_achaValorProfundo(d, rx); if(r&&typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); } });
+    // CACHE: guarda o valor achado por (propriedade, id). Recontas de seleções que
+    // se sobrepõem não releem o Pset — ficam instantâneas.
+    x._qtyCache = x._qtyCache || {}; const cache = x._qtyCache[chave] = x._qtyCache[chave] || new Map();
+    const faltam = ids.filter(id=> !cache.has(id));
+    if(faltam.length){
+      const dd=await _lerPsetsEmLotes(V, x.model, faltam, 'Somando');
+      (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+        const r=_achaValorProfundo(d, rx); cache.set(lid, (r&&typeof r.val==='number')?{val:r.val,nome:r.nome}:null); });
+      // ids sem retorno de dado ficam como null p/ não reler toda hora
+      faltam.forEach(id=>{ if(!cache.has(id)) cache.set(id,null); });
+    }
+    for(const id of ids){ const c=cache.get(id); if(c){ soma+=c.val; comValor++; nomes.add(c.nome); } }
   }
   return { n, comValor, soma, nomes:[...nomes] };
 }
@@ -1422,17 +1442,9 @@ function _avaliaCond(c, ctx){
   }
   return true;
 }
-// Lê itens em LOTES com opções custom (attrs + relações pedidas), cancelável.
+// Lê itens em LOTES (paralelo) com opções custom — reusa _lerLotesPar.
 async function _lerDadosEmLotes(V, model, ids, opts, rotulo){
-  const R=[]; const N=100;
-  for(let i=0;i<ids.length;i+=N){
-    if(V._cancelar) throw new Error('CANCELADO');
-    let da=[]; try{ da=await model.getItemsData(ids.slice(i,i+N), opts); }catch(_){}
-    for(const d of (da||[])) R.push(d);
-    if(V.on&&V.on.dica) V.on.dica((rotulo||'Filtrando')+'… '+Math.min(i+N,ids.length)+'/'+ids.length);
-    await new Promise(r=>setTimeout(r,0));
-  }
-  return R;
+  return _lerLotesPar(V, model, ids, opts, rotulo||'Filtrando');
 }
 export async function filtrar(V, filtro){
   V._cancelar=false;
