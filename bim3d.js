@@ -1416,25 +1416,34 @@ export async function filtrar(V, filtro){
   // categorias candidatas: em modo E, restringe pela(s) classe(s) positiva(s)
   const classePos=conds.filter(c=>c.campo==='classe'&&(c.op==='é'||c.op==='é um de'));
   const regexes=(comb==='all'&&classePos.length)?classePos.map(c=>_classeRx(c.valor)).filter(Boolean):CAT_VISIVEIS;
-  // relações a ler conforme os campos usados
-  const need={pset:false,tipo:false,mat:false};
-  conds.forEach(c=>{ if(c.campo==='pavimento'||c.campo==='dimensao') need.pset=true;
-    if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
-  const relations={};
-  if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
-  if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
-  if(need.mat)  relations.HasAssociations={attributes:true,relations:true};
-  const readOpts={attributesDefault:true,relationsDefault:{attributes:false,relations:false}};
-  if(Object.keys(relations).length) readOpts.relations=relations;
-  const precisaDados=need.pset||need.tipo||need.mat;
-  // pavimento por membership (mais preciso) + ordenação p/ abaixo/acima
+  // pavimento por MEMBERSHIP (getSpatialStructure) — barato, sem ler Pset por elemento.
   const temPav=conds.some(c=>c.campo==='pavimento');
   const st=temPav?await _storeysMapa(V):[];
+  const pavCheap=st.length>0;
   let pavYFn=null;
   if(conds.some(c=>c.campo==='pavimento'&&(c.op==='abaixo de'||c.op==='acima de'))){
     const fx=await _faixasPavimento(V);
     pavYFn=(nome)=>{ const f=(fx||[]).find(f=>_batePavim(_norm(f.nome),_norm(nome))); return f?f.y:null; };
   }
+  // Divide as condições por CUSTO. Baratas (classe/disciplina/pavimento-por-membership)
+  // não leem NADA do elemento → pré-filtram. As caras leem só o necessário, e SÓ dos
+  // sobreviventes. Material casa nos ATRIBUTOS (como a IA por comando) — nada de
+  // HasAssociations (que lia o modelo inteiro e travava). Pset só p/ dimensão (e
+  // pavimento quando não há membership).
+  const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&pavCheap);
+  const baratas=conds.filter(ehBarata), caras=conds.filter(c=>!ehBarata(c));
+  const need={pset:false,tipo:false};
+  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento') need.pset=true; if(c.campo==='tipo') need.tipo=true; });
+  const relations={};
+  if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
+  if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
+  const readOpts={attributesDefault:true,relationsDefault:{attributes:false,relations:false}};
+  if(Object.keys(relations).length) readOpts.relations=relations;
+  const lerDados=async(model, lista)=>{ const dOf=new Map(); if(!caras.length||!lista.length) return dOf;
+    let dados=[];
+    try{ dados = need.pset ? await _lerDadosEmLotes(V, model, lista, readOpts, 'Filtrando')
+                           : await model.getItemsData(lista, readOpts); }catch(e){ if(String(e&&e.message)==='CANCELADO') throw e; }
+    (dados||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); }); return dOf; };
   const porMod={};
   for(let mi=0; mi<V.modelos.length; mi++){
     if(V._cancelar) break;
@@ -1443,20 +1452,23 @@ export async function filtrar(V, filtro){
     const catOf=new Map(); let ids=[];
     for(const [cat,arr] of Object.entries(grp)){ (arr||[]).forEach(id=>{ catOf.set(id,cat); ids.push(id); }); }
     if(!ids.length) continue;
-    let dOf=new Map();
-    if(precisaDados){ let dados=[];
-      try{ dados=await _lerDadosEmLotes(V, x.model, ids, readOpts, 'Filtrando'); }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
-      dados.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); }); }
     const pavOf=new Map();
     if(temPav&&st.length){ st.filter(s=>s.mi===mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nomeNorm))); }
-    const okIds=[];
-    for(const id of ids){
-      const d=dOf.get(id);
-      const ctx={ cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn };
-      const res=conds.map(c=>_avaliaCond(c,ctx));
-      if(comb==='all'?res.every(Boolean):res.some(Boolean)) okIds.push(id);
-    }
-    if(okIds.length) porMod[mi]=okIds;
+    const ctx=(id,d)=>({ cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn });
+    try{
+      if(comb==='all'){
+        let cand = baratas.length ? ids.filter(id=> baratas.every(c=>_avaliaCond(c, ctx(id,null)))) : ids;
+        if(!cand.length) continue;
+        if(!caras.length){ porMod[mi]=cand; continue; }
+        const dOf=await lerDados(x.model, cand);
+        const ok=cand.filter(id=> caras.every(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
+        if(ok.length) porMod[mi]=ok;
+      } else {   // OU: precisa avaliar TODAS por elemento → lê dados (só o necessário)
+        const dOf=await lerDados(x.model, ids);
+        const ok=ids.filter(id=> conds.some(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
+        if(ok.length) porMod[mi]=ok;
+      }
+    }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
   }
   return porMod;
 }
