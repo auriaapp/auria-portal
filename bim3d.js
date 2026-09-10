@@ -2141,10 +2141,11 @@ export async function contarPorPropriedade(V, regexes, termoProp){
 }
 // Busca PROFUNDA (atributo direto OU propriedade de Pset) o 1º valor NUMÉRICO
 // cuja chave/nome casa com rx. Retorna {val, nome} ou null.
-function _achaValorProfundo(d, rx){
-  if(!d) return null;
+// Coleta TODOS os valores numéricos (atributo direto OU propriedade de Pset) cujo
+// nome casa rx → [{val, nome}]. Base do _achaValorProfundo e do somarPorNome.
+function _valoresProfundos(d, rx){
+  const cands=[]; if(!d) return cands;
   const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
-  const cands=[];   // coleta TODOS os matches p/ escolher o melhor (evita misturar Net/Gross)
   for(const [k,v] of Object.entries(d)){          // 1) atributos diretos
     if(k[0]==='_'||Array.isArray(v)) continue;
     if(rx.test(_norm(k))){ const vv=escal(v); if(typeof vv==='number') cands.push({val:vv, nome:k}); }
@@ -2170,10 +2171,30 @@ function _achaValorProfundo(d, rx){
       }
     }
   }
-  if(!cands.length) return null;
-  // Preferência p/ somar CONSISTENTE: Net > (não-Gross) > primeiro. Assim não
-  // mistura NetVolume de uns com GrossVolume de outros.
+  return cands;
+}
+function _achaValorProfundo(d, rx){
+  const cands=_valoresProfundos(d, rx); if(!cands.length) return null;
+  // Preferência p/ somar CONSISTENTE: Net > (não-Gross) > primeiro.
   return cands.find(c=>/net/i.test(c.nome)) || cands.find(c=>!/gross/i.test(c.nome)) || cands[0];
+}
+// Soma a quantidade SEPARADA por NOME de propriedade (ex.: NetArea × GrossArea ×
+// Área): mostra ao usuário qual bater o esperado, em vez de misturar. Uma medição
+// por elemento por nome (pega o 1º valor daquele nome). Retorna [{nome,soma,n}].
+export async function somarPorNome(V, porMod, termoProp){
+  V._cancelar=false;
+  const rx=_termoRegex(termoProp);
+  const map=new Map();
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    const dd=await _lerPsetsEmLotes(V, x.model, ids, 'Somando');
+    (dd||[]).forEach(d=>{
+      const vistos=new Set();
+      _valoresProfundos(d, rx).forEach(c=>{ const k=_norm(c.nome); if(vistos.has(k)) return; vistos.add(k);
+        let g=map.get(k); if(!g){ g={nome:c.nome, soma:0, n:0}; map.set(k,g); } g.soma+=c.val; g.n++; });
+    });
+  }
+  return [...map.values()].sort((a,b)=> b.n-a.n || b.soma-a.soma);
 }
 // SOMA uma quantidade (área/volume/comprimento) sobre um subconjunto filtrado.
 // `termos` (opcional) filtra por texto nos atributos (ex.: "ACM"); `termoProp` é

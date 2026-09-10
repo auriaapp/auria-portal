@@ -4553,10 +4553,17 @@ async function fCalcular(tipo){
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     $('fCount').textContent=n.toLocaleString('pt-BR');
     if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
-    const r=await B3.somarIds(F3D, porMod, CFG.termo);
-    const val=(Math.round(r.soma*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-    $('fMeta').innerHTML='<b style="color:var(--accent2);font-size:13px">'+CFG.lbl+' = '+val+' '+CFG.un+'</b><br>'
-      +'<span style="color:var(--mut)">'+r.comValor+' de '+n+' com valor'+(r.nomes&&r.nomes.length?' · fonte: '+r.nomes.slice(0,2).join(', '):'')+'</span>';
+    // Soma SEPARADA por propriedade (NetArea × GrossArea × Área…) — mostra qual
+    // usar em vez de misturar. Headline na preferida (Net); as outras ficam visíveis.
+    const lista=await B3.somarPorNome(F3D, porMod, CFG.termo);
+    if(!lista.length){ $('fMeta').textContent='esses elementos não têm '+CFG.lbl.toLowerCase()+' registrada.'; f3dProcessando(false); fSpin(false); return; }
+    const fmt=v=>(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const head=lista.find(g=>/net/i.test(g.nome))||lista[0];
+    const outras=lista.filter(g=>g!==head);
+    let html='<b style="color:var(--accent2);font-size:13px">'+CFG.lbl+' = '+fmt(head.soma)+' '+CFG.un+'</b> '
+      +'<span style="color:var(--mut)">('+esc(head.nome)+' · '+head.n+'/'+n+')</span>';
+    if(outras.length) html+='<br><span style="color:var(--mut);font-size:10.5px">outras fontes: '+outras.slice(0,3).map(g=>esc(g.nome)+' '+fmt(g.soma)).join(' · ')+'</span>';
+    const meta=$('fMeta'); meta.innerHTML=html; meta.title=lista.map(g=>g.nome+': '+fmt(g.soma)+' '+CFG.un+' ('+g.n+' elem.)').join('\n');
   }catch(e){ console.warn('calc:',e); $('fMeta').textContent='Erro ao calcular: '+((e&&e.message)||e); }
   f3dProcessando(false); fSpin(false);
 }
