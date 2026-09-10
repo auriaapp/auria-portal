@@ -1416,6 +1416,16 @@ function _tipoNome(d){
   if(d.Name&&d.Name.value!=null) return String(d.Name.value);
   return '';
 }
+// NOMENCLATURA (marca) da INSTÂNCIA — ex.: P1, V2, L3. Prefere uma propriedade de
+// marca/posição; senão o Tag; senão o Name da instância (NÃO o nome do tipo).
+function _nomencl(d, id){
+  if(!d) return '#'+id;
+  const mk=_achaValorQualquer(d, /\bmarca\b|\bmark\b|refer[êe]ncia|reference|r[óo]tulo|posi[çc][ãa]o|prumada|nome do pilar/i);
+  if(mk!=null && String(mk).trim()) return String(mk);
+  if(d.Tag && d.Tag.value!=null){ const t=String(d.Tag.value); if(/^[A-Za-z]{0,3}\s*\d/.test(t)) return t; }
+  if(d.Name && d.Name.value!=null) return String(d.Name.value);
+  return '#'+id;
+}
 function _avaliaCond(c, ctx){
   const op=c.op, val=c.valor;
   switch(c.campo){
@@ -1584,7 +1594,7 @@ export async function linhasQuantitativo(V, porMod){
       const txt=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); return v==null?'':String(v); };
       rows.push({
         grupo:grupoDe(cat), classe:cat,
-        nome:d?(_tipoNome(d)||((d.Name&&d.Name.value!=null)?String(d.Name.value):('#'+id))):('#'+id),
+        nome:_nomencl(d,id),
         pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
         larg:numPref(RX.larg), alt:numPref(RX.alt), esp:numPref(RX.esp), comp:numPref(RX.comp),
         area:numPref(RX.area), volume:numPref(RX.vol),
@@ -1594,6 +1604,28 @@ export async function linhasQuantitativo(V, porMod){
     }
   }
   return rows;
+}
+// DIAGNÓSTICO: lista TODAS as propriedades (Pset → prop = valor) + atributos do
+// 1º elemento do porMod. Serve p/ descobrir onde o modelo guarda marca/seção/fck.
+export async function diagPrimeiro(V, porMod){
+  const escal=(o)=> (o&&typeof o==='object'&&'value' in o&&typeof o.value!=='object')?o.value:undefined;
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    let da=[]; try{ da=await x.model.getItemsData([ids[0]],{ attributesDefault:true,
+      relations:{ IsDefinedBy:{attributes:true,relations:true}, IsTypedBy:{attributes:true,relations:true}, HasAssociations:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(e){ return 'erro: '+(e.message||e); }
+    const d=(da||[])[0]; if(!d) continue;
+    const linhas=[];
+    for(const [k,v] of Object.entries(d)){
+      if(Array.isArray(v)){ v.forEach(ps=>{ if(!ps||typeof ps!=='object') return; const nm=(ps.Name&&ps.Name.value)||k;
+        for(const [k2,v2] of Object.entries(ps)){ if(k2==='Name') continue;
+          if(Array.isArray(v2)){ v2.forEach(p=>{ if(!p||typeof p!=='object')return; const pn=p.Name&&p.Name.value; const pv=escal(p.NominalValue)??escal(p.Value)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.LengthValue); if(pn!=null&&pv!=null) linhas.push(nm+' → '+pn+' = '+pv); }); }
+          else { const vv=escal(v2); if(vv!=null&&vv!=='') linhas.push(nm+' → '+k2+' = '+vv); } } }); }
+      else if(k[0]!=='_'){ const vv=escal(v); if(vv!=null&&vv!=='') linhas.push('(attr) '+k+' = '+vv); }
+    }
+    console.log('[AURIA DIAG] elemento cru:', d);
+    return linhas.join('\n');
+  }
+  return 'sem elementos.';
 }
 // Aplica a AÇÃO sobre um porMod já calculado.
 export async function isolarPorMod(V, porMod){
