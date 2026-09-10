@@ -1554,6 +1554,47 @@ export async function linhasFiltro(V, porMod){
   }
   return rows;
 }
+// Dados RICOS por elemento p/ o quantitativo por disciplina (esquadria/estrutura/
+// covering): dimensões, área/volume, material/cor/acabamento, fck/cobrimento, local.
+// Campos custom (cor/acabamento/fck/cobrimento) por heurística de nome de propriedade.
+export async function linhasQuantitativo(V, porMod){
+  V._cancelar=false;
+  const RX={ larg:/width|largura/i, alt:/height|altura/i, esp:/thick|espessura/i, comp:/length|comprimento/i,
+    area:/area/i, vol:/vol/i, cor:/\bcor\b|colou?r/i, acab:/acabament|finish/i,
+    fck:/fck|compressive|strength|resist/i, cob:/cobrim|cover/i };
+  const isFogo=(nm)=>/fogo|fire/i.test(nm||'');
+  const grupoDe=(cat)=>{ if(/IFCDOOR|IFCWINDOW|IFCCURTAINWALL|IFCPLATE/.test(cat)) return 'esquadria';
+    if(/IFCCOLUMN|IFCBEAM|IFCSLAB|IFCFOOTING|IFCPILE|IFCMEMBER/.test(cat)) return 'estrutura';
+    if(/IFCCOVERING/.test(cat)) return 'covering'; return 'outros'; };
+  const st=await _storeysMapa(V);
+  const opts={ attributesDefault:true, relationsDefault:{attributes:false,relations:false},
+    relations:{ IsDefinedBy:{attributes:true,relations:true}, IsTypedBy:{attributes:true,relations:false}, HasAssociations:{attributes:true,relations:true} } };
+  const rows=[];
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    if(V._cancelar) break;
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    let grp={}; try{ grp=await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}; }catch(_){}
+    const catOf=new Map(); for(const [cat,arr] of Object.entries(grp)) (arr||[]).forEach(id=>catOf.set(id,cat));
+    const pavOf=new Map(); st.filter(s=>s.mi==mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nome)));
+    let dd=[]; try{ dd=await _lerLotesPar(V, x.model, ids, opts, 'Exportando'); }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
+    const dOf=new Map(); dd.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); });
+    for(const id of ids){ const d=dOf.get(id); const cat=catOf.get(id)||'';
+      const numPref=(rx,excl)=>{ if(!d) return ''; const cs=_valoresProfundos(d,rx);
+        const g=(excl?cs.find(c=>!excl(c.nome)):null)||cs.find(c=>/net/i.test(c.nome))||cs.find(c=>!/gross/i.test(c.nome))||cs[0]; return g?g.val:''; };
+      const txt=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); return v==null?'':String(v); };
+      rows.push({
+        grupo:grupoDe(cat), classe:cat,
+        nome:d?(_tipoNome(d)||((d.Name&&d.Name.value!=null)?String(d.Name.value):('#'+id))):('#'+id),
+        pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
+        larg:numPref(RX.larg), alt:numPref(RX.alt), esp:numPref(RX.esp), comp:numPref(RX.comp),
+        area:numPref(RX.area), volume:numPref(RX.vol),
+        material:d?(_materiaisDe(d)[0]||''):'', cor:txt(RX.cor), acabamento:txt(RX.acab),
+        fck:numPref(RX.fck, isFogo), cobrimento:numPref(RX.cob, isFogo)
+      });
+    }
+  }
+  return rows;
+}
 // Aplica a AÇÃO sobre um porMod já calculado.
 export async function isolarPorMod(V, porMod){
   const T=V.THREE; let total=0;

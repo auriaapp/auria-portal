@@ -826,7 +826,7 @@
                 <div class="fsvtabs" id="fSvTabs"><button class="on" onclick="fSetTab('mine')">Meus</button><button onclick="fSetTab('team')">Da equipe</button></div>
                 <div id="fSvList"></div>
                 <div class="fsvadd"><input id="fSvName" placeholder="Nome do filtro…" onkeydown="if(event.key==='Enter')fSalvar()"><button onclick="fSalvar()">Salvar</button></div>
-                <button class="fexport" onclick="fExportar()">⬇ Exportar planilha (.csv)</button>
+                <button class="fexport" onclick="fExportar()">⬇ Exportar quantitativo (Excel)</button>
               </div>
             </div>
             <div id="fOverlay" style="display:none;position:absolute;inset:0;z-index:3;background:rgba(16,23,42,.74);align-items:center;justify-content:center;flex-direction:column;gap:9px;border-radius:13px">
@@ -4580,23 +4580,65 @@ async function fExportar(){
     const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     if(!n){ f3dDica('Nenhum elemento para exportar.'); f3dProcessando(false); fSpin(false); return; }
-    const rows=await B3.linhasFiltro(F3D, porMod);
-    fBaixarCSV(rows);
-    f3dDica('Planilha exportada — '+rows.length+' elemento(s).');
+    const rows=await B3.linhasQuantitativo(F3D, porMod);
+    await fGerarXlsx(rows);
+    f3dDica('Planilha gerada — '+rows.length+' elemento(s).');
   }catch(e){ console.warn('export:',e); f3dDica('Erro ao exportar: '+((e&&e.message)||e)); }
   f3dProcessando(false); fSpin(false);
 }
-function fBaixarCSV(rows){
-  const cols=[['nome','Elemento'],['classe','Classe'],['disciplina','Disciplina'],['pavimento','Pavimento'],['tipo','Tipo'],['material','Material'],['area','Área (m²)'],['volume','Volume (m³)'],['comprimento','Comprimento (m)']];
-  const num=(v)=> (v===''||v==null)?'':String(Math.round(v*1000)/1000).replace('.',',');   // decimal com vírgula (Excel pt-BR)
-  const cel=(v)=>{ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; };
-  const head=cols.map(c=>cel(c[1])).join(';');
-  const body=rows.map(r=> cols.map(c=>{ const k=c[0]; return (k==='area'||k==='volume'||k==='comprimento')?cel(num(r[k])):cel(r[k]); }).join(';')).join('\r\n');
-  const csv='﻿'+head+'\r\n'+body;   // BOM p/ o Excel abrir em UTF-8
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}), url=URL.createObjectURL(blob);
-  const emp=((typeof EMP!=='undefined'&&EMP&&EMP.nome)?String(EMP.nome):'auria');
+function _fScript(src){ return new Promise((res,rej)=>{ if([...document.scripts].some(s=>s.src===src)) return res(); const s=document.createElement('script'); s.src=src; s.onload=()=>res(); s.onerror=()=>rej(new Error('falha ao carregar '+src)); document.head.appendChild(s); }); }
+async function _fLogoB64(){ try{ const buf=await fetch('logo_symbol.png').then(r=>r.arrayBuffer()); let bin='',u=new Uint8Array(buf); for(let i=0;i<u.length;i++) bin+=String.fromCharCode(u[i]); return btoa(bin); }catch(_){ return null; } }
+function _fFiltroTxt(){ return FILT.conds.filter(c=>c&&c.campo&&String(c.valor||'').trim()).map(c=>{ const F=FILT_FIELDS[c.campo]; return (F?F.label:c.campo)+(c.sub?' '+c.sub:'')+' '+c.op+' '+c.valor+(F&&F.dim?(' '+(F.unit[c.sub]||'')):''); }).join(FILT.comb==='any'?'  OU  ':'  E  '); }
+function _fR2(v){ return (v===''||v==null||isNaN(v))?'':Math.round(v*100)/100; }
+// Gera o quantitativo em .xlsx com a estética Auria (logo + cabeçalho), abas por
+// disciplina (Esquadrias/Estrutura/Revestimentos), agrupado por tipologia.
+async function fGerarXlsx(rows){
+  await _fScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+  const ExcelJS=window.ExcelJS; if(!ExcelJS) throw new Error('ExcelJS não carregou');
+  const wb=new ExcelJS.Workbook(); wb.creator='Auria';
+  const logo=await _fLogoB64(); const logoId=(logo!=null)?wb.addImage({base64:'data:image/png;base64,'+logo,extension:'png'}):null;
+  const emp=(EMP&&EMP.nome)?EMP.nome:'—', hoje=new Date().toLocaleDateString('pt-BR'), filtro=_fFiltroTxt();
+  const NAVY='FF1E3A5F', ZEBRA='FFF6F9FC', LINHA='FFE2E8F0', CINZA='FF64748B';
+  const aba=(nome, cols, dados)=>{
+    const ws=wb.addWorksheet(nome, { views:[{state:'frozen', ySplit:5}] });
+    ws.columns=cols.map(c=>({key:c.key, width:c.w||16}));
+    if(logoId!=null) ws.addImage(logoId, { tl:{col:0.1,row:0.1}, ext:{width:112,height:38} });
+    ws.mergeCells(1,2,1,cols.length); const t=ws.getCell(1,2); t.value='Quantitativo — '+nome; t.font={bold:true,size:15,color:{argb:NAVY}}; t.alignment={vertical:'middle'};
+    ws.mergeCells(2,2,2,cols.length); const s=ws.getCell(2,2); s.value=emp+'   ·   '+hoje; s.font={size:10,color:{argb:CINZA}};
+    ws.mergeCells(3,1,3,cols.length); const f=ws.getCell(3,1); f.value='Filtro: '+(filtro||'—'); f.font={size:9,italic:true,color:{argb:CINZA}};
+    ws.getRow(1).height=28; ws.getRow(4).height=5;
+    const hr=ws.getRow(5); cols.forEach((c,i)=>{ const cell=hr.getCell(i+1); cell.value=c.h; cell.font={bold:true,color:{argb:'FFFFFFFF'},size:11}; cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}}; cell.alignment={vertical:'middle',horizontal:c.num?'right':'left'}; }); hr.height=20;
+    dados.forEach((row,ri)=>{ const r=ws.getRow(6+ri); cols.forEach((c,i)=>{ const cell=r.getCell(i+1); let v=row[c.key]; if(c.num){ v=_fR2(v); if(v!=='') cell.numFmt='#,##0.00'; cell.alignment={horizontal:'right'}; } cell.value=(v===''||v==null)?'':v; }); if(ri%2) r.eachCell({includeEmpty:true},c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:ZEBRA}}; }); });
+    const last=5+dados.length; for(let rr=5; rr<=last; rr++) for(let cc=1; cc<=cols.length; cc++) ws.getCell(rr,cc).border={bottom:{style:'thin',color:{argb:LINHA}}};
+    return ws;
+  };
+  const g=(k)=>rows.filter(r=>r.grupo===k);
+  const esq=g('esquadria'), est=g('estrutura'), cov=g('covering'), out=g('outros');
+  if(esq.length){
+    const m=new Map();
+    esq.forEach(r=>{ const larg=_fR2(r.larg), alt=_fR2(r.alt); const k=[r.nome,larg,alt,r.material,r.cor,r.acabamento,r.pavimento].join('|');
+      let x=m.get(k); if(!x){ x={tipo:r.nome,larg,alt,material:r.material,cor:r.cor,acabamento:r.acabamento,pavimento:r.pavimento,qtd:0}; m.set(k,x);} x.qtd++; });
+    aba('Esquadrias', [{key:'tipo',h:'Tipologia',w:26},{key:'larg',h:'Largura (m)',num:1,w:12},{key:'alt',h:'Altura (m)',num:1,w:12},{key:'material',h:'Material',w:22},{key:'cor',h:'Cor',w:14},{key:'acabamento',h:'Acabamento',w:16},{key:'pavimento',h:'Pavimento',w:22},{key:'qtd',h:'Qtd',num:1,w:8}],
+      [...m.values()].sort((a,b)=>String(a.tipo).localeCompare(String(b.tipo))));
+  }
+  if(est.length){
+    aba('Estrutura', [{key:'nome',h:'Nomenclatura',w:22},{key:'secao',h:'Seção',w:14},{key:'area',h:'Área (m²)',num:1,w:12},{key:'fck',h:'fck',num:1,w:10},{key:'cobrimento',h:'Cobrimento',num:1,w:12},{key:'volume',h:'Volume (m³)',num:1,w:12},{key:'pavimento',h:'Pavimento',w:22}],
+      est.map(r=>({ nome:r.nome, secao:(_fR2(r.larg)&&_fR2(r.alt))?(Math.round(r.larg*100)+'×'+Math.round(r.alt*100)+' cm'):'', area:r.area, fck:r.fck, cobrimento:r.cobrimento, volume:r.volume, pavimento:r.pavimento })));
+  }
+  if(cov.length){
+    const m=new Map();
+    cov.forEach(r=>{ const k=[r.material,r.cor,r.acabamento,r.pavimento].join('|'); let x=m.get(k); if(!x){ x={material:r.material,cor:r.cor,acabamento:r.acabamento,pavimento:r.pavimento,area:0}; m.set(k,x);} x.area+=(+r.area||0); });
+    aba('Revestimentos', [{key:'material',h:'Material',w:24},{key:'cor',h:'Cor',w:14},{key:'acabamento',h:'Acabamento',w:16},{key:'pavimento',h:'Pavimento',w:22},{key:'area',h:'Área (m²)',num:1,w:12}],
+      [...m.values()].sort((a,b)=>b.area-a.area));
+  }
+  if(out.length){
+    aba('Outros', [{key:'nome',h:'Elemento',w:24},{key:'classe',h:'Classe',w:16},{key:'pavimento',h:'Pavimento',w:22},{key:'material',h:'Material',w:20},{key:'area',h:'Área (m²)',num:1,w:12},{key:'volume',h:'Volume (m³)',num:1,w:12}], out);
+  }
+  if(!wb.worksheets.length) aba('Quantitativo', [{key:'nome',h:'Elemento',w:24},{key:'classe',h:'Classe',w:16}], []);
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}), url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url;
-  a.download='quantitativo_'+emp.replace(/[^a-z0-9]/gi,'_').slice(0,28)+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.download='quantitativo_'+String(emp).replace(/[^a-z0-9]/gi,'_').slice(0,28)+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
 // Spinner (símbolo do Auria girando) sobre o painel.
