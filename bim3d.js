@@ -1392,15 +1392,18 @@ function _matSyn(v){ const t=_norm(v); const map={
 // _textoBusca é raso demais p/ chegar lá, então caminhamos a relação de material.
 function _materiaisDe(d){
   const out=[]; const rels=d&&d.HasAssociations; if(!Array.isArray(rels)) return out;
-  const walk=(o,depth)=>{ if(o==null||depth>7) return;
-    if(Array.isArray(o)){ for(const x of o) walk(x,depth+1); return; }
-    if(typeof o==='object'){
-      if(o.Name&&o.Name.value!=null&&typeof o.Name.value!=='object') out.push(String(o.Name.value));
-      for(const k in o){ if(k[0]==='_'||k==='Name') continue; walk(o[k],depth+1); } } };
-  for(const rel of rels){ if(!rel||typeof rel!=='object') continue;
-    if('RelatingMaterial' in rel) walk(rel.RelatingMaterial,0);
-    else if(/material/i.test(String((rel._category&&rel._category.value)||''))) walk(rel,0); }
-  return out;
+  const nm=(o)=> (o&&o.Name&&o.Name.value!=null&&typeof o.Name.value!=='object')?String(o.Name.value):null;
+  // Extrai SÓ os nomes de material do RelatingMaterial — nunca varre a subárvore
+  // toda (senão pega Pset, classificação, códigos de instância → planilha gigante).
+  const addMat=(m,depth)=>{ if(!m||typeof m!=='object'||depth>4) return;
+    const n=nm(m); if(n) out.push(n);
+    const layers = m.MaterialLayers || (m.ForLayerSet && m.ForLayerSet.MaterialLayers);
+    if(Array.isArray(layers)) layers.forEach(l=>{ if(l){ const mn=nm(l.Material)||nm(l); if(mn) out.push(mn); } });
+    if(Array.isArray(m.Materials)) m.Materials.forEach(x=>{ const mn=nm(x); if(mn) out.push(mn); });
+    if(Array.isArray(m.MaterialConstituents)) m.MaterialConstituents.forEach(c=>{ if(c){ const mn=nm(c.Material)||nm(c); if(mn) out.push(mn); } });
+    if(m.ForLayerSet && m.ForLayerSet!==m) addMat(m.ForLayerSet, depth+1); };
+  for(const rel of rels){ if(rel&&typeof rel==='object' && 'RelatingMaterial' in rel) addMat(rel.RelatingMaterial,0); }
+  return [...new Set(out)];   // sem repetição
 }
 function _numBR(s){ if(s==null) return NaN; return parseFloat(String(s).replace(/\./g,'').replace(',','.')); }
 // Nome do TIPO do elemento (IsTypedBy → Name; senão ObjectType; senão Name).
