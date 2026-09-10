@@ -1391,10 +1391,11 @@ function _matSyn(v){ const t=_norm(v); const map={
 // vive aninhado: RelatingMaterial.Name, ou camadas/constituintes/lista). O
 // _textoBusca é raso demais p/ chegar lá, então caminhamos a relação de material.
 function _materiaisDe(d){
-  const out=[]; const rels=d&&d.HasAssociations; if(!Array.isArray(rels)) return out;
+  if(!d||typeof d!=='object') return [];
+  const out=[];
   const nm=(o)=> (o&&o.Name&&o.Name.value!=null&&typeof o.Name.value!=='object')?String(o.Name.value):null;
-  // Extrai SÓ os nomes de material do RelatingMaterial — nunca varre a subárvore
-  // toda (senão pega Pset, classificação, códigos de instância → planilha gigante).
+  // Extrai SÓ os nomes de material — nunca varre a subárvore toda (senão pega Pset,
+  // classificação, códigos → planilha gigante). Trata camadas/constituintes/lista.
   const addMat=(m,depth)=>{ if(!m||typeof m!=='object'||depth>4) return;
     const n=nm(m); if(n) out.push(n);
     const layers = m.MaterialLayers || (m.ForLayerSet && m.ForLayerSet.MaterialLayers);
@@ -1402,7 +1403,16 @@ function _materiaisDe(d){
     if(Array.isArray(m.Materials)) m.Materials.forEach(x=>{ const mn=nm(x); if(mn) out.push(mn); });
     if(Array.isArray(m.MaterialConstituents)) m.MaterialConstituents.forEach(c=>{ if(c){ const mn=nm(c.Material)||nm(c); if(mn) out.push(mn); } });
     if(m.ForLayerSet && m.ForLayerSet!==m) addMat(m.ForLayerSet, depth+1); };
-  for(const rel of rels){ if(rel&&typeof rel==='object' && 'RelatingMaterial' in rel) addMat(rel.RelatingMaterial,0); }
+  // Varre QUALQUER array (HasAssociations etc.); trata o item embrulhado
+  // (RelatingMaterial) OU o material JÁ ACHATADO (_category IFCMATERIAL*).
+  for(const v of Object.values(d)){
+    if(!Array.isArray(v)) continue;
+    for(const rel of v){ if(!rel||typeof rel!=='object') continue;
+      const cat=String((rel._category&&rel._category.value)||'');
+      if('RelatingMaterial' in rel) addMat(rel.RelatingMaterial,0);
+      else if(/IFCMATERIAL/i.test(cat)) addMat(rel,0);
+    }
+  }
   return [...new Set(out)];   // sem repetição
 }
 function _numBR(s){ if(s==null) return NaN; return parseFloat(String(s).replace(/\./g,'').replace(',','.')); }
@@ -1592,16 +1602,19 @@ export async function linhasQuantitativo(V, porMod){
       const numPref=(rx,excl)=>{ if(!d) return ''; const cs=_valoresProfundos(d,rx);
         const g=(excl?cs.find(c=>!excl(c.nome)):null)||cs.find(c=>/net/i.test(c.nome))||cs.find(c=>!/gross/i.test(c.nome))||cs[0]; return g?g.val:''; };
       const txt=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); return v==null?'':String(v); };
+      // aceita número OU texto numérico ("30", "30 cm") — TQS exporta dims como texto.
+      const numAny=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); if(v==null||v==='') return '';
+        const f=parseFloat(String(v).replace(/[^\d.,-]/g,'').replace(',','.')); return isNaN(f)?'':f; };
       const cm=(v)=> v===''?'':(v<5?Math.round(v*100):Math.round(v));   // <5 => está em metros → cm
-      const secB=cm(numPref(/dimensao_?b1?|\blargura\b|\bwidth\b/i));   // TQS: Dimensao_b1 (cm)
-      const secH=cm(numPref(/dimensao_?h1?|\bprofundidade\b|\baltura\b|\bheight\b/i));   // Dimensao_h1
+      const secB=cm(numAny(/dimensao_?b1?|\blargura\b|\bwidth\b/i));    // TQS: Dimensao_b1 (cm)
+      const secH=cm(numAny(/dimensao_?h1?|\bprofundidade\b|\bdepth\b/i));   // TQS: Dimensao_h1
       const matNome=d?(_materiaisDe(d)[0]||''):'';
       let fck=''; { const mf=/\bC[-\s]?(\d{2,3})\b/i.exec(matNome); if(mf) fck=+mf[1]; else { const p=numPref(RX.fck,isFogo); if(p!=='') fck=p; } }
       rows.push({
         grupo:grupoDe(cat), classe:cat,
         nome:_nomencl(d,id),
         pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/planta|piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
-        larg:numPref(RX.larg), alt:numPref(RX.alt), esp:numPref(RX.esp), comp:numPref(RX.comp),
+        larg:numAny(RX.larg), alt:numAny(RX.alt), esp:numAny(RX.esp), comp:numAny(RX.comp),
         secB, secH, area:numPref(RX.area), volume:numPref(RX.vol),
         material:matNome, fckMat:fck, cor:txt(RX.cor), acabamento:txt(RX.acab),
         fck, cobrimento:numPref(RX.cob, isFogo)
