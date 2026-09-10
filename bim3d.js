@@ -1448,7 +1448,9 @@ async function _lerDadosEmLotes(V, model, ids, opts, rotulo){
 }
 export async function filtrar(V, filtro){
   V._cancelar=false;
-  const conds=((filtro&&filtro.conds)||[]).filter(c=>c&&c.campo&&c.op);
+  // Condição SEM valor é ignorada (não filtra nem lê dados) — assim "Classe é
+  // Escada" + Material vazio roda tão rápido quanto só a classe.
+  const conds=((filtro&&filtro.conds)||[]).filter(c=> c&&c.campo&&c.op && String(c.valor==null?'':c.valor).trim()!=='');
   const comb=(filtro&&filtro.comb)||'all';
   if(!conds.length) return {};
   // categorias candidatas: em modo E, restringe pela(s) classe(s) positiva(s)
