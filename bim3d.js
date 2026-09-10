@@ -1598,6 +1598,9 @@ export async function linhasQuantitativo(V, porMod){
     const pavOf=new Map(); st.filter(s=>s.mi==mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nome)));
     let dd=[]; try{ dd=await _lerLotesPar(V, x.model, ids, opts, 'Exportando'); }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
     const dOf=new Map(); dd.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); });
+    // Caixas p/ o volume geométrico de pilares/vigas (área da seção × comprimento).
+    let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
+    const boxOf=new Map(); ids.forEach((id,i)=>{ if(boxes&&boxes[i]) boxOf.set(id,boxes[i]); });
     for(const id of ids){ const d=dOf.get(id); const cat=catOf.get(id)||'';
       const numPref=(rx,excl)=>{ if(!d) return ''; const cs=_valoresProfundos(d,rx);
         const g=(excl?cs.find(c=>!excl(c.nome)):null)||cs.find(c=>/net/i.test(c.nome))||cs.find(c=>!/gross/i.test(c.nome))||cs[0]; return g?g.val:''; };
@@ -1610,12 +1613,24 @@ export async function linhasQuantitativo(V, porMod){
       const secH=cm(numAny(/dimensao_?h1?|\bprofundidade\b|\bdepth\b/i));   // TQS: Dimensao_h1
       const matNome=d?(_materiaisDe(d)[0]||''):'';
       let fck=''; { const mf=/\bC[-\s]?(\d{2,3})\b/i.exec(matNome); if(mf) fck=+mf[1]; else { const p=numPref(RX.fck,isFogo); if(p!=='') fck=p; } }
+      const areaVal=numPref(RX.area);
+      // Volume: da propriedade; se faltar E for LINEAR (pilar/viga/estaca), calcula
+      // geométrico = área da seção × maior dimensão da caixa (comprimento). Laje NUNCA
+      // é deduzida (nervurada tem vazio — vem só da propriedade). `volEstim` marca o
+      // que foi calculado.
+      let volume=numPref(RX.vol), volEstim=false;
+      if((volume===''||volume==null) && /IFCCOLUMN|IFCBEAM|IFCMEMBER|IFCPILE/.test(cat)){
+        const b=boxOf.get(id);
+        let secA = (secB!==''&&secH!=='')? (secB*secH)/10000 : (typeof areaVal==='number'?areaVal:'');
+        if(b&&b.min&&b.max&&secA!==''&&secA>0){ const len=Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z);
+          if(isFinite(len)&&len>0){ volume=Math.round(secA*len*1000)/1000; volEstim=true; } }
+      }
       rows.push({
         grupo:grupoDe(cat), classe:cat,
         nome:_nomencl(d,id),
         pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/planta|piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
         larg:numAny(RX.larg), alt:numAny(RX.alt), esp:numAny(RX.esp), comp:numAny(RX.comp),
-        secB, secH, area:numPref(RX.area), volume:numPref(RX.vol),
+        secB, secH, area:areaVal, volume, volEstim,
         material:matNome, fckMat:fck, cor:txt(RX.cor), acabamento:txt(RX.acab),
         fck, cobrimento:numPref(RX.cob, isFogo)
       });
