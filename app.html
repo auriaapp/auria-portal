@@ -789,6 +789,8 @@
             .fsvadd input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--txt);font-size:12px;padding:6px 8px}
             .fsvadd button{flex:none;background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:7px;padding:0 11px;font-size:12px;cursor:pointer;font-weight:700}
             .fsvadd button:hover{border-color:var(--accent);color:var(--accent2)}
+            .fexport{width:100%;margin-top:8px;background:transparent;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+            .fexport:hover{border-color:#7FB3D3;color:#7FB3D3}
           </style>
           <div id="fFiltroPanel">
             <div class="fhead" onmousedown="fFiltroDrag(event)">
@@ -814,10 +816,17 @@
                 <button onclick="fAplicar('limpar')">↺ Limpar</button>
               </div>
               <div class="fswat" id="fSwat" style="display:none"><span class="l">Cor</span></div>
+              <div style="font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin:14px 0 6px">Calcular (dos elementos do filtro)</div>
+              <div class="fact fcalc">
+                <button onclick="fCalcular('area')">Área <span style="color:var(--mut)">m²</span></button>
+                <button onclick="fCalcular('volume')">Volume <span style="color:var(--mut)">m³</span></button>
+                <button onclick="fCalcular('comprimento')" style="grid-column:1/-1">Comprimento <span style="color:var(--mut)">m linear</span></button>
+              </div>
               <div class="fsv">
                 <div class="fsvtabs" id="fSvTabs"><button class="on" onclick="fSetTab('mine')">Meus</button><button onclick="fSetTab('team')">Da equipe</button></div>
                 <div id="fSvList"></div>
                 <div class="fsvadd"><input id="fSvName" placeholder="Nome do filtro…" onkeydown="if(event.key==='Enter')fSalvar()"><button onclick="fSalvar()">Salvar</button></div>
+                <button class="fexport" onclick="fExportar()">⬇ Exportar planilha (.csv)</button>
               </div>
             </div>
             <div id="fOverlay" style="display:none;position:absolute;inset:0;z-index:3;background:rgba(16,23,42,.74);align-items:center;justify-content:center;flex-direction:column;gap:9px;border-radius:13px">
@@ -4531,6 +4540,54 @@ async function fAplicar(kind){
     else if(kind==='color'){ try{ F3D._cores=null; }catch(_){} await B3.colorirGrupo(F3D, porMod, FILT.cor); $('fMeta').textContent='elementos coloridos.'; $('fSwat').style.display='flex'; }
   }catch(e){ console.warn('filtro:',e); $('fMeta').textContent='Erro ao filtrar: '+((e&&e.message)||e); }
   f3dProcessando(false); fSpin(false);
+}
+// Calcular área/volume/comprimento dos elementos do filtro (soma a quantidade real).
+async function fCalcular(tipo){
+  if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
+  const conds=FILT.conds.filter(c=>c&&c.campo&&c.op);
+  if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
+  const CFG={area:{termo:'area',un:'m²',lbl:'Área'},volume:{termo:'volume',un:'m³',lbl:'Volume'},comprimento:{termo:'length',un:'m',lbl:'Comprimento'}}[tipo];
+  f3dProcessando(true); fSpin(true,'Calculando '+CFG.lbl.toLowerCase()+'…'); $('fMeta').textContent='Filtrando…';
+  try{
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
+    $('fCount').textContent=n.toLocaleString('pt-BR');
+    if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
+    const r=await B3.somarIds(F3D, porMod, CFG.termo);
+    const val=(Math.round(r.soma*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    $('fMeta').innerHTML='<b style="color:var(--accent2);font-size:13px">'+CFG.lbl+' = '+val+' '+CFG.un+'</b><br>'
+      +'<span style="color:var(--mut)">'+r.comValor+' de '+n+' com valor'+(r.nomes&&r.nomes.length?' · fonte: '+r.nomes.slice(0,2).join(', '):'')+'</span>';
+  }catch(e){ console.warn('calc:',e); $('fMeta').textContent='Erro ao calcular: '+((e&&e.message)||e); }
+  f3dProcessando(false); fSpin(false);
+}
+// Exportar planilha (.csv) com os dados por elemento do filtro.
+async function fExportar(){
+  if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
+  const conds=FILT.conds.filter(c=>c&&c.campo&&c.op);
+  if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
+  f3dProcessando(true); fSpin(true,'Gerando planilha…');
+  try{
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
+    if(!n){ f3dDica('Nenhum elemento para exportar.'); f3dProcessando(false); fSpin(false); return; }
+    const rows=await B3.linhasFiltro(F3D, porMod);
+    fBaixarCSV(rows);
+    f3dDica('Planilha exportada — '+rows.length+' elemento(s).');
+  }catch(e){ console.warn('export:',e); f3dDica('Erro ao exportar: '+((e&&e.message)||e)); }
+  f3dProcessando(false); fSpin(false);
+}
+function fBaixarCSV(rows){
+  const cols=[['nome','Elemento'],['classe','Classe'],['disciplina','Disciplina'],['pavimento','Pavimento'],['tipo','Tipo'],['material','Material'],['area','Área (m²)'],['volume','Volume (m³)'],['comprimento','Comprimento (m)']];
+  const num=(v)=> (v===''||v==null)?'':String(Math.round(v*1000)/1000).replace('.',',');   // decimal com vírgula (Excel pt-BR)
+  const cel=(v)=>{ v=(v==null?'':String(v)); return '"'+v.replace(/"/g,'""')+'"'; };
+  const head=cols.map(c=>cel(c[1])).join(';');
+  const body=rows.map(r=> cols.map(c=>{ const k=c[0]; return (k==='area'||k==='volume'||k==='comprimento')?cel(num(r[k])):cel(r[k]); }).join(';')).join('\r\n');
+  const csv='﻿'+head+'\r\n'+body;   // BOM p/ o Excel abrir em UTF-8
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}), url=URL.createObjectURL(blob);
+  const emp=(typeof EMP!=='undefined'&&EMP)?String(EMP):'auria';
+  const a=document.createElement('a'); a.href=url;
+  a.download='filtro_'+emp.replace(/[^a-z0-9]/gi,'_').slice(0,28)+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),3000);
 }
 // Spinner (símbolo do Auria girando) sobre o painel.
 function fSpin(on, txt){ const o=$('fOverlay'); if(!o) return; if(txt){ const t=$('fOverlayTxt'); if(t) t.textContent=txt; } o.style.display = on ? 'flex' : 'none'; }

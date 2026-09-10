@@ -1518,6 +1518,37 @@ export async function contarFiltro(V, filtro){
   for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
   return { n, porMod };
 }
+// Linhas detalhadas dos elementos de um porMod (p/ exportar planilha): lê
+// atributos + Pset + tipo + material de cada elemento e monta uma linha.
+export async function linhasFiltro(V, porMod){
+  V._cancelar=false;
+  const rxA=_termoRegex('area'), rxV=_termoRegex('volume'), rxL=_termoRegex('length');
+  const rxPav=/piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|eleva/i;
+  const st=await _storeysMapa(V);
+  const opts={ attributesDefault:true, relationsDefault:{attributes:false,relations:false},
+    relations:{ IsDefinedBy:{attributes:true,relations:true}, IsTypedBy:{attributes:true,relations:false}, HasAssociations:{attributes:true,relations:true} } };
+  const rows=[];
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    if(V._cancelar) break;
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    let grp={}; try{ grp=await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}; }catch(_){}
+    const catOf=new Map(); for(const [cat,arr] of Object.entries(grp)) (arr||[]).forEach(id=>catOf.set(id,cat));
+    const pavOf=new Map(); st.filter(s=>s.mi==mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id, s.nome)));
+    let dd=[]; try{ dd=await _lerLotesPar(V, x.model, ids, opts, 'Exportando'); }catch(e){ if(String(e&&e.message)==='CANCELADO') break; }
+    const dOf=new Map(); dd.forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); });
+    for(const id of ids){ const d=dOf.get(id);
+      const rA=d?_achaValorProfundo(d,rxA):null, rV=d?_achaValorProfundo(d,rxV):null, rL=d?_achaValorProfundo(d,rxL):null;
+      rows.push({
+        nome:(d&&d.Name&&d.Name.value!=null)?String(d.Name.value):('#'+id),
+        classe:catOf.get(id)||'', disciplina:x.disciplina||x.nome||'',
+        pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,rxPav)||''):''),
+        tipo:d?_tipoNome(d):'', material:d?_materiaisDe(d).join(', '):'',
+        area:(rA&&typeof rA.val==='number')?rA.val:'', volume:(rV&&typeof rV.val==='number')?rV.val:'', comprimento:(rL&&typeof rL.val==='number')?rL.val:''
+      });
+    }
+  }
+  return rows;
+}
 // Aplica a AÇÃO sobre um porMod já calculado.
 export async function isolarPorMod(V, porMod){
   const T=V.THREE; let total=0;
@@ -2025,6 +2056,7 @@ function _termoRegex(t){
   if(/[áa]rea/.test(t))     return /area/i;
   if(/vol/.test(t))         return /vol/i;    // pega volume, NetVolume, auria_vol…
   if(/per[íi]m/.test(t))    return /perim/i;
+  if(/comprim|length/.test(t)) return /length|comprimento/i;   // metro linear
   if(/pavim|piso|andar|n[íi]vel|storey|level/.test(t)) return /piso|planta|pavim|storey|level|andar|n[íi]vel|nivel|restri[çc][aã]o da base|base ?constraint/i;
   if(/tipo|type|classif/.test(t)) return /tipo|type|classif/i;
   if(/mat/.test(t))         return /material/i;
