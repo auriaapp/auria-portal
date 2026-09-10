@@ -1592,14 +1592,19 @@ export async function linhasQuantitativo(V, porMod){
       const numPref=(rx,excl)=>{ if(!d) return ''; const cs=_valoresProfundos(d,rx);
         const g=(excl?cs.find(c=>!excl(c.nome)):null)||cs.find(c=>/net/i.test(c.nome))||cs.find(c=>!/gross/i.test(c.nome))||cs[0]; return g?g.val:''; };
       const txt=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); return v==null?'':String(v); };
+      const cm=(v)=> v===''?'':(v<5?Math.round(v*100):Math.round(v));   // <5 => está em metros → cm
+      const secB=cm(numPref(/dimensao_?b1?|\blargura\b|\bwidth\b/i));   // TQS: Dimensao_b1 (cm)
+      const secH=cm(numPref(/dimensao_?h1?|\bprofundidade\b|\baltura\b|\bheight\b/i));   // Dimensao_h1
+      const matNome=d?(_materiaisDe(d)[0]||''):'';
+      let fck=''; { const mf=/\bC[-\s]?(\d{2,3})\b/i.exec(matNome); if(mf) fck=+mf[1]; else { const p=numPref(RX.fck,isFogo); if(p!=='') fck=p; } }
       rows.push({
         grupo:grupoDe(cat), classe:cat,
         nome:_nomencl(d,id),
-        pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
+        pavimento:pavOf.get(id)||(d?String(_achaValorQualquer(d,/planta|piso|pavim|storey|level|andar|n[íi]vel/i)||''):''),
         larg:numPref(RX.larg), alt:numPref(RX.alt), esp:numPref(RX.esp), comp:numPref(RX.comp),
-        area:numPref(RX.area), volume:numPref(RX.vol),
-        material:d?(_materiaisDe(d)[0]||''):'', cor:txt(RX.cor), acabamento:txt(RX.acab),
-        fck:numPref(RX.fck, isFogo), cobrimento:numPref(RX.cob, isFogo)
+        secB, secH, area:numPref(RX.area), volume:numPref(RX.vol),
+        material:matNome, fckMat:fck, cor:txt(RX.cor), acabamento:txt(RX.acab),
+        fck, cobrimento:numPref(RX.cob, isFogo)
       });
     }
   }
