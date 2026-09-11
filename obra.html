@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — Minhas obras</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* Entrada do RAMO OBRA. Irmã do cde_setor.html (consulta), mas NÃO a mesma
+     coisa: aqui a pessoa é quem toca a obra — vê o nível dela, entra direto
+     quando só tem uma, e o vocabulário é de canteiro, não de consulta. */
+  :root{
+    --bg:#F3EFE9; --panel:#FFFFFF; --line:#E6DED3;
+    --txt:#1C1712; --txt2:#3F3630; --mut:#7A6E62; --obra:#BF6410; --obra2:#FBEEDC;
+  }
+  body.dark{ --bg:#15110D; --panel:#1E1813; --line:#332A22; --txt:#F1EAE2; --txt2:#D6CCC0; --mut:#9C8F82; --obra:#E8A24B; --obra2:#392A17; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#1C1712,#3A2A17);color:#fff;padding:11px 20px;
+         display:flex;align-items:center;gap:13px;position:sticky;top:0;z-index:30}
+  header img{height:30px}
+  header h1{font-size:15px;font-weight:800;margin:0}
+  header h1 em{font-style:normal;color:#F0B25B}
+  header .who{margin-left:auto;text-align:right;font-size:11.5px;color:#C9B8A4;line-height:1.35}
+  header .who b{color:#fff;font-size:12.5px;display:block}
+  .hbtn{background:#2B2119;border:1px solid #4A3928;color:#E6D6C4;border-radius:8px;
+        padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .hbtn:hover{background:#3A2C20}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px 18px 70px}
+  h2.sec{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);
+         font-weight:800;margin:4px 0 4px}
+  .hint{color:var(--mut);font-size:13px;margin:0 0 16px}
+  .emps{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:13px}
+  .emp{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--obra);border-radius:13px;
+       overflow:hidden;cursor:pointer;text-align:left;font-family:inherit;color:var(--txt);display:flex;flex-direction:column}
+  .emp:hover{border-color:var(--obra)}
+  .emp-h{padding:16px}
+  .emp-h b{display:block;font-size:15px;line-height:1.3;margin-bottom:3px}
+  .emp-h span{font-size:12px;color:var(--mut)}
+  .nivel{display:inline-block;margin-top:9px;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--obra);background:var(--obra2);border-radius:999px;padding:3px 10px}
+  .emp-go{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;font-weight:700;color:var(--obra)}
+  .vazio{background:var(--panel);border:1px dashed var(--line);border-radius:12px;
+         padding:40px 20px;text-align:center;color:var(--mut);font-size:13.5px;line-height:1.6}
+  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<header>
+  <img src="logo_symbol.png" alt="Auria">
+  <h1>Auria — <em>Obra</em></h1>
+  <div class="who"><b id="uNome"></b><span id="uMail"></span></div>
+  <button class="hbtn" onclick="tema()">Tema</button>
+  <button class="hbtn" onclick="sair()">Sair</button>
+</header>
+
+<div class="wrap">
+  <div id="load" class="load">Carregando…</div>
+  <div id="app" style="display:none">
+    <h2 class="sec">Minhas obras</h2>
+    <p class="hint">Aqui você abre o CDE de cada obra: a <b>última revisão liberada</b> de cada prancha, os modelos 3D, os apontamentos, o diário e os QR do canteiro.</p>
+    <div id="emps"></div>
+  </div>
+</div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const NIVEL_ROTULO = { eng_chefe:'Engenheiro chefe', coord_campo:'Coordenação de campo', equipe_campo:'Equipe de campo' };
+
+function tema(){ const d=document.body.classList.toggle('dark');
+  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){} }
+try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
+async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
+
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./'); return; }
+  const user = session.user;
+  const { data:p } = await sb.from('usuarios_auria').select('nome,email,role').eq('id', user.id).maybeSingle();
+  // Guarda: esta entrada é SÓ do ramo obra. Setor tem a dele (cde_setor.html);
+  // qualquer outro papel volta ao roteador, que sabe para onde mandar.
+  if(!p || p.role!=='obra'){ location.replace(p && p.role==='setor' ? 'cde_setor.html' : './'); return; }
+  $('uNome').textContent = p.nome || user.email;
+  $('uMail').textContent = user.email;
+
+  // Obras: a lista vem da matriz (mesma RPC que já prova o acesso, com o
+  // deleted_at tratado); o NÍVEL vem da tabela do ramo obra (RLS obra_emp_meu
+  // deixa cada um ler as próprias linhas). Junta pelos ids.
+  let emps=[], niveis={};
+  try{ const r=await sb.rpc('cde_setor_meus_empreendimentos'); emps = r.error?[]:(r.data||[]); }
+  catch(e){ emps=[]; }
+  try{ const n=await sb.from('obra_empreendimento_auria').select('empreendimento_id,nivel,ativo').eq('usuario_id', user.id);
+    (n.data||[]).forEach(x=>{ if(x.ativo!==false) niveis[x.empreendimento_id]=x.nivel; }); }
+  catch(e){}
+  // Só conta como "minha obra" quem tem nível nela — a matriz sozinha é o
+  // caminho do setor. Sem nível, a pessoa está no papel errado ou incompleta.
+  emps = emps.filter(e=>niveis[e.empreendimento_id]);
+
+  // Uma obra só (o caso normal do engenheiro): entra direto, sem tela no meio.
+  // EXCETO quando a pessoa pediu a lista (o "voltar" do CDE manda ?lista=1) —
+  // senão voltar do CDE cairia aqui e voltaria ao CDE, e o botão não faria nada.
+  const pediuLista = new URLSearchParams(location.search).has('lista');
+  if(emps.length===1 && !pediuLista){
+    location.replace('cde_obra.html?emp='+encodeURIComponent(emps[0].empreendimento_id));
+    return;
+  }
+
+  $('load').style.display='none';
+  $('app').style.display='block';
+  if(!emps.length){
+    $('emps').innerHTML='<div class="vazio">Você ainda não foi vinculado a nenhuma obra.<br>'
+      +'Peça à coordenação do empreendimento para liberar o seu acesso.</div>';
+    return;
+  }
+  $('emps').innerHTML='<div class="emps">'+emps.map(e=>{
+    const local=[e.cidade,e.estado].filter(Boolean).join(' · ');
+    const nv=niveis[e.empreendimento_id];
+    return `<button class="emp" onclick="location.href='cde_obra.html?emp=${encodeURIComponent(e.empreendimento_id)}'">
+      <div class="emp-h"><b>${esc(e.empreendimento_nome)}</b><span>${esc(local||'—')}</span><br>
+        <span class="nivel">${esc(NIVEL_ROTULO[nv]||nv)}</span></div>
+      <div class="emp-go">🏗 Abrir a obra ›</div>
+    </button>`;
+  }).join('')+'</div>';
+}
+boot();
+</script>
+</body>
+</html>

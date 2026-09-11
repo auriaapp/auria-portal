@@ -62,6 +62,24 @@
   /* Modo consulta (usuário de setor): esconde os controles de escrita. O
      !important vence o display inline que a toolbar aplica em alguns botões. */
   body.cde-ro .cde-wr{display:none!important}
+  /* Camada 3 (engenheiro chefe): revisão em análise é VISÍVEL mas marcada — na
+     lista (chip no card) e na janela (faixa fixa sob o cabeçalho). Não é
+     decoração: é o aviso de que aquela prancha não pode ir para execução. */
+  .fdoc .fanalise{margin-left:6px;font-size:9.5px;font-weight:800;letter-spacing:.04em;color:#7C3E06;
+    background:#FDE7C4;border:1px solid #F0B25B;border-radius:8px;padding:1px 6px;white-space:nowrap}
+  .cdeWin-analise{display:none;flex:none;align-items:center;justify-content:center;gap:8px;
+    background:repeating-linear-gradient(135deg,#F59E0B 0 12px,#111827 12px 24px);padding:2px}
+  .cdeWin-analise > span{background:#111827;color:#FDE68A;font-size:11.5px;font-weight:800;letter-spacing:.06em;
+    padding:4px 14px;border-radius:6px;text-transform:uppercase}
+  .cdeWin-analise.on{display:flex}
+  /* Marca d'água sobre o DESENHO (PDF, DXF e 3D): o servidor não separa "ver"
+     de "baixar" — os bytes chegam nos dois casos — então o carimbo tem que
+     estar em cima do que a pessoa vê. Um print ou uma foto da tela sai marcado.
+     pointer-events:none: não atrapalha zoom, pan, pins nem medições. */
+  .cdeWin-marca{display:none;position:absolute;inset:0;z-index:40;pointer-events:none;opacity:.2;
+    background-repeat:repeat;background-size:360px 230px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='360' height='230'><text x='180' y='125' text-anchor='middle' transform='rotate(-28 180 125)' font-family='Segoe UI,Arial,sans-serif' font-size='21' font-weight='800' fill='%23B45309'>EM AN%C3%81LISE %E2%80%94 N%C3%83O LIBERADO</text></svg>")}
+  .cdeWin-marca.on{display:block}
   .tb{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
       padding:5px 10px;font-size:12.5px;cursor:pointer;font-family:inherit;font-weight:600}
   .tb:hover{border-color:var(--accent)}
@@ -846,11 +864,25 @@ let AUTOGRP_MODE=null, AUTOGRP_SEL=null;   // grupos automáticos dentro da aba 
 let MULTI_MODE=false, MULTI_SEL=new Set();   // seleção múltipla → abrir juntas no App (uma análise só)
 
 // ── Boot ────────────────────────────────────────────────────────────────────
-// Modo consulta: usuário de setor (orçamento/suprimentos/planejamento) só VÊ e
-// BAIXA o que está liberado — nunca recebe, muda status, agrupa ou analisa no
-// App. A RLS já barra a escrita; isto apenas esconde os controles que falhariam.
-let READONLY = false;
-let USER_ROLE = null;      // papel global — Fase 2 usa p/ distinguir obra (abre apontamento) de setor
+// Quem NÃO é da coordenação entra num de dois ramos, e eles NÃO são a mesma
+// coisa (a antiga flag READONLY tratava os dois como um só, e por isso o
+// engenheiro chefe não enxergava o em-análise). Quatro perguntas separadas:
+//   SEM_ESCRITA      — não sobe arquivo, não muda status, não agrupa, não analisa
+//                      no App. Vale para setor E para todo o ramo obra.
+//   SO_PUBLICADO     — só abre o liberado (A1/B1/as-built). Vale para setor,
+//                      coord. e equipe de campo. NÃO vale para o eng. chefe
+//                      (Camada 3: ele vê o em-análise, marcado; e não baixa).
+//   FERRAMENTAS_OBRA — diário e organizador de QR. Coordenação, eng. chefe e
+//                      coord. de campo. Setor e equipe de campo, não.
+//   RAMO_OBRA/NIVEL  — quem é do ramo obra, e em que nível nesta obra.
+// Tudo fail-closed: sem nível conhecido, o obra cai no comportamento mais
+// restrito. A RLS é a barreira real; isto só esconde o que falharia.
+let SEM_ESCRITA = false;
+let SO_PUBLICADO = false;
+let FERRAMENTAS_OBRA = false;
+let RAMO_OBRA = false;
+let NIVEL_OBRA = null;     // 'eng_chefe' | 'coord_campo' | 'equipe_campo' | null
+let USER_ROLE = null;      // papel global
 let USER_NOME = '';        // nome do usuário (autoria do apontamento)
 let CAN_APONTAR = false;   // pode abrir apontamento neste empreendimento (flag abrir_apont da matriz)
 async function boot(){
@@ -861,22 +893,31 @@ async function boot(){
     const { data: prof } = await sb.from('usuarios_auria').select('role,nome').eq('id',USER.id).maybeSingle();
     USER_ROLE = prof && prof.role || null;
     USER_NOME = (prof && prof.nome) || USER.email || '';
-    // Fase 1: obra entra em modo CONSULTA (vê/baixa arquivos), como o setor.
-    // Fase 2 liberará abrir apontamento para 'obra' via flags da matriz.
-    READONLY = (USER_ROLE==='setor' || USER_ROLE==='obra');
   }catch(e){}
+  RAMO_OBRA   = (USER_ROLE==='obra');
+  SEM_ESCRITA = (USER_ROLE==='setor' || RAMO_OBRA);
+  // Nível nesta obra (RPC SECURITY DEFINER do banco — mesma fonte da RLS).
+  if(RAMO_OBRA && EMP_ID){
+    try{ const n=await sb.rpc('obra_nivel',{ p_emp:EMP_ID }); NIVEL_OBRA=(!n.error && n.data) ? n.data : null; }
+    catch(e){ NIVEL_OBRA=null; }
+  }
+  SO_PUBLICADO     = SEM_ESCRITA && NIVEL_OBRA!=='eng_chefe';
+  FERRAMENTAS_OBRA = !SEM_ESCRITA || NIVEL_OBRA==='eng_chefe' || NIVEL_OBRA==='coord_campo';
   // Capacidade de ABRIR APONTAMENTO: flag abrir_apont na matriz do empreendimento
-  // (obra/projetista). Independente do READONLY — o +Apontar é liberado por flag,
+  // (obra/projetista). Independente do ramo — o +Apontar é liberado por flag,
   // não pelo papel. A RLS (apt_externo_ins) é a barreira real; isto é só a UI.
   try{
     const { data: acc } = await sb.from('cde_acesso_auria')
       .select('abrir_apont').eq('empreendimento_id',EMP_ID).eq('usuario_id',USER.id).maybeSingle();
     CAN_APONTAR = !!(acc && acc.abrir_apont);
   }catch(e){}
-  if(READONLY){
+  if(SEM_ESCRITA){
     document.body.classList.add('cde-ro');
     const lp=$('lnkPadrao'); if(lp) lp.style.display='none';
-    const volta=document.querySelector('header a[href="portal.html"]'); if(volta) volta.setAttribute('href','cde_setor.html');
+    // Cada ramo volta para a SUA entrada: obra tem página própria; setor, a de consulta.
+    const volta=document.querySelector('header a[href="portal.html"]');
+    // ?lista=1 impede a entrada da obra de redirecionar de volta para cá quando só há uma obra.
+    if(volta) volta.setAttribute('href', RAMO_OBRA ? 'obra.html?lista=1' : 'cde_setor.html');
   }
   if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no portal.'; return; }
   carregarPastasAbertas();
@@ -890,16 +931,17 @@ async function boot(){
   STMAP={}; (st||[]).forEach(s=>STMAP[s.codigo]=s);
 
   { const bf=$('btnFicha'); if(bf) bf.style.display=''; }   // ficha do empreend. independe do padrão
-  { const br=$('btnRdo'); if(br) br.style.display=''; }     // diário de obra (equipe de campo)
+  // Diário de obra: ferramenta de coordenação de campo — não é de consulta.
+  { const br=$('btnRdo'); if(br && FERRAMENTAS_OBRA) br.style.display=''; }
   try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); CONV = (c&&c[0])||null; }catch(err){ CONV=null; }
   if(!CONV){
     $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
       + '<a href="cde.html" style="color:var(--accent)">Defina o padrão do grupo/empresa</a> antes de enviar arquivo(s).';
     return;
   }
-  if(!READONLY) $('btnReceber').style.display='';
-  // Organizador de QR: perfil Obra (e gestão/admin, p/ preparar as folhas). Setor não.
-  if(USER_ROLE==='obra' || !READONLY){ const b=$('btnOrgQR'); if(b) b.style.display=''; }
+  if(!SEM_ESCRITA) $('btnReceber').style.display='';
+  // Organizador de QR: mesma régua do diário (coordenação, eng. chefe, coord. de campo).
+  if(FERRAMENTAS_OBRA){ const b=$('btnOrgQR'); if(b) b.style.display=''; }
   await carregarDocs();
   await carregarGrupos();
   $('load').style.display='none';
@@ -1360,7 +1402,14 @@ function ordenarDocs(arr){
   return a;
 }
 // Consumidor (obra/setor) não abre o que ainda não foi liberado (não-PUBLICADO).
-function docBloqueado(d){ if(!READONLY) return false; const e=d.atual?d.atual.estado:null; return e!=='PUBLICADO'; }
+function docBloqueado(d){ if(!SO_PUBLICADO) return false; const e=d.atual?d.atual.estado:null; return e!=='PUBLICADO'; }
+// Camada 3 — o que o ramo obra pode BAIXAR é sempre só o liberado, em qualquer
+// nível (espelha obra_pode_baixar_status / cde_path_acc_le no banco; a RLS
+// recusaria de qualquer jeito, isto tira o botão da frente). E o que está em
+// análise, quando visível (eng. chefe), vai marcado.
+const STATUS_LIBERADO = ['A1','B1','AS_BUILT'];
+function statusBaixavel(st){ return !RAMO_OBRA || STATUS_LIBERADO.includes(st); }
+function docEmAnalise(d){ return RAMO_OBRA && !!d.atual && d.atual.estado!=='PUBLICADO'; }
 
 // ── Popovers de Filtro e Ordenação ─────────────────────────────────────────
 function _fechaPops(){
@@ -1955,10 +2004,12 @@ function cardFdoc(d){
   }
   const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
   const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
+  // Eng. chefe vendo o em-análise: o card abre, mas avisa que não é para executar.
+  const analise = docEmAnalise(d) ? `<span class="fanalise" title="Em análise — não liberado para execução">em análise</span>` : '';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
     ${chk}
     <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(_docTit(d))} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}${analise}</span><br><span class="ft">${esc(_docTit(d))} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
 }
@@ -1975,22 +2026,27 @@ function docMenuOpen(ev,id){
   const d=DOCS.find(x=>x.id===id); if(!d) return;
   const byExt={}; ((d.atual&&d.atual.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase(); if(e&&!byExt[e]) byExt[e]=a; });
   const rows=[];
+  // Ramo obra só BAIXA o liberado (Camada 3): numa revisão em análise o eng.
+  // chefe abre, mas o "Baixar" nem aparece. Abrir (👁) continua.
+  const baixavel = statusBaixavel(d.atual ? d.atual.status : null);
   FMT_ORDER.filter(e=>byExt[e]).forEach(e=>{ const view=(e==='pdf'||e==='dxf');
+    if(!view && !baixavel) return;
     rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
   });
   if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
-  if(d.qr_token){   // QR disponível para todos (inclusive obra)
+  // QR: obra (qualquer nível) e coordenação. Setor é consulta — não afixa QR.
+  if(d.qr_token && (RAMO_OBRA || !SEM_ESCRITA) && baixavel){
     rows.push('<div class="dm-sep"></div>');
     if(byExt.pdf) rows.push(`<button onclick="docMenuAct('${id}','','qrimp')"><span class="mi">▦</span>Baixar prancha com QR (PDF)</button>`);
     rows.push(`<button onclick="docMenuAct('${id}','','qrimg')"><span class="mi">⬛</span>Baixar QR (imagem grande)</button>`);
   }
-  if(byExt.pdf && !READONLY){
+  if(byExt.pdf && !SEM_ESCRITA){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
   }
   // Mesmo caminho da prancha 2D, agora para o modelo: quem analisa é o App.
   // Só aparece com a conversão pronta — sem .frag não há o que abrir lá.
-  if(byExt.ifc && !READONLY && byExt.ifc.frag_status==='pronto'){
+  if(byExt.ifc && !SEM_ESCRITA && byExt.ifc.frag_status==='pronto'){
     if(!byExt.pdf) rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','appbim')"><span class="mi">🧊</span>Analisar no App (3D)</button>`);
   }
@@ -1999,7 +2055,7 @@ function docMenuOpen(ev,id){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','cmp')"><span class="mi">⇄</span>Comparar revisões</button>`);
   }
-  if(!CDE_LINKED_DOCS.has(id) && !READONLY){
+  if(!CDE_LINKED_DOCS.has(id) && !SEM_ESCRITA){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','link')"><span class="mi">🔗</span>Vincular apontamentos existentes</button>`);
   }
@@ -2557,6 +2613,8 @@ class CdeWin {
       +     '<button class="cdeWin-btn" data-act="close" title="Fechar">×</button>'
       +   '</div>'
       + '</div>'
+      // Faixa da Camada 3 — fica entre o cabeçalho e o desenho, nunca some com scroll.
+      + '<div class="cdeWin-analise"><span>⚠ Em análise — não liberado para execução</span></div>'
       + '<div class="cdeWin-body">'
       +   '<div class="cdeWin-stage"><canvas></canvas>'
       +     '<div class="cdeWin-tiles"></div>'
@@ -2629,6 +2687,7 @@ class CdeWin {
       +     '</div>'
       +     '<img class="bimLogo" src="logo_symbol.png" alt="Auria" draggable="false">'
       +     '<div class="bimDica">Arraste para girar · roda para zoom · clique da roda para deslocar</div></div>'
+      +   '<div class="cdeWin-marca"></div>'
       +   '<div class="cdeWin-resize"></div>'
       + '</div>';
     this.el       = w;
@@ -2636,6 +2695,8 @@ class CdeWin {
     this.titleEl  = w.querySelector('.cdeWin-title');
     this.subEl    = w.querySelector('.cdeWin-sub');
     this.statusEl = w.querySelector('.cdeWin-status');
+    this.analiseEl= w.querySelector('.cdeWin-analise');
+    this.marcaEl  = w.querySelector('.cdeWin-marca');
     this.stage    = w.querySelector('.cdeWin-stage');
     this.canvas   = w.querySelector('.cdeWin-stage > canvas');
     this.tilesA   = w.querySelector('.cdeWin-tiles');
@@ -3030,6 +3091,11 @@ class CdeWin {
     this.subEl.textContent = doc.titulo && doc.titulo!==doc.codigo ? doc.titulo : '';
     this.statusEl.textContent = s ? s.rotulo : 'sem revisão';
     this.statusEl.style.background = s ? s.cor : '#94A3B8';
+    // Camada 3: eng. chefe abrindo revisão em análise vê a faixa e a marca
+    // d'água o tempo todo — são o "não baixe" que o servidor não consegue dar.
+    const emAnalise = docEmAnalise(doc);
+    if(this.analiseEl) this.analiseEl.classList.toggle('on', emAnalise);
+    if(this.marcaEl)   this.marcaEl.classList.toggle('on', emAnalise);
     atualizarTaskbar();                     // aba ganha o código da prancha
     // arquivos visualizáveis da revisão vigente
     this.VIEW_FILES = {}; this.VIEW_FRAG = null;
@@ -3064,6 +3130,8 @@ class CdeWin {
     this.subEl.textContent   = modelos.map(m=>m.nome).join('  +  ');
     this.statusEl.textContent = modelos.length + ' modelos';
     this.statusEl.style.background = '#0E7C86';
+    if(this.analiseEl) this.analiseEl.classList.remove('on');   // cena federada não é uma revisão
+    if(this.marcaEl)   this.marcaEl.classList.remove('on');
     atualizarTaskbar();
     this.VIEW_FILES = {};
     this.VIEW_FRAG  = modelos;
@@ -5977,7 +6045,7 @@ async function renderDetalhe(){
   const revs=(d.revs||[]).slice().sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
 
   // Ação de recepção (avisa o projetista da disciplina). Escondida em consulta.
-  const topo = READONLY ? '' : `<div class="det-recep">
+  const topo = SEM_ESCRITA ? '' : `<div class="det-recep">
       <button class="btn sm" onclick="confirmarRecepcao()">✓ Confirmar recebimento ao projetista</button>
       <span style="font-size:11.5px;color:var(--mut)">avisa o projetista da disciplina que os arquivos chegaram</span>
     </div>`;
@@ -5985,8 +6053,14 @@ async function renderDetalhe(){
   const revsHtml = revs.map((r,idx)=>{
     const s=STMAP[r.status]||{rotulo:r.status,cor:'#64748B'};
     const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
-    const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span><button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button></div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
-    const trans=TRANSICOES[r.status]||[]; const podeAgir=!READONLY&&idx===0&&r.status!=='SUBSTITUIDO';
+    // Ramo obra: o botão de baixar só existe na revisão liberada. Na em análise
+    // (que só o eng. chefe vê) fica o motivo no lugar do botão.
+    const dl = statusBaixavel(r.status);
+    const btnDl = a => dl
+      ? `<button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button>`
+      : `<span style="font-size:11px;color:#7C3E06;font-weight:700" title="Só a revisão liberada para obra pode ser baixada">não liberado</span>`;
+    const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span>${btnDl(a)}</div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
+    const trans=TRANSICOES[r.status]||[]; const podeAgir=!SEM_ESCRITA&&idx===0&&r.status!=='SUBSTITUIDO';
     const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
     return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';

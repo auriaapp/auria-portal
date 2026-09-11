@@ -1364,11 +1364,8 @@ function accRow(row){
     </tr>`;
   }
   const cols=ACC_COLS.map(([k,lbl,ttl])=>`<td class="cde-ac-c" title="${esc(ttl)}"><input type="checkbox" ${row[k]?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${k}',this.checked,this)"></td>`).join('');
-  // Selo de OBRA: distingue o ramo obra do cliente interno de setor na mesma tabela.
-  const nivObra=(row.tipo==='interno')?ACC_OBRA[row.sujeito_id]:null;
-  const seloObra=nivObra?` <span style="font-size:10px;font-weight:800;color:#BF6410;background:#FBEEDC;border-radius:10px;padding:1px 7px;margin-left:4px" title="Ramo Obra">🏗 ${esc(OBRA_NIVEL_ROTULO[nivObra]||nivObra)}</span>`:'';
   return `<tr>
-    <td><div style="font-weight:600;color:var(--txt)">${esc(row.nome||'—')}${seloObra}</div>
+    <td><div style="font-weight:600;color:var(--txt)">${esc(row.nome||'—')}</div>
         <div style="font-size:11px;color:var(--mut)">${esc(row.email||'')}</div></td>
     <td style="min-width:190px"><label class="acc-chip ${row.todas_disciplinas?'on':''}" title="Todas as disciplinas"><input type="checkbox" ${row.todas_disciplinas?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','todas_disciplinas',this.checked,this)">todas</label>
         <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px">${accChips(row)}</div></td>
@@ -1376,25 +1373,53 @@ function accRow(row){
     <td style="text-align:right">${row.tipo==='interno'?`<button class="ctr-btn sec" style="font-size:11px;padding:4px 9px" onclick="accRemoverInterno('${row.sujeito_id}')">Remover</button>`:''}</td>
   </tr>`;
 }
+// Linha do RAMO OBRA: igual à do cliente interno, mas com o NÍVEL trocável no
+// lugar dos chips de disciplina (obra vê todas). Trocar o nível chama
+// obra_definir_nivel, que reaplica o preset — a regra de flags fica no banco.
+function accRowObra(row){
+  const nv=ACC_OBRA[row.sujeito_id]||'';
+  const opts=Object.entries(OBRA_NIVEL_ROTULO).map(([k,l])=>`<option value="${k}" ${k===nv?'selected':''}>${esc(l)}</option>`).join('');
+  const cols=ACC_COLS.map(([k,lbl,ttl])=>`<td class="cde-ac-c" title="${esc(ttl)}"><input type="checkbox" ${row[k]?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${k}',this.checked,this)"></td>`).join('');
+  return `<tr>
+    <td><div style="font-weight:600;color:var(--txt)">${esc(row.nome||'—')}</div>
+        <div style="font-size:11px;color:var(--mut)">${esc(row.email||'')}</div></td>
+    <td style="min-width:190px">
+      <select onchange="accMudarNivel('${row.sujeito_id}',this.value,this)" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid #F0B25B;border-radius:8px;background:#FBEEDC;color:#7C3E06;font-weight:700">${opts}</select>
+      <div style="font-size:10.5px;color:var(--mut);margin-top:4px">todas as disciplinas</div></td>
+    ${cols}
+    <td style="text-align:right"><button class="ctr-btn sec" style="font-size:11px;padding:4px 9px" onclick="accRemoverInterno('${row.sujeito_id}')">Remover</button></td>
+  </tr>`;
+}
 function renderAcessos(){
   const v=$('peView');
   const head='<tr><th style="min-width:200px">Nome</th><th>Disciplinas</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')+'<th></th></tr>';
-  // Coordenação (travada) e clientes internos ficam na mesma tabela.
-  const internos=ACC_LIST.filter(r=>r.tipo==='coordenacao' || r.tipo==='interno');
+  const headObra='<tr><th style="min-width:200px">Nome</th><th>Nível na obra</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')+'<th></th></tr>';
+  // Três grupos, três tabelas. Obra e setor têm linha na MESMA matriz — o que
+  // os separa é ter nível em obra_empreendimento_auria (ACC_OBRA).
+  const ehObra=r=> r.tipo==='interno' && !!ACC_OBRA[r.sujeito_id];
+  const internos=ACC_LIST.filter(r=> r.tipo==='coordenacao' || (r.tipo==='interno' && !ehObra(r)));
+  const obra=ACC_LIST.filter(ehObra);
   const forn=ACC_LIST.filter(r=>r.tipo==='fornecedor');
   const tabela=(rows)=> rows.length
     ? `<div class="tbl-card" style="overflow-x:auto"><table class="cde-ac"><thead>${head}</thead><tbody>${rows.map(accRow).join('')}</tbody></table></div>` : '';
+  const tabelaObra=(rows)=> rows.length
+    ? `<div class="tbl-card" style="overflow-x:auto"><table class="cde-ac"><thead>${headObra}</thead><tbody>${rows.map(accRowObra).join('')}</tbody></table></div>` : '';
   v.innerHTML=`
     <div style="background:#F5F3FA;border:1px solid #DAD3EC;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#4A3F73;font-size:13px;line-height:1.6">
       <b>Acessos ao CDE.</b> Marque <b>“todas”</b> para liberar o sujeito em todas as disciplinas, ou desmarque e escolha uma a uma nos chips. Leitura e download já valem na hora; as demais colunas ficam registradas.
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px">
-      <b style="font-size:14px">👤 Clientes internos e obra</b>
-      <span style="color:var(--mut);font-size:12px;flex:1">Funcionários da construtora (orçamento, suprimentos, planejamento) e a equipe de campo (selo 🏗)</span>
-      <button class="ctr-btn sec" style="font-size:12px;padding:6px 12px" onclick="accConvidarInterno()">＋ Dar acesso a alguém</button>
+      <b style="font-size:14px">🏗 Equipe de obra</b>
+      <span style="color:var(--mut);font-size:12px;flex:1">Engenheiro chefe, coordenação e equipe de campo. Veem todas as disciplinas; o <b>nível</b> define o que cada um pode.</span>
       <button class="ctr-btn" style="font-size:12px;padding:6px 12px;background:#BF6410;border-color:#BF6410" onclick="accConvidarObra()">🏗 Convidar para a obra</button>
     </div>
-    ${internos.length?tabela(internos):'<div class="empty2" style="padding:20px;margin-bottom:16px">Ninguém ainda. Use “＋ Dar acesso a alguém” (setor) ou “🏗 Convidar para a obra”.</div>'}
+    ${obra.length?tabelaObra(obra):'<div class="empty2" style="padding:20px;margin-bottom:16px">Nenhuma equipe de obra ainda. Comece pelo engenheiro chefe em “🏗 Convidar para a obra”.</div>'}
+    <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
+      <b style="font-size:14px">👤 Clientes internos</b>
+      <span style="color:var(--mut);font-size:12px;flex:1">Funcionários da construtora (orçamento, suprimentos, planejamento) — só consultam o liberado</span>
+      <button class="ctr-btn sec" style="font-size:12px;padding:6px 12px" onclick="accConvidarInterno()">＋ Dar acesso a alguém</button>
+    </div>
+    ${internos.length?tabela(internos):'<div class="empty2" style="padding:20px;margin-bottom:16px">Ninguém ainda. Use “＋ Dar acesso a alguém”.</div>'}
     <div style="display:flex;align-items:center;gap:10px;margin:20px 0 8px">
       <b style="font-size:14px">🏢 Fornecedores</b>
       <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas da empresa. <b style="color:#166534">Verde</b> = disciplina contratada (vê, baixa e <b>envia</b>); demais marcadas = só vê e baixa. O <b>upload é sempre limitado à disciplina contratada</b> — um projetista não posta em outra disciplina.</span>
@@ -1487,6 +1512,17 @@ async function accConvidarObra(){
       : 'Convite enviado. Entra como '+rot+'.');
     await loadAcessos(empId);
   }catch(e){ alert('Não foi possível convidar: '+((e&&e.message)||e)+'\n(A function invite-obra precisa estar deployada.)'); }
+}
+// Troca o nível de alguém do ramo obra. obra_definir_nivel exige estacao_pode
+// no servidor e reaplica o preset — o cliente só pede.
+async function accMudarNivel(uid, nivel, sel){
+  const rot=OBRA_NIVEL_ROTULO[nivel]||nivel;
+  if(!confirm('Mudar o nível desta pessoa para "'+rot+'"?')){ await loadAcessos(CDE_AC_EMPID); return; }
+  try{
+    const r=await sb.rpc('obra_definir_nivel',{ p_emp:CDE_AC_EMPID, p_usuario:uid, p_nivel:nivel });
+    if(r.error) throw r.error;
+    await loadAcessos(CDE_AC_EMPID);
+  }catch(e){ alert('Não foi possível mudar o nível: '+((e&&e.message)||e)); await loadAcessos(CDE_AC_EMPID); }
 }
 async function accRemoverInterno(uid){
   if(!confirm('Remover o acesso desta pessoa a este empreendimento?')) return;
