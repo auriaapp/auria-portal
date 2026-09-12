@@ -6149,14 +6149,24 @@ async function bimToggle(){
 }
 async function bimEnsure(prefId){
   if(!EMP){ _bimMsg('Selecione um empreendimento.'); return; }
-  if(BIM_BUILDING!==EMP.nome){   // (re)carrega os modelos do empreendimento atual
+  // A chave do BIM legado é bim_building (estável), NUNCA o nome: o nome muda
+  // entre fases, e dois empreendimentos homônimos em tenants diferentes não
+  // podem enxergar os mesmos modelos (o Supabase antigo do BIM não tem noção
+  // de empresa). NULL = sem modelos legados — os atuais abrem pelo CDE, por id.
+  const chaveBim = (EMP.bim_building||'').trim();
+  if(!chaveBim){
+    BIM_BUILDING=''; BIM_PROJS=[]; BIM_PROJ=null; BIM_FLOORS=[]; BIM_FSEL=new Set();
+    _bimMsg('Este empreendimento não tem modelos no Auria BIM legado. Os modelos 3D abrem pelo CDE.');
+    $('bimDisc').innerHTML=''; $('bimFloorsPop').innerHTML=''; return;
+  }
+  if(BIM_BUILDING!==chaveBim){   // (re)carrega os modelos do empreendimento atual
     BIM_BUILDING=''; BIM_PROJS=[]; BIM_PROJ=null; BIM_FLOORS=[]; BIM_FSEL=new Set();
     _bimMsg('Carregando modelos…');
     try{
       const { data, error }=await _sbBim.from('projects')
-        .select('id,name,discipline,building,xkt_url,meta_url').eq('building', EMP.nome);
+        .select('id,name,discipline,building,xkt_url,meta_url').eq('building', chaveBim);
       if(error) throw error;
-      BIM_PROJS=data||[]; BIM_BUILDING=EMP.nome;
+      BIM_PROJS=data||[]; BIM_BUILDING=chaveBim;
     }catch(e){ _bimMsg('Não foi possível carregar os modelos BIM.'); console.warn('BIM projects:',e.message||e); return; }
     if(!BIM_PROJS.length){ _bimMsg('Este empreendimento ainda não tem modelo no Auria BIM.'); $('bimDisc').innerHTML=''; $('bimFloorsPop').innerHTML=''; return; }
     // popula seletor de disciplina (modelos disponíveis)
@@ -6455,7 +6465,7 @@ function bimPopOut(){
   const g=[...BIM_FSEL][0]; if(g) p.set('floor', g);
   if(BIM_PROJ.xkt_url)  p.set('xkt',  BIM_PROJ.xkt_url);
   if(BIM_PROJ.meta_url) p.set('meta', BIM_PROJ.meta_url);
-  p.set('building', BIM_PROJ.building||(EMP&&EMP.nome)||'');
+  p.set('building', BIM_PROJ.building||(EMP&&EMP.bim_building)||'');   // chave estável, não o nome
   const url=BIM_VIEWER+'?'+p.toString();
   const w=Math.min(1280, Math.round(screen.availWidth*0.7))||1100;
   const h=Math.min(900, Math.round(screen.availHeight*0.9))||800;
