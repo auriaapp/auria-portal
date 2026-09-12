@@ -300,7 +300,7 @@
         <b style="font-size:13px">Projetistas (pessoas) desta empresa</b>
         <button type="button" class="ctr-btn sec" style="font-size:11px;padding:4px 10px" onclick="addProjetistaLinha()">＋ Adicionar pessoa</button>
       </div>
-      <div style="font-size:11px;color:var(--mut);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marcar RT se for o responsável técnico.</div>
+      <div style="font-size:11px;color:var(--mut);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marcar RT se for o responsável técnico. Ao editar, remover uma linha (🗑) desativa a pessoa ao salvar — ela deixa de aparecer e de enviar arquivos.</div>
       <table class="parc-tbl">
         <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px">RT</th><th></th></tr></thead>
         <tbody id="fn-proj-body"></tbody>
@@ -880,7 +880,10 @@ async function renderFornecedoresPage(){
           <div style="font-size:12px;color:var(--mut);margin-top:2px">${f.cnpj?('CNPJ '+esc(f.cnpj)):''}${f.cnpj&&(f.telefone||f.email_contato)?' · ':''}${esc(f.telefone||'')}${f.telefone&&f.email_contato?' · ':''}${esc(f.email_contato||'')}</div>
           ${f.observacao?`<div style="font-size:12px;color:var(--txt2);margin-top:6px">${esc(f.observacao)}</div>`:''}
         </div>
-        <button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" onclick="removerFornecedorPg('${f.id}')">🗑</button>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" title="Editar empresa e projetistas" onclick="abrirFornecedor('${f.id}')">✎ Editar</button>
+          <button class="ctr-btn sec" style="font-size:11px;padding:5px 10px" title="Remover fornecedor" onclick="removerFornecedorPg('${f.id}')">🗑</button>
+        </div>
       </div>
       ${projHtml}
     </div>`;
@@ -891,9 +894,30 @@ async function removerFornecedorPg(id){
   try{ await sb.from('fornecedores_auria').delete().eq('id',id); renderFornecedoresPage(); }
   catch(e){ alert('Erro: '+(e.message||e)); }
 }
-function abrirFornecedor(){
-  ['fn-nome','fn-cnpj','fn-tel','fn-email','fn-obs'].forEach(id=>$(id).value='');
+// Sem id = cadastro novo; com id = edição (empresa + pessoas). Na edição as
+// linhas do buffer carregam o id do projetista; remover uma linha desativa a
+// pessoa ao salvar (ativo=false — nada é apagado, para não perder histórico).
+var FN_EDIT_ID=null, FN_ORIG_PROJS=[];
+function abrirFornecedor(id){
+  FN_EDIT_ID=null; FN_ORIG_PROJS=[];
+  ['fn-nome','fn-cnpj','fn-tel','fn-email','fn-obs'].forEach(k=>$(k).value='');
   FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+  $('fnT').textContent='Cadastrar fornecedor';
+  $('fn-save').textContent='💾 Salvar fornecedor';
+  if(id){
+    const f=(FORNECEDORES||[]).find(x=>x.id===id);
+    if(!f){ alert('Fornecedor não encontrado. Clique em Atualizar.'); return; }
+    FN_EDIT_ID=f.id;
+    $('fn-nome').value=f.nome||''; $('fn-cnpj').value=f.cnpj||''; $('fn-tel').value=f.telefone||'';
+    $('fn-email').value=f.email_contato||''; $('fn-obs').value=f.observacao||'';
+    FN_ORIG_PROJS=(f.projetistas_auria||[]).slice();
+    FN_PROJS_BUF=FN_ORIG_PROJS.filter(p=>p.ativo!==false).map(p=>({ id:p.id, nome:p.nome||'', email:p.email||'', telefone:p.telefone||'',
+      disciplinas:(Array.isArray(p.disciplinas)?p.disciplinas:String(p.disciplinas||'').split(',')).map(x=>String(x).trim()).filter(Boolean).join(', '),
+      eh_rt:!!p.eh_rt }));
+    if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+    $('fnT').textContent='Editar fornecedor';
+    $('fn-save').textContent='💾 Salvar alterações';
+  }
   renderFnProjs();
   $('fornecedorModal').classList.add('on');
 }
@@ -968,6 +992,7 @@ async function salvarFornecedor(){
     criado_por:USER.id };
   const btn=$('fn-save'); btn.disabled=true; const t=btn.textContent; btn.textContent='Salvando…';
   try{
+    if(FN_EDIT_ID){ await _salvarFornecedorEdicao(FN_EDIT_ID, obj, validos, btn); btn.disabled=false; btn.textContent=t; return; }
     const r=await sb.from('fornecedores_auria').insert(obj).select().single();
     if(r.error) throw r.error;
     const fid=r.data.id;
@@ -985,6 +1010,47 @@ async function salvarFornecedor(){
     alert(_resumoConvites(res, nome));
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
+}
+// Edição: atualiza a empresa; pessoas com id são atualizadas, e-mails novos
+// são inseridos (ou reativados, se já existiam desativados), linhas removidas
+// viram ativo=false. Convite só para quem é novo de verdade.
+async function _salvarFornecedorEdicao(fid, obj, validos, btn){
+  const nome=obj.nome;
+  const dados={ nome, cnpj:obj.cnpj, telefone:obj.telefone, email_contato:obj.email_contato, observacao:obj.observacao };
+  const ru=await sb.from('fornecedores_auria').update(dados).eq('id',fid);
+  if(ru.error) throw ru.error;
+  const discsDe=p=>(p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const porEmail={}; FN_ORIG_PROJS.forEach(p=>{ if(p.email) porEmail[String(p.email).trim().toLowerCase()]=p; });
+  const mantidos=new Set(), novos=[];
+  for(const p of validos){
+    const email=p.email.trim();
+    const linha={ nome:p.nome||'', email, telefone:p.telefone||'', disciplinas:discsDe(p), eh_rt:!!p.eh_rt, ativo:true };
+    const existente = p.id ? FN_ORIG_PROJS.find(x=>x.id===p.id) : porEmail[email.toLowerCase()];
+    if(existente){
+      const r=await sb.from('projetistas_auria').update(linha).eq('id',existente.id);
+      if(r.error) throw r.error;
+      mantidos.add(existente.id);
+      if(existente.ativo===false) novos.push(p);   // estava desativado: volta a valer, avisa
+    }else{
+      const r=await sb.from('projetistas_auria').insert({ fornecedor_id:fid, ...linha });
+      if(r.error) throw r.error;
+      novos.push(p);
+    }
+  }
+  const remover=FN_ORIG_PROJS.filter(x=>x.ativo!==false && !mantidos.has(x.id));
+  for(const x of remover){
+    const r=await sb.from('projetistas_auria').update({ativo:false}).eq('id',x.id);
+    if(r.error) throw r.error;
+  }
+  let res={enviados:0,existentes:0,falhas:0};
+  if(novos.length){ btn.textContent='Enviando convites…'; res=await _enviarConvitesProjetistas(novos, nome); }
+  fecharFornecedor();
+  if(CTR_EMP_ID) await loadContratos(CTR_EMP_ID);
+  if($('ovForn').classList.contains('on')) await renderFornecedoresPage();
+  if($('contratoModal').classList.contains('on')) $('ct-projetista').innerHTML=_projOptions();
+  let m=_resumoConvites(res, nome).replace(' salvo.',' atualizado.');
+  if(remover.length) m+='\n'+remover.length+' projetista(s) desativado(s): '+remover.map(x=>x.email).join(', ');
+  alert(m);
 }
 async function _enviarConvitesProjetistas(validos, empresaNome){
   let enviados=0, existentes=0, falhas=0;
@@ -1279,6 +1345,7 @@ var ACC_LIST=[], ACC_DISCS=[], ACC_CONV=null;
 // A matriz não distingue setor de obra — os dois têm linha em cde_acesso_auria —
 // então a tabela nova é o que permite marcar a diferença na tela.
 var ACC_OBRA={};
+var ACC_DF=[];   // vínculos disciplina→fornecedor do empreendimento aberto (disciplina_fornecedor_auria)
 var OBRA_NIVEL_ROTULO={ eng_chefe:'Engenheiro chefe', coord_campo:'Coordenação de campo', equipe_campo:'Equipe de campo' };
 function accDiscLabel(cod){
   if(!ACC_CONV) return cod;
@@ -1309,9 +1376,15 @@ async function loadAcessos(empId){
     accDiscsDaConv().forEach(d=>set.add(d));
     try{ const dd=await sb.from('cde_documento_auria').select('disciplina').eq('empreendimento_id',empId);
       (dd.data||[]).forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
-    try{ const df=await sb.from('disciplina_fornecedor_auria').select('disciplina').eq('empreendimento_id',empId);
-      (df.data||[]).forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
+    // Vínculos fornecedor→disciplina deste empreendimento (a ATRIBUIÇÃO — item 28).
+    ACC_DF=[];
+    try{ const df=await sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id').eq('empreendimento_id',empId);
+      ACC_DF=df.data||[]; ACC_DF.forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
     ACC_DISCS=[...set].sort();
+    // Lista de fornecedores do grupo (com profissionais) — pode não ter vindo ainda.
+    if(!FORNECEDORES.length){
+      try{ const rf=await sb.from('fornecedores_auria').select('*,projetistas_auria(*)').order('nome'); FORNECEDORES=rf.data||[]; }catch(_){}
+    }
     const r=await sb.rpc('cde_acessos_do_emp',{p_emp:empId});
     if(r.error) throw r.error;
     ACC_LIST=r.data||[];
@@ -1424,7 +1497,78 @@ function renderAcessos(){
       <b style="font-size:14px">🏢 Fornecedores</b>
       <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas da empresa. <b style="color:#166534">Verde</b> = disciplina contratada (vê, baixa e <b>envia</b>); demais marcadas = só vê e baixa. O <b>upload é sempre limitado à disciplina contratada</b> — um projetista não posta em outra disciplina.</span>
     </div>
-    ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra. Atribua em <b>Fornecedores</b>.</div>'}`;
+    ${accAtribuicaoHtml()}
+    ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra ainda. Atribua uma disciplina a um fornecedor acima.</div>'}`;
+}
+// ── Atribuição fornecedor → disciplina (item 28) ────────────────────────────
+//  É o que o CDE, a matriz, o cde_minhas_entregas e o painel do projetista leem.
+//  O CADASTRO (página Fornecedores) diz o que a empresa sabe fazer; isto diz o
+//  que ela ATENDE nesta obra. Uma disciplina tem um fornecedor por obra
+//  (unique emp+disciplina): atribuir de novo troca o fornecedor.
+function accFornNome(id){ const f=(FORNECEDORES||[]).find(x=>x.id===id); return f?f.nome:'—'; }
+// Fornecedores com algum profissional cadastrado na disciplina (por rótulo ou código).
+function accFornTemDisc(f, cod){
+  const rot=(accDiscLabel(cod)||'').toLowerCase(), c=String(cod).toLowerCase();
+  return (f.projetistas_auria||[]).some(p=>(Array.isArray(p.disciplinas)?p.disciplinas:String(p.disciplinas||'').split(','))
+    .some(d=>{ const x=String(d||'').trim().toLowerCase(); return x && (x===rot || x===c); }));
+}
+function accAtribuicaoHtml(){
+  const discs=ACC_DISCS.length?ACC_DISCS:accDiscsDaConv();
+  const vinc=(ACC_DF||[]).slice().sort((a,b)=>String(a.disciplina).localeCompare(String(b.disciplina)));
+  const lista = vinc.length
+    ? vinc.map(v=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px 6px 4px 9px;font-size:12px">
+          <b style="font-family:var(--mono,ui-monospace,Consolas,monospace);color:var(--txt)">${esc(v.disciplina)}</b>
+          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}
+          <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Remover atribuição" onclick="accRemoverAtrib('${v.id}')">✕</button></span>`).join(' ')
+    : '<span style="font-size:12px;color:var(--mut)">Nenhuma disciplina atribuída a fornecedor nesta obra.</span>';
+  const optsDisc = discs.map(d=>`<option value="${esc(d)}">${esc(d)}${accDiscLabel(d)!==d?' — '+esc(accDiscLabel(d)):''}</option>`).join('');
+  return `<div style="background:#F5F3FA;border:1px solid #DAD3EC;border-radius:10px;padding:12px 16px;margin-bottom:12px">
+    <div style="font-size:12.5px;color:#4A3F73;margin-bottom:8px"><b>Quem atende cada disciplina nesta obra.</b> O cadastro em Fornecedores diz o que a empresa sabe fazer; aqui você diz o que ela <b>atende neste empreendimento</b>. É isto que libera o upload do projetista e o mostra na matriz abaixo.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${lista}</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="accAtribDisc" onchange="accAtribFornOpts()" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:220px">
+        <option value="">Disciplina…</option>${optsDisc}</select>
+      <select id="accAtribForn" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:260px">
+        <option value="">Escolha a disciplina primeiro</option></select>
+      <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="accAtribuirForn()">Atribuir</button>
+      ${FORNECEDORES.length?'':'<span style="font-size:12px;color:var(--err)">Nenhum fornecedor cadastrado no grupo — cadastre em <b>Fornecedores</b>.</span>'}
+    </div>
+  </div>`;
+}
+// Popula o seletor de fornecedores conforme a disciplina: primeiro os que têm
+// profissional nela, depois os demais (nada fica escondido).
+function accAtribFornOpts(){
+  const cod=($('accAtribDisc')||{}).value||''; const sel=$('accAtribForn'); if(!sel) return;
+  if(!cod){ sel.innerHTML='<option value="">Escolha a disciplina primeiro</option>'; return; }
+  const com=FORNECEDORES.filter(f=>accFornTemDisc(f,cod)), sem=FORNECEDORES.filter(f=>!accFornTemDisc(f,cod));
+  const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
+  const opt=f=>`<option value="${f.id}" ${atual&&atual.fornecedor_id===f.id?'selected':''}>${esc(f.nome)}${atual&&atual.fornecedor_id===f.id?' (atual)':''}</option>`;
+  sel.innerHTML = (com.length?'<optgroup label="Com profissional de '+esc(accDiscLabel(cod))+'">'+com.map(opt).join('')+'</optgroup>':'')
+                + (sem.length?'<optgroup label="Outros fornecedores">'+sem.map(opt).join('')+'</optgroup>':'')
+                + (FORNECEDORES.length?'':'<option value="">Nenhum fornecedor cadastrado</option>');
+}
+async function accAtribuirForn(){
+  const cod=($('accAtribDisc')||{}).value||'', fid=($('accAtribForn')||{}).value||'';
+  if(!cod||!fid){ alert('Escolha a disciplina e o fornecedor.'); return; }
+  const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
+  if(atual && atual.fornecedor_id!==fid && !confirm('A disciplina '+cod+' já é atendida por '+accFornNome(atual.fornecedor_id)+'. Trocar para '+accFornNome(fid)+'?')) return;
+  try{
+    // unique (empreendimento_id, disciplina): upsert troca o fornecedor se já houver.
+    const r=await sb.from('disciplina_fornecedor_auria').upsert(
+      { empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, criado_por:USER.id },
+      { onConflict:'empreendimento_id,disciplina' });
+    if(r.error) throw r.error;
+    await loadAcessos(CDE_AC_EMPID);
+  }catch(e){ alert('Não foi possível atribuir: '+((e&&e.message)||e)); }
+}
+async function accRemoverAtrib(id){
+  const v=(ACC_DF||[]).find(x=>x.id===id); if(!v) return;
+  if(!confirm('Remover '+accFornNome(v.fornecedor_id)+' da disciplina '+v.disciplina+' nesta obra?\nOs projetistas dele deixam de poder enviar nessa disciplina aqui.')) return;
+  try{
+    const r=await sb.from('disciplina_fornecedor_auria').delete().eq('id',id);
+    if(r.error) throw r.error;
+    await loadAcessos(CDE_AC_EMPID);
+  }catch(e){ alert('Não foi possível remover: '+((e&&e.message)||e)); }
 }
 // Garante uma linha na matriz para o sujeito (fornecedor pode ainda não ter).
 async function accGaranteLinha(acessoId, tipo, sujeitoId){
