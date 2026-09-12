@@ -894,30 +894,58 @@ async function boot(){
     USER_ROLE = prof && prof.role || null;
     USER_NOME = (prof && prof.nome) || USER.email || '';
   }catch(e){}
-  RAMO_OBRA   = (USER_ROLE==='obra');
-  SEM_ESCRITA = (USER_ROLE==='setor' || RAMO_OBRA);
+  RAMO_OBRA = (USER_ROLE==='obra');
+  // COORDENAÇÃO = quem o BANCO diz que gere este empreendimento (estacao_pode:
+  // analista designado, gerente do grupo, super_admin) — a mesma função que a
+  // RLS usa. Antes a página deduzia "coordenação" por exclusão ("não é setor
+  // nem obra"), o que incluía projetista e financeiro: eles viam Receber,
+  // transições de status e Analisar no App (a RLS barrava a escrita, mas a
+  // tela oferecia e falhava). Agora a tela concorda com o servidor. Falha na
+  // consulta → false → modo consulta (fail-closed; recarregar resolve).
+  let COORDENACAO = false;
+  if(EMP_ID){
+    try{ const r=await sb.rpc('estacao_pode',{ p_emp:EMP_ID }); COORDENACAO = (!r.error && r.data===true); }
+    catch(e){ COORDENACAO=false; }
+  }
+  SEM_ESCRITA = !COORDENACAO;   // tudo que não é coordenação é consulta
   // Nível nesta obra (RPC SECURITY DEFINER do banco — mesma fonte da RLS).
   if(RAMO_OBRA && EMP_ID){
     try{ const n=await sb.rpc('obra_nivel',{ p_emp:EMP_ID }); NIVEL_OBRA=(!n.error && n.data) ? n.data : null; }
     catch(e){ NIVEL_OBRA=null; }
   }
-  SO_PUBLICADO     = SEM_ESCRITA && NIVEL_OBRA!=='eng_chefe';
-  FERRAMENTAS_OBRA = !SEM_ESCRITA || NIVEL_OBRA==='eng_chefe' || NIVEL_OBRA==='coord_campo';
-  // Capacidade de ABRIR APONTAMENTO: flag abrir_apont na matriz do empreendimento
-  // (obra/projetista). Independente do ramo — o +Apontar é liberado por flag,
-  // não pelo papel. A RLS (apt_externo_ins) é a barreira real; isto é só a UI.
+  // Flags da matriz para ESTE usuário neste empreendimento. abrir_apont libera o
+  // +Apontar (obra/projetista) — por flag, não por papel; a RLS (apt_externo_ins)
+  // é a barreira real. ver_nao_publicado é a Camada 3 (o preset dá ao eng. chefe).
+  let acc=null;
   try{
-    const { data: acc } = await sb.from('cde_acesso_auria')
-      .select('abrir_apont').eq('empreendimento_id',EMP_ID).eq('usuario_id',USER.id).maybeSingle();
-    CAN_APONTAR = !!(acc && acc.abrir_apont);
+    const q=await sb.from('cde_acesso_auria')
+      .select('abrir_apont,ver_nao_publicado').eq('empreendimento_id',EMP_ID).eq('usuario_id',USER.id).maybeSingle();
+    acc=q.data||null;
   }catch(e){}
+  CAN_APONTAR = !!(acc && acc.abrir_apont);
+  const VER_NAO_PUB = NIVEL_OBRA==='eng_chefe' || !!(acc && acc.ver_nao_publicado);
+  // "Vê que existe, mas não abre" (Camada 1) é conceito de CONSUMIDOR: setor e
+  // ramo obra. O projetista é PRODUTOR — precisa abrir o próprio upload em S0 —
+  // e para ele quem decide é a RLS (disciplina contratada em qualquer status;
+  // concedidas conforme a matriz). Não aplicar o cinza de "não liberado" a ele.
+  const CONSUMIDOR = (USER_ROLE==='setor') || RAMO_OBRA;
+  SO_PUBLICADO     = CONSUMIDOR && !VER_NAO_PUB;
+  FERRAMENTAS_OBRA = COORDENACAO || NIVEL_OBRA==='eng_chefe' || NIVEL_OBRA==='coord_campo';
   if(SEM_ESCRITA){
     document.body.classList.add('cde-ro');
     const lp=$('lnkPadrao'); if(lp) lp.style.display='none';
-    // Cada ramo volta para a SUA entrada: obra tem página própria; setor, a de consulta.
+    // "Voltar" leva cada papel à SUA entrada, com o rótulo certo (antes dizia
+    // "Portal" para todo mundo). ?lista=1: a entrada da obra não redireciona de
+    // volta para cá quando a pessoa só tem uma obra.
     const volta=document.querySelector('header a[href="portal.html"]');
-    // ?lista=1 impede a entrada da obra de redirecionar de volta para cá quando só há uma obra.
-    if(volta) volta.setAttribute('href', RAMO_OBRA ? 'obra.html?lista=1' : 'cde_setor.html');
+    if(volta){
+      const dest = RAMO_OBRA                 ? ['obra.html?lista=1', '← Obra']
+                 : USER_ROLE==='setor'      ? ['cde_setor.html',    '← Consulta']
+                 : USER_ROLE==='projetista' ? ['projetista.html',   '← Meu portal']
+                 : USER_ROLE==='financeiro' ? ['auria_custos.html', '← Custos']
+                 :                            ['./',                '← Início'];
+      volta.setAttribute('href', dest[0]); volta.textContent = dest[1];
+    }
   }
   if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no portal.'; return; }
   carregarPastasAbertas();
