@@ -309,6 +309,14 @@
              padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
   .pjh .hbtn:hover{background:#243452}
   .pjh .msg-badge,.pj-tabs .msg-badge{background:var(--cde-accent);color:#231703;font-weight:800}
+  /* Nota geral em destaque no cabeçalho (a faixa fica só com os contadores) */
+  .pjh-nota{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.06);border:1px solid #2A3850;
+            border-radius:10px;padding:4px 12px 4px 10px;min-height:44px}
+  .pjh-nota .lbl{display:flex;flex-direction:column;line-height:1.1}
+  .pjh-nota .lbl small{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:#8FA6C0;font-weight:800}
+  .pjh-nota .lbl span{font-size:10.5px;color:#9DB3CA;margin-top:2px}
+  .pjh-nota b{font-size:26px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  .pjh-nota i{font-style:normal;font-size:14px;font-weight:800}
   /* barra de ferramentas (.vtool) */
   .pjv{display:flex;align-items:center;gap:9px;padding:8px 14px;background:var(--cde-panel);
        border-bottom:1px solid var(--cde-line);flex-shrink:0;flex-wrap:wrap}
@@ -419,6 +427,10 @@
     <div class="pjh-c"><b id="pj-forn-nome">&nbsp;</b><span id="pj-forn-sub">Fornecedor</span></div>
     <div class="pjh-r">
       <div class="pjh-logo" id="pj-forn-logo" style="display:none"></div>
+      <div class="pjh-nota" id="pj-nota" title="Sua nota geral (prazo, engajamento e assertividade)">
+        <div class="lbl"><small>Nota geral</small><span id="pj-nota-sub">—</span></div>
+        <b id="pj-nota-num">—</b><i id="pj-nota-trend"></i>
+      </div>
       <div class="who"><b id="user-nome"></b><span id="user-email"></span></div>
       <button class="hbtn" id="btn-msg" onclick="showMensagens()" title="Mensagens">Mensagens<span class="msg-badge" id="msg-badge" style="display:none">0</span></button>
       <button class="hbtn" onclick="logout()">Sair</button>
@@ -848,6 +860,7 @@ function renderHome(){
   EMP_NOMES = empNomes();
   pjRenderHeader(); pjRenderVtool(); pjRenderCards(); pjRenderRail();
   setAba(PJ_ABA);
+  pjResolverNomes();
   if(PJ_ABA==='apt'){ if(!TODOS.length && !PJ_EMP_ID) TODOS=MINE.slice(); atualizarKPIs(); filtrar(); }
   return;
   // (código antigo abaixo mantido só como referência; não executa)
@@ -2321,10 +2334,27 @@ function setAba(k){
 }
 // Empreendimentos do projetista: o vínculo do fornecedor (CDE_EMPS) é a fonte;
 // sem ele (ainda carregando ou sem disciplina atribuída), cai nos nomes dos apontamentos.
+var PJ_NOMES={};   // id → nome ATUAL em empreendimentos_auria (o texto do apontamento é rótulo antigo)
 function pjEmps(){
   if(CDE_EMPS && CDE_EMPS.length) return CDE_EMPS;
-  return empNomes().map(function(nm){ var a=MINE.find(function(x){ return x.empreendimento===nm; });
-    return { id:(a&&a.empreendimento_id)||'', nome:nm, fornecedor:'', discs:[], discs_ler:[] }; });
+  // Reserva: agrupa por ID quando há; senão por nome. Mostra o nome atual se já resolvido.
+  var por={}, ordem=[];
+  MINE.forEach(function(a){
+    var k=a.empreendimento_id||('nome:'+(a.empreendimento||''));
+    if(!por[k]){ por[k]={ id:a.empreendimento_id||'', nome:(a.empreendimento_id && PJ_NOMES[a.empreendimento_id])||a.empreendimento||'—', fornecedor:'', discs:[], discs_ler:[] }; ordem.push(k); }
+  });
+  return ordem.map(function(k){ return por[k]; }).sort(function(x,y){ return String(x.nome).localeCompare(String(y.nome)); });
+}
+// Resolve os nomes atuais por id (uma vez). Só faz sentido no caminho reserva.
+async function pjResolverNomes(){
+  if(CDE_EMPS && CDE_EMPS.length) return;
+  var ids=[]; MINE.forEach(function(a){ if(a.empreendimento_id && ids.indexOf(a.empreendimento_id)<0 && !PJ_NOMES[a.empreendimento_id]) ids.push(a.empreendimento_id); });
+  if(!ids.length) return;
+  try{
+    var emps=await _supaGet('empreendimentos_auria?select=id,nome&id=in.('+ids.join(',')+')');
+    var mudou=false; (emps||[]).forEach(function(e){ if(e.nome && PJ_NOMES[e.id]!==e.nome){ PJ_NOMES[e.id]=e.nome; mudou=true; } });
+    if(mudou){ pjRenderCards(); pjRenderRail(); setAba(PJ_ABA); }
+  }catch(e){}
 }
 function pjEmpAtual(){ return PJ_EMP_ID ? (pjEmps().find(function(e){ return e.id===PJ_EMP_ID; })||null) : null; }
 // Apontamentos de um empreendimento: por ID quando os dois lados têm; senão por nome.
@@ -2337,6 +2367,12 @@ function pjRenderHeader(){
   var sub=document.getElementById('pj-forn-sub'); if(sub) sub.textContent = forn ? 'Fornecedor' : '';
   var discs=[]; pjEmps().forEach(function(e){ (e.discs||[]).forEach(function(d){ if(discs.indexOf(d)<0) discs.push(d); }); });
   var t=document.getElementById('topbar-title'); if(t) t.textContent = discs.length ? discs.map(function(d){ return discFullName(d)||d; }).join(' · ') : 'Painel do Projetista';
+  // Nota geral no cabeçalho
+  var g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(ALL);
+  var nn=document.getElementById('pj-nota-num'), nt=document.getElementById('pj-nota-trend'), ns=document.getElementById('pj-nota-sub');
+  if(nn){ nn.textContent=g; nn.style.color=scoreCor(g); }
+  if(nt){ nt.textContent=trendIcon(tg); nt.style.color=trendCor(tg); }
+  if(ns){ ns.textContent = rg ? (rg.pos+'º de '+rg.total+' fornecedores') : (tg==='up'?'em alta':tg==='down'?'em queda':'estável'); }
   // Logo do fornecedor: não há campo no banco ainda (item 24); o espaço fica reservado.
 }
 function pjRenderVtool(){
@@ -2345,7 +2381,6 @@ function pjRenderVtool(){
   var at=MINE.filter(function(a){ return isAtrasado(a); }).length;
   var forn=(pjEmps()[0]||{}).fornecedor||'';
   var html='<span class="pj-cod">'+escH(pjSigla(forn)||'PROJETISTA')+'</span>'
-    +'<span class="pj-pill" style="background:'+scoreCor(g)+'">Nota '+g+' · '+trendIcon(tg)+'</span>'
     +pjChip(ab+' em aberto', ab?'warn':'ok')
     +pjChip(at+' em atraso', at?'err':'ok');
   PJ_FIN=pjFin();
