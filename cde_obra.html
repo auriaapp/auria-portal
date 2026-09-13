@@ -925,10 +925,15 @@ async function boot(){
   // cde_minhas_flags: linha própria (setor/obra) OU linha do fornecedor (projetista) —
   // antes lia só por usuario_id e o projetista nunca ganhava +Apontar (item 24-c).
   let acc=null;
-  try{
-    const q=await sb.rpc('cde_minhas_flags',{ p_emp:EMP_ID });
-    acc=(q.data&&q.data[0])||null;
-  }catch(e){}
+  for(let tent=0; tent<2 && !acc; tent++){
+    try{
+      const q=await sb.rpc('cde_minhas_flags',{ p_emp:EMP_ID });
+      if(q.error){ console.warn('[cde] cde_minhas_flags falhou (tentativa '+(tent+1)+'):', q.error.message||q.error); }
+      acc=(q.data&&q.data[0])||null;
+      if(!acc && !q.error) console.warn('[cde] cde_minhas_flags sem linha para', EMP_ID, JSON.stringify(q.data));
+    }catch(e){ console.warn('[cde] cde_minhas_flags exceção:', e&&e.message||e); }
+    if(!acc) await new Promise(r=>setTimeout(r,1200));   // PostgREST pode estar recarregando o schema
+  }
   CAN_APONTAR = !!(acc && acc.abrir_apont);
   const VER_NAO_PUB = NIVEL_OBRA==='eng_chefe' || !!(acc && acc.ver_nao_publicado);
   // "Vê que existe, mas não abre" (Camada 1) é conceito de CONSUMIDOR: setor e
