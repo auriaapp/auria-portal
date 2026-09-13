@@ -293,6 +293,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .dist-check-item:last-child{border-bottom:none}
 .dist-check-item input[type=checkbox]{accent-color:var(--blue);width:15px;height:15px}
 .dist-check-name{font-size:13px;flex:1}
+.dist-papel{font-size:12px;padding:4px 8px;border:1px solid var(--gray-border);border-radius:8px;background:#fff;font-family:inherit;color:var(--text)}
+.dist-papel.c{border-color:var(--orange);background:var(--orange-light);font-weight:700}
+.dist-papel:disabled{opacity:.45}
+.dist-papel-h{display:flex;justify-content:space-between;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em;padding:0 0 6px}
 
 /* ── TIPO TOGGLE (formulário empreendimento) ─────────── */
 .tipo-group{display:flex;gap:6px;flex-wrap:wrap}
@@ -611,7 +615,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <div class="toolbar-title">Distribuicao de Empreendimentos</div>
           </div>
           <div style="font-size:13px;color:var(--text-soft);margin-bottom:16px">
-            Selecione um empreendimento e marque quais analistas tem acesso a ele.
+            Selecione um empreendimento, marque quais analistas tem acesso a ele e escolha o papel de cada um: <b>Coordenador</b> (gere o empreendimento) ou <b>Visualizador</b> (so consulta).
           </div>
           <div class="dist-grid">
             <div class="dist-panel">
@@ -2217,13 +2221,21 @@ function selDistEmp(empId){
 
 async function renderDistAnalistas(){
   if(!DIST_EMP){setHTML('distAnalistaList','<div style="color:var(--text-soft);font-size:13px">Selecione um empreendimento</div>');return;}
+  // Papel por empreendimento (item 30): coordenador = gere; visualizador = so consulta.
+  // Mesmo campo que o mapa de vinculos (analista_empreendimento_auria.papel).
   const {data:ae} = await sb.from('analista_empreendimento_auria')
-    .select('analista_id').eq('empreendimento_id',DIST_EMP).eq('ativo',true);
+    .select('analista_id, papel').eq('empreendimento_id',DIST_EMP).eq('ativo',true);
   const ativos = (ae||[]).map(x=>x.analista_id);
-  setHTML('distAnalistaList', ANALISTAS.map(a=>`
+  const papel = {}; (ae||[]).forEach(x=>{ papel[x.analista_id]=x.papel||'coordenador'; });
+  const sel = (a)=>{ const p=papel[a.id]||'coordenador'; const on=ativos.includes(a.id);
+    return `<select class="dist-papel${p==='coordenador'?' c':''}" id="dp-${a.id}" ${on?'':'disabled'} onchange="this.classList.toggle('c', this.value==='coordenador')" title="Coordenador gere o empreendimento; visualizador so consulta">
+      <option value="coordenador"${p==='coordenador'?' selected':''}>Coordenador</option>
+      <option value="visualizador"${p==='visualizador'?' selected':''}>Visualizador</option></select>`; };
+  setHTML('distAnalistaList', (ANALISTAS.length?'<div class="dist-papel-h"><span>Analista</span><span>Papel</span></div>':'')+ANALISTAS.map(a=>`
     <div class="dist-check-item">
-      <input type="checkbox" id="da-${a.id}" ${ativos.includes(a.id)?'checked':''}>
+      <input type="checkbox" id="da-${a.id}" ${ativos.includes(a.id)?'checked':''} onchange="const s=document.getElementById('dp-${a.id}'); if(s) s.disabled=!this.checked">
       <label class="dist-check-name" for="da-${a.id}">${esc(a.nome||a.email)}</label>
+      ${sel(a)}
     </div>`).join('')||'<div style="color:var(--text-soft);font-size:13px">Nenhum analista cadastrado</div>');
 }
 
@@ -2235,9 +2247,10 @@ async function salvarDistribuicao(){
 
   // Ativa os selecionados (upsert)
   for(const aid of selecionados){
+    const ps=document.getElementById('dp-'+aid); const papel=(ps&&ps.value==='visualizador')?'visualizador':'coordenador';
     await sb.from('analista_empreendimento_auria').upsert({
       analista_id:aid, empreendimento_id:DIST_EMP,
-      concedido_por:USER.id, ativo:true
+      concedido_por:USER.id, ativo:true, papel
     },{onConflict:'analista_id,empreendimento_id'});
   }
   // Desativa os desmarcados
