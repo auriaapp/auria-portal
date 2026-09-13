@@ -1623,8 +1623,9 @@ async function loadCotacoes(empId){
 }
 function renderCotacoes(){
   const v=$('peView'); const e=empPorId(COT_EMP)||{};
+  const RO=souVisualizador(COT_EMP);
   const topo='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<button class="ctr-btn" onclick="cqAbrir()">＋ Nova cotação</button>'
+    +(RO?'<span class="cd-pill navy">Visualizador — só consulta</span>':'<button class="ctr-btn" onclick="cqAbrir()">＋ Nova cotação</button>')
     +'<span style="font-size:12.5px;color:var(--mut)">Solicitação de proposta por disciplina: os escritórios recebem o link, enviam a proposta e o mapa de equalização se monta sozinho.'
     +(e.area_construida_m2?' Área de referência do empreendimento: <b>'+m2fmt(e.area_construida_m2)+' m²</b>.':' <span style="color:var(--warn)">Sem área construída na ficha — informe na cotação para ter R$/m².</span>')+'</span></div>';
   if(!COT_LIST.length){ v.innerHTML=topo+'<div class="empty2" style="padding:26px"><div class="emoji">📨</div><h3>Nenhuma cotação ainda</h3><p>Abra a primeira: escolha a disciplina, descreva o escopo e convide os escritórios.</p></div>'; return; }
@@ -1643,7 +1644,7 @@ function renderCotacoes(){
 }
 function cotToggle(id){ COT_ABERTA=(COT_ABERTA===id)?null:id; renderCotacoes(); }
 function cotDetalhe(c,props,conv){
-  const area=Number(c.area_m2||0);
+  const area=Number(c.area_m2||0); const RO=souVisualizador(COT_EMP);
   const et=p=>(Array.isArray(p.etapas)?p.etapas:[]).filter(e=>e&&e.nome).map(e=>esc(e.nome)+' '+(Number(e.pct)||0)+'%').join(' · ')||'—';
   const menor=props.length?Math.min(...props.map(p=>Number(p.valor_total))):0;
   const linhas=props.map(p=>{
@@ -1656,7 +1657,7 @@ function cotDetalhe(c,props,conv){
       +'<td style="font-size:11.5px">'+et(p)+'</td>'
       +'<td class="mut" style="white-space:nowrap">'+(p.validade?fmtDate(p.validade):'—')+'</td>'
       +'<td style="white-space:nowrap">'+(p.pdf_path?'<button class="mini" onclick="cotPdf(\''+esc(p.pdf_path)+'\')">📄 PDF</button> ':'')
-      +(c.status!=='decidida'?'<button class="mini" title="Marcar como vencedora" onclick="cotVencedora(\''+c.id+'\',\''+p.id+'\')">🏆</button> <button class="mini" title="Descartar" onclick="cotDescartar(\''+p.id+'\')">✕</button>':(p.status==='vencedora'?'<span class="cd-pill ok">vencedora</span>':''))
+      +(c.status!=='decidida'&&!RO?'<button class="mini" title="Marcar como vencedora" onclick="cotVencedora(\''+c.id+'\',\''+p.id+'\')">🏆</button> <button class="mini" title="Descartar" onclick="cotDescartar(\''+p.id+'\')">✕</button>':(p.status==='vencedora'?'<span class="cd-pill ok">vencedora</span>':''))
       +'</td></tr>';
   }).join('');
   const pend=conv.filter(x=>!x.respondido_em);
@@ -1665,17 +1666,17 @@ function cotDetalhe(c,props,conv){
     +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'
     +'<b style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)">Mapa de equalização</b>'
     +'<span style="flex:1"></span>'
-    +(props.length?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="mdeAbrir(\''+c.id+'\')" title="Gera o PDF do mapa de equalização com a decisão e os campos de assinatura">📄 MDE em PDF</button>':'')
+    +(props.length&&!RO?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="mdeAbrir(\''+c.id+'\')" title="Gera o PDF do mapa de equalização com a decisão e os campos de assinatura">📄 MDE em PDF</button>':'')
     +(c.mde_pdf_path?'<button class="mini" onclick="cotPdf(\''+esc(c.mde_pdf_path)+'\')" title="Último MDE gerado'+(c.mde_gerado_em?' em '+new Date(c.mde_gerado_em).toLocaleDateString('pt-BR'):'')+'">⬇ MDE gerado</button>':'')
-    +(c.mde_pdf_path?(c.mde_assinado_path?'<button class="mini" onclick="cotPdf(\''+esc(c.mde_assinado_path)+'\')" title="MDE assinado">✅ MDE assinado</button>':'<label class="mini" style="cursor:pointer" title="Subir o PDF assinado no TOTVS Sign">📎 Anexar MDE assinado<input type="file" accept="application/pdf" style="display:none" onchange="mdeAssinado(\''+c.id+'\',this)"></label>'):'')
-    +(c.status==='aberta'?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="ppAbrir(\''+c.id+'\')">＋ Registrar proposta recebida por e-mail</button>':'')
-    +(c.status==='aberta'?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="cotStatus(\''+c.id+'\',\'cancelada\')">Cancelar cotação</button>':'')
+    +(c.mde_pdf_path&&!RO?(c.mde_assinado_path?'<button class="mini" onclick="cotPdf(\''+esc(c.mde_assinado_path)+'\')" title="MDE assinado">✅ MDE assinado</button>':'<label class="mini" style="cursor:pointer" title="Subir o PDF assinado no TOTVS Sign">📎 Anexar MDE assinado<input type="file" accept="application/pdf" style="display:none" onchange="mdeAssinado(\''+c.id+'\',this)"></label>'):'')
+    +(c.status==='aberta'&&!RO?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="ppAbrir(\''+c.id+'\')">＋ Registrar proposta recebida por e-mail</button>':'')
+    +(c.status==='aberta'&&!RO?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="cotStatus(\''+c.id+'\',\'cancelada\')">Cancelar cotação</button>':'')
     +'</div>'
     +(props.length?'<div class="cd-tbl"><table><thead><tr><th>Escritório</th><th style="text-align:right">Valor</th><th style="text-align:right">R$/m²</th><th style="text-align:center">Prazo</th><th>Etapas</th><th>Validade</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
       :'<div style="font-size:12.5px;color:var(--mut);padding:10px 0">Nenhuma proposta recebida ainda.</div>')
     +'<div id="cot-ref-'+c.id+'" style="font-size:12px;color:var(--mut);margin-top:8px"></div>'
     +'<div style="font-size:12px;color:var(--mut);margin-top:10px"><b>Convidados:</b> '+(conv.length?conv.map(x=>esc(x.empresa_nome||x.email)+(x.respondido_em?' <span class="cd-pill ok" style="font-size:10px">respondeu</span>':' <span class="cd-pill mut" style="font-size:10px">aguardando</span>')).join(' · '):'—')
-    +(pend.length&&c.status==='aberta'?' <button class="mini" onclick="cotLembrar(\''+c.id+'\')" title="Reenviar o e-mail a quem ainda não respondeu">↻ lembrar</button>':'')+'</div>'
+    +(pend.length&&c.status==='aberta'&&!RO?' <button class="mini" onclick="cotLembrar(\''+c.id+'\')" title="Reenviar o e-mail a quem ainda não respondeu">↻ lembrar</button>':'')+'</div>'
     +'</div>' + (setTimeout(()=>cotReferencia(c),0), '');
 }
 // Faixa histórica: contratos do grupo na mesma disciplina, R$/m² pela área do empreendimento.
