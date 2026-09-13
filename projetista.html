@@ -816,7 +816,16 @@ async function carregarApontamentos(){
     });
     await loadMsgData();
     try{
+      // Contrato de empreendimento INATIVO não entra (casca antiga/homônima). Se a RLS
+      // não deixar ler o empreendimento, o embed vem null e o contrato fica (não some por engano).
       P_CONTRATOS=await _supaGet('contratos_auria?select=*');
+      try{
+        var eids=[...new Set(P_CONTRATOS.map(function(c){ return c.empreendimento_id; }).filter(Boolean))];
+        if(eids.length){
+          var inativos={}; (await _supaGet('empreendimentos_auria?select=id,ativo&id=in.('+eids.join(',')+')')||[]).forEach(function(e){ if(e.ativo===false) inativos[e.id]=true; });
+          P_CONTRATOS=P_CONTRATOS.filter(function(c){ return !inativos[c.empreendimento_id]; });
+        }
+      }catch(e){}
       const cids=P_CONTRATOS.map(c=>c.id);
       if(cids.length){
         const parcs=await _supaGet('parcelas_auria?contrato_id=in.('+cids.join(',')+')');
