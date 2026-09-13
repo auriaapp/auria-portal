@@ -367,6 +367,14 @@
   .pj-card:hover{border-color:var(--cde-accent)}
   .pj-card.sel{background:rgba(232,150,10,.13);outline:1px solid var(--cde-accent)}
   .pj-card .hd{padding:13px 15px 10px;display:flex;gap:12px;align-items:flex-start}
+  /* Logo do empreendimento: slot SEMPRE presente no card (com logo = branco + linha
+     laranja; sem logo = tracejado com a sigla). Mesmo formato da logo do fornecedor. */
+  .elogo{width:60px;height:46px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid var(--cde-accent);
+         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box}
+  .elogo img{max-width:100%;max-height:100%;object-fit:contain;padding:3px;display:block}
+  .elogo.ph{border:1.5px dashed var(--cde-line);background:var(--cde-panel2);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+            font-weight:800;font-size:11px;letter-spacing:.04em;color:var(--cde-mut)}
+  .pj-card .dot{margin-top:0;display:inline-block;vertical-align:middle;margin-right:6px}
   .pj-card .dot{width:8px;height:8px;border-radius:50%;margin-top:7px;flex-shrink:0}
   .pj-card .fc{font-family:var(--cde-mono);font-size:13px;font-weight:700;color:var(--cde-navy);line-height:1.2}
   .pj-card .ft{font-size:11px;color:var(--cde-mut);line-height:1.2}
@@ -377,7 +385,7 @@
   .pj-card .nota small{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--cde-mut);font-weight:800}
   .pj-card .nota b{font-size:26px;font-weight:800;line-height:1.05;font-variant-numeric:tabular-nums}
   .pj-card .nota i{font-style:normal;font-size:10.5px;font-weight:700}
-  .pj-card .stats{padding:0 15px 12px 35px;display:flex;gap:6px;flex-wrap:wrap}
+  .pj-card .stats{padding:0 15px 12px 87px;display:flex;gap:6px;flex-wrap:wrap}
   .pj-card .acts{padding:8px 15px;border-top:1px solid var(--cde-line);background:var(--cde-panel2);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
   .pj-card.sel .acts{background:var(--cde-panel)}
   .pj-btn{background:var(--cde-panel2);border:1px solid var(--cde-line);color:var(--cde-txt);border-radius:8px;padding:5px 10px;
@@ -873,6 +881,7 @@ function renderHome(){
   pjRenderHeader(); pjRenderVtool(); pjRenderCards(); pjRenderRail();
   setAba(PJ_ABA);
   pjResolverNomes();
+  pjResolverLogos();
   if(PJ_ABA==='apt'){ if(!TODOS.length && !PJ_EMP_ID) TODOS=MINE.slice(); atualizarKPIs(); filtrar(); }
   return;
   // (código antigo abaixo mantido só como referência; não executa)
@@ -2347,6 +2356,21 @@ function setAba(k){
 // Empreendimentos do projetista: o vínculo do fornecedor (CDE_EMPS) é a fonte;
 // sem ele (ainda carregando ou sem disciplina atribuída), cai nos nomes dos apontamentos.
 var PJ_NOMES={};   // id → nome ATUAL em empreendimentos_auria (o texto do apontamento é rótulo antigo)
+var PJ_LOGOS={};   // id → logo_url (empreendimentos_auria; RLS emp_projetista_sel libera a leitura)
+function pjElogo(e){
+  var url=e.id?PJ_LOGOS[e.id]:''; var sigla=(e.nome||'').split(/\s+/).map(function(w){ return w.replace(/[^\p{L}\p{N}]/gu,''); }).filter(Boolean).map(function(w){ return w[0]; }).join('').slice(0,4).toUpperCase();
+  return url ? '<div class="elogo"><img src="'+escH(url)+'" alt=""></div>' : '<div class="elogo ph" title="Sem logo">'+escH(sigla||'?')+'</div>';
+}
+async function pjResolverLogos(){
+  var ids=[]; pjEmps().forEach(function(e){ if(e.id && !(e.id in PJ_LOGOS)) ids.push(e.id); });
+  if(!ids.length) return;
+  try{
+    var rows=await _supaGet('empreendimentos_auria?select=id,logo_url&id=in.('+ids.join(',')+')');
+    ids.forEach(function(id){ PJ_LOGOS[id]=''; });
+    (rows||[]).forEach(function(r){ PJ_LOGOS[r.id]=r.logo_url||''; });
+    pjRenderCards();
+  }catch(e){}
+}
 function pjEmps(){
   if(CDE_EMPS && CDE_EMPS.length) return CDE_EMPS;
   // Reserva: agrupa por ID quando há; senão por nome. Mostra o nome atual se já resolvido.
@@ -2481,8 +2505,8 @@ function pjRenderCards(){
         +'<a href="ficha.html?emp='+encodeURIComponent(e.id)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:12px;color:var(--cde-navy);font-weight:700;text-decoration:none">Ficha</a>'
       : '<span class="pj-hint">Sem vínculo de fornecedor neste empreendimento — só apontamentos.</span>';
     return '<div class="pj-card'+(sel?' sel':'')+'" onclick="pjSelectEmpIdx('+idx+')">'
-      +'<div class="hd"><span class="dot" style="background:'+dot+'"></span>'
-      +'<div style="flex:1;display:flex;flex-direction:column;gap:2px"><span class="fc">'+escH(e.nome)+'</span>'
+      +'<div class="hd">'+pjElogo(e)
+      +'<div style="flex:1;display:flex;flex-direction:column;gap:2px"><span class="fc"><span class="dot" style="background:'+dot+'"></span>'+escH(e.nome)+'</span>'
       +'<span class="ft">'+apts.length+' apontamento(s) na minha disciplina</span>'
       +'<div class="chips">'+chips+'</div></div>'
       +'<div class="nota"><small>Nota</small><b style="color:'+scoreCor(sc)+'">'+sc+'</b><i style="color:'+trendCor(td)+'">'+trendIcon(td)+'</i></div></div>'

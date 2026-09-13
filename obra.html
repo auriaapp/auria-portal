@@ -36,7 +36,15 @@
   .emp{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--obra);border-radius:13px;
        overflow:hidden;cursor:pointer;text-align:left;font-family:inherit;color:var(--txt);display:flex;flex-direction:column}
   .emp:hover{border-color:var(--obra)}
-  .emp-h{padding:16px}
+  .emp-h{padding:16px;display:flex;gap:12px;align-items:flex-start}
+  .emp-h > div{flex:1;min-width:0}
+  /* Logo do empreendimento: slot SEMPRE presente no card (com logo = branco + linha
+     laranja; sem logo = tracejado com a sigla). Mesmo formato da logo do fornecedor. */
+  .elogo{width:60px;height:46px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid var(--accent,#E8960A);
+         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box}
+  .elogo img{max-width:100%;max-height:100%;object-fit:contain;padding:3px;display:block}
+  .elogo.ph{border:1.5px dashed var(--line);background:var(--panel2,#F6F9FC);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+            font-weight:800;font-size:11px;letter-spacing:.04em;color:var(--mut)}
   .emp-h b{display:block;font-size:15px;line-height:1.3;margin-bottom:3px}
   .emp-h span{font-size:12px;color:var(--mut)}
   .nivel{display:inline-block;margin-top:9px;font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
@@ -120,15 +128,25 @@ async function boot(){
       +'Peça à coordenação do empreendimento para liberar o seu acesso.</div>';
     return;
   }
+  await carregarLogos(emps.map(e=>e.empreendimento_id));
   $('emps').innerHTML='<div class="emps">'+emps.map(e=>{
     const local=[e.cidade,e.estado].filter(Boolean).join(' · ');
     const nv=niveis[e.empreendimento_id];
     return `<button class="emp" onclick="location.href='cde_obra.html?emp=${encodeURIComponent(e.empreendimento_id)}'">
-      <div class="emp-h"><b>${esc(e.empreendimento_nome)}</b><span>${esc(local||'—')}</span><br>
-        <span class="nivel">${esc(NIVEL_ROTULO[nv]||nv)}</span></div>
+      <div class="emp-h">${elogoHtml(LOGOS[e.empreendimento_id], e.empreendimento_nome)}<div><b>${esc(e.empreendimento_nome)}</b><span>${esc(local||'—')}</span><br>
+        <span class="nivel">${esc(NIVEL_ROTULO[nv]||nv)}</span></div></div>
       <div class="emp-go">🏗 Abrir a obra ›</div>
     </button>`;
   }).join('')+'</div>';
+}
+// Logo do empreendimento (empreendimentos_auria.logo_url — a RLS emp_acc_sel libera a leitura).
+var LOGOS={};
+async function carregarLogos(ids){
+  try{ const r=await sb.from('empreendimentos_auria').select('id,logo_url').in('id',ids); (r.data||[]).forEach(x=>{ LOGOS[x.id]=x.logo_url||''; }); }catch(e){}
+}
+function elogoHtml(url, nome){
+  const sigla=(nome||'').split(/\s+/).map(w=>w.replace(/[^\p{L}\p{N}]/gu,'')).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase();
+  return url ? '<div class="elogo"><img src="'+esc(url)+'" alt=""></div>' : '<div class="elogo ph" title="Sem logo">'+esc(sigla||'?')+'</div>';
 }
 boot();
 </script>
