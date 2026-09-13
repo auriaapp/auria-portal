@@ -449,7 +449,17 @@
       </div>
       <label>Fim</label>
       <input id="ct-fim" type="date">
-      <label style="margin-top:14px">Parcelas (valor e % por parcela) *</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <label style="margin:0">Parcelas (valor e % por parcela) *</label>
+        <button type="button" class="ctr-btn sec" style="font-size:11px;padding:4px 10px" onclick="ctEtapasAbrir()" title="Gera as parcelas a partir das etapas de projeto em % da proposta">⚙ Gerar por etapas (%)</button>
+      </div>
+      <div id="ct-etapas" style="display:none;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px">
+        <div style="font-size:12px;color:var(--mut);margin-bottom:6px">Etapas e percentuais conforme a <b>proposta do fornecedor</b>. Os valores são calculados sobre o valor total; ajuste nomes e % e clique em Aplicar.</div>
+        <table class="parc-tbl"><thead><tr><th>Etapa</th><th>%</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody id="ct-etapas-body"></tbody>
+          <tfoot><tr><td style="text-align:right;font-weight:700">Soma:</td><td id="ct-etapas-soma">0%</td><td colspan="2" style="text-align:right">
+            <button type="button" class="mini" onclick="CT_ETAPAS.push({nome:'',pct:0});ctEtapasRender()">＋ etapa</button>
+            <button type="button" class="ctr-btn" style="font-size:11px;padding:4px 10px" onclick="ctEtapasAplicar()">Aplicar às parcelas</button></td></tr></tfoot></table>
+      </div>
       <table class="parc-tbl" id="ct-parc-tbl">
         <thead><tr><th class="n">#</th><th>Descrição</th><th class="v">Valor (R$)</th><th style="width:80px">%</th><th class="d">Vencimento</th><th></th></tr></thead>
         <tbody id="ct-parc-body"></tbody>
@@ -1263,8 +1273,46 @@ function _projOptions(){
 function _discOptions(sel){
   return '<option value="">— Selecione —</option>'+DISC_OPTS.map(d=>`<option value="${esc(d)}"${sel===d?' selected':''}>${esc(d)}</option>`).join('');
 }
-function abrirContrato(){
-  CT_PARCS_BUF=[{descricao:'',valor:0,vencimento:''}];
+// Atalho do vínculo (chip 💼): abre Contratos do empreendimento com o projetista
+// responsável e a disciplina já escolhidos.
+function accContratoDe(vid){
+  const v=(ACC_DF||[]).find(x=>x.id===vid); if(!v) return;
+  const emp=CDE_AC_EMPID;
+  abrirEmpContratos(emp);
+  setTimeout(()=>{ abrirContrato({ projetista_id:v.projetista_id, fornecedor_id:v.fornecedor_id, disciplina:accDiscLabel(v.disciplina)||v.disciplina }); }, 400);
+}
+// Etapas de projeto em % — modelo padrão; a coordenação ajusta pelo que a proposta
+// do fornecedor diz (ex.: estudo preliminar 15%, pré-executivo 20%…).
+var CT_ETAPAS_PADRAO=[ ['Estudo preliminar',15], ['Anteprojeto',15], ['Pré-executivo',20], ['Executivo',40], ['As-built / liberação final',10] ];
+var CT_ETAPAS=[];
+function ctEtapasAbrir(){
+  if(!CT_ETAPAS.length) CT_ETAPAS=CT_ETAPAS_PADRAO.map(e=>({nome:e[0],pct:e[1]}));
+  $('ct-etapas').style.display=''; ctEtapasRender();
+}
+function ctEtapasRender(){
+  const tb=$('ct-etapas-body'); if(!tb) return;
+  tb.innerHTML=CT_ETAPAS.map((e,i)=>`<tr>
+    <td><input data-et="nome" data-i="${i}" value="${esc(e.nome)}"></td>
+    <td style="width:90px"><input data-et="pct" data-i="${i}" type="number" step="0.5" min="0" max="100" value="${e.pct}"></td>
+    <td style="width:110px;text-align:right;font-variant-numeric:tabular-nums">${fmtBRL(Number($('ct-valor').value||0)*Number(e.pct||0)/100)}</td>
+    <td><button class="mini" type="button" onclick="CT_ETAPAS.splice(${i},1);ctEtapasRender()">🗑</button></td></tr>`).join('');
+  const soma=CT_ETAPAS.reduce((s,e)=>s+Number(e.pct||0),0);
+  const el=$('ct-etapas-soma'); if(el){ el.textContent=soma.toFixed(1).replace('.',',')+'%'; el.style.color=Math.abs(soma-100)>0.01?'var(--err)':'var(--ok)'; }
+}
+document.addEventListener('input',function(e){ const t=e.target; if(!t||!t.getAttribute) return; const f=t.getAttribute('data-et'); if(!f) return;
+  const i=+t.getAttribute('data-i'); if(!CT_ETAPAS[i]) return; CT_ETAPAS[i][f]=(f==='pct')?Number(t.value||0):t.value; if(f==='pct') ctEtapasRender(); });
+function ctEtapasAplicar(){
+  const tot=Number($('ct-valor').value||0); if(!tot){ alert('Informe o valor total do contrato primeiro.'); return; }
+  const soma=CT_ETAPAS.reduce((s,e)=>s+Number(e.pct||0),0);
+  if(Math.abs(soma-100)>0.01 && !confirm('As etapas somam '+soma.toFixed(1)+'% (não 100%). Gerar mesmo assim?')) return;
+  CT_PARCS_BUF=CT_ETAPAS.filter(e=>Number(e.pct)>0).map(e=>({ descricao:e.nome, valor:Math.round(tot*Number(e.pct)/100*100)/100, vencimento:'' }));
+  const diff=Math.round((tot-CT_PARCS_BUF.reduce((s,p)=>s+p.valor,0))*100)/100;
+  if(Math.abs(soma-100)<=0.01 && diff!==0 && CT_PARCS_BUF.length) CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor=Math.round((CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor+diff)*100)/100;
+  $('ct-nparc').value=CT_PARCS_BUF.length||1; $('ct-etapas').style.display='none'; renderCtParcs();
+}
+function abrirContrato(pre){
+  CT_PARCS_BUF=[{descricao:'',valor:0,vencimento:''}]; CT_ETAPAS=[];
+  const et=$('ct-etapas'); if(et) et.style.display='none';
   $('contratoModalT').textContent='Novo contrato';
   $('ct-projetista').innerHTML=_projOptions();
   $('ct-disc').innerHTML=_discOptions('');
@@ -1274,6 +1322,13 @@ function abrirContrato(){
   $('ct-proj-info').textContent='';
   renderCtParcs();
   $('contratoModal').classList.add('on');
+  // Pré-preenchimento vindo do vínculo disciplina→fornecedor→responsável (Fase B).
+  if(pre && typeof pre==='object'){
+    let pid=pre.projetista_id;
+    if(!pid && pre.fornecedor_id){ const p=PROJETISTAS.find(x=>x.fornecedor_id===pre.fornecedor_id); pid=p&&p.id; }
+    if(pid && PROJETISTAS.some(p=>p.id===pid)){ $('ct-projetista').value=pid; onSelProj(); }
+    if(pre.disciplina){ if(!DISC_OPTS.includes(pre.disciplina)) DISC_OPTS.push(pre.disciplina); $('ct-disc').innerHTML=_discOptions(pre.disciplina); }
+  }
 }
 function onSelProj(){
   const id=$('ct-projetista').value;
@@ -1286,7 +1341,7 @@ function onSelProj(){
   }
 }
 function fecharContrato(){ $('contratoModal').classList.remove('on'); }
-function onTotalChg(){ renderCtParcs(); }
+function onTotalChg(){ renderCtParcs(); if($('ct-etapas') && $('ct-etapas').style.display!=='none') ctEtapasRender(); }
 function onNParcChg(){
   const n=Math.max(1, parseInt($('ct-nparc').value||'1'));
   const tot=Number($('ct-valor').value||0);
@@ -1913,7 +1968,7 @@ async function loadAcessos(empId){
       (dd.data||[]).forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
     // Vínculos fornecedor→disciplina deste empreendimento (a ATRIBUIÇÃO — item 28).
     ACC_DF=[];
-    try{ const df=await sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id').eq('empreendimento_id',empId);
+    try{ const df=await sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id,projetista_id').eq('empreendimento_id',empId);
       ACC_DF=df.data||[]; ACC_DF.forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
     ACC_DISCS=[...set].sort();
     // Lista de fornecedores do grupo (com profissionais) — pode não ter vindo ainda.
@@ -2053,7 +2108,8 @@ function accAtribuicaoHtml(){
   const lista = vinc.length
     ? vinc.map(v=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px 6px 4px 9px;font-size:12px">
           <b style="font-family:var(--mono,ui-monospace,Consolas,monospace);color:var(--txt)">${esc(v.disciplina)}</b>
-          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}
+          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}${v.projetista_id?' <span style="color:var(--mut)">·</span> '+esc(accProjNome(v.fornecedor_id, v.projetista_id)):' <span style="color:var(--err);font-size:11px" title="Sem projetista responsável — defina abaixo">sem responsável</span>'}
+          <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Contrato desta disciplina (pré-preenchido)" onclick="accContratoDe('${v.id}')">💼</button>
           <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Remover atribuição" onclick="accRemoverAtrib('${v.id}')">✕</button></span>`).join(' ')
     : '<span style="font-size:12px;color:var(--mut)">Nenhuma disciplina atribuída a fornecedor nesta obra.</span>';
   const optsDisc = discs.map(d=>`<option value="${esc(d)}">${esc(d)}${accDiscLabel(d)!==d?' — '+esc(accDiscLabel(d)):''}</option>`).join('');
@@ -2063,8 +2119,10 @@ function accAtribuicaoHtml(){
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <select id="accAtribDisc" onchange="accAtribFornOpts()" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:220px">
         <option value="">Disciplina…</option>${optsDisc}</select>
-      <select id="accAtribForn" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:260px">
+      <select id="accAtribForn" onchange="accAtribProjOpts()" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:240px">
         <option value="">Escolha a disciplina primeiro</option></select>
+      <select id="accAtribProj" title="Projetista responsável por esta disciplina nesta obra" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:220px">
+        <option value="">Responsável…</option></select>
       <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="accAtribuirForn()">Atribuir</button>
       ${FORNECEDORES.length?'':'<span style="font-size:12px;color:var(--err)">Nenhum fornecedor cadastrado no grupo — cadastre em <b>Fornecedores</b>.</span>'}
     </div>
@@ -2082,6 +2140,18 @@ function accAtribFornOpts(){
                 + (sem.length?'<optgroup label="Outros fornecedores">'+sem.map(opt).join('')+'</optgroup>':'')
                 + (FORNECEDORES.length?'':'<option value="">Nenhum fornecedor cadastrado</option>');
 }
+// Projetistas (pessoas) do fornecedor escolhido: primeiro os da disciplina.
+function accProjNome(fid, pid){ const f=(FORNECEDORES||[]).find(x=>x.id===fid); const p=f&&(f.projetistas_auria||[]).find(x=>x.id===pid); return p?(p.nome||p.email):'—'; }
+function accAtribProjOpts(){
+  const cod=($('accAtribDisc')||{}).value||'', fid=($('accAtribForn')||{}).value||''; const sel=$('accAtribProj'); if(!sel) return;
+  const f=(FORNECEDORES||[]).find(x=>x.id===fid); const ps=f?(f.projetistas_auria||[]).filter(p=>p.ativo!==false):[];
+  const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
+  const daDisc=p=>{ const rot=(accDiscLabel(cod)||'').toLowerCase(), c=String(cod).toLowerCase();
+    return (Array.isArray(p.disciplinas)?p.disciplinas:String(p.disciplinas||'').split(',')).some(d=>{ const x=String(d||'').trim().toLowerCase(); return x && (x===rot||x===c); }); };
+  const ord=ps.slice().sort((a,b)=>(daDisc(b)?1:0)-(daDisc(a)?1:0));
+  sel.innerHTML='<option value="">Responsável…</option>'+ord.map(p=>'<option value="'+p.id+'"'+(atual&&atual.projetista_id===p.id?' selected':'')+'>'+esc(p.nome||p.email)+(daDisc(p)?'':' (outra disciplina)')+'</option>').join('');
+  if(!sel.value && ord.length===1) sel.value=ord[0].id;
+}
 async function accAtribuirForn(){
   const cod=($('accAtribDisc')||{}).value||'', fid=($('accAtribForn')||{}).value||'';
   if(!cod||!fid){ alert('Escolha a disciplina e o fornecedor.'); return; }
@@ -2089,11 +2159,16 @@ async function accAtribuirForn(){
   if(atual && atual.fornecedor_id!==fid && !confirm('A disciplina '+cod+' já é atendida por '+accFornNome(atual.fornecedor_id)+'. Trocar para '+accFornNome(fid)+'?')) return;
   try{
     // unique (empreendimento_id, disciplina): upsert troca o fornecedor se já houver.
+    const pid=($('accAtribProj')||{}).value||null;
     const r=await sb.from('disciplina_fornecedor_auria').upsert(
-      { empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, criado_por:USER.id },
+      { empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, projetista_id:pid, criado_por:USER.id },
       { onConflict:'empreendimento_id,disciplina' });
     if(r.error) throw r.error;
     await loadAcessos(CDE_AC_EMPID);
+    // Responsável sem conta ainda → convite de acesso (a function devolve ja_existia quando já tem).
+    if(pid){ const f=(FORNECEDORES||[]).find(x=>x.id===fid); const p=f&&(f.projetistas_auria||[]).find(x=>x.id===pid);
+      if(p&&p.email){ try{ const cv=await sb.functions.invoke('invite-projetista',{ body:{ email:p.email, nome:p.nome||'', empresa_nome:f.nome||'' } });
+        if(!cv.error && cv.data && !cv.data.ja_existia) alert('Convite de acesso enviado para '+p.email+'.'); }catch(_){} } }
   }catch(e){ alert('Não foi possível atribuir: '+((e&&e.message)||e)); }
 }
 async function accRemoverAtrib(id){
