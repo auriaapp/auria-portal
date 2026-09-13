@@ -1410,7 +1410,45 @@ function abrirContrato(pre){
     if(!pid && pre.fornecedor_id){ const p=PROJETISTAS.find(x=>x.fornecedor_id===pre.fornecedor_id); pid=p&&p.id; }
     if(pid && PROJETISTAS.some(p=>p.id===pid)){ $('ct-projetista').value=pid; onSelProj(); }
     if(pre.disciplina){ if(!DISC_OPTS.includes(pre.disciplina)) DISC_OPTS.push(pre.disciplina); $('ct-disc').innerHTML=_discOptions(pre.disciplina); }
+    if(pre.objeto) $('ct-obj').value=pre.objeto;
+    if(pre.valor_total){ $('ct-valor').value=Number(pre.valor_total).toFixed(2); }
+    if(Array.isArray(pre.etapas) && pre.etapas.length && pre.valor_total){
+      const tot=Number(pre.valor_total);
+      CT_PARCS_BUF=pre.etapas.filter(e=>Number(e.pct)>0).map(e=>({ descricao:e.nome||'', valor:Math.round(tot*Number(e.pct)/100*100)/100, vencimento:'' }));
+      const diff=Math.round((tot-CT_PARCS_BUF.reduce((s,p)=>s+p.valor,0))*100)/100;
+      if(diff!==0 && CT_PARCS_BUF.length) CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor=Math.round((CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor+diff)*100)/100;
+      $('ct-nparc').value=CT_PARCS_BUF.length||1; renderCtParcs();
+    }
+    CT_ORIGEM = pre.cotacao_id ? { cotacao_id:pre.cotacao_id, proposta_id:pre.proposta_id||null } : null;
+    if(CT_ORIGEM) $('contratoModalT').textContent='Novo contrato — a partir da proposta vencedora';
   }
+}
+var CT_ORIGEM=null;
+// Cotação decidida → contrato: acha o fornecedor cadastrado (pela proposta, e-mail ou
+// CNPJ), escolhe o projetista da disciplina e abre o contrato já preenchido.
+async function cotContratar(cid, pid){
+  const c=COT_LIST.find(x=>x.id===cid), p=(COT_PROPS[cid]||[]).find(x=>x.id===pid); if(!c||!p) return;
+  await carregarFornecedoresLeve();
+  const cnpj=String(p.cnpj||'').replace(/\D/g,''), em=(p.email||'').toLowerCase();
+  let forn=(FORNECEDORES||[]).find(f=>f.id===p.fornecedor_id)
+        || (cnpj?(FORNECEDORES||[]).find(f=>String(f.cnpj||'').replace(/\D/g,'')===cnpj):null)
+        || (em?(FORNECEDORES||[]).find(f=>(f.email_contato||'').toLowerCase()===em || (f.projetistas_auria||[]).some(x=>(x.email||'').toLowerCase()===em)):null);
+  if(!forn){
+    if(confirm('O escritório '+p.empresa_nome+' ainda não é fornecedor cadastrado do grupo (o cadastro precisa ser aprovado pela gestão antes do contrato). Enviar o convite de cadastro para '+(p.email||'o e-mail informado')+'?')){
+      if(!p.email){ alert('A proposta não tem e-mail — registre o cadastro pela Gestão.'); return; }
+      const cv=await sb.rpc('fornecedor_convidar_cadastro',{ p_email:p.email, p_emp:COT_EMP, p_mensagem:'Sua proposta para '+c.titulo+' foi selecionada. Complete o cadastro para seguirmos com o contrato.' });
+      alert(cv.error?('Convite não enviado: '+cv.error.message):'Convite enviado. Quando a gestão aprovar o cadastro, volte aqui e clique em Contratar.');
+    }
+    return;
+  }
+  if(!PROJETISTAS.some(x=>x.fornecedor_id===forn.id)){ FORNECEDORES.forEach(f=>(f.projetistas_auria||[]).forEach(x=>{ if(!PROJETISTAS.some(y=>y.id===x.id)) PROJETISTAS.push({...x, fornecedor_nome:f.nome}); })); }
+  const daDisc=x=>(Array.isArray(x.disciplinas)?x.disciplinas:String(x.disciplinas||'').split(',')).some(d=>String(d).trim().toLowerCase()===String(c.disciplina).toLowerCase());
+  const ps=(forn.projetistas_auria||[]).filter(x=>x.ativo!==false);
+  const resp=ps.find(daDisc)||ps.find(x=>(x.email||'').toLowerCase()===em)||ps[0];
+  if(!resp){ alert('O fornecedor '+forn.nome+' não tem projetista cadastrado. Edite o fornecedor em Fornecedores e adicione a pessoa.'); return; }
+  abrirEmpContratos(COT_EMP);
+  setTimeout(()=>{ abrirContrato({ projetista_id:resp.id, fornecedor_id:forn.id, disciplina:c.disciplina, objeto:c.titulo+(c.escopo?' — '+c.escopo:''),
+    valor_total:Number(p.valor_total), etapas:Array.isArray(p.etapas)?p.etapas:[], cotacao_id:c.id, proposta_id:p.id }); }, 400);
 }
 function onSelProj(){
   const id=$('ct-projetista').value;
@@ -1491,6 +1529,7 @@ async function salvarContrato(){
     data_inicio:$('ct-ini').value||null,
     data_fim:$('ct-fim').value||null,
     pdf_data:pdfData, pdf_nome:f.name,
+    cotacao_id:(CT_ORIGEM&&CT_ORIGEM.cotacao_id)||null, proposta_id:(CT_ORIGEM&&CT_ORIGEM.proposta_id)||null,
     criado_por:USER.id, atualizado_em:new Date().toISOString()
   };
   const btn=$('ct-save'); btn.disabled=true; const t=btn.textContent; btn.textContent='Salvando…';
@@ -1501,6 +1540,7 @@ async function salvarContrato(){
     const linhas=CT_PARCS_BUF.map((p,i)=>({contrato_id:ctrId, numero:i+1, descricao:p.descricao||`Parcela ${i+1}`, valor:Number(p.valor||0), vencimento:p.vencimento||null, status:'a_faturar'}));
     const rp=await sb.from('parcelas_auria').insert(linhas);
     if(rp.error) throw rp.error;
+    if(CT_ORIGEM&&CT_ORIGEM.cotacao_id){ try{ await sb.from('cotacao_auria').update({ contrato_id:ctrId }).eq('id',CT_ORIGEM.cotacao_id); }catch(_){} CT_ORIGEM=null; }
     fecharContrato(); await loadContratos(CTR_EMP_ID);
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
@@ -1637,7 +1677,7 @@ function renderCotacoes(){
       +'<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;cursor:pointer" onclick="cotToggle(\''+c.id+'\')">'
       +'<div><div style="font-size:15px;font-weight:800"><span class="cd-pill '+st[1]+'" style="margin-right:8px">'+st[0]+'</span>'+esc(c.titulo)+'</div>'
       +'<div style="font-size:12px;color:var(--mut);margin-top:3px"><span style="font-family:var(--mono);color:var(--navy);font-weight:700">'+esc(discCod(c.disciplina))+'</span> '+esc(c.disciplina)+' · '+conv.length+' convidado'+(conv.length===1?'':'s')+' · <b>'+props.length+' proposta'+(props.length===1?'':'s')+'</b>'
-      +(c.area_m2?' · '+m2fmt(c.area_m2)+' m²':'')+(c.prazo_envio?' · envio até '+fmtDate(c.prazo_envio):'')+(venc?' · vencedora: <b>'+esc(venc.empresa_nome)+'</b>':'')+'</div></div>'
+      +(c.area_m2?' · '+m2fmt(c.area_m2)+' m²':'')+(c.prazo_envio?' · envio até '+fmtDate(c.prazo_envio):'')+(venc?' · vencedora: <b>'+esc(venc.empresa_nome)+'</b>':'')+(c.contrato_id?' · <span class="cd-pill ok">contrato gerado</span>':'')+'</div></div>'
       +'<span style="font-size:18px;color:var(--mut)">'+(aberta?'▾':'▸')+'</span></div>'
       +(aberta?cotDetalhe(c,props,conv):'')+'</div>';
   }).join('');
@@ -1657,6 +1697,7 @@ function cotDetalhe(c,props,conv){
       +'<td style="font-size:11.5px">'+et(p)+'</td>'
       +'<td class="mut" style="white-space:nowrap">'+(p.validade?fmtDate(p.validade):'—')+'</td>'
       +'<td style="white-space:nowrap">'+(p.pdf_path?'<button class="mini" onclick="cotPdf(\''+esc(p.pdf_path)+'\')">📄 PDF</button> ':'')
+      +(c.status==='decidida'&&p.status==='vencedora'&&!RO?'<button class="mini" title="Criar o contrato com esta proposta (valor, etapas → parcelas, projetista)" onclick="cotContratar(\''+c.id+'\',\''+p.id+'\')">💼 Contratar</button> ':'')
       +(c.status!=='decidida'&&!RO?'<button class="mini" title="Marcar como vencedora" onclick="cotVencedora(\''+c.id+'\',\''+p.id+'\')">🏆</button> <button class="mini" title="Descartar" onclick="cotDescartar(\''+p.id+'\')">✕</button>':(p.status==='vencedora'?'<span class="cd-pill ok">vencedora</span>':''))
       +'</td></tr>';
   }).join('');
