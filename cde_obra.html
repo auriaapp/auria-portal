@@ -902,10 +902,16 @@ async function boot(){
   // transições de status e Analisar no App (a RLS barrava a escrita, mas a
   // tela oferecia e falhava). Agora a tela concorda com o servidor. Falha na
   // consulta → false → modo consulta (fail-closed; recarregar resolve).
-  let COORDENACAO = false;
+  // estacao_edita (item 13) = estacao_pode MENOS o analista VISUALIZADOR do
+  // empreendimento: ele lê tudo como equipe, mas a RLS não deixa escrever —
+  // então a tela entra em modo consulta para ele também.
+  let COORDENACAO = false, VISUALIZADOR = false;
   if(EMP_ID){
-    try{ const r=await sb.rpc('estacao_pode',{ p_emp:EMP_ID }); COORDENACAO = (!r.error && r.data===true); }
+    try{ const r=await sb.rpc('estacao_edita',{ p_emp:EMP_ID }); COORDENACAO = (!r.error && r.data===true); }
     catch(e){ COORDENACAO=false; }
+    if(!COORDENACAO && USER_ROLE==='analista'){
+      try{ const v=await sb.rpc('analista_visualizador',{ p_emp:EMP_ID }); VISUALIZADOR = (!v.error && v.data===true); }catch(e){}
+    }
   }
   SEM_ESCRITA = !COORDENACAO;   // tudo que não é coordenação é consulta
   // Nível nesta obra (RPC SECURITY DEFINER do banco — mesma fonte da RLS).
@@ -943,6 +949,7 @@ async function boot(){
                  : USER_ROLE==='setor'      ? ['cde_setor.html',    '← Consulta']
                  : USER_ROLE==='projetista' ? ['projetista.html',   '← Meu portal']
                  : USER_ROLE==='financeiro' ? ['auria_custos.html', '← Custos']
+                 : USER_ROLE==='analista'   ? ['portal.html',       '← Portal']
                  :                            ['./',                '← Início'];
       volta.setAttribute('href', dest[0]); volta.textContent = dest[1];
     }
@@ -953,7 +960,8 @@ async function boot(){
   const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,cidade,estado').eq('id',EMP_ID).maybeSingle();
   if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
   EMP = e;
-  $('hSub').textContent = e.nome + (e.cidade? ' · '+e.cidade+(e.estado?'/'+e.estado:'') : '');
+  $('hSub').textContent = e.nome + (e.cidade? ' · '+e.cidade+(e.estado?'/'+e.estado:'') : '')
+                        + (VISUALIZADOR ? ' · Visualizador (só consulta)' : '');
 
   const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
   STMAP={}; (st||[]).forEach(s=>STMAP[s.codigo]=s);

@@ -396,10 +396,17 @@ async function boot(){
   carregarMsgs().then(()=>{ try{ renderKpis(); renderTools(); }catch(e){} }).catch(()=>{});
 }
 
+// Papel do analista POR empreendimento (analista_empreendimento_auria.papel):
+// 'coordenador' = escreve; 'visualizador' = só leitura (o servidor barra a
+// escrita via estacao_edita — item 13). Aqui só para a tela concordar.
+var EMP_PAPEL={};
+function souVisualizador(id){ return EMP_PAPEL[id]==='visualizador'; }
 async function carregarEmps(){
   try{
     const { data } = await sb.from('analista_empreendimento_auria')
-      .select('ativo, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+      .select('ativo, papel, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+    EMP_PAPEL={};
+    (data||[]).forEach(r=>{ if(r.empreendimentos_auria) EMP_PAPEL[r.empreendimentos_auria.id]=r.papel||'coordenador'; });
     EMPS = (data||[]).map(r=>r.empreendimentos_auria).filter(e=>e && !e.deleted_at)
                      .sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
   }catch(e){ EMPS=[]; }
@@ -543,7 +550,7 @@ function renderEmps(){
     const local = [e.cidade, e.estado].filter(Boolean).join(' · ');
     return `<button class="emp" onclick="abrirEmp('${e.id}')">
       <div class="emp-h">
-        <b>${esc(e.nome)}</b>
+        <b>${esc(e.nome)}${souVisualizador(e.id)?' <span title="Você só consulta este empreendimento" style="font-size:10px;font-weight:800;color:#1D4ED8;background:#EFF6FF;border-radius:10px;padding:1px 7px;vertical-align:middle">VISUALIZADOR</span>':''}</b>
         <span>${esc(local || e.tipologia || '—')}</span>
       </div>
       <div class="emp-b">
@@ -560,7 +567,9 @@ function abrirEmp(id){
   const e = EMPS.find(x=>x.id===id); if(!e) return;
   const s = statsDe(e);
   $('peNome').textContent = e.nome;
-  $('peSub').textContent  = [ [e.cidade,e.estado].filter(Boolean).join(' · '),
+  const VIS = souVisualizador(e.id);
+  $('peSub').textContent  = [ VIS ? 'Visualizador — só consulta' : null,
+                              [e.cidade,e.estado].filter(Boolean).join(' · '),
                               s.abertos+' apontamentos em aberto',
                               s.atraso?(s.atraso+' em atraso'):null,
                               s.nf?(s.nf+' NF aguardando'):null ].filter(Boolean).join('  ·  ');
@@ -582,7 +591,8 @@ function abrirEmp(id){
     t('🗓','#117A65','Cronograma','Físico da obra',                    'cronograma.html?emp='+q) +
     t('📊','#7D6608','Apontamentos','Indicadores desta obra',          'bi.html?emp_id='+q) +   // por id — bi.html só cai no nome se não vier id
     tBtn('💼','#B7791F','Contratos e Faturas','Parcelas, NF e aditivos', "abrirEmpContratos('"+e.id+"')") +
-    tBtn('🔑','#5B4B8A','Acessos','Quem vê o CDE e o que pode fazer',    "abrirEmpAcessos('"+e.id+"')");
+    // Acessos é ferramenta de coordenação — o visualizador não gere a matriz.
+    (VIS ? '' : tBtn('🔑','#5B4B8A','Acessos','Quem vê o CDE e o que pode fazer',    "abrirEmpAcessos('"+e.id+"')"));
 
   $('peTabsWrap').style.display='none';
   $('ov').classList.add('on');
