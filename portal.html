@@ -81,11 +81,13 @@
          padding:34px 20px;text-align:center;color:var(--mut);font-size:13px}
 
   /* Portal do empreendimento (sobreposto) */
-  .ov{position:fixed;inset:0;background:rgba(8,14,26,.62);z-index:40;display:none;
-      align-items:flex-start;justify-content:center;padding:34px 18px;overflow-y:auto}
-  .ov.on{display:flex}
-  .pemp{background:var(--panel);border:1px solid var(--line);border-radius:15px;
-        width:min(780px,100%);overflow:hidden}
+  /* Painéis internos (empreendimento, fornecedores) abrem INLINE abaixo das abas —
+     não são mais modais sobrepostos (pedido do usuário, 2026-09-12). */
+  .ov{display:none}
+  .ov.on{display:block}
+  .pemp{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%!important;overflow:hidden}
+  .pemp-h button[title="Fechar"]{display:none}
+  .cd-frame{width:100%;height:calc(100vh - 250px);min-height:620px;border:1px solid var(--line);border-radius:12px;background:var(--panel);display:block}
   .pemp-h{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;gap:12px}
   .pemp-h b{font-size:18px;display:block;line-height:1.25}
   .pemp-h span{font-size:12px;color:var(--mut)}
@@ -266,6 +268,22 @@
   body.dark .cd-papel.vis{background:#1E3A5F;color:#BFDBFE}
   body.dark .cd-mini.ana{background:#3B2A0F;color:#F0B25B;border-color:#7C3E06}
   body.dark .cd-chip.acc,body.dark .cd-pill.acc{color:#F0B25B}
+  /* Painéis internos (Contratos, Acessos, Fornecedores) na mesma linguagem: navy
+     no lugar do azul genérico, cartões sem sombra, abas com sublinhado laranja. */
+  .ctr-btn{background:var(--navy);border-radius:8px;font-weight:600}
+  .ctr-btn:hover{background:#163050}
+  .ctr-btn.sec{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+  .ctr-btn.sec:hover{border-color:var(--accent);filter:none}
+  .ctr-card,.fn-card{box-shadow:none;border:1px solid var(--line)}
+  .ctr-card{border-top:3px solid var(--navy)}
+  .ctr-fin .v,.aditivo-row .vlr,.back{color:var(--navy)}
+  .ctr-acoes .mini:hover{border-color:var(--accent);color:var(--txt)}
+  .st-au{background:rgba(26,90,150,.13);color:var(--navy)}
+  .acc-chip.on{background:rgba(232,150,10,.13);border-color:var(--accent);color:#7C3E06}
+  .acc-chip input,.cde-ac-c input[type=checkbox]{accent-color:var(--navy)}
+  .pemp-h b{font-size:16px}
+  /* A grade de atalhos do empreendimento é redundante com o card: o painel inline abre direto em Contratos/Acessos. */
+  #peTools,#peTabsWrap .back{display:none}
 </style>
 </head>
 <body>
@@ -279,8 +297,6 @@
   <div class="cdh-r">
     <div class="cdh-logo" id="hLogo" style="display:none"></div>
     <div class="who"><b id="uNome"></b><span id="uMail"></span></div>
-    <button class="hbtn" onclick="irPara('agenda')">Agenda</button>
-    <button class="hbtn" onclick="irPara('msg')">Mensagens<span class="msg-badge" id="hMsg"></span></button>
     <button class="hbtn" onclick="tema()">Tema</button>
     <button class="hbtn" onclick="sair()">Sair</button>
   </div>
@@ -305,19 +321,23 @@
 
       <section>
         <div class="cd-tabs" id="tabs">
-          <button class="tb on" onclick="paAba('fila')">Fila da coordenação</button>
-          <button class="tb" onclick="irPara('agenda')">Agenda</button>
-          <button class="tb" onclick="irPara('kanban')">Kanban</button>
-          <button class="tb" onclick="irPara('msg')">Mensagens<span class="msg-badge" id="tMsg"></span></button>
-          <button class="tb" onclick="abrirCustosGeral()">Custos e NF</button>
-          <button class="tb" onclick="abrirFornecedoresView()">Fornecedores</button>
-          <button class="tb" onclick="irPara('bi')">Painel de Apontamentos</button>
+          <button class="tb on" data-aba="fila" onclick="paAba('fila')">Fila da coordenação</button>
+          <button class="tb" data-aba="agenda" onclick="paAba('agenda')">Agenda</button>
+          <button class="tb" data-aba="kanban" onclick="paAba('kanban')">Kanban</button>
+          <button class="tb" data-aba="msg" onclick="paAba('msg')">Mensagens<span class="msg-badge" id="tMsg"></span></button>
+          <button class="tb" data-aba="custos" onclick="abrirCustosGeral()">Custos e NF</button>
+          <button class="tb" data-aba="forn" onclick="abrirFornecedoresView()">Fornecedores</button>
+          <button class="tb" data-aba="bi" onclick="paAba('bi')">Painel de Apontamentos</button>
+          <button class="tb" data-aba="emp" id="tbEmp" style="display:none" onclick="paAba('emp')"></button>
           <span class="cd-tabsep"></span>
           <span class="cd-hint" id="filaCtx"></span>
           <span style="flex:1"></span>
-          <span class="cd-hint">ordenado por urgência</span>
+          <span class="cd-hint" id="filaOrd">ordenado por urgência</span>
         </div>
-        <div class="cd-tbl" id="fila" style="margin-top:10px"></div>
+        <div id="abaPanel" style="margin-top:10px">
+          <div class="cd-tbl" id="fila"></div>
+          <div id="abaFrames"></div>
+        </div>
       </section>
     </div>
     <div class="cd-rail" id="rail"></div>
@@ -325,14 +345,14 @@
 </div>
 
 <!-- Portal de um empreendimento -->
-<div class="ov" id="ov" onclick="if(event.target===this)fecharEmp()">
+<div class="ov" id="ov">
   <div class="pemp">
     <div class="pemp-h">
       <div>
         <b id="peNome"></b>
         <span id="peSub"></span>
       </div>
-      <span onclick="fecharEmp()" style="cursor:pointer;color:#1D4ED8;font-size:13px;font-weight:700;margin-left:8px;align-self:center;white-space:nowrap">← Voltar ao painel</span>
+      <span onclick="fecharEmp()" style="cursor:pointer;color:var(--navy);font-size:13px;font-weight:700;margin-left:auto;align-self:center;white-space:nowrap">← Voltar à fila</span>
       <button onclick="fecharEmp()" title="Fechar">×</button>
     </div>
     <div class="pemp-b">
@@ -350,11 +370,11 @@
 </div>
 
 <!-- Fornecedores (visão geral, fora do contexto de um empreendimento) -->
-<div class="ov" id="ovForn" onclick="if(event.target===this)fecharFornecedoresView()">
+<div class="ov" id="ovForn">
   <div class="pemp" style="width:min(900px,100%)">
     <div class="pemp-h">
       <div><b>Fornecedores</b><span>Empresas projetistas e seus profissionais, todos os empreendimentos</span></div>
-      <span onclick="fecharFornecedoresView()" style="cursor:pointer;color:#1D4ED8;font-size:13px;font-weight:700;margin-left:8px;align-self:center;white-space:nowrap">← Voltar ao painel</span>
+      <span onclick="fecharFornecedoresView()" style="cursor:pointer;color:var(--navy);font-size:13px;font-weight:700;margin-left:auto;align-self:center;white-space:nowrap">← Voltar à fila</span>
       <button onclick="fecharFornecedoresView()" title="Fechar">×</button>
     </div>
     <div class="pemp-b">
@@ -489,7 +509,8 @@ const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 const brl = n => (n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL',maximumFractionDigits:0});
 
 function tema(){ const d=document.body.classList.toggle('dark');
-  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){} }
+  try{ localStorage.setItem('auria_theme', d?'dark':'light'); }catch(e){}
+  document.querySelectorAll('iframe.cd-frame').forEach(f=>{ try{ f.contentWindow.postMessage({auria_tema:d?'dark':'light'},'*'); }catch(e){} }); }
 try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
 async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
 
@@ -521,13 +542,15 @@ async function boot(){
   await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
   carregarPrazos();   // depende de APTS já carregado
 
+  // Painéis internos viram filhos do painel de abas (abrem abaixo, não por cima).
+  $('abaPanel').appendChild($('ov')); $('abaPanel').appendChild($('ovForn'));
   paRender();
   $('load').style.display='none';
   $('app').style.display='block';
   // Segundo plano: contexto do grupo (cabeçalho), CDE (recebidos/em análise por
   // obra) e fornecedores (nome de quem responde por cada disciplina).
   carregarContexto().then(paHeader).catch(()=>{});
-  Promise.all([carregarCde(), carregarFornecedoresLeve()]).then(paRender).catch(()=>{});
+  Promise.all([carregarConvencoes(), carregarCde(), carregarFornecedoresLeve()]).then(paRender).catch(()=>{});
 
   // Mensagens são pesadas (campo mensagens de muitos apontamentos) → em segundo
   // plano, sem segurar a tela; o KPI e o badge se atualizam quando chegam.
@@ -633,6 +656,7 @@ function abrirCustosGeral(){
   if(!empId) empId = EMPS[0].id;
   abrirEmp(empId);
   setTimeout(()=>{ try{ abrirEmpContratos(empId); }catch(e){} }, 60);
+  document.querySelectorAll('#tabs .tb').forEach(b=>b.classList.toggle('on', b.getAttribute('data-aba')==='custos'));
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -662,7 +686,7 @@ function paHeader(){
   const el=$('hLogo'); if(logo){ el.innerHTML='<img src="'+esc(logo)+'" alt="">'; el.style.display=''; } else el.style.display='none';
 }
 function paBadges(){
-  ['hMsg','tMsg'].forEach(id=>{ const b=$(id); if(!b) return; b.textContent=MSG_NOVAS||''; b.classList.toggle('on', MSG_NOVAS>0); });
+  ['tMsg'].forEach(id=>{ const b=$(id); if(!b) return; b.textContent=MSG_NOVAS||''; b.classList.toggle('on', MSG_NOVAS>0); });
 }
 // CDE dos meus empreendimentos: documentos (disciplinas/pranchas) e revisões
 // recebidas (S0) ou em análise (S1–S4) — é o que a coordenação precisa decidir.
@@ -674,7 +698,7 @@ async function carregarCde(){
     const docs=d.data||[]; const porDoc={};
     docs.forEach(x=>{ porDoc[x.id]=x; const k=x.empreendimento_id;
       const o=CDE_DOCS_EMP[k]||(CDE_DOCS_EMP[k]={docs:0,discs:new Set(),rec:[],ana:0});
-      o.docs++; if(x.disciplina) o.discs.add(x.disciplina); });
+      o.docs++; if(x.disciplina) o.discs.add(discCod(x.disciplina)); });
     const docIds=docs.map(x=>x.id);
     for(let i=0;i<docIds.length;i+=300){
       const r=await sb.from('cde_revisao_auria').select('id,documento_id,revisao,status,recebido_em')
@@ -709,10 +733,38 @@ function quemDoApt(a){
   return esc(emails.length ? fornPorEmail(emails[0]) : '—');
 }
 function empPorId(id){ return EMPS.find(e=>e.id===id); }
-function empSigla(e){ return (e.codigo||'').trim() || (e.nome||'').split(/\s+/).map(w=>w[0]).join('').slice(0,4).toUpperCase(); }
+// Sigla: codigo do empreendimento; senão iniciais (só letras/dígitos — "—" e "·" não entram).
+function empSigla(e){ return (e.codigo||'').trim() || (e.nome||'').split(/\s+/).map(w=>w.replace(/[^\p{L}\p{N}]/gu,'')).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase(); }
+// Disciplina SEMPRE em código curto (ARQ, EST, HID…). Apontamentos vindos do
+// desktop trazem o nome completo ("Estrutura Concreto"); o CDE usa o código da
+// convenção. DISC_MAP: nome (minúsculo) → código, montado das convenções dos
+// meus empreendimentos + tabela fixa; último recurso = 3 primeiras letras.
+var DISC_MAP={};
+function discCod(v){
+  if(!v) return '';
+  const s=String(v).trim(); if(!s) return '';
+  if(/^[A-Z]{2,4}$/.test(s)) return s;                       // já é código
+  const k=s.toLowerCase();
+  if(DISC_MAP[k]) return DISC_MAP[k];
+  for(const c in DISC_FULLNAME){ if(DISC_FULLNAME[c].toLowerCase()===k) return c; }
+  const fixo={'estrutura concreto':'EST','estrutura metálica':'MET','instalações hidrossanitárias':'HID','instalações elétricas':'ELE',
+    'instalações pci/spda/gás':'INC','instalações automação':'AUT','infraestrutura':'INF','topografia / sondagem':'TOP','ambientação':'AMB',
+    'paisagismo':'PAI','luminotécnico':'LUM','esquadrias':'ESQ','fachada':'FAC','heliponto':'HEL','segurança':'SEG',
+    'sinalização / comunicação visual':'SIN','eta / ete':'ETA','climatização / pressurização / exaustão':'CLI','fundação':'FUN','contenção':'CON','arquitetura':'ARQ'};
+  if(fixo[k]) return fixo[k];
+  return s.normalize('NFD').replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase();
+}
+async function carregarConvencoes(){
+  for(const e of EMPS){
+    try{ const r=await sb.rpc('cde_convencao',{ p_emp:e.id }); const conv=(r.data&&r.data[0])||null; if(!conv) continue;
+      const c=(conv.campos||[]).find(x=>x.mapeia==='disciplina'); if(!c||!c.dominio) continue;
+      c.dominio.forEach(d=>{ if(typeof d==='object' && d.v && d.rotulo) DISC_MAP[String(d.rotulo).toLowerCase()]=d.v; });
+    }catch(_){}
+  }
+}
 function empRotulo(e){ return e ? (empSigla(e)+' · '+e.nome) : '—'; }
 function aptEmp(a){ return a.empreendimento_id ? empPorId(a.empreendimento_id) : EMPS.find(e=>e.nome===a.empreendimento); }
-function aptCod(a){ return (a.disciplina?a.disciplina+'-':'')+(a.id_num!=null?a.id_num:String(a.id||'').slice(0,6)); }
+function aptCod(a){ const d=discCod(a.disciplina); return (d?d+'-':'')+(a.id_num!=null?a.id_num:String(a.id||'').slice(0,6)); }
 function hojeZero(){ const h=new Date(); h.setHours(0,0,0,0); return h; }
 function diasAte(d){ return Math.round((d-hojeZero())/864e5); }
 function fmtBR(d){ return d ? d.toLocaleDateString('pt-BR') : '—'; }
@@ -730,13 +782,13 @@ function paVtool(){
   const chip=(k,cls,txt,title)=>'<span class="cd-chip '+cls+(PA_FILTRO===k?' on':'')+'" title="'+esc(title||'')+'" onclick="paFiltro(\''+k+'\')">'+txt+'</span>';
   $('vtool').innerHTML =
     '<span class="cd-cod">'+EMPS.length+' EMPREENDIMENTO'+(EMPS.length===1?'':'S')+'</span>'
-    + chip('atraso','err',atraso+' em atraso','Apontamentos com prazo vencido')
-    + chip('abertos','warn',abertos+' em aberto','Apontamentos não resolvidos')
-    + (terceiros ? chip('terceiros','acc-sol',terceiros+' aberto'+(terceiros>1?'s':'')+' pela obra/projetista','Abertos por quem não é coordenação — precisam da sua leitura') : '')
-    + (rec ? chip('rec','acc',rec+' recebida'+(rec>1?'s':'')+' (S0) a analisar','Revisões recebidas no CDE aguardando análise') : '')
-    + (ana ? chip('ana','navy',ana+' em análise no CDE','Revisões S1–S4') : '')
+    + chip('atraso','err',atraso+' apont. em atraso','Apontamentos com prazo vencido')
+    + chip('abertos','warn',abertos+' apont. em aberto','Apontamentos não resolvidos')
+    + (terceiros ? chip('terceiros','acc-sol',terceiros+' apont. aberto'+(terceiros>1?'s':'')+' pela obra/projetista','Abertos por quem não é coordenação — precisam da sua leitura') : '')
+    + (rec ? chip('rec','acc',rec+' arquivo'+(rec>1?'s':'')+' recebido'+(rec>1?'s':'')+' (S0) a analisar','Revisões recebidas no CDE aguardando análise') : '')
+    + (ana ? chip('ana','navy',ana+' arquivo'+(ana>1?'s':'')+' em análise no CDE','Revisões S1–S4') : '')
     + chip('nf','acc',nf+' solicitaç'+(nf===1?'ão':'ões')+' de NF'+(NF_VALOR?' · '+brl(NF_VALOR):''),'Parcelas solicitadas pelos projetistas')
-    + chip('prazo7','navy',PRAZOS7+' prazo'+(PRAZOS7===1?'':'s')+' em 7 dias','Apontamentos que vencem na próxima semana')
+    + chip('prazo7','navy',PRAZOS7+' apont. vence'+(PRAZOS7===1?'':'m')+' em 7 dias','Apontamentos que vencem na próxima semana')
     + '<span style="flex:1"></span>'
     + '<input class="cd-busca" id="busca" placeholder="Buscar empreendimento, apontamento ou fornecedor" value="'+esc(PA_BUSCA)+'" oninput="PA_BUSCA=this.value;PA_LIMITE=40;paCards();paFila()">';
 }
@@ -765,11 +817,11 @@ function paCards(){
       +'<div class="fc">'+esc(empRotulo(e))+'</div>'
       +'<div class="ft">'+esc(ft||'—')+'</div>'
       +'<div class="chips"><span class="cd-papel'+(vis?' vis':'')+'">'+(vis?'VISUALIZADOR':'COORDENADOR')+'</span>'
-      +(c.rec.length?'<span class="cd-mini rec">'+c.rec.length+' recebida'+(c.rec.length>1?'s':'')+' (S0)</span>':'')
-      +(c.ana?'<span class="cd-mini ana">'+c.ana+' em análise</span>':'')
+      +(c.rec.length?'<span class="cd-mini rec">'+c.rec.length+' arq. recebido'+(c.rec.length>1?'s':'')+' (S0)</span>':'')
+      +(c.ana?'<span class="cd-mini ana">'+c.ana+' arq. em análise</span>':'')
       +'</div></div></div>'
-      +'<div class="stats"><span class="cd-chip warn">'+s.abertos+' em aberto</span>'
-      +(s.atraso?'<span class="cd-chip err">'+s.atraso+' em atraso</span>':'')
+      +'<div class="stats"><span class="cd-chip warn">'+s.abertos+' apont. em aberto</span>'
+      +(s.atraso?'<span class="cd-chip err">'+s.atraso+' apont. em atraso</span>':'')
       +(s.nf?'<span class="cd-chip acc">'+s.nf+' NF</span>':'')+'</div>'
       +'<div class="acts">'
       + btn('navy','Auria App','app.html?emp='+q)
@@ -788,13 +840,37 @@ function renderEmps(){ paCards(); }   // compatibilidade com chamadas antigas
 // Trilho: disciplinas presentes (apontamentos + CDE) — filtro da fila.
 function paRail(){
   const set=new Set();
-  APTS.forEach(a=>{ if(a.disciplina && a.status!=='Resolvido' && aptEmp(a)) set.add(a.disciplina); });
-  Object.values(CDE_DOCS_EMP).forEach(o=>o.discs.forEach(d=>set.add(d)));
+  APTS.forEach(a=>{ const d=discCod(a.disciplina); if(d && a.status!=='Resolvido' && aptEmp(a)) set.add(d); });
+  Object.values(CDE_DOCS_EMP).forEach(o=>o.discs.forEach(d=>set.add(discCod(d))));
   const discs=[...set].sort();
   $('rail').innerHTML = discs.map(d=>'<span class="cd-tag'+(PA_DISC===d?' sel':'')+'" title="'+esc(discFullName(d))+'" onclick="paDisc(\''+esc(d)+'\')">'+esc(d)+'</span>').join('');
 }
 function paDisc(d){ PA_DISC = (PA_DISC===d) ? '' : d; PA_LIMITE=40; paRail(); paFila(); }
-function paAba(k){ /* só a fila é inline por enquanto; as demais navegam/abrem painéis */ }
+// Abas: tudo abre ABAIXO das abas. fila = tabela; agenda/kanban/msg/bi = a própria
+// página embutida (iframe ?embed=1, sem o cabeçalho dela, no tema do painel);
+// emp = painel do empreendimento (contratos/acessos); forn = fornecedores.
+var PA_ABA='fila';
+var PA_FRAMES={ agenda:'agenda.html', kanban:'kanban.html', msg:'mensagens.html', bi:'bi.html' };
+function paAba(k){
+  PA_ABA=k;
+  document.querySelectorAll('#tabs .tb').forEach(b=>b.classList.toggle('on', b.getAttribute('data-aba')===k));
+  $('fila').style.display = (k==='fila') ? '' : 'none';
+  $('filaOrd').style.display = (k==='fila') ? '' : 'none';
+  $('ov').classList.toggle('on', k==='emp');
+  $('ovForn').classList.toggle('on', k==='forn');
+  const tbe=$('tbEmp'); if(tbe) tbe.style.display = (k==='emp') ? '' : 'none';
+  // iframes: cria uma vez, depois só mostra/esconde (não recarrega ao trocar de aba)
+  Object.keys(PA_FRAMES).forEach(f=>{
+    let fr=$('frame-'+f);
+    if(k===f && !fr){
+      fr=document.createElement('iframe'); fr.id='frame-'+f; fr.className='cd-frame';
+      fr.src=PA_FRAMES[f]+'?embed=1&tema='+(document.body.classList.contains('dark')?'dark':'light');
+      $('abaFrames').appendChild(fr);
+    }
+    if(fr) fr.style.display = (k===f) ? '' : 'none';
+  });
+  if(k!=='fila'){ const p=$('tabs'); if(p) p.scrollIntoView({behavior:'smooth',block:'start'}); }
+}
 
 // Fila da coordenação: o que precisa de decisão, ordenado por urgência.
 //  peso 0 = atraso · 1 = recebido S0 · 2 = aberto por terceiro · 3 = NF · 4 = vence em 7d · 5 = resto
@@ -810,14 +886,14 @@ function paItens(){
     else if(terceiro && a.status!=='Em análise'){ peso=2; sit='<span class="cd-pill acc-sol">Aberto pela '+({obra:'obra',projetista:'projetista',setor:'área'}[a.criado_por_papel])+'</span>'; urg=true; }
     else if(d && dias<=7){ peso=4; sit='<span class="cd-pill warn">Vence '+(dias===0?'hoje':'em '+dias+'d')+'</span>'; }
     else if(a.status==='Em análise'){ sit='<span class="cd-pill navy">Em análise</span>'; }
-    itens.push({ tipo:'apt', peso, urg, ord:d?d.getTime():9e15, emp:e, disc:a.disciplina||'', cod:aptCod(a), item:a.titulo||'—',
+    itens.push({ tipo:'apt', peso, urg, ord:d?d.getTime():9e15, emp:e, disc:discCod(a.disciplina), cod:aptCod(a), item:a.titulo||'—',
       quem:quemDoApt(a), prazo:fmtBR(d), sit, filtros:{atraso:!!(d&&d<hoje), abertos:true, terceiros:terceiro, prazo7:!!(d&&dias>=0&&dias<=7)},
       href:'app.html?emp='+encodeURIComponent(e.id)+'&apt='+encodeURIComponent(a.id), busca:[a.titulo,a.disciplina,aptCod(a),e.nome].join(' ') });
   });
   Object.values(CDE_DOCS_EMP).forEach(o=>o.rec.forEach(r=>{
     const e=empPorId(r.empreendimento_id); if(!e) return;
     const forn=fornPorId(r.fornecedor_id);
-    itens.push({ tipo:'rec', peso:1, urg:true, ord:new Date(r.recebido_em||0).getTime(), emp:e, disc:r.disciplina||'', cod:r.codigo,
+    itens.push({ tipo:'rec', peso:1, urg:true, ord:new Date(r.recebido_em||0).getTime(), emp:e, disc:discCod(r.disciplina), cod:r.codigo,
       item:'Revisão '+esc(r.revisao||'')+' recebida'+(forn?' — '+esc(forn):''), quem:esc(forn||'—'), prazo:haDias(r.recebido_em),
       sit:'<span class="cd-pill acc-sol">Recebido (S0) · analisar</span>', filtros:{rec:true},
       href:'cde_obra.html?emp='+encodeURIComponent(e.id), busca:[r.codigo,forn,e.nome].join(' ') });
@@ -825,7 +901,7 @@ function paItens(){
   NF_PARCS.forEach(pq=>{
     const e=empPorId(pq.empreendimento_id); if(!e) return;
     const v=pdata(pq.vencimento);
-    itens.push({ tipo:'nf', peso:3, urg:false, ord:v?v.getTime():9e15, emp:e, disc:pq.disciplina||'', cod:'NF · '+(pq.contrato_numero||'contrato')+' · '+(pq.numero||'?'),
+    itens.push({ tipo:'nf', peso:3, urg:false, ord:v?v.getTime():9e15, emp:e, disc:discCod(pq.disciplina), cod:'NF · '+(pq.contrato_numero||'contrato')+' · '+(pq.numero||'?'),
       item:'Solicitação de faturamento — parcela '+(pq.numero||'?')+(pq.valor?' · '+brl(Number(pq.valor)):''), quem:esc(pq.projetista_nome||'—'), prazo:v?fmtBR(v):haDias(pq.data_solicitacao),
       sit:'<span class="cd-pill acc">Autorizar?</span>', filtros:{nf:true}, acao:"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpContratos('"+e.id+"')},60)",
       busca:[pq.projetista_nome,pq.contrato_numero,e.nome].join(' ') });
@@ -838,7 +914,7 @@ function paFila(){
   let itens=paItens().filter(it=>(!PA_EMP || it.emp.id===PA_EMP) && (!PA_DISC || it.disc===PA_DISC)
     && (!PA_FILTRO || it.filtros[PA_FILTRO]) && (!q || it.busca.toLowerCase().includes(q)));
   const e=PA_EMP?empPorId(PA_EMP):null;
-  const rotFiltro={atraso:'em atraso',abertos:'em aberto',terceiros:'abertos pela obra/projetista',rec:'recebidos (S0)',ana:'em análise',nf:'solicitações de NF',prazo7:'vencem em 7 dias'}[PA_FILTRO];
+  const rotFiltro={atraso:'apont. em atraso',abertos:'apont. em aberto',terceiros:'apont. abertos pela obra/projetista',rec:'arquivos recebidos (S0)',ana:'arquivos em análise',nf:'solicitações de NF',prazo7:'apont. que vencem em 7 dias'}[PA_FILTRO];
   $('filaCtx').textContent = (e ? 'Filtrado: '+empRotulo(e) : 'O que precisa da sua decisão, nos '+EMPS.length+' empreendimento'+(EMPS.length===1?'':'s'))
     + (PA_DISC?' · '+PA_DISC:'') + (rotFiltro?' · '+rotFiltro:'');
   if(!itens.length){ $('fila').innerHTML='<div style="padding:26px;text-align:center;color:var(--mut)">Nada pendente com esse filtro.</div>'; return; }
@@ -884,10 +960,11 @@ function abrirEmp(id){
     (VIS ? '' : tBtn('🔑','#5B4B8A','Acessos','Quem vê o CDE e o que pode fazer',    "abrirEmpAcessos('"+e.id+"')"));
 
   $('peTabsWrap').style.display='none';
-  $('ov').classList.add('on');
+  const tbe=$('tbEmp'); if(tbe) tbe.textContent='Empreendimento · '+empSigla(e);
+  paAba('emp');
 }
-function fecharEmp(){ $('ov').classList.remove('on'); $('peTabsWrap').style.display='none'; }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ fecharEmp(); fecharFornecedoresView(); } });
+function fecharEmp(){ $('peTabsWrap').style.display='none'; paAba('fila'); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && (PA_ABA==='emp'||PA_ABA==='forn')) paAba('fila'); });
 
 // ════════════════════════════════════════════════════════════════════════
 //  Painéis migrados do auria_analista.html: Contratos & Faturas, Financeiro,
@@ -1151,8 +1228,8 @@ async function salvarContrato(){
 }
 
 // ── Fornecedores (visão geral) ──────────────────────────────────────────
-function abrirFornecedoresView(){ $('ovForn').classList.add('on'); renderFornecedoresPage(); }
-function fecharFornecedoresView(){ $('ovForn').classList.remove('on'); }
+function abrirFornecedoresView(){ paAba('forn'); renderFornecedoresPage(); }
+function fecharFornecedoresView(){ paAba('fila'); }
 async function renderFornecedoresPage(){
   const el=$('fn-list'); if(!el)return;
   el.innerHTML='<div class="load">Carregando…</div>';
