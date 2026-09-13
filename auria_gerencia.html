@@ -639,6 +639,19 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           <div style="font-size:13px;color:var(--text-soft);margin-bottom:16px">
             Empresas projetistas e seus profissionais (com disciplinas). Acessível a todos os analistas e ao gestor.
           </div>
+          <!-- Cadastro público (item 26): link do grupo + fila de aprovação -->
+          <div id="cadBox" style="background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:14px 18px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <b style="font-size:14px">Link público de cadastro</b>
+              <span style="font-size:12px;color:var(--text-soft)">Envie aos escritórios de projeto. Quem se cadastra entra na fila abaixo para sua aprovação.</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+              <input id="cadLink" readonly style="flex:1;min-width:280px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:#F8FAFC" value="…">
+              <button class="btn-secondary" onclick="cadCopiar()">Copiar</button>
+              <button class="btn-secondary" onclick="cadNovoToken()" title="Gera um link novo; o antigo deixa de funcionar">Gerar novo link</button>
+            </div>
+            <div id="cadFila" style="margin-top:14px"></div>
+          </div>
           <div id="fornList"><div class="loading-spinner"><div class="spinner"></div></div></div>
         </div>
 
@@ -3299,7 +3312,63 @@ async function excluirAnalista(id){
 var FORNECEDORES_LIST=[], FN_PROJS_BUF=[], FN_EDIT=null;
 function escF(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+// ── Cadastro público de fornecedores (item 26, Fase A) ──────────────────────
+function cadLinkUrl(){ return 'https://auria.solutions/cadastro.html?g='+(EMPRESA&&EMPRESA.cadastro_token||''); }
+async function cadCopiar(){ try{ await navigator.clipboard.writeText(cadLinkUrl()); showToast('Link copiado','green'); }catch(e){ const i=document.getElementById('cadLink'); i.select(); document.execCommand('copy'); showToast('Link copiado','green'); } }
+async function cadNovoToken(){
+  if(!confirm('Gerar um novo link? O link atual deixa de funcionar na hora.')) return;
+  const r=await sb.rpc('fornecedor_cadastro_novo_token');
+  if(r.error){ showToast('Não foi possível: '+r.error.message,'red'); return; }
+  if(EMPRESA) EMPRESA.cadastro_token=r.data; document.getElementById('cadLink').value=cadLinkUrl(); showToast('Novo link gerado','green');
+}
+async function renderCadastros(){
+  const box=document.getElementById('cadFila'); if(!box) return;
+  const li=document.getElementById('cadLink'); if(li) li.value=cadLinkUrl();
+  let rows=[];
+  try{ const r=await sb.from('fornecedor_cadastro_auria').select('*').order('criado_em',{ascending:false}).limit(60); rows=r.data||[]; }catch(e){}
+  const pend=rows.filter(x=>x.status==='pendente'), hist=rows.filter(x=>x.status!=='pendente').slice(0,8);
+  const fmt=d=>{ try{ return new Date(d).toLocaleDateString('pt-BR'); }catch(e){ return ''; } };
+  const cnpjF=c=>String(c||'').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,'$1.$2.$3/$4-$5');
+  const card=x=>{
+    const pj=(x.projetistas||[]).map(p=>esc(p.nome||p.email)+(p.email?' &lt;'+esc(p.email)+'&gt;':'')).join(', ');
+    const end=x.endereco||{}; const rl=x.responsavel_legal||{}; const rt=x.rt||{};
+    return `<div style="border:1px solid var(--gray-border);border-radius:10px;padding:12px 14px;margin-top:8px;background:#FFFDF8">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start">
+        <div>
+          <div style="font-weight:800;font-size:14px">${esc(x.razao_social)}${x.nome_fantasia?' <span style="font-weight:400;color:var(--text-soft)">· '+esc(x.nome_fantasia)+'</span>':''}</div>
+          <div style="font-size:12px;color:var(--text-soft)">CNPJ ${cnpjF(x.cnpj)} · ${esc(x.porte||'porte —')} · ${esc([end.cidade,end.uf].filter(Boolean).join('/')||'—')} · recebido ${fmt(x.criado_em)}</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn-primary" style="padding:6px 12px;font-size:12px" onclick="cadDecidir('${x.id}',true)">Aprovar</button>
+          <button class="btn-danger" style="padding:6px 12px;font-size:12px" onclick="cadDecidir('${x.id}',false)">Reprovar</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;margin-top:8px;line-height:1.6">
+        <b>Disciplinas:</b> ${esc((x.disciplinas||[]).join(', ')||'—')}<br>
+        <b>Contato:</b> ${esc(x.email)}${x.telefone?' · '+esc(x.telefone):''}${x.site?' · '+esc(x.site):''}<br>
+        <b>Responsável legal:</b> ${esc(rl.nome||'—')}${rl.email?' · '+esc(rl.email):''}${rl.telefone?' · '+esc(rl.telefone):''}
+        ${rt.nome?'<br><b>RT:</b> '+esc(rt.nome)+(rt.registro?' · '+esc(rt.registro):''):''}<br>
+        <b>Projetistas:</b> ${pj||'—'}
+        ${x.observacao?'<br><b>Obs.:</b> '+esc(x.observacao):''}
+      </div>
+    </div>`; };
+  box.innerHTML =
+    '<div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--text-soft)">Cadastros aguardando aprovação'+(pend.length?' <span style="background:var(--orange);color:#231703;border-radius:9px;padding:1px 8px;margin-left:6px">'+pend.length+'</span>':'')+'</div>'
+    + (pend.length ? pend.map(card).join('') : '<div style="font-size:12.5px;color:var(--text-soft);margin-top:6px">Nenhum cadastro pendente.</div>')
+    + (hist.length ? '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--text-soft)">Últimas decisões ('+hist.length+')</summary>'
+        + hist.map(x=>'<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--gray-border)">'+esc(x.razao_social)+' · <b style="color:'+(x.status==='aprovado'?'var(--green,#1E8449)':'var(--red)')+'">'+x.status+'</b> · '+fmt(x.decidido_em||x.criado_em)+(x.motivo_recusa?' · <i>'+esc(x.motivo_recusa)+'</i>':'')+'</div>').join('')+'</details>' : '');
+}
+async function cadDecidir(id, aprovar){
+  let motivo=null;
+  if(!aprovar){ motivo=prompt('Motivo da recusa (vai no e-mail ao fornecedor):'); if(motivo===null) return; }
+  else if(!confirm('Aprovar este cadastro? A empresa e seus projetistas entram na lista de fornecedores do grupo.')) return;
+  const r=await sb.rpc('fornecedor_cadastro_decidir',{ p_id:id, p_aprovar:aprovar, p_motivo:motivo });
+  if(r.error){ showToast('Não foi possível: '+r.error.message,'red'); return; }
+  showToast(aprovar?'Fornecedor aprovado e cadastrado':'Cadastro reprovado','green');
+  renderFornecedoresPage();
+}
 async function renderFornecedoresPage(){
+  renderCadastros();
   const el=document.getElementById('fornList');
   if(el) el.innerHTML='<div class="loading-spinner"><div class="spinner"></div></div>';
   try{
