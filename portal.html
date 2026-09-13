@@ -508,6 +508,26 @@
   </div>
 </div>
 
+<!-- Modal: MDE em PDF (justificativa + quem assina) -->
+<div class="cmodal-ov" id="mdeModal">
+  <div class="cmodal" style="width:640px">
+    <div class="cmodal-h"><span>Mapa de equalização (MDE) — gerar PDF para assinatura</span><button class="cmodal-x" onclick="$('mdeModal').classList.remove('on')">×</button></div>
+    <div class="cmodal-b">
+      <div style="font-size:12.5px;color:var(--mut);margin-bottom:10px">O PDF traz o mapa com todas as propostas, a referência do grupo, a decisão e os campos de assinatura do analista e do gestor. Depois de assinado no TOTVS Sign, anexe o PDF assinado aqui na cotação.</div>
+      <label>Justificativa da decisão *</label>
+      <textarea id="mde-just" rows="4" placeholder="Ex.: Menor valor global e R$/m² dentro da referência do grupo; prazo compatível com o cronograma; escritório com histórico no grupo."></textarea>
+      <div class="row">
+        <div><label>Analista (assina)</label><input id="mde-analista"></div>
+        <div><label>Gestor (assina)</label><select id="mde-gestor"></select></div>
+      </div>
+    </div>
+    <div class="cmodal-f">
+      <button class="ctr-btn sec" onclick="$('mdeModal').classList.remove('on')">Cancelar</button>
+      <button class="ctr-btn" id="mde-save" onclick="mdeGerar()">📄 Gerar MDE em PDF</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: registrar proposta recebida por e-mail -->
 <div class="cmodal-ov" id="propostaModal">
   <div class="cmodal" style="width:680px">
@@ -1645,6 +1665,9 @@ function cotDetalhe(c,props,conv){
     +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'
     +'<b style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)">Mapa de equalização</b>'
     +'<span style="flex:1"></span>'
+    +(props.length?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="mdeAbrir(\''+c.id+'\')" title="Gera o PDF do mapa de equalização com a decisão e os campos de assinatura">📄 MDE em PDF</button>':'')
+    +(c.mde_pdf_path?'<button class="mini" onclick="cotPdf(\''+esc(c.mde_pdf_path)+'\')" title="Último MDE gerado'+(c.mde_gerado_em?' em '+new Date(c.mde_gerado_em).toLocaleDateString('pt-BR'):'')+'">⬇ MDE gerado</button>':'')
+    +(c.mde_pdf_path?(c.mde_assinado_path?'<button class="mini" onclick="cotPdf(\''+esc(c.mde_assinado_path)+'\')" title="MDE assinado">✅ MDE assinado</button>':'<label class="mini" style="cursor:pointer" title="Subir o PDF assinado no TOTVS Sign">📎 Anexar MDE assinado<input type="file" accept="application/pdf" style="display:none" onchange="mdeAssinado(\''+c.id+'\',this)"></label>'):'')
     +(c.status==='aberta'?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="ppAbrir(\''+c.id+'\')">＋ Registrar proposta recebida por e-mail</button>':'')
     +(c.status==='aberta'?'<button class="ctr-btn sec" style="font-size:12px;padding:5px 10px" onclick="cotStatus(\''+c.id+'\',\'cancelada\')">Cancelar cotação</button>':'')
     +'</div>'
@@ -1697,6 +1720,87 @@ async function cotLembrar(cid){
   const pend=(COT_CONV[cid]||[]).filter(x=>!x.respondido_em); if(!pend.length) return;
   if(!confirm('Reenviar a solicitação para '+pend.length+' escritório(s) que ainda não responderam?')) return;
   const r=await sb.rpc('cotacao_lembrar',{ p_cotacao:cid }); if(r.error){ alert(r.error.message); return; } alert('Lembretes enviados.');
+}
+// ── MDE em PDF ──
+var MDE_COT=null;
+function carregarScript(src){ return new Promise((res,rej)=>{ if(document.querySelector('script[src="'+src+'"]')) return res(); const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('Falha ao carregar '+src)); document.head.appendChild(s); }); }
+async function mdeAbrir(cid){
+  MDE_COT=COT_LIST.find(c=>c.id===cid); if(!MDE_COT) return;
+  $('mde-just').value=MDE_COT.justificativa||'';
+  $('mde-analista').value=(PERFIL&&PERFIL.nome)||USER.email;
+  const sel=$('mde-gestor'); sel.innerHTML='<option value="">— carregando —</option>';
+  try{ const r=await sb.rpc('auria_gerentes_do_grupo'); const gs=r.data||[];
+    sel.innerHTML=(gs.length?gs.map(g=>'<option value="'+esc(g.nome)+'"'+(MDE_COT.mde_gestor===g.nome?' selected':'')+'>'+esc(g.nome)+' · '+esc(g.email)+'</option>').join(''):'')+'<option value="__outro">Outro (digitar no PDF)</option>';
+  }catch(e){ sel.innerHTML='<option value="__outro">Outro</option>'; }
+  $('mdeModal').classList.add('on');
+}
+function _imgData(url){ return new Promise(res=>{ const im=new Image(); im.crossOrigin='anonymous'; im.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=im.naturalWidth; c.height=im.naturalHeight; c.getContext('2d').drawImage(im,0,0); res({data:c.toDataURL('image/png'), w:im.naturalWidth, h:im.naturalHeight}); }catch(e){ res(null); } }; im.onerror=()=>res(null); im.src=url; }); }
+async function mdeGerar(){
+  const c=MDE_COT; if(!c) return;
+  const just=($('mde-just').value||'').trim(); if(!just){ alert('Escreva a justificativa da decisão.'); return; }
+  const analista=($('mde-analista').value||'').trim(); let gestor=$('mde-gestor').value; if(gestor==='__outro') gestor=prompt('Nome do gestor que assina:')||'';
+  const b=$('mde-save'); b.disabled=true; b.textContent='Gerando…';
+  try{
+    await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js');
+    const { jsPDF } = window.jspdf; const doc=new jsPDF({ unit:'mm', format:'a4', orientation:'landscape' });
+    const W=297, M=14; const e=empPorId(COT_EMP)||{}; const props=(COT_PROPS[c.id]||[]).slice().sort((a,b)=>Number(a.valor_total)-Number(b.valor_total));
+    const area=Number(c.area_m2||0); const hoje=new Date();
+    // cabeçalho
+    doc.setFillColor(248,250,252); doc.rect(0,0,W,22,'F');   // faixa clara: a logo completa tem texto navy
+    const lg=await _imgData('logo_full.png'); if(lg){ const h=14, w=h*lg.w/lg.h; doc.addImage(lg.data,'PNG',M,4,w,h); }
+    doc.setTextColor(30,58,95); doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.text('Mapa de Equalização de Propostas — MDE', W-M, 10, {align:'right'});
+    doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.text((CTX.grupo?CTX.grupo.nome:'')+' · '+(e.nome||'')+' · '+hoje.toLocaleDateString('pt-BR'), W-M, 16, {align:'right'});
+    doc.setFillColor(232,150,10); doc.rect(0,22,W,1.2,'F');
+    // dados da cotação
+    let y=31; doc.setTextColor(15,23,42); doc.setFontSize(12); doc.setFont('helvetica','bold'); doc.text(c.titulo||'', M, y); y+=6;
+    doc.setFontSize(9.5); doc.setFont('helvetica','normal'); doc.setTextColor(51,65,85);
+    const kv=[['Empreendimento', e.nome||''],['Disciplina', c.disciplina||''],['Área de referência', area?m2fmt(area)+' m²':'—'],['Prazo de envio', c.prazo_envio?fmtDate(c.prazo_envio):'—'],['Propostas', String(props.length)+' recebida(s) de '+((COT_CONV[c.id]||[]).length)+' convidado(s)']];
+    kv.forEach(([k,v])=>{ doc.setFont('helvetica','bold'); doc.text(k+':', M, y); doc.setFont('helvetica','normal'); doc.text(String(v), M+40, y); y+=5; });
+    if(c.escopo){ doc.setFont('helvetica','bold'); doc.text('Escopo:', M, y); doc.setFont('helvetica','normal'); const lines=doc.splitTextToSize(c.escopo, W-2*M-40); doc.text(lines, M+40, y); y+=lines.length*4.2+2; }
+    y+=3;
+    // tabela
+    const menor=props.length?Math.min(...props.map(p=>Number(p.valor_total))):0;
+    const etTxt=p=>(Array.isArray(p.etapas)?p.etapas:[]).filter(x=>x&&x.nome).map(x=>x.nome+' '+(Number(x.pct)||0)+'%').join(' · ')||'—';
+    const body=props.map((p,i)=>[String(i+1), p.empresa_nome+(p.status==='vencedora'?'  ★':'')+(p.status==='descartada'?'  (descartada)':''), fmtBRL(Number(p.valor_total)), area?fmtBRL(Number(p.valor_total)/area):'—', menor?(Number(p.valor_total)===menor?'menor':'+'+((Number(p.valor_total)/menor-1)*100).toFixed(1)+'%'):'—', p.prazo_dias?p.prazo_dias+' d':'—', p.validade?fmtDate(p.validade):'—', etTxt(p), p.origem==='manual'?'e-mail':'link']);
+    doc.autoTable({ startY:y, margin:{left:M,right:M}, head:[['#','Escritório','Valor total','R$/m²','vs menor','Prazo','Validade','Etapas (%)','Via']], body,
+      styles:{ fontSize:8.5, cellPadding:2, textColor:[15,23,42] }, headStyles:{ fillColor:[30,58,95], textColor:255, fontStyle:'bold' },
+      columnStyles:{ 0:{cellWidth:7}, 2:{halign:'right',cellWidth:28}, 3:{halign:'right',cellWidth:24}, 4:{halign:'right',cellWidth:18}, 5:{halign:'center',cellWidth:16}, 6:{cellWidth:20}, 8:{cellWidth:14} },
+      didParseCell:(d)=>{ if(d.section==='body' && props[d.row.index] && props[d.row.index].status==='vencedora'){ d.cell.styles.fillColor=[253,231,196]; d.cell.styles.fontStyle='bold'; } } });
+    y=doc.lastAutoTable.finalY+6;
+    // referência
+    const refEl=$('cot-ref-'+c.id); const refTxt=refEl?refEl.textContent.replace(/\s+/g,' ').trim():'';
+    if(refTxt){ doc.setFontSize(8.5); doc.setTextColor(100,116,139); const rl=doc.splitTextToSize(refTxt, W-2*M); doc.text(rl, M, y); y+=rl.length*4+3; }
+    // decisão
+    const venc=props.find(p=>p.status==='vencedora');
+    doc.setTextColor(15,23,42); doc.setFontSize(10.5); doc.setFont('helvetica','bold'); doc.text('Decisão', M, y); y+=5;
+    doc.setFontSize(9.5); doc.setFont('helvetica','normal');
+    const dec=(venc?'Proposta selecionada: '+venc.empresa_nome+' — '+fmtBRL(Number(venc.valor_total))+(area?' ('+fmtBRL(Number(venc.valor_total)/area)+'/m²)':'')+'. ':'Sem proposta selecionada ainda. ')+'Justificativa: '+just;
+    const dl=doc.splitTextToSize(dec, W-2*M); doc.text(dl, M, y); y+=dl.length*4.4+8;
+    if(y>170){ doc.addPage(); y=25; }
+    // assinaturas
+    const colW=(W-2*M-20)/2;
+    [[analista,'Analista de coordenação'],[gestor||'____________________','Gestor']].forEach(([n,r],i)=>{ const x=M+i*(colW+20); doc.setDrawColor(148,163,184); doc.line(x, y+18, x+colW, y+18); doc.setFontSize(9.5); doc.setFont('helvetica','bold'); doc.text(n||'', x, y+23); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(100,116,139); doc.text(r+' · assinatura eletrônica (TOTVS Sign)', x, y+27.5); doc.setTextColor(15,23,42); });
+    // rodapé
+    const pages=doc.getNumberOfPages(); for(let i=1;i<=pages;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(148,163,184); doc.text('Auria — Coordenação de Projetos · MDE gerado em '+hoje.toLocaleString('pt-BR')+' · cotação '+c.id.slice(0,8)+' · página '+i+'/'+pages, M, 205); }
+    const blob=doc.output('blob');
+    const path=COT_EMP+'/'+c.id+'/MDE_'+hoje.toISOString().slice(0,10)+'_'+Date.now()+'.pdf';
+    const up=await sb.storage.from('cotacoes').upload(path, blob, { contentType:'application/pdf', upsert:true }); if(up.error) throw up.error;
+    const r=await sb.from('cotacao_auria').update({ mde_pdf_path:path, justificativa:just, mde_gestor:gestor||null, mde_gerado_em:new Date().toISOString(), status:(c.status==='aberta'?'em_analise':c.status) }).eq('id',c.id); if(r.error) throw r.error;
+    $('mdeModal').classList.remove('on');
+    const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='MDE_'+(discCod(c.disciplina)||'')+'_'+(e.nome||'').replace(/[^\w]+/g,'_')+'.pdf'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),30000);
+    await loadCotacoes(COT_EMP);
+  }catch(err){ alert('Não foi possível gerar o MDE: '+((err&&err.message)||err)); }
+  b.disabled=false; b.textContent='📄 Gerar MDE em PDF';
+}
+async function mdeAssinado(cid, inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  try{
+    const path=COT_EMP+'/'+cid+'/MDE_assinado_'+Date.now()+'_'+f.name.replace(/[^\w.\-]+/g,'_').slice(0,80);
+    const up=await sb.storage.from('cotacoes').upload(path, f, { contentType:'application/pdf', upsert:true }); if(up.error) throw up.error;
+    const r=await sb.from('cotacao_auria').update({ mde_assinado_path:path, mde_assinado_em:new Date().toISOString() }).eq('id',cid); if(r.error) throw r.error;
+    await loadCotacoes(COT_EMP);
+  }catch(e){ alert('Não foi possível anexar: '+((e&&e.message)||e)); }
 }
 // ── Nova cotação ──
 function cqAbrir(){
