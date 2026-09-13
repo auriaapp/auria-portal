@@ -59,6 +59,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .sb-brand-name{font-size:16px;font-weight:800;letter-spacing:.3px}
 .sb-brand-role{font-size:10px;color:rgba(255,255,255,.5);letter-spacing:.5px;text-transform:uppercase;margin-top:1px}
 .sb-nav{flex:1;padding:14px 10px;display:flex;flex-direction:column;gap:2px}
+.sb-cnt{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--orange);color:#231703;font-size:11px;font-weight:800;display:none;align-items:center;justify-content:center}
+.sb-cnt.on{display:inline-flex}
 .sb-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;
   cursor:pointer;font-size:13px;font-weight:500;color:rgba(255,255,255,.7);
   transition:all .15s;text-decoration:none}
@@ -459,7 +461,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           <span class="sb-item-icon">&#9636;</span> Distribuicao
         </a>
         <a class="sb-item" data-page="fornecedores" onclick="goPage('fornecedores')">
-          <span class="sb-item-icon">&#127970;</span> Fornecedores
+          <span class="sb-item-icon">&#127970;</span> Fornecedores <span class="sb-cnt" id="sbCad" title="Cadastros de fornecedor aguardando sua aprovação"></span>
         </a>
         <div class="sb-section">Padrões</div>
         <a class="sb-item" data-page="disciplinas" onclick="goPage('disciplinas')">
@@ -1286,7 +1288,13 @@ async function doLogout(){
 // ═══════════════════════════════════════════════════════
 // DATA LOADING
 // ═══════════════════════════════════════════════════════
+// Bolinha no menu: cadastros de fornecedor pendentes (item 26).
+async function atualizarBadgeCadastros(){
+  try{ const r=await sb.from('fornecedor_cadastro_auria').select('id',{count:'exact',head:true}).eq('status','pendente');
+    const b=document.getElementById('sbCad'); if(!b) return; const n=r.count||0; b.textContent=n; b.classList.toggle('on', n>0); }catch(e){}
+}
 async function loadAll(){
+  atualizarBadgeCadastros();
   await Promise.all([ loadConstrutoras(), loadEmpreendimentos(), loadMetrics(), loadAnalistas() ]);
   await loadApontamentosLive();     // sobrepõe os números de hoje com a tabela real (inclui web)
   preencherFiltroEmpresas();
@@ -3384,7 +3392,7 @@ async function cadDecidir(id, aprovar){
   const r=await sb.rpc('fornecedor_cadastro_decidir',{ p_id:id, p_aprovar:aprovar, p_motivo:motivo });
   if(r.error){ showToast('Não foi possível: '+r.error.message,'red'); return; }
   showToast(aprovar?'Fornecedor aprovado e cadastrado':'Cadastro reprovado','green');
-  renderFornecedoresPage();
+  renderFornecedoresPage(); atualizarBadgeCadastros();
 }
 async function renderFornecedoresPage(){
   renderCadastros();
