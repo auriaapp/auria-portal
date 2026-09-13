@@ -16,7 +16,9 @@
   header img{height:44px}
   header .tt b{display:block;font-size:14px;font-weight:800;line-height:1.15}
   header .tt span{font-size:11px;color:#8FA6C0}
-  header .grupo{margin-left:auto;text-align:right}
+  header .grupo{margin-left:auto;text-align:right;display:flex;align-items:center;gap:12px}
+  header .grupo .tx{text-align:right}
+  header .grupo img{height:46px;max-width:160px;object-fit:contain;border-radius:8px;background:#fff;border:1.5px solid var(--accent);padding:3px 6px}
   header .grupo b{display:block;font-size:15px;font-weight:800}
   header .grupo span{font-size:11px;color:#8FA6C0}
   .line{height:2px;background:var(--accent)}
@@ -59,7 +61,7 @@
 <header>
   <img src="logo_symbol.png" alt="Auria">
   <div class="tt"><b>Auria — Cadastro de Fornecedor</b><span>Empresas de projeto · triagem da construtora</span></div>
-  <div class="grupo"><b id="hGrupo">&nbsp;</b><span>Este cadastro é avaliado pela gestão do grupo</span></div>
+  <div class="grupo"><div class="tx"><b id="hGrupo">&nbsp;</b><span id="hEmp">Este cadastro é avaliado pela gestão do grupo</span></div><img id="hLogo" alt="" style="display:none"></div>
 </header>
 <div class="line"></div>
 
@@ -154,6 +156,7 @@ const DISC_OPTS=['Arquitetura','Estrutura Concreto','Estrutura Metálica','Insta
   'Luminotécnico','Esquadrias','Fachada','Heliponto','Segurança','Sinalização / Comunicação Visual','ETA / ETE',
   'Climatização / Pressurização / Exaustão','Fundação','Contenção'];
 const TOKEN = new URLSearchParams(location.search).get('g') || '';
+const EMP_ID = new URLSearchParams(location.search).get('e') || '';
 let GRUPO = null, PROJS = [];
 
 function mascaraCnpj(el){
@@ -187,11 +190,15 @@ async function boot(){
   renderDiscs(); PROJS=[{nome:'',email:'',telefone:'',disciplinas:[],eh_rt:false}]; renderProjs();
   if(!TOKEN){ $('invalido').style.display=''; return; }
   try{
-    const r=await sb.rpc('fornecedor_cadastro_grupo',{ p_token:TOKEN });
+    const args={ p_token:TOKEN }; if(EMP_ID) args.p_emp=EMP_ID;
+    const r=await sb.rpc('fornecedor_cadastro_grupo',args);
     GRUPO=(r.data&&r.data[0])||null;
   }catch(e){}
   if(!GRUPO){ $('invalido').style.display=''; return; }
-  $('hGrupo').textContent=GRUPO.grupo; $('form').style.display='';
+  $('hGrupo').textContent=GRUPO.grupo;
+  if(GRUPO.empreendimento) $('hEmp').textContent='Convite para o empreendimento '+GRUPO.empreendimento;
+  const lg=GRUPO.emp_logo_url||GRUPO.logo_url; if(lg){ $('hLogo').src=lg; $('hLogo').style.display=''; }
+  $('form').style.display='';
 }
 async function enviar(ev){
   ev.preventDefault();
@@ -209,7 +216,8 @@ async function enviar(ev){
     rt:{ nome:$('rt_nome').value.trim(), registro:$('rt_reg').value.trim() },
     disciplinas:discs,
     projetistas:projs.map(p=>({ nome:(p.nome||'').trim(), email:(p.email||'').trim().toLowerCase(), telefone:(p.telefone||'').trim(), disciplinas:p.disciplinas, eh_rt:!!p.eh_rt })),
-    observacao:$('observacao').value.trim()
+    observacao:$('observacao').value.trim(),
+    empreendimento_id:(GRUPO.empreendimento && EMP_ID) ? EMP_ID : ''
   };
   const b=$('btnEnviar'); b.disabled=true; b.textContent='Enviando…';
   try{

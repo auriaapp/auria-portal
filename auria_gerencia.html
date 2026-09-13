@@ -650,6 +650,14 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
               <button class="btn-secondary" onclick="cadCopiar()">Copiar</button>
               <button class="btn-secondary" onclick="cadNovoToken()" title="Gera um link novo; o antigo deixa de funcionar">Gerar novo link</button>
             </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--gray-border)">
+              <b style="font-size:13px;white-space:nowrap">Convidar por e-mail</b>
+              <input id="cvEmail" type="email" placeholder="email@escritorio.com.br" style="flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit">
+              <select id="cvEmp" style="padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit;max-width:260px"><option value="">(sem empreendimento)</option></select>
+              <button class="btn-primary" onclick="cvEnviar()">Enviar convite</button>
+              <span style="font-size:12px;color:var(--text-soft)">O fornecedor recebe um e-mail Auria com o nome do empreendimento, a logo e o link do cadastro.</span>
+            </div>
+            <div id="cvLista" style="font-size:12px;color:var(--text-soft);margin-top:6px"></div>
             <div id="cadFila" style="margin-top:14px"></div>
           </div>
           <div id="fornList"><div class="loading-spinner"><div class="spinner"></div></div></div>
@@ -3321,8 +3329,19 @@ async function cadNovoToken(){
   if(r.error){ showToast('Não foi possível: '+r.error.message,'red'); return; }
   if(EMPRESA) EMPRESA.cadastro_token=r.data; document.getElementById('cadLink').value=cadLinkUrl(); showToast('Novo link gerado','green');
 }
+async function cvEnviar(){
+  const em=(document.getElementById('cvEmail').value||'').trim(), emp=document.getElementById('cvEmp').value||null;
+  if(!em){ showToast('Informe o e-mail','red'); return; }
+  const r=await sb.rpc('fornecedor_convidar_cadastro',{ p_email:em, p_emp:emp, p_mensagem:null });
+  if(r.error){ showToast('Não foi possível: '+r.error.message,'red'); return; }
+  document.getElementById('cvEmail').value=''; showToast('Convite enviado para '+em,'green'); renderCadastros();
+}
 async function renderCadastros(){
   const box=document.getElementById('cadFila'); if(!box) return;
+  const se=document.getElementById('cvEmp');
+  if(se && se.options.length<=1) se.innerHTML='<option value="">(sem empreendimento)</option>'+(EMPS||[]).map(e=>'<option value="'+e.id+'">'+esc(e.nome)+'</option>').join('');
+  try{ const cv=await sb.from('fornecedor_convite_auria').select('email,enviado_em,empreendimento_id').order('enviado_em',{ascending:false}).limit(6);
+    const l=document.getElementById('cvLista'); if(l) l.innerHTML=(cv.data||[]).length?'Últimos convites: '+(cv.data||[]).map(c=>esc(c.email)+' ('+new Date(c.enviado_em).toLocaleDateString('pt-BR')+')').join(' · '):''; }catch(e){}
   const li=document.getElementById('cadLink'); if(li) li.value=cadLinkUrl();
   let rows=[];
   try{ const r=await sb.from('fornecedor_cadastro_auria').select('*').order('criado_em',{ascending:false}).limit(60); rows=r.data||[]; }catch(e){}
