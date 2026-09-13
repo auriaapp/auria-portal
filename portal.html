@@ -294,6 +294,24 @@
   .pemp-h b{font-size:16px}
   /* A grade de atalhos do empreendimento é redundante com o card: o painel inline abre direto em Contratos/Acessos. */
   #peTools,#peTabsWrap .back{display:none}
+  /* Empreendimento em foco (item 31) */
+  .fx{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:14px;margin-bottom:16px}
+  .fx-sec{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+  .fx-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .fx-box + .fx-box{margin-top:12px}
+  .fx-eq h4{margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+  .fx-eq p{margin:0 0 10px;font-size:12.5px;line-height:1.5}
+  .fx-eq p:last-child{margin-bottom:0}
+  .fx-ev{list-style:none;margin:0;padding:0}
+  .fx-ev li{display:flex;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px;line-height:1.4}
+  .fx-ev li:first-child{border-top:none;padding-top:0}
+  .fx-ev .q{color:var(--mut);white-space:nowrap;font-size:11.5px;min-width:78px}
+  .fx-n{font-family:var(--mono);font-weight:700;font-variant-numeric:tabular-nums}
+  .fx-n.zero{color:var(--mut);font-weight:400}
+  .fx-n.rec{background:var(--accent);color:#231703;border-radius:8px;padding:1px 7px}
+  .fx-n.ana{color:var(--warn)} .fx-n.lib{color:var(--ok)}
+  .cd-tbl tbody tr.fx-off td{color:var(--mut)}
+  @media (max-width:1100px){ .fx{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
@@ -324,7 +342,7 @@
       <section>
         <div class="cd-sech">
           <h2 class="cd-sec">Meus empreendimentos</h2>
-          <span class="cd-hint">O seu <b style="color:var(--txt)">papel</b> em cada um decide o que você pode fazer nele. Clique num card para filtrar a fila; clique de novo para ver todos.</span>
+          <span class="cd-hint">O seu <b style="color:var(--txt)">papel</b> em cada um decide o que você pode fazer nele. Clique num card para abrir o empreendimento em foco; clique de novo para voltar à fila.</span>
         </div>
         <div id="emps"></div>
       </section>
@@ -367,6 +385,7 @@
     </div>
     <div class="pemp-b">
       <div class="ptools" id="peTools"></div>
+      <div id="peFoco"></div>
       <div id="peTabsWrap" style="display:none">
         <span class="back" onclick="$('peTabsWrap').style.display='none'">← Voltar às ferramentas</span>
         <div class="tabs" id="peTabs">
@@ -847,7 +866,12 @@ function paCards(){
 function elogoHtml(url, sigla){
   return url ? '<div class="elogo"><img src="'+esc(url)+'" alt=""></div>' : '<div class="elogo ph" title="Sem logo — a gestão define no cadastro do empreendimento">'+esc((sigla||'?').slice(0,4))+'</div>';
 }
-function paSelEmp(id){ PA_EMP = (PA_EMP===id) ? '' : id; PA_LIMITE=40; paCards(); paFila(); }
+// Clique no card = abrir o empreendimento em foco (e a fila fica filtrada nele
+// para quando voltar). Clicar de novo no card em foco volta à fila com todos.
+function paSelEmp(id){
+  if(PA_EMP===id && PA_ABA==='emp'){ PA_EMP=''; PA_LIMITE=40; paCards(); paFila(); paAba('fila'); return; }
+  PA_EMP=id; PA_LIMITE=40; paCards(); paFila(); abrirEmp(id);
+}
 function renderEmps(){ paCards(); }   // compatibilidade com chamadas antigas
 
 // Trilho: disciplinas presentes (apontamentos + CDE) — filtro da fila.
@@ -975,8 +999,100 @@ function abrirEmp(id){
   $('peTabsWrap').style.display='none';
   const tbe=$('tbEmp'); if(tbe) tbe.textContent='Empreendimento · '+empSigla(e);
   paAba('emp');
+  loadFoco(e.id);
 }
-function fecharEmp(){ $('peTabsWrap').style.display='none'; paAba('fila'); }
+// ── Empreendimento em foco (item 31) ─────────────────────────────────────────
+//  Três blocos: pipeline do CDE por disciplina (onde a decisão está travada),
+//  equipe (papel e nível de quem está na obra) e últimos eventos. Tudo por ID.
+var FX_EMP=null, FX_STATUS_ANA=['S1','S2','S3','S4'], FX_STATUS_LIB=['A1','B1'];
+async function loadFoco(id){
+  const e=empPorId(id); if(!e) return;
+  FX_EMP=id;
+  const box=$('peFoco'); box.innerHTML='<div class="load" style="padding:30px">Carregando o empreendimento…</div>';
+  // Toda resposta vira array (erro/RLS → lista vazia, nunca quebra a tela).
+  const q=(p)=>Promise.resolve(p).then(r=>({data:Array.isArray(r&&r.data)?r.data:[]})).catch(()=>({data:[]}));
+  const [rConv,rDocs,rDF,rAcc,rObra,rAna,rEv]=await Promise.all([
+    q(sb.rpc('cde_convencao',{p_emp:id})),
+    q(sb.from('cde_documento_auria').select('id,codigo,disciplina,fornecedor_id,cde_revisao_auria(id,revisao,status,recebido_em)').eq('empreendimento_id',id).eq('arquivado',false)),
+    q(sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id').eq('empreendimento_id',id)),
+    q(sb.rpc('cde_acessos_do_emp',{p_emp:id})),
+    q(sb.from('obra_empreendimento_auria').select('usuario_id,nivel,ativo').eq('empreendimento_id',id)),
+    q(sb.from('analista_empreendimento_auria').select('analista_id,papel,ativo').eq('empreendimento_id',id).eq('ativo',true)),
+    q(sb.from('cde_evento_auria').select('acao,de_status,para_status,usuario_nome,quando,cde_revisao_auria!inner(revisao,cde_documento_auria!inner(codigo,empreendimento_id))')
+        .eq('cde_revisao_auria.cde_documento_auria.empreendimento_id',id).order('quando',{ascending:false}).limit(12)),
+  ]);
+  if(FX_EMP!==id) return;   // trocou de empreendimento no meio
+  await carregarFornecedoresLeve();
+
+  // ── Pipeline por disciplina ──
+  const conv=(rConv.data&&rConv.data[0])||null; const discs=new Set();
+  if(conv){ const c=(conv.campos||[]).find(x=>x.mapeia==='disciplina'); if(c&&c.dominio) c.dominio.forEach(d=>{ const v=(typeof d==='object')?d.v:d; if(v) discs.add(v); }); }
+  const df={}; (rDF.data||[]).forEach(x=>{ if(x.disciplina){ df[x.disciplina]=x.fornecedor_id; discs.add(x.disciplina); } });
+  const por={};
+  (rDocs.data||[]).forEach(d=>{
+    const k=discCod(d.disciplina)||'—'; discs.add(k);
+    const o=por[k]||(por[k]={rec:0,ana:0,lib:0,dev:0,ult:null});
+    (d.cde_revisao_auria||[]).forEach(r=>{
+      if(r.status==='S0') o.rec++; else if(FX_STATUS_ANA.includes(r.status)) o.ana++; else if(FX_STATUS_LIB.includes(r.status)) o.lib++; else if(r.status==='DEVOLVIDO') o.dev++;
+      if(r.recebido_em && (!o.ult || r.recebido_em>o.ult.q)) o.ult={q:r.recebido_em, cod:d.codigo, rev:r.revisao};
+    });
+  });
+  const lista=[...discs].map(discCod).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).sort();
+  const semForn=lista.filter(k=>!df[k]);
+  const n=(v,cls)=>'<span class="fx-n '+(v?cls:'zero')+'">'+v+'</span>';
+  const linhas=lista.map(k=>{
+    const o=por[k]||{rec:0,ana:0,lib:0,dev:0,ult:null}; const forn=df[k]?fornPorId(df[k]):'';
+    const acao = o.rec ? '<a class="cd-btn navy" style="padding:3px 9px;font-size:11.5px" href="cde_obra.html?emp='+encodeURIComponent(id)+'">Analisar</a>'
+               : !forn ? '<button class="cd-btn" style="padding:3px 9px;font-size:11.5px" onclick="abrirEmpAcessos(\''+id+'\')">Atribuir fornecedor</button>'
+               : (o.ana ? '<a class="cd-btn" style="padding:3px 9px;font-size:11.5px" href="cde_obra.html?emp='+encodeURIComponent(id)+'">Continuar</a>' : '<span class="cd-hint">em dia</span>');
+    const off=!forn && !o.rec && !o.ana && !o.lib;
+    return '<tr class="'+(o.rec?'urg':(off?'fx-off':''))+'">'
+      +'<td><span class="dc">'+esc(k)+'</span> <span class="mut">'+(discFullName(k)!==k?esc(discFullName(k)):'')+'</span></td>'
+      +'<td>'+(forn?esc(forn):'<span class="cd-pill err">sem fornecedor</span>')+'</td>'
+      +'<td style="text-align:center">'+n(o.rec,'rec')+'</td>'
+      +'<td style="text-align:center">'+n(o.ana,'ana')+(o.dev?' <span class="mut" title="devolvidas ao projetista">+'+o.dev+' dev.</span>':'')+'</td>'
+      +'<td style="text-align:center">'+n(o.lib,'lib')+'</td>'
+      +'<td class="mut">'+(o.ult?('<span class="cod" style="color:var(--navy)">'+esc(o.ult.cod)+'</span> · '+esc(o.ult.rev||'')+' · '+haDias(o.ult.q)):'—')+'</td>'
+      +'<td>'+acao+'</td></tr>';
+  }).join('');
+  const totRec=Object.values(por).reduce((s,o)=>s+o.rec,0);
+  const pipeline='<div class="fx-sec"><h2 class="cd-sec">Pipeline do CDE por disciplina</h2>'
+    +'<span class="cd-hint">Recebido (S0) → em análise → liberado para obra. Onde há laranja, a decisão é sua.'+(totRec?' <b style="color:#7C3E06">'+totRec+' arquivo'+(totRec>1?'s':'')+' aguardando análise.</b>':'')+'</span></div>'
+    +'<div class="cd-tbl"><table><thead><tr><th>Disc.</th><th>Fornecedor</th><th style="text-align:center">Recebido (S0)</th><th style="text-align:center">Em análise</th><th style="text-align:center">Liberado</th><th>Última entrega</th><th></th></tr></thead>'
+    +'<tbody>'+(linhas||'<tr><td colspan="7" class="mut" style="text-align:center;padding:20px">Sem disciplinas na convenção nem arquivos no CDE.</td></tr>')+'</tbody></table></div>';
+
+  // ── Equipe ──
+  const acc=rAcc.data||[]; const obra={}; (rObra.data||[]).forEach(x=>{ if(x.ativo!==false) obra[x.usuario_id]=x.nivel; });
+  const papel={}; (rAna.data||[]).forEach(x=>{ papel[x.analista_id]=x.papel||'coordenador'; });
+  const coord=acc.filter(r=>r.tipo==='coordenacao'), internos=acc.filter(r=>r.tipo==='interno');
+  const equipeObra=internos.filter(r=>obra[r.sujeito_id]), setor=internos.filter(r=>!obra[r.sujeito_id]);
+  const fornIds=[...new Set(Object.values(df))];
+  const li=(t)=>'<li>'+t+'</li>';
+  const equipe='<div class="fx-box fx-eq">'
+    +'<div class="fx-sec" style="margin-bottom:6px"><h2 class="cd-sec">Equipe deste empreendimento</h2><span class="cd-hint">papel e nível — quem decide, quem vê</span></div>'
+    +'<h4>Coordenação</h4><p>'+(coord.length?coord.map(r=>esc(r.nome||r.email)+' · <span class="mut">'+(papel[r.sujeito_id]==='visualizador'?'visualizador':'coordenador')+'</span>').join('<br>'):'<span class="mut">—</span>')+'</p>'
+    +'<h4>Obra</h4><p>'+(equipeObra.length?equipeObra.map(r=>esc(r.nome||r.email)+' · <span class="mut">'+esc((OBRA_NIVEL_ROTULO[obra[r.sujeito_id]]||obra[r.sujeito_id]).toLowerCase())+'</span>').join('<br>'):'<span class="mut">ninguém da obra ainda</span>')+'</p>'
+    +'<h4>Fornecedores</h4><p>'+(fornIds.length?fornIds.length+' empresa'+(fornIds.length>1?'s':'')+' · '+Object.keys(df).length+' disciplina'+(Object.keys(df).length>1?'s':'')+' atendida'+(Object.keys(df).length>1?'s':''):'<span class="mut">nenhuma disciplina atribuída</span>')
+      +(semForn.length?'<br><span class="cd-pill err" style="margin-top:4px">'+semForn.join(', ')+' sem fornecedor</span>':'')+'</p>'
+    +'<h4>Setor</h4><p>'+(setor.length?setor.map(r=>esc(r.nome||r.email)).join(', '):'<span class="mut">—</span>')+'</p>'
+    +(souVisualizador(id)?'':'<button class="cd-btn" onclick="abrirEmpAcessos(\''+id+'\')">Gerir acessos</button>')
+    +'</div>';
+
+  // ── Últimos eventos: CDE + apontamentos deste empreendimento ──
+  const ACAO={recebeu:'Arquivo recebido',analisou:'Em análise',liberou:'Liberado para obra',devolveu:'Devolvido ao projetista',substituiu:'Revisão substituída',baixou:'Download'};
+  const evs=(rEv.data||[]).map(ev=>({ q:ev.quando, t:(ACAO[ev.acao]||ev.acao)+' — <span class="cod" style="color:var(--navy)">'+esc(ev.cde_revisao_auria&&ev.cde_revisao_auria.cde_documento_auria?ev.cde_revisao_auria.cde_documento_auria.codigo:'')+'</span> '+esc(ev.cde_revisao_auria?ev.cde_revisao_auria.revisao||'':'')+(ev.usuario_nome?' <span class="mut">· '+esc(ev.usuario_nome)+'</span>':'') }));
+  APTS.filter(a=>aptEmp(a)&&aptEmp(a).id===id&&a.data_criacao).forEach(a=>{
+    const quem=a.criado_por_nome?(' <span class="mut">· '+esc(a.criado_por_nome)+(['obra','projetista','setor'].includes(a.criado_por_papel||'')?' · '+a.criado_por_papel:'')+'</span>'):'';
+    evs.push({ q:a.data_criacao, t:'Apontamento aberto — <span class="cod" style="color:var(--navy)">'+esc(aptCod(a))+'</span> '+esc(a.titulo||'')+quem });
+  });
+  evs.sort((a,b)=>String(b.q).localeCompare(String(a.q)));
+  const fmtQ=q=>{ const d=new Date(q); return isNaN(d)?'':d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
+  const eventos='<div class="fx-box"><div class="fx-sec" style="margin-bottom:6px"><h2 class="cd-sec">Últimos eventos</h2><span class="cd-hint">o que aconteceu neste empreendimento</span></div>'
+    +(evs.length?'<ul class="fx-ev">'+evs.slice(0,12).map(v=>'<li><span class="q">'+fmtQ(v.q)+'</span><span>'+v.t+'</span></li>').join('')+'</ul>':'<span class="mut" style="font-size:12.5px">Nada registrado ainda.</span>')+'</div>';
+
+  box.innerHTML='<div class="fx"><div>'+pipeline+'</div><div>'+equipe+eventos+'</div></div>';
+}
+function fecharEmp(){ $('peTabsWrap').style.display='none'; PA_EMP=''; paCards(); paFila(); paAba('fila'); }
 document.addEventListener('keydown', e=>{ if(e.key==='Escape' && (PA_ABA==='emp'||PA_ABA==='forn')) paAba('fila'); });
 
 // ════════════════════════════════════════════════════════════════════════
