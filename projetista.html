@@ -301,8 +301,16 @@
   .pjh-c b{font-size:17px;font-weight:800;line-height:1.15;letter-spacing:.01em}
   .pjh-c span{font-size:11px;color:#8FA6C0}
   .pjh-r{display:flex;align-items:center;gap:9px;justify-self:end}
-  .pjh-logo{height:40px;max-width:160px;display:flex;align-items:center}
-  .pjh-logo img{height:40px;width:auto;border-radius:6px;background:#fff;padding:2px}
+  /* Logo do fornecedor: retângulo branco de cantos arredondados com linha laranja.
+     Clique = trocar (só o projetista do fornecedor; a RPC confere no servidor). */
+  .pjh-logo{height:44px;max-width:180px;display:flex;align-items:center}
+  .pjh-logo img{height:44px;width:auto;max-width:180px;object-fit:contain;border-radius:8px;background:#fff;
+                padding:3px 6px;border:1.5px solid var(--cde-accent);cursor:pointer}
+  .pjh-logo img:hover{box-shadow:0 0 0 2px rgba(232,150,10,.35)}
+  .pjh-addlogo{height:40px;padding:0 12px;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);
+               border:1px dashed #3A4A66;border-radius:8px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+               color:#8FA6C0;cursor:pointer;font-family:inherit}
+  .pjh-addlogo:hover{border-color:var(--cde-accent);color:#fff}
   .pjh .who{text-align:right;font-size:11.5px;color:#9DB3CA;line-height:1.35;display:flex;flex-direction:column}
   .pjh .who b{color:#fff;font-size:12.5px}
   .pjh .hbtn{position:relative;background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
@@ -429,6 +437,7 @@
     <div class="pjh-c"><b id="pj-forn-nome">&nbsp;</b><span id="pj-forn-sub">Fornecedor</span></div>
     <div class="pjh-r">
       <div class="pjh-logo" id="pj-forn-logo" style="display:none"></div>
+      <input type="file" id="pj-logo-file" accept="image/png,image/jpeg" style="display:none" onchange="pjLogoEscolhida(this)">
       <div class="pjh-nota" id="pj-nota" title="Sua nota geral (prazo, engajamento e assertividade)">
         <div class="lbl"><small>Nota geral</small><span id="pj-nota-sub">—</span></div>
         <b id="pj-nota-num">—</b><i id="pj-nota-trend"></i>
@@ -2375,7 +2384,60 @@ function pjRenderHeader(){
   if(nn){ nn.textContent=g; nn.style.color=scoreCor(g); }
   if(nt){ nt.textContent=trendIcon(tg); nt.style.color=trendCor(tg); }
   if(ns){ ns.textContent = rg ? (rg.pos+'º de '+rg.total+' fornecedores') : (tg==='up'?'em alta':tg==='down'?'em queda':'estável'); }
-  // Logo do fornecedor: não há campo no banco ainda (item 24); o espaço fica reservado.
+  pjRenderLogo();
+}
+// ── Logo do fornecedor (item 24) ─────────────────────────────────────────────
+//  PJ_FORN vem de forn_meu() (RPC: o projetista não lê fornecedores_auria).
+//  Upload: PNG/JPG até 2 MB, redimensionada no navegador para 160 px de altura
+//  (fica pequena e uniforme), sobe para logos/fornecedores/<id>/logo.png e a
+//  URL pública é gravada por forn_set_logo (que confere a permissão).
+var PJ_FORN=null;
+async function pjCarregarForn(){
+  try{ const r=await sb.rpc('forn_meu'); const f=(r.data&&r.data[0])||null; if(f){ PJ_FORN=f; pjRenderHeader(); } }
+  catch(e){ console.warn('forn_meu', e.message||e); }
+}
+function pjRenderLogo(){
+  var el=document.getElementById('pj-forn-logo'); if(!el) return;
+  if(!PJ_FORN){ el.style.display='none'; return; }
+  el.style.display='';
+  if(PJ_FORN.logo_url){
+    el.innerHTML='<img src="'+escH(PJ_FORN.logo_url)+'" alt="'+escH(PJ_FORN.nome||'')+'" title="Trocar a logo" onclick="document.getElementById(\'pj-logo-file\').click()">';
+  }else{
+    el.innerHTML='<button class="pjh-addlogo" onclick="document.getElementById(\'pj-logo-file\').click()">+ Add Logo</button>';
+  }
+  // Sem vínculo de CDE ainda, o nome da empresa vem daqui.
+  var nm=document.getElementById('pj-forn-nome'); if(nm && (nm.textContent||'').trim()==='' && PJ_FORN.nome){ nm.textContent=PJ_FORN.nome; var sb2=document.getElementById('pj-forn-sub'); if(sb2) sb2.textContent='Fornecedor'; }
+}
+function pjLogoEscolhida(inp){
+  var f=inp.files&&inp.files[0]; inp.value=''; if(!f||!PJ_FORN) return;
+  if(!/^image\/(png|jpeg)$/.test(f.type)){ alert('Use uma imagem PNG ou JPG.'); return; }
+  if(f.size>2*1024*1024){ alert('A imagem passa de 2 MB. Reduza e tente de novo.'); return; }
+  var img=new Image(); var url=URL.createObjectURL(f);
+  img.onload=function(){
+    URL.revokeObjectURL(url);
+    var H=160, esc2=Math.min(1, H/img.naturalHeight);
+    var w=Math.max(1,Math.round(img.naturalWidth*esc2)), h=Math.max(1,Math.round(img.naturalHeight*esc2));
+    if(w>640){ var k=640/w; w=640; h=Math.max(1,Math.round(h*k)); }
+    var c=document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    c.toBlob(function(blob){ if(!blob){ alert('Não foi possível processar a imagem.'); return; } pjEnviarLogo(blob); }, 'image/png');
+  };
+  img.onerror=function(){ URL.revokeObjectURL(url); alert('Não foi possível ler a imagem.'); };
+  img.src=url;
+}
+async function pjEnviarLogo(blob){
+  var el=document.getElementById('pj-forn-logo'); if(el) el.innerHTML='<span style="font-size:11px;color:#8FA6C0">Enviando…</span>';
+  try{
+    var path='fornecedores/'+PJ_FORN.id+'/logo.png';
+    var up=await sb.storage.from('logos').upload(path, blob, { upsert:true, contentType:'image/png', cacheControl:'60' });
+    if(up.error) throw up.error;
+    var pub=sb.storage.from('logos').getPublicUrl(path); var urlPub=(pub.data&&pub.data.publicUrl)||'';
+    if(!urlPub) throw new Error('sem URL pública');
+    urlPub+='?v='+Date.now();   // fura o cache do navegador ao trocar
+    var r=await sb.rpc('forn_set_logo',{ p_forn:PJ_FORN.id, p_url:urlPub });
+    if(r.error) throw r.error;
+    PJ_FORN.logo_url=urlPub; pjRenderLogo();
+  }catch(e){ alert('Não foi possível salvar a logo: '+(e.message||e)); pjRenderLogo(); }
 }
 function pjRenderVtool(){
   var g=computeScore(MINE).total, tg=trendOf(MINE);
@@ -2492,6 +2554,7 @@ function pjFin(){
   sb.auth.onAuthStateChange(function(_e,s){ if(s){ TOKEN=s.access_token; } else { location.replace('./'); } });
   entrar();
   cdeBootCheck();   // revela o botão 📁 se o projetista tiver disciplina atribuída em algum CDE
+  pjCarregarForn(); // nome + logo da empresa do projetista (independe de ter disciplina atribuída)
 })();
 </script>
 </body>
