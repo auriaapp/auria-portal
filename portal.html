@@ -1542,8 +1542,33 @@ async function salvarContrato(){
     if(rp.error) throw rp.error;
     if(CT_ORIGEM&&CT_ORIGEM.cotacao_id){ try{ await sb.from('cotacao_auria').update({ contrato_id:ctrId }).eq('id',CT_ORIGEM.cotacao_id); }catch(_){} CT_ORIGEM=null; }
     fecharContrato(); await loadContratos(CTR_EMP_ID);
+    await registrarPosContrato(CTR_EMP_ID, proj, disc);
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
+}
+
+// ── Registro automático pós-contrato (item 38, peça 7) ───────────────────────
+//  Contrato salvo → o fornecedor passa a atender a disciplina neste empreendimento
+//  (disciplina_fornecedor_auria, com o projetista do contrato como responsável) e o
+//  projetista recebe o convite de acesso se ainda não tem conta. É o mesmo que a
+//  coordenação faria à mão em Acessos › Fornecedores — só que sem esquecer.
+async function registrarPosContrato(empId, proj, discNome){
+  try{
+    if(!Object.keys(DISC_MAP).length) await carregarConvencoes();
+    const cod=discCod(discNome); if(!cod||!proj||!proj.fornecedor_id) return;
+    const atual=await sb.from('disciplina_fornecedor_auria').select('id,fornecedor_id,projetista_id').eq('empreendimento_id',empId).eq('disciplina',cod).maybeSingle();
+    const a=atual.data||null;
+    if(a && a.fornecedor_id!==proj.fornecedor_id){
+      if(!confirm('A disciplina '+cod+' já é atendida por outro fornecedor neste empreendimento. Trocar para '+(proj.fornecedor_nome||'o fornecedor do contrato')+'?')) return;
+    }
+    const r=await sb.from('disciplina_fornecedor_auria').upsert({ empreendimento_id:empId, disciplina:cod, fornecedor_id:proj.fornecedor_id, projetista_id:proj.id, criado_por:USER.id },{ onConflict:'empreendimento_id,disciplina' });
+    if(r.error) throw r.error;
+    let msg='Contrato salvo. '+(proj.fornecedor_nome||'O fornecedor')+' passa a atender '+cod+' neste empreendimento, com '+(proj.nome||proj.email)+' como responsável.';
+    if(proj.email){ try{ const cv=await sb.functions.invoke('invite-projetista',{ body:{ email:proj.email, nome:proj.nome||'', empresa_nome:proj.fornecedor_nome||'' } });
+      if(!cv.error && cv.data && !cv.data.ja_existia) msg+='\nConvite de acesso enviado para '+proj.email+'.'; }catch(_){} }
+    alert(msg);
+    if(CDE_AC_EMPID===empId && $('peTabs').style.display==='none') loadAcessos(empId);
+  }catch(e){ alert('Contrato salvo, mas não foi possível registrar o fornecedor na disciplina: '+((e&&e.message)||e)+'\nFaça em Acessos › Fornecedores.'); }
 }
 
 // ── Fornecedores (visão geral) ──────────────────────────────────────────
