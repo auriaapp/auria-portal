@@ -1778,8 +1778,7 @@ function trendHTML(t){
 // disciplina, convenção e pavimentos. Cada consulta falha sozinha (allSettled):
 // um bloco sem dado vira aviso no console, nunca derruba o painel.
 // ═══════════════════════════════════════════════════════
-let GD = { cot:[], props:[], contr:[], parc:[], nfs:[], convA:[], fconv:[], emails:new Set(), cad:[], discNotif:0,
-           cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
+let GD = { cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
 let FIN_PRESEL_EMP = null;   // nome do empreendimento a pré-selecionar em Custos & NFs (botão Custos do card)
 
 function gdHoje(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
@@ -1808,8 +1807,7 @@ function gdDiscCod(emp, s){
 async function gq(q){ const r=await q; if(r.error) throw r.error; return r.data||[]; }
 
 async function loadGestaoExtras(){
-  const d7=new Date(Date.now()-7*864e5).toISOString();
-  const G={ cot:[], props:[], contr:[], parc:[], nfs:[], convA:[], fconv:[], emails:new Set(), cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
+  const G={ cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
   const t=[];
   // cotações em andamento + propostas recebidas
   t.push((async()=>{ G.cot=await gq(sb.from('cotacao_auria').select('id,empreendimento_id,disciplina,titulo,prazo_envio,status,mde_gerado_em,mde_assinado_em,mde_pdf_path').in('status',['aberta','em_analise']));
@@ -1817,16 +1815,8 @@ async function loadGestaoExtras(){
   // contratos ativos + parcelas
   t.push((async()=>{ G.contr=await gq(sb.from('contratos_auria').select('id,empreendimento_id,disciplina,valor_total,status,projetista_nome').eq('status','ativo'));
     if(G.contr.length) G.parc=await gq(sb.from('parcelas_auria').select('id,contrato_id,numero,valor,vencimento,status,data_pagamento').in('contrato_id',G.contr.map(c=>c.id))); })());
-  // NFs enviadas pelos projetistas ainda não confirmadas pelo financeiro
-  t.push((async()=>{ G.nfs=await gq(sb.rpc('nf_listar',{ p_empreendimento_id:null, p_status:'enviada' })); })());
-  // convites parados: equipe (convites_auria) e fornecedores (fornecedor_convite_auria) > 7 dias sem aceite
-  t.push((async()=>{ G.convA=await gq(sb.from('convites_auria').select('email,role,criado_em').lt('criado_em',d7)); })());
-  t.push((async()=>{ G.fconv=await gq(sb.from('fornecedor_convite_auria').select('email,enviado_em,empreendimento_id').lt('enviado_em',d7)); })());
-  t.push((async()=>{ (await gq(sb.from('usuarios_auria').select('email'))).forEach(u=>G.emails.add(String(u.email||'').toLowerCase())); })());
-  t.push((async()=>{ (await gq(sb.from('projetistas_auria').select('email'))).forEach(u=>G.emails.add(String(u.email||'').toLowerCase())); })());
-  // cadastros de fornecedor (pendentes = decisão do gestor; todos = quem já respondeu ao convite)
-  t.push((async()=>{ (await gq(sb.from('fornecedor_cadastro_auria').select('id,razao_social,nome_fantasia,email,status,criado_em').order('criado_em',{ascending:false}).limit(300)))
-    .forEach(x=>{ if(x.email) G.emails.add(String(x.email).toLowerCase()); if(x.status==='pendente') G.cad.push(x); }); })());
+  // cadastros de fornecedor pendentes (decisão do gestor)
+  t.push((async()=>{ G.cad=await gq(sb.from('fornecedor_cadastro_auria').select('id,razao_social,nome_fantasia,email,criado_em').eq('status','pendente').order('criado_em',{ascending:false})); })());
   // disciplinas criadas por analista aguardando validação
   t.push((async()=>{ let q=sb.from('cde_disc_notif_auria').select('id',{count:'exact',head:true}).eq('lida',false); if(EMPRESA&&EMPRESA.id) q=q.eq('grupo_id',EMPRESA.id);
     const r=await q; if(r.error) throw r.error; G.discNotif=r.count||0; })());
@@ -1860,7 +1850,7 @@ async function loadGestaoExtras(){
 function gdDiscCodWith(G,emp,s){ const keep=GD; GD=G; try{ return gdDiscCod(emp,s); } finally{ GD=keep; } }
 
 // ── faixa ────────────────────────────────────────────────
-function gdStripRender(vis, nDecisoes, solic){
+function gdStripRender(vis, nDecisoes){
   const lat=vis.map(e=>gdLat(e.id)); const sum=f=>lat.reduce((s,r)=>s+(r[f]||0),0);
   const avg=vis.length?Math.round(sum('indice_resposta')/vis.length):0;
   setText('gdCod', vis.length+' EMPREENDIMENTO'+(vis.length!==1?'S':''));
@@ -1870,7 +1860,6 @@ function gdStripRender(vis, nDecisoes, solic){
   ch.push(`<span class="cd-chip ok">${sum('total_resolvidos')} resolvidos</span>`);
   ch.push(`<span class="cd-chip navy" onclick="gdOrdenar('resposta')" title="Ordenar: menor resposta">resposta dos projetistas ${avg}%</span>`);
   if(nDecisoes) ch.push(`<span class="cd-chip acc-sol" onclick="document.getElementById('gdPrecisa').scrollIntoView({behavior:'smooth',block:'center'})">${nDecisoes} decis${nDecisoes===1?'ão':'ões'} pendente${nDecisoes===1?'':'s'}</span>`);
-  if(solic.n) ch.push(`<span class="cd-chip acc" onclick="goPage('financeiro')">${solic.n} faturamento${solic.n===1?'':'s'} solicitado${solic.n===1?'':'s'} · ${gdBrl(solic.v)}</span>`);
   setHTML('gdChips', ch.join(''));
 }
 function gdOrdenar(v){ const s=document.getElementById('sortSel'); if(s) s.value=v; renderCards(); }
@@ -1892,30 +1881,18 @@ function gdPrecisaRender(vis){
   const mde=cot.filter(c=>c.mde_gerado_em && !c.mde_assinado_em);
   const venc=cot.filter(c=>c.status==='aberta' && c.prazo_envio && new Date(c.prazo_envio+'T00:00:00')<hoje && !(propsPor[c.id]||[]).length);
   const semMde=cot.filter(c=>!c.mde_gerado_em && (propsPor[c.id]||[]).length);
-  const contrPor={}; GD.contr.forEach(c=>{ if(ids.has(c.empreendimento_id)) contrPor[c.id]=c; });
-  const parc=GD.parc.filter(p=>contrPor[p.contrato_id]);
-  const parcVenc=parc.filter(p=>p.vencimento && new Date(p.vencimento+'T00:00:00')<hoje && ['a_faturar','solicitada','autorizada'].includes(p.status));
-  const solic=parc.filter(p=>p.status==='solicitada');
-  const nfs=GD.nfs.filter(n=>!n.empreendimento_id || ids.has(n.empreendimento_id));
-  const convA=GD.convA.filter(c=>!GD.emails.has(String(c.email||'').toLowerCase()));
-  const fconv=GD.fconv.filter(c=>!GD.emails.has(String(c.email||'').toLowerCase()) && (!c.empreendimento_id || ids.has(c.empreendimento_id)));
-  const sum=(a,f)=>a.reduce((s,x)=>s+(Number(x[f])||0),0);
   const sig=id=>{ const e=gdEmp(id); return e?gdSigla(e):''; };
   const disc=c=>gdDiscCod(gdEmp(c.empreendimento_id),c.disciplina);
   const tiles=[];
   if(GD.cad.length) tiles.push({hot:1,n:GD.cad.length,t:'Cadastros de fornecedor',s:GD.cad.map(x=>x.nome_fantasia||x.razao_social).join(' · '),b:'Aprovar',go:"goPage('fornecedores')"});
   if(mde.length) tiles.push({hot:1,n:mde.length,t:'MDE para assinar',s:mde.map(c=>sig(c.empreendimento_id)+' · '+disc(c)).join(' · '),b:'Ver MDE',go:"gdVerMde('"+mde[0].id+"')"});
   if(GD.discNotif) tiles.push({hot:1,n:GD.discNotif,t:'Disciplina nova para validar',s:'criada por analista fora da convenção',b:'Validar',go:"goPage('disciplinas')"});
-  if(nfs.length) tiles.push({hot:1,n:nfs.length,t:'NFs enviadas sem confirmação',s:gdBrl(sum(nfs,'valor'))+' · o financeiro ainda não deu entrada',b:'Custos',go:"goPage('financeiro')"});
-  const nConv=convA.length+fconv.length;
-  if(nConv) tiles.push({hot:0,n:nConv,t:'Convites parados',s:'sem aceite há mais de 7 dias · '+[convA.length?convA.length+' da equipe':'',fconv.length?fconv.length+' de fornecedor':''].filter(Boolean).join(' · '),b:'Ver',go:convA.length?"goPage('analistas')":"goPage('fornecedores')"});
   if(venc.length) tiles.push({hot:0,n:venc.length,t:'Cotação vencida sem proposta',s:venc.map(c=>sig(c.empreendimento_id)+' · '+disc(c)+' · prazo '+gdDbr(c.prazo_envio)).join(' · '),b:'Abrir',go:"verDetalhe('"+venc[0].empreendimento_id+"')"});
   if(semMde.length) tiles.push({hot:0,n:semMde.length,t:'Propostas sem MDE',s:semMde.map(c=>sig(c.empreendimento_id)+' · '+disc(c)+' · '+(propsPor[c.id]||[]).length+' proposta'+((propsPor[c.id]||[]).length!==1?'s':'')).join(' · '),b:'Abrir',go:"verDetalhe('"+semMde[0].empreendimento_id+"')"});
-  if(parcVenc.length) tiles.push({hot:0,n:parcVenc.length,t:'Parcelas vencidas sem NF',s:'contrato diz que era para faturar · '+gdBrl(sum(parcVenc,'valor')),b:'Custos',go:"goPage('financeiro')"});
   const box=document.getElementById('gdPrecisa'); if(!box) return 0;
   box.innerHTML = tiles.length
     ? '<div class="gd-tiles">'+tiles.map(x=>`<div class="gd-tile${x.hot?' hot':''}" onclick="${x.go}"><span class="n">${x.n}</span><div style="flex:1;min-width:0"><div class="t">${esc(x.t)}</div><div class="s" title="${_escAttr(x.s)}">${esc(x.s)}</div></div><span class="cd-btn">${esc(x.b)}</span></div>`).join('')+'</div>'
-    : '<div class="gd-zero">Nada pendente para você agora — cadastros, MDEs, cotações, parcelas, NFs e convites estão em dia.</div>';
+    : '<div class="gd-zero">Nada pendente para você agora — cadastros, MDEs, disciplinas e cotações estão em dia.</div>';
   return tiles.reduce((s,x)=>s+x.n,0);
 }
 
@@ -2011,7 +1988,7 @@ function gdFinRender(vis){
   const parc=GD.parc.filter(p=>contrPor[p.contrato_id]);
   const inMes=p=>String(p.vencimento||'').slice(0,7)===ym;
   const comp=parc.filter(p=>inMes(p)&&!['paga','cancelada'].includes(p.status));
-  const solic=parc.filter(p=>p.status==='solicitada');
+  const venc=parc.filter(p=>p.vencimento && new Date(p.vencimento+'T00:00:00')<h && !['paga','cancelada'].includes(p.status));
   const pagoMes=parc.filter(p=>p.status==='paga'&&String(p.data_pagamento||p.vencimento||'').slice(0,7)===ym);
   const prevMes=parc.filter(p=>inMes(p)&&p.status!=='cancelada');
   const sum=a=>a.reduce((s,p)=>s+(Number(p.valor)||0),0);
@@ -2023,11 +2000,10 @@ function gdFinRender(vis){
   setHTML('gdFin', `<div class="cd-sech" style="margin-bottom:6px"><h2 class="cd-sec">Financeiro</h2><span class="cd-hint">só leitura · o detalhe fica em Custos &amp; NFs</span><button class="cd-btn" style="margin-left:auto;padding:3px 9px;font-size:11.5px" onclick="goPage('financeiro')">Custos &amp; NFs</button></div>
     <div class="gd-kpis">
       <div class="gd-kpi"><div class="l">Compromissos do mês</div><div class="v">${gdBrl(sum(comp))}</div><div class="s">${comp.length} parcela${comp.length!==1?'s':''} prevista${comp.length!==1?'s':''}</div></div>
-      <div class="gd-kpi${solic.length?' acc':''}"><div class="l">Faturamentos solicitados</div><div class="v">${gdBrl(sum(solic))}</div><div class="s">${solic.length} aguardando autorização</div></div>
+      <div class="gd-kpi${venc.length?' acc':''}"><div class="l">Vencido sem pagamento</div><div class="v">${gdBrl(sum(venc))}</div><div class="s">${venc.length} parcela${venc.length!==1?'s':''} · trata o coordenador / adm-fin</div></div>
       <div class="gd-kpi ok"><div class="l">Pago no mês</div><div class="v">${gdBrl(sum(pagoMes))}</div><div class="s">${pct}% do previsto no mês</div></div>
     </div>
     <div class="cd-hint" style="font-size:11px;margin-bottom:4px">contratado × pago por empreendimento (contratos ativos)</div>${barras||'<div class="cd-hint">Nenhum contrato ativo nos empreendimentos filtrados.</div>'}`);
-  return {n:solic.length,v:sum(solic)};
 }
 
 // ── equipe com carga ─────────────────────────────────────
@@ -2054,9 +2030,9 @@ function gdRailRender(){
 
 function renderDashboard(){
   const vis=empsFiltradas();
-  const solic=gdFinRender(vis);
+  gdFinRender(vis);
   const nDec=gdPrecisaRender(vis);
-  gdStripRender(vis,nDec,solic);
+  gdStripRender(vis,nDec);
   renderCards();
   gdCronRender(vis); gdEquipeRender(vis); gdRailRender();
   if(GD.quando) setText('gdAtualizado','atualizado às '+GD.quando.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}));
