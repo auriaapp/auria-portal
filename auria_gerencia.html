@@ -1865,6 +1865,7 @@ function gdStripRender(vis, nDecisoes){
 function gdOrdenar(v){ const s=document.getElementById('sortSel'); if(s) s.value=v; renderCards(); }
 function gdEmpresa(id){ DASH_EMPRESA=id||''; const s=document.getElementById('filterEmpresa'); if(s) s.value=DASH_EMPRESA; renderDashboard(); }
 function gdIrConviteFornecedor(){ goPage('fornecedores'); setTimeout(()=>{ const i=document.getElementById('cvEmail'); if(i){ i.scrollIntoView({behavior:'smooth',block:'center'}); i.focus(); } },350); }
+function gdIrImplantacao(){ const c=document.querySelector('.cd-card.impl'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); }
 function gdCustos(empId){ const e=gdEmp(empId); FIN_PRESEL_EMP=e?e.nome:null; goPage('financeiro'); }
 async function gdVerMde(id){
   const c=GD.cot.find(x=>x.id===id);
@@ -1875,24 +1876,25 @@ async function gdVerMde(id){
 
 // ── Precisa de você ──────────────────────────────────────
 function gdPrecisaRender(vis){
-  const ids=new Set(vis.map(e=>e.id)); const hoje=gdHoje();
-  const propsPor={}; GD.props.forEach(p=>{ (propsPor[p.cotacao_id]||(propsPor[p.cotacao_id]=[])).push(p); });
+  const ids=new Set(vis.map(e=>e.id));
   const cot=GD.cot.filter(c=>ids.has(c.empreendimento_id));
   const mde=cot.filter(c=>c.mde_gerado_em && !c.mde_assinado_em);
-  const venc=cot.filter(c=>c.status==='aberta' && c.prazo_envio && new Date(c.prazo_envio+'T00:00:00')<hoje && !(propsPor[c.id]||[]).length);
-  const semMde=cot.filter(c=>!c.mde_gerado_em && (propsPor[c.id]||[]).length);
   const sig=id=>{ const e=gdEmp(id); return e?gdSigla(e):''; };
   const disc=c=>gdDiscCod(gdEmp(c.empreendimento_id),c.disciplina);
+  // Só o que depende da caneta do gestor: cadastro, assinatura do MDE, convenção,
+  // coordenação e implantação. Cotação vencida / proposta sem MDE são do analista → aviso no card.
+  const saude=vis.map(e=>({e,s:gdSaude(e)}));
+  const semCoord=saude.filter(x=>!x.s.coord.length), impl=saude.filter(x=>x.s.impl);
   const tiles=[];
   if(GD.cad.length) tiles.push({hot:1,n:GD.cad.length,t:'Cadastros de fornecedor',s:GD.cad.map(x=>x.nome_fantasia||x.razao_social).join(' · '),b:'Aprovar',go:"goPage('fornecedores')"});
-  if(mde.length) tiles.push({hot:1,n:mde.length,t:'MDE para assinar',s:mde.map(c=>sig(c.empreendimento_id)+' · '+disc(c)).join(' · '),b:'Ver MDE',go:"gdVerMde('"+mde[0].id+"')"});
+  if(mde.length) tiles.push({hot:1,n:mde.length,t:'MDE aguardando sua assinatura',s:mde.map(c=>sig(c.empreendimento_id)+' · '+disc(c)).join(' · ')+' · assine no TOTVS Sign',b:'Ver MDE',go:"gdVerMde('"+mde[0].id+"')"});
   if(GD.discNotif) tiles.push({hot:1,n:GD.discNotif,t:'Disciplina nova para validar',s:'criada por analista fora da convenção',b:'Validar',go:"goPage('disciplinas')"});
-  if(venc.length) tiles.push({hot:0,n:venc.length,t:'Cotação vencida sem proposta',s:venc.map(c=>sig(c.empreendimento_id)+' · '+disc(c)+' · prazo '+gdDbr(c.prazo_envio)).join(' · '),b:'Abrir',go:"verDetalhe('"+venc[0].empreendimento_id+"')"});
-  if(semMde.length) tiles.push({hot:0,n:semMde.length,t:'Propostas sem MDE',s:semMde.map(c=>sig(c.empreendimento_id)+' · '+disc(c)+' · '+(propsPor[c.id]||[]).length+' proposta'+((propsPor[c.id]||[]).length!==1?'s':'')).join(' · '),b:'Abrir',go:"verDetalhe('"+semMde[0].empreendimento_id+"')"});
+  if(semCoord.length) tiles.push({hot:1,n:semCoord.length,t:'Sem coordenador',s:semCoord.map(x=>gdSigla(x.e)).join(' · ')+' · defina no mapa de vínculos',b:'Distribuir',go:"goPage('analistas');anSetView('mapa')"});
+  if(impl.length) tiles.push({hot:0,n:impl.length,t:'Implantação incompleta',s:impl.map(x=>gdSigla(x.e)+' '+x.s.done+'/'+x.s.items.length).join(' · '),b:'Continuar',go:"gdIrImplantacao()"});
   const box=document.getElementById('gdPrecisa'); if(!box) return 0;
   box.innerHTML = tiles.length
     ? '<div class="gd-tiles">'+tiles.map(x=>`<div class="gd-tile${x.hot?' hot':''}" onclick="${x.go}"><span class="n">${x.n}</span><div style="flex:1;min-width:0"><div class="t">${esc(x.t)}</div><div class="s" title="${_escAttr(x.s)}">${esc(x.s)}</div></div><span class="cd-btn">${esc(x.b)}</span></div>`).join('')+'</div>'
-    : '<div class="gd-zero">Nada pendente para você agora — cadastros, MDEs, disciplinas e cotações estão em dia.</div>';
+    : '<div class="gd-zero">Nada pendente para você agora — cadastros, MDEs, disciplinas, coordenação e implantação estão em dia.</div>';
   return tiles.reduce((s,x)=>s+x.n,0);
 }
 
@@ -1921,6 +1923,8 @@ function gdSaude(emp){
     const hoje=gdHoje();
     GD.cot.filter(c=>c.empreendimento_id===emp.id && c.status==='aberta' && c.prazo_envio && new Date(c.prazo_envio+'T00:00:00')<hoje && !GD.props.some(p=>p.cotacao_id===c.id))
       .forEach(c=>warns.push(gdDiscCod(emp,c.disciplina)+': cotação vencida sem proposta'));
+    GD.cot.filter(c=>c.empreendimento_id===emp.id && !c.mde_gerado_em && GD.props.some(p=>p.cotacao_id===c.id))
+      .forEach(c=>warns.push(gdDiscCod(emp,c.disciplina)+': propostas aguardando MDE'));
   }
   let dot='#1E8449';
   if(impl) dot='#E8960A'; else if((lat.total_em_atraso||0)>0 || warns.length>=2) dot='#A32D2D'; else if(warns.length||(lat.total_abertos||0)>0) dot='#B7791F';
