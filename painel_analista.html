@@ -691,6 +691,19 @@ function souVisualizador(id){ return EMP_PAPEL[id]==='visualizador'; }
 // Item 42: visualizador pode silenciar o empreendimento — some da fila/contadores e dos e-mails.
 var EMP_SIL={};
 function silenciado(id){ return souVisualizador(id) && !!EMP_SIL[id]; }
+// Item 43: aviso de arquivo recebido no CDE, por empreendimento — 'upload' (na hora),
+// 'diario' (resumo às 17h) ou 'nenhum'. Guardado no vínculo (analista_aviso_cde).
+var EMP_AVISO={};
+async function paAvisoCde(id, modo){
+  try{ const r=await sb.rpc('analista_aviso_cde',{ p_emp:id, p_modo:modo }); if(r.error) throw r.error; EMP_AVISO[id]=modo; }
+  catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); paCards(); }
+}
+function avisoSel(id){
+  const m=EMP_AVISO[id]||'upload';
+  const o=(v,t)=>'<option value="'+v+'"'+(m===v?' selected':'')+'>'+t+'</option>';
+  return '<select class="cd-btn" title="Como avisar quando chega arquivo no CDE deste empreendimento" onclick="event.stopPropagation()" onchange="paAvisoCde(\''+id+'\',this.value)" style="padding:4px 6px;font-size:11.5px">'
+    +o('upload','&#128276; Aviso a cada upload')+o('diario','&#128197; Resumo diário 17h')+o('nenhum','&#128277; Sem aviso de arquivos')+'</select>';
+}
 async function paSilenciar(id, sil){
   try{ const r=await sb.rpc('analista_silenciar',{ p_emp:id, p_sil:!!sil }); if(r.error) throw r.error;
        EMP_SIL[id]=!!sil; await carregarPrazos(); paRender(); }
@@ -699,9 +712,9 @@ async function paSilenciar(id, sil){
 async function carregarEmps(){
   try{
     const { data } = await sb.from('analista_empreendimento_auria')
-      .select('ativo, papel, silenciar, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
-    EMP_PAPEL={}; EMP_SIL={};
-    (data||[]).forEach(r=>{ if(r.empreendimentos_auria){ EMP_PAPEL[r.empreendimentos_auria.id]=r.papel||'coordenador'; EMP_SIL[r.empreendimentos_auria.id]=!!r.silenciar; } });
+      .select('ativo, papel, silenciar, aviso_cde, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+    EMP_PAPEL={}; EMP_SIL={}; EMP_AVISO={};
+    (data||[]).forEach(r=>{ if(r.empreendimentos_auria){ const id=r.empreendimentos_auria.id; EMP_PAPEL[id]=r.papel||'coordenador'; EMP_SIL[id]=!!r.silenciar; EMP_AVISO[id]=r.aviso_cde||'upload'; } });
     EMPS = (data||[]).map(r=>r.empreendimentos_auria).filter(e=>e && !e.deleted_at)
                      .sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
   }catch(e){ EMPS=[]; }
@@ -964,6 +977,7 @@ function paCards(){
       + btn('teal','CDE','cde_obra.html?emp='+q)
       + btn('','Cronograma','cronograma.html?emp='+q)
       + btn('','Apontamentos','bi.html?emp_id='+q)
+      + avisoSel(e.id)
       + (vis ? btnFn(silenciado(e.id)?'&#128276; Ativar avisos':'&#128277; Silenciar', "paSilenciar('"+e.id+"',"+(silenciado(e.id)?'false':'true')+")") + '<span class="cd-ro">só leitura</span>'
              : btnFn('Contratos',"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpContratos('"+e.id+"')},60)")
              + btnFn('Acessos',"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpAcessos('"+e.id+"')},60)"))
