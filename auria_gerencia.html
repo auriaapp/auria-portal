@@ -897,9 +897,15 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <input type="file" id="empresaLogoInput" accept="image/*" style="display:none" onchange="previewEmpresaLogo(this)">
       </div>
       <div style="flex:1">
-        <div class="form-group">
-          <label class="form-label">Nome da empresa <span style="color:var(--red)">*</span></label>
-          <input class="form-inp" id="empresaNome" placeholder="Ex: Construtora Alpha">
+        <div style="display:flex;gap:10px">
+          <div class="form-group" style="flex:1">
+            <label class="form-label">Nome da empresa <span style="color:var(--red)">*</span></label>
+            <input class="form-inp" id="empresaNome" placeholder="Ex: Construtora Alpha">
+          </div>
+          <div class="form-group" style="width:110px;flex-shrink:0">
+            <label class="form-label">Sigla <span style="color:var(--red)">*</span></label>
+            <input class="form-inp" id="empresaSigla" placeholder="DIAG" maxlength="6" style="font-family:ui-monospace,Consolas,monospace;text-transform:uppercase;font-weight:700" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+          </div>
         </div>
       </div>
     </div>
@@ -992,9 +998,16 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
           </div>
           <!-- Nome -->
           <div style="flex:1">
-            <div class="form-group">
-              <label class="form-label">Nome do empreendimento <span style="color:var(--red)">*</span></label>
-              <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista, Torre A">
+            <div style="display:flex;gap:10px">
+              <div class="form-group" style="flex:1">
+                <label class="form-label">Nome do empreendimento <span style="color:var(--red)">*</span></label>
+                <input class="form-inp" id="empNome" placeholder="Ex: Residencial Bella Vista, Torre A">
+              </div>
+              <div class="form-group" style="width:120px;flex-shrink:0">
+                <label class="form-label">Sigla <span style="color:var(--red)">*</span></label>
+                <input class="form-inp" id="empSigla" placeholder="PINI" maxlength="6" style="font-family:ui-monospace,Consolas,monospace;text-transform:uppercase;font-weight:700" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+                <div style="font-size:10px;color:var(--text-soft);margin-top:3px">até 6 letras/números · aparece nos cards, no CDE e nos apontamentos</div>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label">Empresa (construtora) <span style="color:var(--red)">*</span></label>
@@ -1658,6 +1671,7 @@ function openModalEmpresa(id){
   EMPRESA_EDIT = id ? CONSTRUTORAS.find(c=>c.id===id) : null;
   document.getElementById('empresaModalTitle').textContent = EMPRESA_EDIT?'Editar Empresa':'Nova Empresa';
   document.getElementById('empresaNome').value = EMPRESA_EDIT?.nome || '';
+  document.getElementById('empresaSigla').value = EMPRESA_EDIT?.sigla || (EMPRESA_EDIT ? gdSiglaEmpresa(EMPRESA_EDIT) : '');
   const img = document.getElementById('empresaLogoImg');
   const ic  = document.getElementById('empresaLogoIcon');
   if(EMPRESA_EDIT?.logo_url){ img.src=EMPRESA_EDIT.logo_url; img.style.display='block'; ic.style.display='none'; }
@@ -1676,15 +1690,17 @@ function previewEmpresaLogo(input){
 async function salvarEmpresa(){
   const nome=(document.getElementById('empresaNome').value||'').trim();
   if(!nome){ showToast('Informe o nome da empresa','red'); return; }
+  const sigla=(document.getElementById('empresaSigla').value||'').trim().toUpperCase();
+  if(!sigla){ showToast('Informe a sigla da empresa','red'); return; }
   const btn=document.getElementById('btnSalvarEmpresa'); btn.disabled=true; btn.textContent='Salvando...';
   try{
     let id = EMPRESA_EDIT?.id;
     if(id){
-      const { error } = await sb.from('construtoras_auria').update({ nome }).eq('id', id);
+      const { error } = await sb.from('construtoras_auria').update({ nome, sigla }).eq('id', id);
       if(error) throw error;
     }else{
       const { data, error } = await sb.from('construtoras_auria')
-        .insert({ nome, grupo_id:EMPRESA.id, criado_por:USER.id }).select('id').single();
+        .insert({ nome, sigla, grupo_id:EMPRESA.id, criado_por:USER.id }).select('id').single();
       if(error) throw error;
       id = data.id;
     }
@@ -1799,6 +1815,7 @@ function gdDbr(s){ if(!s) return '—'; const p=String(s).slice(0,10).split('-')
 function gdBrl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{maximumFractionDigits:0}); }
 function gdSigla(e){ return (e.codigo||'').trim() || (e.nome||'').split(/\s+/).map(w=>w.replace(/[^\p{L}\p{N}]/gu,'')).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase(); }
 function gdSiglaEmpresa(c){
+  if(c && (c.sigla||'').trim()) return String(c.sigla).trim().toUpperCase();
   const gen=/^(construtora|incorporadora|engenharia|empreendimentos|imobiliaria|imobiliária|ltda|s\/?a|me|epp|grupo|cia|companhia|e|de|do|da)$/i;
   const w=String(c.nome||'').replace(/[^\p{L}\p{N} ]/gu,'').split(/\s+/).filter(x=>x&&!gen.test(x));
   return (w[0]||String(c.nome||'?')).slice(0,4).toUpperCase();
@@ -1955,9 +1972,11 @@ function gdSaude(emp){
   const coord=ANALISTAS.filter(a=>vinc(a).some(v=>v.papel!=='visualizador'));
   const vis=ANALISTAS.filter(a=>vinc(a).some(v=>v.papel==='visualizador'));
   const cronN=GD.cron.filter(c=>c.empreendimento_id===emp.id).length;
-  const b=(emp.config&&emp.config.briefing)||null; const ficha=!!(b && ((b.carac||[]).length || (b.docs||[]).length));
+  // ficha: todos os documentos/viabilidades respondidos (Sim/Não/Em processo/Não se aplica contam) — item 46
+  const bdocs=((emp.config&&emp.config.briefing)||{}).docs||[]; const bresp=bdocs.filter(d=>d&&d.status).length;
+  const ficha=bdocs.length>0 && bresp===bdocs.length;
   const nDf=Object.keys(df).length;
-  const items=[ {k:'convenção',ok:conv.length>0}, {k:'pavimentos',ok:(GD.pav[emp.id]||0)>0}, {k:'ficha',ok:ficha}, {k:'logo',ok:!!emp.logo_url}, {k:'coordenador',ok:coord.length>0},
+  const items=[ {k:'convenção',ok:conv.length>0}, {k:'pavimentos',ok:(GD.pav[emp.id]||0)>0}, {k:'ficha',ok:ficha,half:bresp>0,txt:bdocs.length?('ficha '+bresp+'/'+bdocs.length):'ficha'}, {k:'logo',ok:!!emp.logo_url}, {k:'coordenador',ok:coord.length>0},
     {k:'fornecedores',ok:conv.length>0&&nDf>=conv.length,half:nDf>0,txt:'fornecedores '+nDf+'/'+(conv.length||'?')}, {k:'cronograma',ok:cronN>0} ];
   const done=items.filter(i=>i.ok).length;
   const impl = rev.n===0 && done<items.length;          // nada entregue ainda e implantação incompleta
@@ -3046,7 +3065,7 @@ async function abrirEditarEmp(empId){
   const cfg=emp.config||{};
   const sv=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val; };
   const spin=(id,valId,val)=>{ sv(id,val); const v2=document.getElementById(valId); if(v2) v2.textContent=val; };
-  sv('empNome',emp.nome||''); sv('empCidade',emp.cidade||''); sv('empEstado',emp.estado||'');
+  sv('empNome',emp.nome||''); sv('empSigla',emp.codigo||''); sv('empCidade',emp.cidade||''); sv('empEstado',emp.estado||'');
   if(emp.construtora_id) sv('empEmpresa',emp.construtora_id);
   const tipo=emp.tipo_empreendimento||cfg.tipo_empreendimento||'Residencial';
   sv('empTipo',tipo); document.querySelectorAll('#grupoTipo .tipo-btn').forEach(b=>b.classList.toggle('sel', b.textContent.trim()===tipo));
@@ -3076,6 +3095,9 @@ async function salvarEmpreendimento(empId){
   const emp=EMPS.find(e=>e.id===empId); if(!emp) return;
   const nome=v('empNome').trim();
   if(!nome){ showToast('Informe o nome do empreendimento','red'); return; }
+  const sigla=v('empSigla').trim().toUpperCase();
+  if(!sigla){ showToast('Informe a sigla do empreendimento','red'); return; }
+  if(EMPS.some(e=>e.id!==empId && (e.codigo||'').toUpperCase()===sigla)){ showToast('Já existe um empreendimento com a sigla '+sigla,'red'); return; }
   const cidade=v('empCidade').trim(), estado=v('empEstado').trim().toUpperCase().slice(0,2);
   const construtoraId=v('empEmpresa')||emp.construtora_id||null;
   const btn=document.getElementById('btnCriarEmp'); btn.disabled=true; const t0=btn.innerHTML; btn.textContent='Salvando...';
@@ -3096,7 +3118,7 @@ async function salvarEmpreendimento(empId){
       etapas:_etapas.length?_etapas:['Estudo Preliminar','Anteprojeto','Projeto Legal','Projeto Executivo'],
       briefing: briefParaSalvar()
     });
-    const upd={ nome, cidade, estado, construtora_id:construtoraId,
+    const upd={ nome, codigo:sigla, cidade, estado, construtora_id:construtoraId,
       tipo_empreendimento:_config.tipo_empreendimento, tipologia:_config.tipologia,
       n_pavimentos:_config.n_pavimentos, tipo_de:_config.tipo_de, tipo_ate:_config.tipo_ate,
       tem_garagem:_config.tem_garagem, tem_edicula:_config.tem_edicula, config:_config };
@@ -3206,13 +3228,15 @@ function renderBrief(){
       <button type="button" onclick="briefDelCarac(${i})" title="Remover" style="border:none;background:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:2px 5px">&#8722;</button>
     </div>`).join('');
   const docHtml=BRIEF.docs.map((d,i)=>{
-    const op3=d.op!=='sn';
+    // Item 46: quatro estados para todo documento/viabilidade —
+    // Sim · Não · Em processo · Não se aplica ("na" conta como resolvido na implantação).
     const st=v=>d.status===v?'selected':'';
-    const statusSel=`<select onchange="briefSetDocStatus(${i},this.value)" style="width:120px;${selCss}">
+    const statusSel=`<select onchange="briefSetDocStatus(${i},this.value)" style="width:130px;${selCss}">
       <option value="" ${d.status===''?'selected':''}>—</option>
       <option value="sim" ${st('sim')}>Sim</option>
       <option value="nao" ${st('nao')}>Não</option>
-      ${op3?`<option value="processo" ${st('processo')}>Em processo</option>`:''}</select>`;
+      <option value="processo" ${st('processo')}>Em processo</option>
+      <option value="na" ${st('na')}>Não se aplica</option></select>`;
     let cond='';
     if(d.cond && (d.cond.quando||[]).includes(d.status)){
       if(d.cond.tipo==='status3'){
@@ -3477,7 +3501,7 @@ function resetFormEmp(){
   const _tt=document.querySelector('#modalNovoEmp .modal-title'); if(_tt) _tt.textContent='Novo Empreendimento';
   const _bt=document.getElementById('btnCriarEmp'); if(_bt) _bt.innerHTML='&#43; Criar Empreendimento';
   const _ib=document.getElementById('empImportBox'); if(_ib) _ib.style.display='none';   // import só na criação
-  ['empNome','empCidade','empEstado'].forEach(id=>{
+  ['empNome','empSigla','empCidade','empEstado'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
   // Pavimentos
@@ -3519,6 +3543,9 @@ async function criarEmpreendimento(){
   const estado = v('empEstado').trim().toUpperCase().slice(0,2);
   const construtoraId = v('empEmpresa') || null;
   if(!nome){ showToast('Informe o nome do empreendimento','red'); return; }
+  const sigla = v('empSigla').trim().toUpperCase();
+  if(!sigla){ showToast('Informe a sigla do empreendimento','red'); return; }
+  if(EMPS.some(e=>(e.codigo||'').toUpperCase()===sigla)){ showToast('Já existe um empreendimento com a sigla '+sigla,'red'); return; }
   if(!EMPRESA || !EMPRESA.id){ showToast('Erro: empresa não vinculada a este usuário.','red'); return; }
   if(!construtoraId){ showToast('Selecione a Empresa (construtora). Crie uma em "Empresas" se ainda não houver.','red'); return; }
 
@@ -3546,7 +3573,7 @@ async function criarEmpreendimento(){
     };
     // 1. Inserir empreendimento e obter o ID
     const { data: empRow, error } = await sb.from('empreendimentos_auria').insert({
-      nome, cidade, estado,
+      nome, codigo: sigla, cidade, estado,
       empresa_id:          EMPRESA.id,
       construtora_id:      construtoraId,
       criado_por:          USER.id,
