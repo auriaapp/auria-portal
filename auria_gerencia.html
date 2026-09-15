@@ -1873,7 +1873,17 @@ function trendHTML(t){
 // disciplina, convenção e pavimentos. Cada consulta falha sozinha (allSettled):
 // um bloco sem dado vira aviso no console, nunca derruba o painel.
 // ═══════════════════════════════════════════════════════
-let GD = { cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
+let GD = { cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, ativas:{}, quando:null };
+// Disciplinas que valem para o empreendimento (item 51): ativas gravadas; senão o padrão
+// ARQ/EST/SON/FUN (que existam na convenção); sempre + as que já têm fornecedor ou documento.
+function gdAtivas(emp){
+  const conv=(GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[]).map(d=>d.v);
+  const s=new Set(GD.ativas[emp.id]||[]);
+  if(!s.size) ['ARQ','EST','SON','FUN'].forEach(k=>{ if(!conv.length || conv.includes(k)) s.add(k); });
+  Object.keys(GD.discForn[emp.id]||{}).forEach(k=>s.add(k));
+  Object.keys((GD.rev[emp.id]||{}).disc||{}).forEach(k=>s.add(k));
+  return [...s].sort();
+}
 let FIN_PRESEL_EMP = null;   // nome do empreendimento a pré-selecionar em Custos & NFs (botão Custos do card)
 
 function gdHoje(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
@@ -1903,7 +1913,7 @@ function gdDiscCod(emp, s){
 async function gq(q){ const r=await q; if(r.error) throw r.error; return r.data||[]; }
 
 async function loadGestaoExtras(){
-  const G={ cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, quando:null };
+  const G={ cot:[], props:[], contr:[], parc:[], cad:[], discNotif:0, cron:[], cronLog:{}, rev:{}, discForn:{}, convDisc:{}, pav:{}, ativas:{}, quando:null };
   const t=[];
   // cotações em andamento + propostas recebidas
   t.push((async()=>{ G.cot=await gq(sb.from('cotacao_auria').select('id,empreendimento_id,disciplina,titulo,prazo_envio,status,mde_gerado_em,mde_assinado_em,mde_pdf_path').in('status',['aberta','em_analise']));
@@ -1931,6 +1941,9 @@ async function loadGestaoExtras(){
   t.push((async()=>{ (await gq(sb.from('cde_convencao_auria').select('construtora_id,grupo_id,campos')))
     .forEach(c=>{ const f=(c.campos||[]).find(x=>x.mapeia==='disciplina');
       G.convDisc[c.construtora_id||'g']=((f&&f.dominio)||[]).map(d=>(typeof d==='object')?{v:String(d.v||'').toUpperCase(),rotulo:d.rotulo||''}:{v:String(d).toUpperCase(),rotulo:''}).filter(d=>d.v); }); })());
+  // disciplinas ATIVAS por empreendimento (item 51) — checklist e avisos usam só estas
+  t.push((async()=>{ (await gq(sb.from('cde_emp_disciplina_auria').select('empreendimento_id,disciplina')))
+    .forEach(x=>{ (G.ativas[x.empreendimento_id]||(G.ativas[x.empreendimento_id]=new Set())).add(String(x.disciplina||'').toUpperCase()); }); })());
   // pavimentos cadastrados
   t.push((async()=>{ (await gq(sb.from('cde_pavimento_auria').select('empreendimento_id').eq('ativo',true).limit(5000)))
     .forEach(p=>{ G.pav[p.empreendimento_id]=(G.pav[p.empreendimento_id]||0)+1; }); })());
@@ -2107,9 +2120,8 @@ function gdIrImplantacao(){
 function gdImplantacao(empId){
   const emp=gdEmp(empId); if(!emp) return;
   const s=gdSaude(emp);
-  const conv=GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[];
   const df=GD.discForn[emp.id]||{};
-  const semForn=conv.filter(d=>!df[d.v]).map(d=>d.v);
+  const semForn=gdAtivas(emp).filter(v=>!df[v]);
   const cid=emp.construtora_id||'';
   const acoes={
     'convenção':  { txt:'Padrão de codificação (disciplinas) da construtora '+esc(nomeEmpresa(cid)||''), btn:'Disciplinas', go:"gdImplIr('disciplinas','"+cid+"')" },
@@ -2170,7 +2182,8 @@ function gdPrecisaRender(vis){
 // ── cards de empreendimento: saúde, tendência e implantação ──
 function gdSaude(emp){
   const lat=gdLat(emp.id); const rev=GD.rev[emp.id]||{n:0,disc:{}};
-  const conv=GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[];
+  const convTem=(GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[]).length>0;
+  const conv=gdAtivas(emp).map(v=>({v}));   // item 51: só as disciplinas ativas do empreendimento
   const df=GD.discForn[emp.id]||{};
   const vinc=a=>(a.analista_empreendimento_auria||[]).filter(v=>v.empreendimento_id===emp.id&&v.ativo!==false);
   const coord=ANALISTAS.filter(a=>vinc(a).some(v=>v.papel!=='visualizador'));
@@ -2180,7 +2193,7 @@ function gdSaude(emp){
   const bdocs=((emp.config&&emp.config.briefing)||{}).docs||[]; const bresp=bdocs.filter(d=>d&&d.status).length;
   const ficha=bdocs.length>0 && bresp===bdocs.length;
   const nDf=Object.keys(df).length;
-  const items=[ {k:'convenção',ok:conv.length>0}, {k:'pavimentos',ok:(GD.pav[emp.id]||0)>0}, {k:'ficha',ok:ficha,half:bresp>0,txt:bdocs.length?('ficha '+bresp+'/'+bdocs.length):'ficha'}, {k:'logo',ok:!!emp.logo_url}, {k:'coordenador',ok:coord.length>0},
+  const items=[ {k:'convenção',ok:convTem}, {k:'pavimentos',ok:(GD.pav[emp.id]||0)>0}, {k:'ficha',ok:ficha,half:bresp>0,txt:bdocs.length?('ficha '+bresp+'/'+bdocs.length):'ficha'}, {k:'logo',ok:!!emp.logo_url}, {k:'coordenador',ok:coord.length>0},
     {k:'fornecedores',ok:conv.length>0&&nDf>=conv.length,half:nDf>0,txt:'fornecedores '+nDf+'/'+(conv.length||'?')}, {k:'cronograma',ok:cronN>0} ];
   const done=items.filter(i=>i.ok).length;
   const impl = rev.n===0 && done<items.length;          // nada entregue ainda e implantação incompleta

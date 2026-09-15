@@ -922,9 +922,11 @@ async function carregarConvencoes(){
 }
 // ── Implantação (item 47, lado do analista): fornecedor por disciplina, cronograma,
 //    pavimentos — o que o coordenador resolve ou cobra da gestão. Cada consulta falha sozinha.
-var EMP_DF={}, EMP_CRON={}, EMP_PAV={};
+var EMP_DF={}, EMP_CRON={}, EMP_PAV={}, EMP_ATV={};
 async function carregarImplantacao(){
   const ids=EMPS.map(e=>e.id); if(!ids.length) return;
+  try{ const r=await sb.from('cde_emp_disciplina_auria').select('empreendimento_id,disciplina').in('empreendimento_id',ids);
+       (r.data||[]).forEach(x=>{ (EMP_ATV[x.empreendimento_id]||(EMP_ATV[x.empreendimento_id]=new Set())).add(String(x.disciplina||'').toUpperCase()); }); }catch(_){}
   try{ const r=await sb.from('disciplina_fornecedor_auria').select('empreendimento_id,disciplina').in('empreendimento_id',ids);
        (r.data||[]).forEach(x=>{ (EMP_DF[x.empreendimento_id]||(EMP_DF[x.empreendimento_id]=new Set())).add(discCod(x.disciplina)); }); }catch(_){}
   try{ const r=await sb.from('cronograma_auria').select('empreendimento_id').in('empreendimento_id',ids).limit(5000);
@@ -933,11 +935,16 @@ async function carregarImplantacao(){
        (r.data||[]).forEach(x=>{ EMP_PAV[x.empreendimento_id]=(EMP_PAV[x.empreendimento_id]||0)+1; }); }catch(_){}
 }
 function implantacaoDe(e){
-  const conv=EMP_CONV[e.id]||[], df=EMP_DF[e.id]||new Set();
+  // item 51: disciplinas ATIVAS (gravadas; senão padrão ARQ/EST/SON/FUN da convenção) + as que já têm fornecedor
+  const convAll=EMP_CONV[e.id]||[], df=EMP_DF[e.id]||new Set();
+  const atv=new Set(EMP_ATV[e.id]||[]);
+  if(!atv.size) ['ARQ','EST','SON','FUN'].forEach(k=>{ if(!convAll.length || convAll.includes(k)) atv.add(k); });
+  df.forEach(k=>atv.add(k));
+  const conv=[...atv];
   const docs=((e.config&&e.config.briefing)||{}).docs||[]; const resp=docs.filter(d=>d&&d.status).length;
   const semForn=conv.filter(c=>!df.has(c));
   const items=[
-    {k:'convenção', ok:conv.length>0, quem:'gestão', title:'Padrão de codificação da construtora — a gestão define em Disciplinas'},
+    {k:'convenção', ok:convAll.length>0, quem:'gestão', title:'Padrão de codificação da construtora — a gestão define em Disciplinas'},
     {k:'pavimentos', ok:(EMP_PAV[e.id]||0)>0, quem:'gestão', title:'Pavimentos e vistas — a gestão cadastra no empreendimento'},
     {k:docs.length?('ficha '+resp+'/'+docs.length):'ficha', ok:docs.length>0&&resp===docs.length, half:resp>0, quem:'gestão', title:'Ficha (características, viabilidades, documentos) — a gestão preenche'},
     {k:'logo', ok:!!e.logo_url, quem:'gestão', title:'Logo do empreendimento — a gestão sobe no cadastro'},
@@ -1193,13 +1200,38 @@ function abrirEmp(id){
 //  Três blocos: pipeline do CDE por disciplina (onde a decisão está travada),
 //  equipe (papel e nível de quem está na obra) e últimos eventos. Tudo por ID.
 var FX_EMP=null, FX_STATUS_ANA=['S1','S2','S3','S4'], FX_STATUS_LIB=['A1','B1'];
+// Item 51: disciplinas ATIVAS do empreendimento (cde_emp_disciplina_auria)
+var FX_ATIVAS={};
+async function fxAddDisciplina(empId){
+  const sel=$('fxAddDisc'); const cod=(sel&&sel.value||'').trim().toUpperCase(); if(!cod) return;
+  try{
+    // garante as padrão junto com a primeira adição, para a lista não "encolher" para uma só
+    const base=Object.keys(FX_ATIVAS).length ? [] : ['ARQ','EST','SON','FUN'];
+    const linhas=[...new Set([...base, cod])].map(d=>({ empreendimento_id:empId, disciplina:d, criado_por:USER.id }));
+    const r=await sb.from('cde_emp_disciplina_auria').upsert(linhas,{ onConflict:'empreendimento_id,disciplina', ignoreDuplicates:true });
+    if(r.error) throw r.error;
+    await loadFoco(empId);
+  }catch(e){ alert('Não foi possível adicionar: '+((e&&e.message)||e)); }
+}
+async function fxDelDisciplina(empId, cod){
+  if(!confirm('Tirar '+cod+' da lista de disciplinas deste empreendimento?')) return;
+  try{
+    if(!Object.keys(FX_ATIVAS).length){   // ainda era só o padrão: grava o padrão menos esta
+      const linhas=['ARQ','EST','SON','FUN'].filter(d=>d!==cod).map(d=>({ empreendimento_id:empId, disciplina:d, criado_por:USER.id }));
+      if(linhas.length){ const r=await sb.from('cde_emp_disciplina_auria').upsert(linhas,{ onConflict:'empreendimento_id,disciplina', ignoreDuplicates:true }); if(r.error) throw r.error; }
+    } else {
+      const r=await sb.from('cde_emp_disciplina_auria').delete().eq('empreendimento_id',empId).eq('disciplina',cod); if(r.error) throw r.error;
+    }
+    await loadFoco(empId);
+  }catch(e){ alert('Não foi possível remover: '+((e&&e.message)||e)); }
+}
 async function loadFoco(id){
   const e=empPorId(id); if(!e) return;
   FX_EMP=id;
   const box=$('peFoco'); box.innerHTML='<div class="load" style="padding:30px">Carregando o empreendimento…</div>';
   // Toda resposta vira array (erro/RLS → lista vazia, nunca quebra a tela).
   const q=(p)=>Promise.resolve(p).then(r=>({data:Array.isArray(r&&r.data)?r.data:[]})).catch(()=>({data:[]}));
-  const [rConv,rDocs,rDF,rAcc,rObra,rAna,rEv]=await Promise.all([
+  const [rConv,rDocs,rDF,rAcc,rObra,rAna,rEv,rAtv]=await Promise.all([
     q(sb.rpc('cde_convencao',{p_emp:id})),
     q(sb.from('cde_documento_auria').select('id,codigo,disciplina,fornecedor_id,cde_revisao_auria(id,revisao,status,recebido_em)').eq('empreendimento_id',id).eq('arquivado',false)),
     q(sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id').eq('empreendimento_id',id)),
@@ -1208,14 +1240,21 @@ async function loadFoco(id){
     q(sb.from('analista_empreendimento_auria').select('analista_id,papel,ativo').eq('empreendimento_id',id).eq('ativo',true)),
     q(sb.from('cde_evento_auria').select('acao,de_status,para_status,usuario_nome,quando,cde_revisao_auria!inner(revisao,cde_documento_auria!inner(codigo,empreendimento_id))')
         .eq('cde_revisao_auria.cde_documento_auria.empreendimento_id',id).order('quando',{ascending:false}).limit(12)),
+    q(sb.from('cde_emp_disciplina_auria').select('id,disciplina').eq('empreendimento_id',id)),   // item 51: disciplinas ativas
   ]);
   if(FX_EMP!==id) return;   // trocou de empreendimento no meio
   await carregarFornecedoresLeve();
 
-  // ── Pipeline por disciplina ──
-  const conv=(rConv.data&&rConv.data[0])||null; const discs=new Set();
-  if(conv){ const c=(conv.campos||[]).find(x=>x.mapeia==='disciplina'); if(c&&c.dominio) c.dominio.forEach(d=>{ const v=(typeof d==='object')?d.v:d; if(v) discs.add(v); }); }
-  const df={}; (rDF.data||[]).forEach(x=>{ if(x.disciplina){ df[x.disciplina]=x.fornecedor_id; discs.add(x.disciplina); } });
+  // ── Pipeline por disciplina (item 51: só as ATIVAS do empreendimento) ──
+  // Convenção = tudo o que existe na construtora; ativas = padrão ARQ/EST/SON/FUN
+  // + o que o coordenador adicionou + o que já tem fornecedor ou documento.
+  const conv=(rConv.data&&rConv.data[0])||null; const convAll=[];
+  if(conv){ const c=(conv.campos||[]).find(x=>x.mapeia==='disciplina'); if(c&&c.dominio) c.dominio.forEach(d=>{ const v=(typeof d==='object')?d.v:d; if(v) convAll.push({v:String(v).toUpperCase(), rotulo:(typeof d==='object'&&d.rotulo)||''}); }); }
+  const convSet=new Set(convAll.map(x=>x.v));
+  FX_ATIVAS={}; (rAtv.data||[]).forEach(x=>{ FX_ATIVAS[String(x.disciplina||'').toUpperCase()]=x.id; });
+  const discs=new Set(Object.keys(FX_ATIVAS));
+  if(!discs.size) ['ARQ','EST','SON','FUN'].forEach(k=>{ if(!convSet.size || convSet.has(k)) discs.add(k); });
+  const df={}; (rDF.data||[]).forEach(x=>{ if(x.disciplina){ const k=discCod(x.disciplina); df[k]=x.fornecedor_id; discs.add(k); } });
   const por={};
   (rDocs.data||[]).forEach(d=>{
     const k=discCod(d.disciplina)||'—'; discs.add(k);
@@ -1227,6 +1266,7 @@ async function loadFoco(id){
   });
   const lista=[...discs].map(discCod).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).sort();
   const semForn=lista.filter(k=>!df[k]);
+  const VISF=souVisualizador(id);   // visualizador não adiciona/remove disciplinas
   const n=(v,cls)=>'<span class="fx-n '+(v?cls:'zero')+'">'+v+'</span>';
   const linhas=lista.map(k=>{
     const o=por[k]||{rec:0,ana:0,lib:0,dev:0,ult:null}; const forn=df[k]?fornPorId(df[k]):'';
@@ -1234,8 +1274,10 @@ async function loadFoco(id){
                : !forn ? '<button class="cd-btn" style="padding:3px 9px;font-size:11.5px" onclick="abrirEmpAcessos(\''+id+'\')">Atribuir fornecedor</button>'
                : (o.ana ? '<a class="cd-btn" style="padding:3px 9px;font-size:11.5px" href="cde_obra.html?emp='+encodeURIComponent(id)+'">Continuar</a>' : '<span class="cd-hint">em dia</span>');
     const off=!forn && !o.rec && !o.ana && !o.lib;
+    const podeTirar = !VISF && off && !por[k];   // sem fornecedor e sem documento: pode sair da lista
     return '<tr class="'+(o.rec?'urg':(off?'fx-off':''))+'">'
-      +'<td><span class="dc">'+esc(k)+'</span> <span class="mut">'+(discFullName(k)!==k?esc(discFullName(k)):'')+'</span></td>'
+      +'<td><span class="dc">'+esc(k)+'</span> <span class="mut">'+(discFullName(k)!==k?esc(discFullName(k)):'')+'</span>'
+      +(podeTirar?' <button class="cd-btn" style="padding:0 6px;font-size:11px;line-height:1.5;margin-left:4px" title="Tirar esta disciplina da lista deste empreendimento" onclick="fxDelDisciplina(\''+id+'\',\''+esc(k)+'\')">×</button>':'')+'</td>'
       +'<td>'+(forn?esc(forn):'<span class="cd-pill err">sem fornecedor</span>')+'</td>'
       +'<td style="text-align:center">'+n(o.rec,'rec')+'</td>'
       +'<td style="text-align:center">'+n(o.ana,'ana')+(o.dev?' <span class="mut" title="devolvidas ao projetista">+'+o.dev+' dev.</span>':'')+'</td>'
@@ -1244,10 +1286,16 @@ async function loadFoco(id){
       +'<td>'+acao+'</td></tr>';
   }).join('');
   const totRec=Object.values(por).reduce((s,o)=>s+o.rec,0);
+  // adicionar/remover disciplina ativa (só coordenador)
+  const restantes=convAll.filter(x=>!lista.includes(x.v));
+  const addSel = (!VISF && restantes.length) ? '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--line);background:var(--panel2)">'
+      +'<span class="cd-hint">Só as disciplinas deste empreendimento aparecem aqui. Adicione as demais conforme for contratar:</span>'
+      +'<select id="fxAddDisc" class="cd-busca" style="width:auto;min-width:240px;margin:0"><option value="">＋ Adicionar disciplina…</option>'+restantes.map(x=>'<option value="'+esc(x.v)+'">'+esc(x.v)+(x.rotulo?' — '+esc(x.rotulo):'')+'</option>').join('')+'</select>'
+      +'<button class="cd-btn navy" style="padding:4px 10px" onclick="fxAddDisciplina(\''+id+'\')">Adicionar</button></div>' : '';
   const pipeline='<div class="fx-sec"><h2 class="cd-sec">Pipeline do CDE por disciplina</h2>'
     +'<span class="cd-hint">Recebido (S0) → em análise → liberado para obra. Onde há laranja, a decisão é sua.'+(totRec?' <b style="color:#7C3E06">'+totRec+' arquivo'+(totRec>1?'s':'')+' aguardando análise.</b>':'')+'</span></div>'
     +'<div class="cd-tbl"><table><thead><tr><th>Disc.</th><th>Fornecedor</th><th style="text-align:center">Recebido (S0)</th><th style="text-align:center">Em análise</th><th style="text-align:center">Liberado</th><th>Última entrega</th><th></th></tr></thead>'
-    +'<tbody>'+(linhas||'<tr><td colspan="7" class="mut" style="text-align:center;padding:20px">Sem disciplinas na convenção nem arquivos no CDE.</td></tr>')+'</tbody></table></div>';
+    +'<tbody>'+(linhas||'<tr><td colspan="7" class="mut" style="text-align:center;padding:20px">Nenhuma disciplina ativa ainda — adicione abaixo.</td></tr>')+'</tbody></table>'+addSel+'</div>';
 
   // ── Equipe ──
   const acc=rAcc.data||[]; const obra={}; (rObra.data||[]).forEach(x=>{ if(x.ativo!==false) obra[x.usuario_id]=x.nivel; });
