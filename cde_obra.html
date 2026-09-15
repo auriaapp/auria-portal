@@ -45,6 +45,14 @@
   header .tt b{font-size:14px;font-weight:800;display:block;line-height:1.15}
   header .tt span{font-size:11px;color:#8FA6C0}
   header .sp{flex:1}
+  /* Logo do empreendimento no cabeçalho (item 45) — mesmo slot .elogo do painel do
+     analista: com logo = branco + linha laranja; sem logo = tracejado com a sigla. */
+  header .elogo{width:60px;height:46px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid #E8960A;
+         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;margin-left:4px}
+  header .elogo img{max-width:100%;max-height:100%;height:auto;object-fit:contain;padding:3px;display:block}
+  header .elogo.ph{border:1.5px dashed #3A4A66;background:rgba(255,255,255,.06);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+         font-weight:800;font-size:11px;letter-spacing:.04em;color:#8FA6C0}
+  header .ecod{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-weight:700;color:#F0A72A;margin-right:4px}
   .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
         padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none}
   .hbtn:hover{background:#243452}
@@ -548,6 +556,7 @@
 <header>
   <img src="logo_symbol.png" alt="Auria">
   <div class="tt"><b>Auria CDE</b><span id="hSub">—</span></div>
+  <div class="elogo ph" id="hElogo" style="display:none"></div>
   <span class="sp"></span>
   <a class="hbtn" id="lnkPadrao" href="cde.html" title="Padrão de codificação (gestão)">⚙ Padrão</a>
   <a class="hbtn" href="painel_analista.html">← Painel</a>
@@ -972,11 +981,17 @@ async function boot(){
   if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no seu painel.'; return; }
   carregarPastasAbertas();
 
-  const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,cidade,estado').eq('id',EMP_ID).maybeSingle();
+  const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,codigo,logo_url,cidade,estado').eq('id',EMP_ID).maybeSingle();
   if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
   EMP = e;
-  $('hSub').textContent = e.nome + (e.cidade? ' · '+e.cidade+(e.estado?'/'+e.estado:'') : '')
-                        + (VISUALIZADOR ? ' · Visualizador (só consulta)' : '');
+  const sigla=(e.codigo||'').trim().toUpperCase();
+  $('hSub').innerHTML = (sigla?'<span class="ecod">'+sigla+'</span>· ':'') + esc(e.nome) + (e.cidade? ' · '+esc(e.cidade)+(e.estado?'/'+esc(e.estado):'') : '')
+                      + (VISUALIZADOR ? ' · Visualizador (só consulta)' : '');
+  // logo do empreendimento (item 45): com logo = slot branco; sem logo = sigla tracejada
+  const el=$('hElogo');
+  if(e.logo_url){ el.className='elogo'; el.innerHTML='<img src="'+esc(e.logo_url)+'" alt="">'; }
+  else { el.className='elogo ph'; el.textContent=sigla||'?'; el.title='Sem logo — a gestão define no cadastro do empreendimento'; }
+  el.style.display='';
 
   const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
   STMAP={}; (st||[]).forEach(s=>STMAP[s.codigo]=s);
