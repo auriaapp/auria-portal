@@ -2601,8 +2601,65 @@ function renderAcessos(){
       <span style="color:var(--mut);font-size:12px;flex:1">A permissão vale para todos os projetistas da empresa. <b style="color:#166534">Verde</b> = disciplina contratada (vê, baixa e <b>envia</b>); demais marcadas = só vê e baixa. O <b>upload é sempre limitado à disciplina contratada</b> — um projetista não posta em outra disciplina.</span>
     </div>
     ${accAtribuicaoHtml()}
-    ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra ainda. Atribua uma disciplina a um fornecedor acima.</div>'}`;
+    ${forn.length?tabela(forn):'<div class="empty2" style="padding:20px">Nenhum fornecedor atribuído a esta obra ainda. Atribua uma disciplina a um fornecedor acima.</div>'}
+    ${souVisualizador(CDE_AC_EMPID)?'':accTempHtml()}`;
+  if(!souVisualizador(CDE_AC_EMPID)) accTempCarregar();
 }
+// ── Acesso temporário por link (item 50): e-mail + disciplinas + ver/baixar + prazo ──
+function accTempHtml(){
+  const chips=(ACC_DISCS||[]).map(d=>'<label class="cd-chip" style="cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--txt)"><input type="checkbox" class="tmp-disc" value="'+esc(d)+'" style="margin:0 4px 0 0"> '+esc(d)+'</label>').join('');
+  return `<div style="display:flex;align-items:center;gap:10px;margin:22px 0 8px">
+      <b style="font-size:14px">&#9201; Acesso temporário por link</b>
+      <span style="color:var(--mut);font-size:12px;flex:1">Para um escritório orçar a partir do projeto base: sem login, só a ficha e a última revisão liberada das disciplinas escolhidas, por prazo. Expira sozinho.</span>
+    </div>
+    <div id="accTmpLista" style="margin-bottom:8px"></div>
+    <div class="tbl-card" style="padding:12px 14px">
+      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:8px">
+        <div><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">E-mail</label><input id="tmpEmail" type="email" placeholder="escritorio@exemplo.com.br" style="width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit"></div>
+        <div><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Nome</label><input id="tmpNome" placeholder="opcional" style="width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit"></div>
+      </div>
+      <div style="margin-top:8px"><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Disciplinas liberadas</label><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px">${chips||'<span style="font-size:12px;color:var(--mut)">Sem disciplinas na convenção.</span>'}</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px;margin-top:8px;align-items:end">
+        <div><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Permissão</label><select id="tmpDown" style="width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit"><option value="0">Somente visualizar</option><option value="1">Ver e baixar</option></select></div>
+        <div><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Duração</label><select id="tmpHoras" style="width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit"><option value="24">24 horas</option><option value="48">48 horas</option><option value="72">3 dias</option><option value="168">7 dias</option></select></div>
+        <div><label style="font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em">Mensagem (opcional)</label><input id="tmpMsg" placeholder="Ex.: para a proposta de estrutura — dúvidas comigo" style="width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="ctr-btn" id="btnTmp" onclick="accTempCriar()">Gerar link e enviar por e-mail</button></div>
+    </div>`;
+}
+async function accTempCarregar(){
+  const box=$('accTmpLista'); if(!box) return;
+  try{
+    const r=await sb.from('cde_acesso_temp_auria').select('id,email,nome,disciplinas,download,expira_em,revogado_em,aberturas,token').eq('empreendimento_id',CDE_AC_EMPID).order('criado_em',{ascending:false}).limit(12);
+    if(r.error) throw r.error;
+    const now=Date.now();
+    const rows=(r.data||[]).filter(x=>(!x.revogado_em && new Date(x.expira_em)>now) || (now-new Date(x.expira_em))<7*864e5);
+    box.innerHTML = rows.length ? '<div class="tbl-card">'+rows.map(x=>{ const ativo=!x.revogado_em && new Date(x.expira_em)>now;
+      const st=x.revogado_em?'<span class="cd-chip mut">encerrado</span>':ativo?'<span class="cd-chip ok">ativo até '+new Date(x.expira_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span>':'<span class="cd-chip err">expirou</span>';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:12.5px">'+esc(x.nome||x.email)+'</b> <span style="font-size:11.5px;color:var(--mut)">'+esc(x.nome?x.email:'')+'</span>'
+        +'<div style="font-size:11px;color:var(--txt2)"><span style="font-family:var(--mono)">'+esc((x.disciplinas||[]).join(' · '))+'</span> · '+(x.download?'ver e baixar':'só ver')+' · '+(x.aberturas||0)+' abertura'+(x.aberturas===1?'':'s')+'</div></div>'+st
+        +(ativo?'<button class="cd-btn" onclick="accTempCopiar(\''+x.token+'\')">Link</button><button class="cd-btn" onclick="accTempEstender(\''+x.id+'\')">+24 h</button><button class="cd-btn" style="border-color:var(--err);color:var(--err)" onclick="accTempRevogar(\''+x.id+'\')">Encerrar</button>':'<button class="cd-btn" onclick="accTempEstender(\''+x.id+'\')">Reabrir 24 h</button>')+'</div>'; }).join('')+'</div>'
+      : '<div style="font-size:12.5px;color:var(--mut);padding:2px 0 6px">Nenhum acesso temporário ativo.</div>';
+  }catch(e){ box.innerHTML='<div style="font-size:12px;color:var(--mut)">Acessos temporários indisponíveis ('+esc(e.message||e)+').</div>'; }
+}
+async function accTempCriar(){
+  const email=($('tmpEmail').value||'').trim(), nome=($('tmpNome').value||'').trim();
+  const discs=[...document.querySelectorAll('.tmp-disc:checked')].map(x=>x.value);
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ alert('Informe um e-mail válido.'); return; }
+  if(!discs.length){ alert('Marque pelo menos uma disciplina.'); return; }
+  const b=$('btnTmp'); b.disabled=true; b.textContent='Enviando…';
+  try{
+    const r=await sb.rpc('cde_temp_criar',{ p_emp:CDE_AC_EMPID, p_email:email, p_nome:nome, p_disciplinas:discs, p_download:$('tmpDown').value==='1', p_horas:parseInt($('tmpHoras').value,10)||24, p_mensagem:($('tmpMsg').value||'').trim() });
+    if(r.error) throw r.error;
+    alert('Link enviado para '+email+'.');
+    $('tmpEmail').value=''; $('tmpNome').value=''; $('tmpMsg').value=''; document.querySelectorAll('.tmp-disc:checked').forEach(x=>x.checked=false);
+    await accTempCarregar();
+  }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); }
+  b.disabled=false; b.textContent='Gerar link e enviar por e-mail';
+}
+function accTempCopiar(tok){ const u=location.origin+location.pathname.replace(/[^/]*$/,'')+'acesso.html?t='+tok; navigator.clipboard.writeText(u).then(()=>alert('Link copiado.')).catch(()=>prompt('Copie o link:',u)); }
+async function accTempEstender(id){ try{ const r=await sb.rpc('cde_temp_estender',{ p_id:id, p_horas:24 }); if(r.error) throw r.error; }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); } await accTempCarregar(); }
+async function accTempRevogar(id){ if(!confirm('Encerrar este acesso agora? O link deixa de abrir.')) return; try{ const r=await sb.rpc('cde_temp_revogar',{ p_id:id }); if(r.error) throw r.error; }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); } await accTempCarregar(); }
 // ── Atribuição fornecedor → disciplina (item 28) ────────────────────────────
 //  É o que o CDE, a matriz, o cde_minhas_entregas e o painel do projetista leem.
 //  O CADASTRO (página Fornecedores) diz o que a empresa sabe fazer; isto diz o

@@ -86,7 +86,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     margin:-24px -28px 0;color:var(--txt)}
 .gd .cdv{display:flex;align-items:center;gap:9px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
 .gd .cd-cod{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--navy);white-space:nowrap}
-.gd .cd-chip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap;cursor:pointer;border:1px solid transparent}
+.gd .cd-chip,#modalAcessos .cd-chip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap;cursor:pointer;border:1px solid transparent}
 .gd .cd-chip.warn{background:rgba(183,121,31,.15);color:var(--warn)}
 .gd .cd-chip.err{background:rgba(163,45,45,.13);color:var(--err)}
 .gd .cd-chip.ok{background:rgba(30,132,73,.13);color:var(--ok)}
@@ -153,7 +153,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .gd .cd-card .acts .cd-btn{padding:4px 8px;font-size:11.5px}
 /* checklist de implantação */
 #modalImpl,#modalAcessos{--navy:#1E3A5F;--accent:#E8960A;--ok:#1E8449;--err:#A32D2D;--line:#E2E8F0;--panel2:#F6F9FC;--txt:#0F172A}
-.gd .ck,#modalImpl .ck{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px}
+.gd .ck,#modalImpl .ck,#modalAcessos .ck{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px}
 .gd .ck.ok,#modalImpl .ck.ok{background:rgba(30,132,73,.12);color:var(--ok)}
 .gd .ck.no,#modalImpl .ck.no{background:rgba(163,45,45,.10);color:var(--err);border:1px dashed rgba(163,45,45,.4)}
 .gd .ck.half,#modalImpl .ck.half{background:rgba(232,150,10,.14);color:#7C3E06}
@@ -968,8 +968,24 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     </div>
     <div id="acDica" style="display:none;font-size:12.5px;color:var(--text-mid);background:var(--orange-light);border:1px solid #f0dcc0;border-radius:9px;padding:9px 12px;margin-top:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-      <button class="btn-secondary" onclick="closeModal('modalAcessos')">Fechar</button>
       <button class="btn-primary" id="btnAcConvidar" onclick="gdAcessosConvidar()">Convidar e liberar acesso</button>
+    </div>
+    <!-- Acesso temporário por link (item 50) -->
+    <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:16px 0 6px;display:flex;align-items:center;gap:8px">Acesso temporário por link <span style="font-weight:500;text-transform:none;letter-spacing:0">sem login · só ficha + arquivos liberados das disciplinas escolhidas · expira sozinho</span></div>
+    <div id="tmpLista" style="margin-bottom:8px"></div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:8px">
+      <div><label class="form-label">E-mail</label><input class="form-inp" id="tmpEmail" type="email" placeholder="escritorio@exemplo.com.br"></div>
+      <div><label class="form-label">Nome</label><input class="form-inp" id="tmpNome" placeholder="opcional"></div>
+    </div>
+    <div style="margin-top:8px"><label class="form-label">Disciplinas liberadas</label><div id="tmpDiscs" style="display:flex;gap:5px;flex-wrap:wrap"></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px;margin-top:8px;align-items:end">
+      <div><label class="form-label">Permissão</label><select class="form-inp" id="tmpDown"><option value="0">Somente visualizar</option><option value="1">Ver e baixar</option></select></div>
+      <div><label class="form-label">Duração</label><select class="form-inp" id="tmpHoras"><option value="24">24 horas</option><option value="48">48 horas</option><option value="72">3 dias</option><option value="168">7 dias</option></select></div>
+      <div><label class="form-label">Mensagem (opcional)</label><input class="form-inp" id="tmpMsg" placeholder="Ex.: para a proposta de estrutura — dúvidas com o coordenador"></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn-secondary" onclick="closeModal('modalAcessos')">Fechar</button>
+      <button class="btn-primary" id="btnTmp" onclick="gdTempCriar()">Gerar link e enviar por e-mail</button>
     </div>
   </div>
 </div>
@@ -1955,8 +1971,52 @@ async function gdAcessos(empId){
     +(s.vis.length?' · '+s.vis.map(a=>esc(a.nome||a.email)).join(', ')+' <span style="color:var(--text-soft)">(visualiza)</span>':''));
   ['acEmail','acNome'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('modalAcessos').classList.add('open');
-  await gdAcessosCarregar();
+  gdTempForm(emp);
+  await Promise.all([gdAcessosCarregar(), gdTempCarregar()]);
 }
+// ── Acesso temporário por link (item 50) ───────────────────────────────────
+function gdTempForm(emp){
+  const conv=GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[];
+  const usadas=new Set(Object.keys(GD.discForn[emp.id]||{}));
+  const lista=conv.length?conv:[...usadas].map(v=>({v,rotulo:''}));
+  setHTML('tmpDiscs', lista.length ? lista.map(d=>'<label class="ck" style="cursor:pointer;background:var(--panel2,#F6F9FC);border:1px solid var(--line,#E2E8F0);color:var(--text)" title="'+_escAttr(d.rotulo||'')+'"><input type="checkbox" class="tmp-disc" value="'+_escAttr(d.v)+'" style="margin:0 4px 0 0"> '+esc(d.v)+'</label>').join('')
+    : '<span style="font-size:12px;color:var(--text-soft)">Esta construtora ainda não tem padrão de disciplinas.</span>');
+  ['tmpEmail','tmpNome','tmpMsg'].forEach(id=>document.getElementById(id).value='');
+}
+async function gdTempCarregar(){
+  const box=document.getElementById('tmpLista'); if(!AC_EMP) return;
+  try{
+    const r=await sb.from('cde_acesso_temp_auria').select('id,email,nome,disciplinas,download,expira_em,revogado_em,aberturas,ultimo_acesso,token').eq('empreendimento_id',AC_EMP.id).order('criado_em',{ascending:false}).limit(12);
+    if(r.error) throw r.error;
+    const now=Date.now();
+    const rows=(r.data||[]).filter(x=>!x.revogado_em && new Date(x.expira_em)>now || (now-new Date(x.expira_em))<7*864e5);
+    box.innerHTML = rows.length ? rows.map(x=>{ const ativo=!x.revogado_em && new Date(x.expira_em)>now;
+      const st=x.revogado_em?'<span class="cd-chip mut" style="background:var(--panel2,#F6F9FC);color:var(--text-soft)">encerrado</span>':ativo?'<span class="cd-chip ok" style="background:rgba(30,132,73,.13);color:#1E8449">ativo até '+new Date(x.expira_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span>':'<span class="cd-chip" style="background:rgba(163,45,45,.12);color:#A32D2D">expirou</span>';
+      return '<div class="dist-check-item" style="padding:7px 10px;gap:8px"><div style="flex:1;min-width:0"><b style="font-size:12.5px">'+esc(x.nome||x.email)+'</b> <span style="font-size:11.5px;color:var(--text-soft)">'+esc(x.nome?x.email:'')+'</span>'
+        +'<div style="font-size:11px;color:var(--text-mid)"><span style="font-family:ui-monospace,Consolas,monospace">'+esc((x.disciplinas||[]).join(' · '))+'</span> · '+(x.download?'ver e baixar':'só ver')+' · '+(x.aberturas||0)+' abertura'+(x.aberturas===1?'':'s')+'</div></div>'+st
+        +(ativo?'<button class="cd-btn" onclick="gdTempCopiar(\''+x.token+'\')" title="Copiar o link">Link</button><button class="cd-btn" onclick="gdTempEstender(\''+x.id+'\')" title="+24 h">+24 h</button><button class="cd-btn" style="border-color:var(--red);color:var(--red)" onclick="gdTempRevogar(\''+x.id+'\')">Encerrar</button>':'<button class="cd-btn" onclick="gdTempEstender(\''+x.id+'\')" title="Reabrir por mais 24 h">Reabrir 24 h</button>')+'</div>'; }).join('')
+      : '<div style="font-size:12.5px;color:var(--text-soft);padding:4px 0">Nenhum acesso temporário ativo.</div>';
+  }catch(e){ box.innerHTML='<div style="font-size:12px;color:var(--text-soft)">Acessos temporários indisponíveis ('+esc(e.message||e)+').</div>'; }
+}
+async function gdTempCriar(){
+  const email=(document.getElementById('tmpEmail').value||'').trim(), nome=(document.getElementById('tmpNome').value||'').trim();
+  const discs=[...document.querySelectorAll('.tmp-disc:checked')].map(x=>x.value);
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showToast('Informe um e-mail válido','red'); return; }
+  if(!discs.length){ showToast('Marque pelo menos uma disciplina','red'); return; }
+  const b=document.getElementById('btnTmp'); b.disabled=true; b.textContent='Enviando…';
+  try{
+    const r=await sb.rpc('cde_temp_criar',{ p_emp:AC_EMP.id, p_email:email, p_nome:nome, p_disciplinas:discs, p_download:document.getElementById('tmpDown').value==='1',
+      p_horas:parseInt(document.getElementById('tmpHoras').value,10)||24, p_mensagem:(document.getElementById('tmpMsg').value||'').trim() });
+    if(r.error) throw r.error;
+    showToast('Link enviado para '+email+'.','green');
+    ['tmpEmail','tmpNome','tmpMsg'].forEach(id=>document.getElementById(id).value=''); document.querySelectorAll('.tmp-disc:checked').forEach(x=>x.checked=false);
+    await gdTempCarregar();
+  }catch(e){ showToast('Não foi possível: '+((e&&e.message)||e),'red'); }
+  b.disabled=false; b.textContent='Gerar link e enviar por e-mail';
+}
+function gdTempCopiar(tok){ const u=location.origin+location.pathname.replace(/[^/]*$/,'')+'acesso.html?t='+tok; navigator.clipboard.writeText(u).then(()=>showToast('Link copiado.','green')).catch(()=>prompt('Copie o link:',u)); }
+async function gdTempEstender(id){ try{ const r=await sb.rpc('cde_temp_estender',{ p_id:id, p_horas:24 }); if(r.error) throw r.error; showToast('Prazo estendido.','green'); }catch(e){ showToast('Não foi possível: '+((e&&e.message)||e),'red'); } await gdTempCarregar(); }
+async function gdTempRevogar(id){ if(!confirm('Encerrar este acesso agora? O link deixa de abrir.')) return; try{ const r=await sb.rpc('cde_temp_revogar',{ p_id:id }); if(r.error) throw r.error; }catch(e){ showToast('Não foi possível: '+((e&&e.message)||e),'red'); } await gdTempCarregar(); }
 function gdAcessosDistribuir(){ closeModal('modalAcessos'); goPage('distribuicao'); if(AC_EMP) selDistEmp(AC_EMP.id); }
 // Projetista entra pelo cadastro de fornecedor (convite com o empreendimento) — Fornecedores.
 function gdAcessosFornecedores(){
