@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Auria — Envio de Nota Fiscal</title>
+<link rel="icon" type="image/png" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0; --txt:#0F172A; --txt2:#334155; --mut:#64748B;
+         --navy:#1E3A5F; --accent:#E8960A; --ok:#1E8449; --err:#A32D2D; --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.55}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;padding:12px 20px;display:flex;align-items:center;gap:14px}
+  header img.lg{height:44px}
+  header .tt b{display:block;font-size:14px;font-weight:800;line-height:1.15}
+  header .tt span{font-size:11px;color:#8FA6C0}
+  header .grupo{margin-left:auto;display:flex;align-items:center;gap:12px}
+  header .grupo .tx{text-align:right}
+  header .grupo b{display:block;font-size:15px;font-weight:800}
+  header .grupo span{font-size:11px;color:#8FA6C0}
+  header .grupo img{height:46px;max-width:160px;object-fit:contain;border-radius:8px;background:#fff;border:1.5px solid var(--accent);padding:3px 6px}
+  .line{height:2px;background:var(--accent)}
+  .wrap{max-width:820px;margin:0 auto;padding:22px 18px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .hint{color:var(--mut);font-size:13px;margin:0 0 16px}
+  .janela{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:13px}
+  .janela.ok{background:rgba(30,132,73,.10);border:1px solid rgba(30,132,73,.35);color:var(--ok)}
+  .janela .mono{font-family:var(--mono);font-weight:700}
+  .sec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+  .sec h2{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:800}
+  .g{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f label{font-size:11px;font-weight:800;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em}
+  .f label i{color:var(--err);font-style:normal}
+  input,select,textarea{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:13.5px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:#fff}
+  .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}.c3{grid-column:span 3}
+  @media (max-width:640px){ .c8,.c6,.c4,.c3{grid-column:span 12} }
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:11px 20px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit}
+  .btn:hover{background:#163050}.btn:disabled{opacity:.6;cursor:default}
+  .msg{padding:10px 12px;border-radius:9px;font-size:13px;margin-top:12px;display:none}
+  .msg.err{display:block;background:rgba(163,45,45,.08);border:1px solid rgba(163,45,45,.3);color:var(--err)}
+  .done{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:40px 24px;text-align:center}
+  .done h2{margin:0 0 8px;font-size:22px}.done p{color:var(--mut)}
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--mut);cursor:pointer;background:var(--panel2)}
+  .drop.ok{border-color:var(--ok);color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <img class="lg" src="logo_symbol.png" alt="Auria">
+  <div class="tt"><b>Auria — Envio de Nota Fiscal</b><span>Financeiro · recebimento de NFs</span></div>
+  <div class="grupo"><div class="tx"><b id="hGrupo">&nbsp;</b><span id="hComp"></span></div><img id="hLogo" alt="" style="display:none"></div>
+</header>
+<div class="line"></div>
+
+<div class="wrap">
+  <div id="invalido" class="done" style="display:none"><h2>Link inválido</h2><p>Este link não existe. Peça um novo ao financeiro da construtora.</p></div>
+  <div id="fechada" class="done" style="display:none"><h2>Recebimento de NF fechado</h2><p id="fechadaTxt"></p></div>
+  <div id="soContrato" class="done" style="display:none"><h2>Envio somente pelo Painel do Projetista</h2><p>Este grupo recebe NF apenas de contratos cadastrados. Entre em <b>auria.solutions</b> com o seu acesso de projetista.</p></div>
+  <div id="ok" class="done" style="display:none"><h2>Nota fiscal enviada</h2><p>Registramos a NF <b id="okNum"></b> de <b id="okNome"></b>. Você recebe a confirmação por e-mail; o financeiro dá entrada e acompanha o pagamento.</p></div>
+
+  <form id="form" style="display:none" onsubmit="enviar(event)">
+    <h1>Envio de nota fiscal</h1>
+    <p class="hint">Preencha os dados e anexe o PDF da NF. Cada nota é registrada na construtora e no empreendimento que você indicar.</p>
+    <div class="janela ok" id="janela"></div>
+
+    <div class="sec">
+      <h2>Sua empresa</h2>
+      <div class="g">
+        <div class="f c6"><label>Razão social <i>*</i></label><input id="razao" required></div>
+        <div class="f c3"><label>CNPJ <i>*</i></label><input id="cnpj" placeholder="00.000.000/0000-00" required></div>
+        <div class="f c3"><label>E-mail <i>*</i></label><input id="email" type="email" required placeholder="financeiro@escritorio.com.br"></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Para quem é a nota</h2>
+      <div class="g">
+        <div class="f c4"><label>Construtora <i>*</i></label><select id="construtora" required onchange="filtrarEmps()"><option value="">Escolha…</option></select></div>
+        <div class="f c4"><label>Empreendimento <i>*</i></label><select id="empreendimento" required><option value="">Escolha…</option></select></div>
+        <div class="f c4"><label>Disciplina <i>*</i></label><input id="disciplina" required placeholder="Ex.: Estrutura, Arquitetura, Hidráulica"></div>
+        <div class="f c12"><label>Parcela / etapa <i>*</i></label><input id="parcela" required placeholder="Ex.: Parcela 2 — Anteprojeto (30%)"></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Nota fiscal</h2>
+      <div class="g">
+        <div class="f c4"><label>Número da NF <i>*</i></label><input id="nf_numero" required></div>
+        <div class="f c4"><label>Data de emissão <i>*</i></label><input id="emitida_em" type="date" required></div>
+        <div class="f c4"><label>Valor (R$) <i>*</i></label><input id="valor" inputmode="decimal" placeholder="0,00" required></div>
+        <div class="f c12"><label>Conteúdo entregue <i>*</i></label><textarea id="conteudo" rows="3" required placeholder="O que foi entregue nesta parcela (ex.: projeto executivo de estrutura — pranchas EST-01 a EST-12)"></textarea></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>PDF da nota fiscal <i style="color:var(--err);font-style:normal">*</i></h2>
+      <input type="file" id="pdf" accept="application/pdf" style="display:none" onchange="pdfSel(this)">
+      <div class="drop" id="drop" onclick="document.getElementById('pdf').click()">Clique para escolher o PDF (até 15 MB)</div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <button class="btn" id="btnEnviar" type="submit">Enviar nota fiscal</button>
+      <span style="font-size:11.5px;color:var(--mut)">Ao enviar, a NF entra na fila do financeiro e você recebe a confirmação por e-mail.</span>
+    </div>
+    <div class="msg" id="msg"></div>
+  </form>
+</div>
+
+<script>
+const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+let CTX=null, PDF=null;
+const dt = v => v ? new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+const num = s => { s=String(s||'').trim(); if(!s) return 0; if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.'); return Number(s)||0; };
+
+function pdfSel(inp){ PDF=inp.files&&inp.files[0]||null; const d=$('drop'); if(PDF){ d.textContent='📄 '+PDF.name+' ('+Math.round(PDF.size/1024)+' KB)'; d.classList.add('ok'); } else { d.textContent='Clique para escolher o PDF (até 15 MB)'; d.classList.remove('ok'); } }
+function filtrarEmps(){
+  const c=$('construtora').value; const sel=$('empreendimento');
+  const lst=(CTX.empreendimentos||[]).filter(e=>!c || e.construtora_id===c);
+  sel.innerHTML='<option value="">Escolha…</option>'+lst.map(e=>`<option value="${esc(e.id)}">${esc(e.nome)}</option>`).join('');
+}
+$('cnpj').addEventListener('input', e=>{ let v=e.target.value.replace(/\D/g,'').slice(0,14);
+  e.target.value=v.replace(/^(\d{2})(\d)/,'$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/,'$1.$2.$3').replace(/\.(\d{3})(\d)/,'.$1/$2').replace(/(\d{4})(\d)/,'$1-$2'); });
+
+async function boot(){
+  if(!TOKEN){ $('invalido').style.display=''; return; }
+  try{ const r=await sb.rpc('nf_janela_publica',{ p_token:TOKEN }); CTX=(r.data&&r.data[0])||null; }catch(e){}
+  if(!CTX){ $('invalido').style.display=''; return; }
+  $('hGrupo').textContent=CTX.grupo||''; $('hComp').textContent=CTX.competencia?('Competência '+CTX.competencia):'';
+  if(CTX.logo_url){ $('hLogo').src=CTX.logo_url; $('hLogo').style.display=''; }
+  if(CTX.exige_contrato){ $('soContrato').style.display=''; return; }
+  if(!CTX.aberta){
+    const agora=Date.now();
+    $('fechadaTxt').textContent = agora<Date.parse(CTX.abre_em) ? ('O recebimento abre em '+dt(CTX.abre_em)+' e vai até '+dt(CTX.fecha_em)+'.') : ('O prazo terminou em '+dt(CTX.fecha_em)+'. Aguarde o financeiro abrir a próxima janela.');
+    $('fechada').style.display=''; return;
+  }
+  $('janela').innerHTML='<b>Recebimento aberto</b> até <span class="mono">'+dt(CTX.fecha_em)+'</span>'+(CTX.mensagem?' · '+esc(CTX.mensagem):'');
+  $('construtora').innerHTML='<option value="">Escolha…</option>'+(CTX.construtoras||[]).map(c=>`<option value="${esc(c.id)}">${esc(c.nome)}</option>`).join('');
+  if((CTX.construtoras||[]).length===1){ $('construtora').value=CTX.construtoras[0].id; }
+  filtrarEmps();
+  $('emitida_em').value=new Date().toISOString().slice(0,10);
+  $('form').style.display='';
+}
+async function enviar(ev){
+  ev.preventDefault(); const msg=$('msg'); msg.className='msg';
+  if(!PDF){ msg.textContent='Anexe o PDF da nota fiscal.'; msg.className='msg err'; return; }
+  const cnpj=$('cnpj').value.replace(/\D/g,''); if(cnpj.length!==14){ msg.textContent='CNPJ inválido (14 dígitos).'; msg.className='msg err'; return; }
+  if(!(num($('valor').value)>0)){ msg.textContent='Informe o valor da NF.'; msg.className='msg err'; return; }
+  const fd=new FormData();
+  fd.append('token',TOKEN); fd.append('razao',$('razao').value.trim()); fd.append('cnpj',cnpj); fd.append('email',$('email').value.trim());
+  fd.append('construtora_id',$('construtora').value); fd.append('empreendimento_id',$('empreendimento').value);
+  fd.append('disciplina',$('disciplina').value.trim()); fd.append('parcela',$('parcela').value.trim());
+  fd.append('nf_numero',$('nf_numero').value.trim()); fd.append('emitida_em',$('emitida_em').value); fd.append('valor',String(num($('valor').value)));
+  fd.append('conteudo',$('conteudo').value.trim()); fd.append('pdf',PDF,PDF.name);
+  const b=$('btnEnviar'); b.disabled=true; b.textContent='Enviando…';
+  try{
+    const r=await fetch(SUPA_URL+'/functions/v1/nf-enviar-publica',{ method:'POST', headers:{ 'apikey':SUPA_KEY, 'Authorization':'Bearer '+SUPA_KEY }, body:fd });
+    const out=await r.json().catch(()=>({}));
+    if(!r.ok || out.error) throw new Error(out.error||('HTTP '+r.status));
+    $('okNum').textContent=$('nf_numero').value.trim(); $('okNome').textContent=$('razao').value.trim();
+    $('form').style.display='none'; $('ok').style.display=''; window.scrollTo(0,0);
+  }catch(e){ msg.textContent=(e&&e.message)||String(e); msg.className='msg err'; b.disabled=false; b.textContent='Enviar nota fiscal'; }
+}
+boot();
+</script>
+</body>
+</html>

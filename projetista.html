@@ -629,11 +629,16 @@
   <div class="cmodal">
     <div class="cmodal-h"><span>Enviar Nota Fiscal</span><button class="cmodal-x" onclick="fecharEnviarNF()">&times;</button></div>
     <div class="cmodal-b">
-      <div id="nf-info" style="font-size:13px;color:#475569;margin-bottom:10px"></div>
-      <label>Número da NF</label>
-      <input id="nf-numero" type="text" placeholder="Ex.: 12345">
-      <label>Valor da NF (R$)</label>
-      <input id="nf-valor" type="number" step="0.01" min="0" placeholder="0,00">
+      <div id="nf-janela" style="display:none;font-size:12.5px;padding:8px 10px;border-radius:9px;margin-bottom:10px"></div>
+      <div id="nf-info" style="font-size:13px;color:#475569;margin-bottom:10px;line-height:1.5"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
+        <div><label>Número da NF</label><input id="nf-numero" type="text" placeholder="Ex.: 12345"></div>
+        <div><label>Data de emissão</label><input id="nf-emitida" type="date"></div>
+        <div><label>Valor da NF (R$)</label><input id="nf-valor" type="number" step="0.01" min="0" placeholder="0,00"></div>
+        <div><label>CNPJ do emissor</label><input id="nf-cnpj" type="text" placeholder="00.000.000/0000-00"></div>
+      </div>
+      <label>Conteúdo entregue</label>
+      <textarea id="nf-conteudo" rows="2" placeholder="O que foi entregue nesta parcela (ex.: projeto executivo de estrutura — pranchas EST-01 a EST-12)" style="width:100%;font-family:inherit;font-size:13px;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;resize:vertical"></textarea>
       <label>Arquivo da NF (PDF)</label>
       <input id="nf-pdf" type="file" accept="application/pdf">
       <div id="nf-err" style="color:#EF4444;font-size:12px;margin-top:8px;min-height:16px"></div>
@@ -1144,17 +1149,39 @@ function fecharSolicitar(){ document.getElementById('solicitarModal').classList.
 
 // ── Enviar NF (após analista autorizar) ──────────────────────
 let NF_PARC=null;
-function abrirEnviarNF(parcId, ctrIdx){
-  NF_PARC={parcId:parcId, ctrIdx:+ctrIdx};
+async function abrirEnviarNF(parcId, ctrIdx){
+  NF_PARC={parcId:parcId, ctrIdx:+ctrIdx, aberta:true};
   const c=P_CONTRATOS[+ctrIdx]; const p=(c.parcelas_auria||[]).find(x=>x.id===parcId);
-  document.getElementById('nf-info').innerHTML = p
-    ? `<b>${escH(c.disciplina||'Contrato')}</b> · Parcela <b>${p.numero}</b> — ${escH(p.descricao||'')} — contratado <b>${pBRL(p.valor)}</b>`
+  const info=document.getElementById('nf-info');
+  info.innerHTML = p
+    ? `<b>${escH(c._empNome||'Empreendimento')}</b> · <b>${escH(c.disciplina||'Contrato')}</b> · Parcela <b>${p.numero}</b> — ${escH(p.descricao||'')} — contratado <b>${pBRL(p.valor)}</b>`
     : '';
   document.getElementById('nf-numero').value='';
   document.getElementById('nf-valor').value = (p&&p.valor)?p.valor:'';
+  document.getElementById('nf-emitida').value = new Date().toISOString().slice(0,10);
+  document.getElementById('nf-cnpj').value = (typeof PJ_FORN!=='undefined' && PJ_FORN && PJ_FORN.cnpj) ? PJ_FORN.cnpj : '';
+  document.getElementById('nf-conteudo').value='';
   document.getElementById('nf-pdf').value='';
   document.getElementById('nf-err').textContent='';
+  const jn=document.getElementById('nf-janela'); jn.style.display='none';
+  const btn=document.getElementById('nf-save'); btn.disabled=false; btn.textContent='Enviar NF';
   document.getElementById('nfModal').classList.add('on');
+  // construtora (se a RLS deixar ler) — a NF fica separada por empresa no financeiro
+  try{ const e=await _supaGet('empreendimentos_auria?select=nome,construtoras_auria(nome)&id=eq.'+c.empreendimento_id);
+       const cn=e&&e[0]&&e[0].construtoras_auria&&e[0].construtoras_auria.nome; if(cn) info.innerHTML='<b>'+escH(cn)+'</b> · '+info.innerHTML; }catch(e){}
+  // janela de recebimento (item 40): o servidor decide; aqui só avisamos e travamos o botão
+  try{
+    const r=await sb.rpc('nf_janela_status_parcela',{ p_parcela_id:parcId }); const st=(r.data&&r.data[0])||null;
+    const dt=v=>v?new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+    if(st && st.aberta){
+      jn.style.cssText='display:block;background:rgba(30,132,73,.10);border:1px solid rgba(30,132,73,.35);color:#1E8449';
+      jn.innerHTML='<b>Recebimento de NF aberto</b> até '+dt(st.fecha_em)+(st.mensagem?' · '+escH(st.mensagem):'');
+    } else if(st){
+      NF_PARC.aberta=false; btn.disabled=true; btn.textContent='Fora da janela';
+      jn.style.cssText='display:block;background:rgba(163,45,45,.08);border:1px solid rgba(163,45,45,.3);color:#A32D2D';
+      jn.innerHTML='<b>Recebimento de NF fechado.</b> '+(st.proxima_abre?('Próxima janela: '+dt(st.proxima_abre)+' a '+dt(st.proxima_fecha)+'.'):'Aguarde o financeiro abrir a próxima janela.');
+    }
+  }catch(e){ console.warn('nf_janela_status_parcela', e.message||e); }
 }
 function fecharEnviarNF(){ document.getElementById('nfModal').classList.remove('on'); NF_PARC=null; }
 
@@ -1168,13 +1195,21 @@ async function enviarNF(){
   if(!(valor>0)){ err.textContent='Informe um valor válido.'; return; }
   if(!file){ err.textContent='Anexe o PDF da NF.'; return; }
   if(file.type!=='application/pdf'){ err.textContent='O arquivo precisa ser PDF.'; return; }
+  const emitida=document.getElementById('nf-emitida').value||null;
+  const cnpj=(document.getElementById('nf-cnpj').value||'').replace(/\D/g,'');
+  const conteudo=(document.getElementById('nf-conteudo').value||'').trim();
+  if(!emitida){ err.textContent='Informe a data de emissão.'; return; }
+  if(cnpj && cnpj.length!==14){ err.textContent='CNPJ inválido (14 dígitos).'; return; }
+  if(!conteudo){ err.textContent='Descreva o conteúdo entregue.'; return; }
+  if(NF_PARC.aberta===false){ err.textContent='Recebimento de NF fechado.'; return; }
   const btn=document.getElementById('nf-save'); btn.disabled=true; btn.textContent='Enviando…';
   try{
     const safe=file.name.replace(/[^\w.\-]/g,'_');
     const path=USER.id+'/'+NF_PARC.parcId+'/'+Date.now()+'_'+safe;
     const up=await sb.storage.from('notas-fiscais').upload(path, file, {contentType:'application/pdf', upsert:false});
     if(up.error) throw up.error;
-    const { error }=await sb.rpc('nf_enviar', { p_parcela_id:NF_PARC.parcId, p_valor:valor, p_nf_numero:numero, p_pdf_path:path });
+    const { error }=await sb.rpc('nf_enviar', { p_parcela_id:NF_PARC.parcId, p_valor:valor, p_nf_numero:numero, p_pdf_path:path,
+                                                 p_conteudo:conteudo, p_emitida_em:emitida, p_cnpj:cnpj||null });
     if(error) throw error;
     fecharEnviarNF();
     await showContratos();

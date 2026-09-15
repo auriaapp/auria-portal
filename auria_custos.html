@@ -174,6 +174,15 @@
       </div>
 
       <div id="viewDash" style="display:flex;flex-direction:column;gap:14px">
+        <!-- Janela de recebimento de NFs (item 40) -->
+        <div class="card" id="janBox" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="display:flex;flex-direction:column;min-width:220px">
+            <h2 class="cd-sec" style="margin:0">Recebimento de NFs</h2>
+            <span class="cd-hint" id="janHint">carregando&hellip;</span>
+          </div>
+          <div id="janStatus" style="flex:1;min-width:260px;font-size:13px"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="janBtns"></div>
+        </div>
         <div class="kpis">
           <div class="kpi"><div class="l">Notas no per&iacute;odo</div><div class="v" id="kNotas">0</div></div>
           <div class="kpi"><div class="l">Valor no per&iacute;odo</div><div class="v" id="kValor">R$ 0</div></div>
@@ -223,6 +232,31 @@
 
     <!-- trilho: empresas (construtoras) — filtra a fila -->
     <div class="cd-rail" id="fRail"></div>
+  </div>
+</div>
+
+<!-- MODAL: abrir janela de recebimento de NFs -->
+<div class="modalbg" id="modalJan" onclick="if(event.target===this)janFechar()">
+  <div class="modalcard" style="max-width:640px">
+    <button class="x" onclick="janFechar()">&times;</button>
+    <h3 style="margin-bottom:2px;color:var(--navy)">Abrir recebimento de NFs</h3>
+    <div class="cd-hint" style="margin-bottom:12px">No período abaixo os projetistas cadastrados enviam pelo Painel do Projetista e os demais pelo link p&uacute;blico. Fora dele, nada entra.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div><label class="cd-hint" style="font-weight:700">Compet&ecirc;ncia</label><input class="cd-sel" id="janComp" placeholder="2026-09" style="width:100%"></div>
+      <div><label class="cd-hint" style="font-weight:700">Abre em</label><input class="cd-sel" id="janAbre" type="datetime-local" style="width:100%"></div>
+      <div><label class="cd-hint" style="font-weight:700">Fecha em</label><input class="cd-sel" id="janFecha" type="datetime-local" style="width:100%"></div>
+    </div>
+    <div style="margin-top:10px"><label class="cd-hint" style="font-weight:700">Mensagem aos projetistas</label>
+      <input class="cd-sel" id="janMsg" style="width:100%" placeholder="Ex.: NFs emitidas at&eacute; o dia 25 entram no pagamento de outubro."></div>
+    <div style="margin-top:10px"><label class="cd-hint" style="font-weight:700">Avisar tamb&eacute;m (e-mails de escrit&oacute;rios sem cadastro, um por linha)</label>
+      <textarea class="cd-sel" id="janEmails" rows="3" style="width:100%;resize:vertical" placeholder="financeiro@escritorio.com.br"></textarea></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--txt2)"><input type="checkbox" id="janExige"> S&oacute; aceitar NF de contrato cadastrado (bloqueia o link p&uacute;blico)</label>
+    <div class="cd-hint" style="margin-top:8px">Ao abrir, o Auria avisa por e-mail os projetistas com parcela autorizada e a lista acima (com o link p&uacute;blico).</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="mini" onclick="janFechar()">Cancelar</button>
+      <button class="mini go" id="janSalvar" onclick="janAbrirSalvar()">Abrir e avisar</button>
+    </div>
+    <div class="msg-err" id="janErr" style="display:none;margin-top:10px;color:var(--err);font-size:12.5px"></div>
   </div>
 </div>
 
@@ -277,6 +311,7 @@ async function carregar(){
     popEmpOptions();
     renderRail();
     render();
+    janCarregar();
     if($('viewPastas').style.display!=='none') renderPastas();
   }catch(e){
     $('tbody').innerHTML='<tr><td colspan="10" class="empty">Erro: '+esc(e.message||e)+'</td></tr>';
@@ -383,8 +418,8 @@ function render(){
     }
     if(n.contrato_id) acoes.push(`<button class="mini" title="Resumo do contrato (todas as parcelas)" onclick="abrirResumoContrato('${n.contrato_id}')">📋</button>`);
     return `<tr class="${n.status==='enviada'?'act':''}">
-      <td class="emp" title="${esc(n.construtora||'')}">${esc(n.empreendimento)}</td><td class="mono">${esc(n.disciplina||'—')}</td><td>${esc(n.projetista||'—')}</td>
-      <td class="mono">${n.parcela_numero||'—'}</td><td class="num">${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</td>
+      <td class="emp" title="${esc(n.construtora||'')}">${esc(n.empreendimento)}${n.origem==='externa'?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06" title="Enviada pelo link público, sem contrato/parcela vinculada">sem contrato</span>':''}</td><td class="mono">${esc(n.disciplina||'—')}</td><td title="${esc(n.fornecedor_cnpj?('CNPJ '+n.fornecedor_cnpj):'')}">${esc(n.projetista||'—')}</td>
+      <td class="mono" title="${esc(n.parcela_txt||'')}">${n.parcela_numero||(n.parcela_txt?esc(n.parcela_txt).slice(0,18)+'…':'—')}</td><td class="num" title="${esc(n.conteudo||'')}">${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</td>
       <td class="num">${brl(n.valor)}</td><td class="mono">${dbr(n.emitida_em)}</td>
       <td><span class="st st-${n.status}">${stLbl(n.status)}</span></td>
       <td style="white-space:nowrap">${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')" title="Visualizar em nova aba">📄 Ver</a> <a class="mini" onclick="baixarPDF('${esc(n.pdf_path)}','NF ${esc(n.nf_numero||'')}.pdf')" title="Baixar">⬇</a>`:'—'}</td>
@@ -670,6 +705,62 @@ async function baixarZip(btn, idx){
     if(falhas>0) alert('ZIP gerado, mas '+falhas+' arquivo(s) falharam no download.');
   }catch(e){ alert('Falha ao gerar o ZIP: '+(e.message||e)); }
   finally{ btn.disabled=false; btn.textContent=orig; }
+}
+
+// ═══ JANELA DE RECEBIMENTO DE NFs (item 40) ════════════════════════════════
+let JANELAS=[];
+function janFmt(v){ return v ? new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''; }
+function janLink(j){ return location.origin + location.pathname.replace(/[^/]*$/,'') + 'nf.html?t=' + j.token; }
+async function janCarregar(){
+  try{ const r=await sb.from('nf_janela_auria').select('*').order('abre_em',{ascending:false}).limit(12); if(r.error) throw r.error; JANELAS=r.data||[]; }
+  catch(e){ $('janHint').textContent='Janelas indisponíveis: '+(e.message||e); return; }
+  const now=Date.now();
+  const aberta=JANELAS.find(j=>now>=Date.parse(j.abre_em)&&now<=Date.parse(j.fecha_em));
+  const proxima=JANELAS.filter(j=>Date.parse(j.abre_em)>now).sort((a,b)=>Date.parse(a.abre_em)-Date.parse(b.abre_em))[0];
+  const ultima=JANELAS.filter(j=>Date.parse(j.fecha_em)<now)[0];
+  const st=$('janStatus'), bt=$('janBtns');
+  if(aberta){
+    $('janHint').textContent='janela aberta · projetistas e link público aceitam NF';
+    st.innerHTML=`<span class="st st-enviada">ABERTA</span> até <b class="mono">${janFmt(aberta.fecha_em)}</b>${aberta.competencia?' · competência <b class="mono">'+esc(aberta.competencia)+'</b>':''}${aberta.mensagem?'<div class="cd-hint" style="margin-top:3px">'+esc(aberta.mensagem)+'</div>':''}
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap"><input class="cd-sel mono" readonly value="${esc(janLink(aberta))}" style="flex:1;min-width:260px;font-size:11.5px" onclick="this.select()"><button class="mini" onclick="janCopiar('${esc(janLink(aberta))}')">Copiar link</button></div>`;
+    bt.innerHTML=`<button class="mini" onclick="janFecharAgora('${aberta.id}')">Fechar agora</button>`;
+  } else {
+    $('janHint').textContent='fechado · ninguém consegue enviar NF';
+    st.innerHTML=`<span class="st st-cancelada">FECHADO</span> ${proxima?('próxima abertura <b class="mono">'+janFmt(proxima.abre_em)+'</b> a <b class="mono">'+janFmt(proxima.fecha_em)+'</b>'):(ultima?('última janela encerrou em <b class="mono">'+janFmt(ultima.fecha_em)+'</b>'):'nenhuma janela criada ainda')}`;
+    bt.innerHTML=`<button class="mini go" onclick="janAbrir()">Abrir recebimento</button>`+(proxima?`<button class="mini" onclick="janFecharAgora('${proxima.id}','cancelar')">Cancelar próxima</button>`:'');
+  }
+}
+function janCopiar(u){ navigator.clipboard.writeText(u).then(()=>alert('Link copiado.')).catch(()=>prompt('Copie o link:',u)); }
+function janAbrir(){
+  const h=new Date(); const p=x=>String(x).padStart(2,'0'); const loc=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
+  const fim=new Date(h.getTime()+5*864e5); fim.setHours(18,0,0,0);
+  $('janComp').value=h.getFullYear()+'-'+p(h.getMonth()+1); $('janAbre').value=loc(h); $('janFecha').value=loc(fim);
+  $('janMsg').value=''; $('janEmails').value=''; $('janExige').checked=false; $('janErr').style.display='none';
+  $('modalJan').classList.add('on');
+}
+function janFechar(){ $('modalJan').classList.remove('on'); }
+async function janAbrirSalvar(){
+  const err=$('janErr'); err.style.display='none';
+  const abre=$('janAbre').value, fecha=$('janFecha').value;
+  if(!abre||!fecha){ err.textContent='Informe abertura e fechamento.'; err.style.display=''; return; }
+  const emails=$('janEmails').value.split(/[\n,;]+/).map(x=>x.trim()).filter(x=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+  const b=$('janSalvar'); b.disabled=true; b.textContent='Abrindo…';
+  try{
+    const r=await sb.rpc('nf_janela_abrir',{ p_abre:new Date(abre).toISOString(), p_fecha:new Date(fecha).toISOString(), p_competencia:$('janComp').value.trim(),
+      p_mensagem:$('janMsg').value.trim(), p_emails_extra:emails, p_exige_contrato:$('janExige').checked });
+    if(r.error) throw r.error;
+    janFechar(); await janCarregar();
+  }catch(e){ err.textContent=(e&&e.message)||String(e); err.style.display=''; }
+  b.disabled=false; b.textContent='Abrir e avisar';
+}
+async function janFecharAgora(id, modo){
+  if(!confirm(modo==='cancelar' ? 'Cancelar a próxima janela? Os avisos já enviados não são desfeitos.' : 'Fechar o recebimento agora? A partir de já ninguém consegue enviar NF.')) return;
+  try{
+    const r = modo==='cancelar' ? await sb.from('nf_janela_auria').delete().eq('id',id)
+                                : await sb.from('nf_janela_auria').update({ fecha_em:new Date().toISOString() }).eq('id',id);
+    if(r.error) throw r.error;
+    await janCarregar();
+  }catch(e){ alert('Não foi possível: '+(e.message||e)); }
 }
 
 async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
