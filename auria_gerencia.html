@@ -949,15 +949,24 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:0 0 6px">Pessoas com acesso ao CDE (setor e obra)</div>
     <div id="acLista" style="max-height:34vh;overflow:auto;border:1px solid var(--gray-border);border-radius:10px"></div>
     <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:14px 0 6px">Convidar para ver o empreendimento</div>
-    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:8px;align-items:end">
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1.3fr;gap:8px;align-items:end">
       <div><label class="form-label">E-mail</label><input class="form-inp" id="acEmail" type="email" placeholder="pessoa@empresa.com.br"></div>
       <div><label class="form-label">Nome</label><input class="form-inp" id="acNome" placeholder="opcional"></div>
-      <div><label class="form-label">Papel</label><select class="form-inp" id="acTipo" onchange="document.getElementById('acNivelWrap').style.display=this.value==='obra'?'':'none'">
-        <option value="setor">Setor interno (orçamento, suprimentos…)</option>
-        <option value="obra">Obra (canteiro)</option></select></div>
-      <div id="acNivelWrap" style="display:none"><label class="form-label">Nível na obra</label><select class="form-inp" id="acNivel">
-        <option value="eng_chefe">Engenheiro chefe</option><option value="coord_campo">Coordenação de campo</option><option value="equipe_campo">Equipe de campo</option></select></div>
+      <div><label class="form-label">Papel</label><select class="form-inp" id="acTipo" onchange="gdAcessosPapel(this.value)">
+        <optgroup label="Construtora">
+          <option value="setor">Setor interno — orçamento, suprimentos, planejamento (só lê o publicado)</option>
+        </optgroup>
+        <optgroup label="Obra (canteiro)">
+          <option value="obra:eng_chefe">Obra · Engenheiro chefe</option>
+          <option value="obra:coord_campo">Obra · Coordenação de campo</option>
+          <option value="obra:equipe_campo">Obra · Equipe de campo</option>
+        </optgroup>
+        <optgroup label="Equipe Auria / projeto">
+          <option value="analista">Analista — coordenador ou visualizador (Distribuição)</option>
+          <option value="projetista">Projetista / escritório (Fornecedores)</option>
+        </optgroup></select></div>
     </div>
+    <div id="acDica" style="display:none;font-size:12.5px;color:var(--text-mid);background:var(--orange-light);border:1px solid #f0dcc0;border-radius:9px;padding:9px 12px;margin-top:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
       <button class="btn-secondary" onclick="closeModal('modalAcessos')">Fechar</button>
       <button class="btn-primary" id="btnAcConvidar" onclick="gdAcessosConvidar()">Convidar e liberar acesso</button>
@@ -1949,6 +1958,26 @@ async function gdAcessos(empId){
   await gdAcessosCarregar();
 }
 function gdAcessosDistribuir(){ closeModal('modalAcessos'); goPage('distribuicao'); if(AC_EMP) selDistEmp(AC_EMP.id); }
+// Projetista entra pelo cadastro de fornecedor (convite com o empreendimento) — Fornecedores.
+function gdAcessosFornecedores(){
+  closeModal('modalAcessos'); goPage('fornecedores');
+  setTimeout(()=>{ const se=document.getElementById('cvEmp'); if(se && AC_EMP){ se.value=AC_EMP.id; }
+    const em=document.getElementById('cvEmail'); const v=(document.getElementById('acEmail').value||'').trim();
+    if(em){ if(v) em.value=v; em.scrollIntoView({behavior:'smooth',block:'center'}); em.focus(); } },400);
+}
+function gdAcessosPapel(v){
+  const d=document.getElementById('acDica'), b=document.getElementById('btnAcConvidar');
+  const dicas={
+    setor:'Recebe convite por e-mail e vê só o que está <b>publicado</b> no CDE deste empreendimento (sem abrir apontamentos).',
+    'obra:eng_chefe':'Gerente de campo: vê o publicado, abre e responde apontamentos de obra, acessa o Diário de Obra.',
+    'obra:coord_campo':'Coordenação de campo: vê o publicado e abre apontamentos de obra.',
+    'obra:equipe_campo':'Equipe de campo: só lê o publicado e os apontamentos.',
+    analista:'Analista é vinculado como <b>coordenador</b> ou <b>visualizador</b> na Distribuição — o botão abaixo leva para lá.',
+    projetista:'Projetista entra pelo cadastro do escritório (fornecedor) com convite por e-mail para este empreendimento — o botão abaixo abre Fornecedores com o e-mail preenchido.'
+  };
+  d.innerHTML=dicas[v]||''; d.style.display=dicas[v]?'':'none';
+  b.textContent = v==='analista' ? 'Ir para Distribuição' : v==='projetista' ? 'Ir para Fornecedores' : 'Convidar e liberar acesso';
+}
 async function gdAcessosCarregar(){
   const box=document.getElementById('acLista'); box.innerHTML='<div class="loading-spinner" style="padding:18px"><div class="spinner"></div></div>';
   try{
@@ -1967,7 +1996,10 @@ async function gdAcessosCarregar(){
 }
 async function gdAcessosConvidar(){
   const email=(document.getElementById('acEmail').value||'').trim().toLowerCase(), nome=(document.getElementById('acNome').value||'').trim();
-  const tipo=document.getElementById('acTipo').value, nivel=document.getElementById('acNivel').value;
+  const sel=document.getElementById('acTipo').value;
+  if(sel==='analista'){ gdAcessosDistribuir(); return; }
+  if(sel==='projetista'){ gdAcessosFornecedores(); return; }
+  const tipo=sel.startsWith('obra:')?'obra':'setor', nivel=sel.startsWith('obra:')?sel.slice(5):null;
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showToast('Informe um e-mail válido','red'); return; }
   const b=document.getElementById('btnAcConvidar'); b.disabled=true; b.textContent='Convidando…';
   try{
