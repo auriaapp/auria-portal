@@ -978,7 +978,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       <div><label class="form-label">E-mail</label><input class="form-inp" id="tmpEmail" type="email" placeholder="escritorio@exemplo.com.br"></div>
       <div><label class="form-label">Nome</label><input class="form-inp" id="tmpNome" placeholder="opcional"></div>
     </div>
-    <div style="margin-top:8px"><label class="form-label">Disciplinas liberadas</label><div id="tmpDiscs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:5px"></div></div>
+    <div style="margin-top:8px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px"><label class="form-label" style="margin:0">Disciplinas liberadas</label>
+        <input class="form-inp" id="tmpDiscBusca" placeholder="Digite a sigla ou o nome (Enter marca)" style="width:260px;padding:5px 9px;font-size:12px" oninput="discBuscaFiltrar(this,'tmpDiscs')" onkeydown="discBuscaTecla(event,this,'tmpDiscs')"></div>
+      <div id="tmpDiscs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:5px"></div></div>
     <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr 1.6fr;gap:8px;margin-top:8px;align-items:end">
       <div><label class="form-label">Alcance</label><select class="form-inp" id="tmpAlc"><option value="publicado">Só liberado para obra (A1/B1)</option><option value="compartilhado">Liberado + compartilhado (S1–S4)</option></select></div>
       <div><label class="form-label">Permissão</label><select class="form-inp" id="tmpDown"><option value="0">Somente visualizar</option><option value="1">Ver e baixar</option></select></div>
@@ -1989,6 +1992,21 @@ async function gdAcessos(empId){
   gdTempForm(emp);
   await Promise.all([gdAcessosCarregar(), gdTempCarregar()]);
 }
+// Caixa de busca das disciplinas: filtra os chips pelo que se digita (sigla ou nome) e
+// Enter marca a primeira; Esc limpa. Evita procurar entre 80+ códigos.
+function discBuscaFiltrar(inp, wrapId){
+  const q=(inp.value||'').trim().toLowerCase(); const wrap=document.getElementById(wrapId); if(!wrap) return;
+  let primeiro=null;
+  wrap.querySelectorAll('label').forEach(l=>{ const cb=l.querySelector('input'); const t=((cb&&cb.value)||'')+' '+(l.title||'')+' '+l.textContent;
+    const ok=!q || t.toLowerCase().includes(q); l.style.display=ok?'':'none'; if(ok && !primeiro && cb && !cb.checked) primeiro=cb; });
+  inp._primeiro=primeiro;
+}
+function discBuscaTecla(ev, inp, wrapId){
+  if(ev.key==='Enter'){ ev.preventDefault(); const wrap=document.getElementById(wrapId); const q=(inp.value||'').trim().toUpperCase();
+    let cb=wrap && wrap.querySelector('input[value="'+q.replace(/"/g,'')+'"]'); if(!cb) cb=inp._primeiro;
+    if(cb){ cb.checked=true; inp.value=''; discBuscaFiltrar(inp, wrapId); } }
+  else if(ev.key==='Escape'){ inp.value=''; discBuscaFiltrar(inp, wrapId); }
+}
 // ── Acesso temporário por link (item 50) ───────────────────────────────────
 function gdTempForm(emp){
   const conv=GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[];
@@ -1996,7 +2014,7 @@ function gdTempForm(emp){
   const lista=conv.length?conv:[...usadas].map(v=>({v,rotulo:''}));
   setHTML('tmpDiscs', lista.length ? lista.map(d=>'<label class="ck" style="cursor:pointer;background:var(--panel2,#F6F9FC);border:1px solid var(--line,#E2E8F0);color:var(--text);justify-content:flex-start;font-family:ui-monospace,Consolas,monospace" title="'+_escAttr(d.rotulo||'')+'"><input type="checkbox" class="tmp-disc" value="'+_escAttr(d.v)+'" style="margin:0 4px 0 0"> '+esc(d.v)+'</label>').join('')
     : '<span style="font-size:12px;color:var(--text-soft)">Esta construtora ainda não tem padrão de disciplinas.</span>');
-  ['tmpEmail','tmpNome','tmpMsg'].forEach(id=>document.getElementById(id).value='');
+  ['tmpEmail','tmpNome','tmpMsg','tmpDiscBusca'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
 }
 async function gdTempCarregar(){
   const box=document.getElementById('tmpLista'); if(!AC_EMP) return;
