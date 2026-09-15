@@ -357,6 +357,7 @@
           <button class="tb" data-aba="forn" onclick="abrirFornecedoresView()">Fornecedores</button>
           <button class="tb" data-aba="bi" onclick="paAba('bi')">Painel de Apontamentos</button>
           <button class="tb" data-aba="emp" id="tbEmp" style="display:none" onclick="paAba('emp')"></button>
+          <button class="tb" data-aba="cron" id="tbCron" style="display:none" onclick="paAba('cron')"></button>
           <span class="cd-tabsep"></span>
           <span class="cd-hint" id="filaCtx"></span>
           <span style="flex:1"></span>
@@ -941,7 +942,7 @@ function implantacaoDe(e){
     {k:docs.length?('ficha '+resp+'/'+docs.length):'ficha', ok:docs.length>0&&resp===docs.length, half:resp>0, quem:'gestão', title:'Ficha (características, viabilidades, documentos) — a gestão preenche'},
     {k:'logo', ok:!!e.logo_url, quem:'gestão', title:'Logo do empreendimento — a gestão sobe no cadastro'},
     {k:'fornecedores '+df.size+'/'+(conv.length||'?'), ok:conv.length>0&&semForn.length===0, half:df.size>0, quem:'eu', title:semForn.length?('Sem fornecedor: '+semForn.join(' · ')+' — atribua em Acessos › Fornecedores'):'Todas as disciplinas têm fornecedor', go:"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpAcessos('"+e.id+"')},60)"},
-    {k:'cronograma', ok:(EMP_CRON[e.id]||0)>0, quem:'eu', title:'Marcos e prazos — publique pelo desktop ou edite aqui', href:'cronograma.html?emp='+encodeURIComponent(e.id)},
+    {k:'cronograma', ok:(EMP_CRON[e.id]||0)>0, quem:'eu', title:'Marcos e prazos — publique pelo desktop ou edite aqui', go:"paCronograma('"+e.id+"')"},
   ];
   return { items, done:items.filter(i=>i.ok).length };
 }
@@ -1026,7 +1027,7 @@ function paCards(){
       +'<div class="acts">'
       + btn('navy','Auria App','app.html?emp='+q)
       + btn('teal','CDE','cde_obra.html?emp='+q)
-      + btn('','Cronograma','cronograma.html?emp='+q)
+      + btnFn('Cronograma',"paCronograma('"+e.id+"')")
       + btn('','Apontamentos','bi.html?emp_id='+q)
       + avisoSel(e.id)
       + (vis ? btnFn(silenciado(e.id)?'&#128276; Ativar avisos':'&#128277; Silenciar', "paSilenciar('"+e.id+"',"+(silenciado(e.id)?'false':'true')+")") + '<span class="cd-ro">só leitura</span>'
@@ -1060,6 +1061,18 @@ function paDisc(d){ PA_DISC = (PA_DISC===d) ? '' : d; PA_LIMITE=40; paRail(); pa
 // emp = painel do empreendimento (contratos/acessos); forn = fornecedores.
 var PA_ABA='fila';
 var PA_FRAMES={ agenda:'agenda.html', kanban:'kanban.html', msg:'mensagens.html', bi:'bi.html' };
+// Cronograma do empreendimento: abre abaixo das abas (iframe embed), uma aba "Cronograma · SIGLA".
+var PA_CRON_EMP='';
+function paCronograma(id){
+  const e=empPorId(id); if(!e) return;
+  const src='cronograma.html?emp='+encodeURIComponent(id)+'&embed=1&tema='+(document.body.classList.contains('dark')?'dark':'light');
+  let fr=$('frame-cron');
+  if(!fr){ fr=document.createElement('iframe'); fr.id='frame-cron'; fr.className='cd-frame'; $('abaFrames').appendChild(fr); }
+  if(PA_CRON_EMP!==id){ fr.src=src; PA_CRON_EMP=id; }
+  const tb=$('tbCron'); if(tb){ tb.textContent='Cronograma · '+empSigla(e); tb.style.display=''; }
+  paAba('cron');
+  const t=$('tabs'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'});
+}
 function paAba(k){
   PA_ABA=k;
   document.querySelectorAll('#tabs .tb').forEach(b=>b.classList.toggle('on', b.getAttribute('data-aba')===k));
@@ -1068,6 +1081,8 @@ function paAba(k){
   $('ov').classList.toggle('on', k==='emp');
   $('ovForn').classList.toggle('on', k==='forn');
   const tbe=$('tbEmp'); if(tbe) tbe.style.display = (k==='emp') ? '' : 'none';
+  const tbc=$('tbCron'); if(tbc) tbc.style.display = (k==='cron' || PA_CRON_EMP) ? '' : 'none';
+  const frc=$('frame-cron'); if(frc) frc.style.display = (k==='cron') ? '' : 'none';
   // iframes: cria uma vez, depois só mostra/esconde (não recarrega ao trocar de aba)
   Object.keys(PA_FRAMES).forEach(f=>{
     let fr=$('frame-'+f);
@@ -1163,7 +1178,7 @@ function abrirEmp(id){
   $('peTools').innerHTML =
     t('📐','#1D4ED8','Auria App','Pranchas, apontamentos e BIM',      'app.html?emp='+q) +
     t('🗂','#0E7490','CDE','Arquivos, revisões e aprovações',          'cde_obra.html?emp='+q) +
-    t('🗓','#117A65','Cronograma','Físico da obra',                    'cronograma.html?emp='+q) +
+    tBtn('🗓','#117A65','Cronograma','Físico da obra',                 "paCronograma('"+e.id+"')") +
     t('📊','#7D6608','Apontamentos','Indicadores desta obra',          'bi.html?emp_id='+q) +   // por id — bi.html só cai no nome se não vier id
     tBtn('💼','#B7791F','Contratos e Faturas','Parcelas, NF e aditivos', "abrirEmpContratos('"+e.id+"')") +
     // Acessos é ferramenta de coordenação — o visualizador não gere a matriz.
