@@ -667,6 +667,7 @@ async function boot(){
   const _timeout = new Promise(r=>setTimeout(()=>r('timeout'), 12000));
   await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
   carregarPrazos();   // depende de APTS já carregado
+  carregarImplantacao().then(()=>{ try{ paCards(); }catch(_){ } });   // item 47: checklist no card
 
   // Painéis internos viram filhos do painel de abas (abrem abaixo, não por cima).
   $('abaPanel').appendChild($('ov')); $('abaPanel').appendChild($('ovForn'));
@@ -908,13 +909,56 @@ function discCod(v){
   if(fixo[k]) return fixo[k];
   return s.normalize('NFD').replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase();
 }
+var EMP_CONV={};   // emp_id → códigos de disciplina da convenção (item 47: implantação)
 async function carregarConvencoes(){
   for(const e of EMPS){
     try{ const r=await sb.rpc('cde_convencao',{ p_emp:e.id }); const conv=(r.data&&r.data[0])||null; if(!conv) continue;
       const c=(conv.campos||[]).find(x=>x.mapeia==='disciplina'); if(!c||!c.dominio) continue;
+      EMP_CONV[e.id]=c.dominio.map(d=>String((typeof d==='object')?(d.v||''):d).toUpperCase()).filter(Boolean);
       c.dominio.forEach(d=>{ if(typeof d==='object' && d.v && d.rotulo) DISC_MAP[String(d.rotulo).toLowerCase()]=d.v; });
     }catch(_){}
   }
+}
+// ── Implantação (item 47, lado do analista): fornecedor por disciplina, cronograma,
+//    pavimentos — o que o coordenador resolve ou cobra da gestão. Cada consulta falha sozinha.
+var EMP_DF={}, EMP_CRON={}, EMP_PAV={};
+async function carregarImplantacao(){
+  const ids=EMPS.map(e=>e.id); if(!ids.length) return;
+  try{ const r=await sb.from('disciplina_fornecedor_auria').select('empreendimento_id,disciplina').in('empreendimento_id',ids);
+       (r.data||[]).forEach(x=>{ (EMP_DF[x.empreendimento_id]||(EMP_DF[x.empreendimento_id]=new Set())).add(discCod(x.disciplina)); }); }catch(_){}
+  try{ const r=await sb.from('cronograma_auria').select('empreendimento_id').in('empreendimento_id',ids).limit(5000);
+       (r.data||[]).forEach(x=>{ EMP_CRON[x.empreendimento_id]=(EMP_CRON[x.empreendimento_id]||0)+1; }); }catch(_){}
+  try{ const r=await sb.from('cde_pavimento_auria').select('empreendimento_id').in('empreendimento_id',ids).eq('ativo',true).limit(5000);
+       (r.data||[]).forEach(x=>{ EMP_PAV[x.empreendimento_id]=(EMP_PAV[x.empreendimento_id]||0)+1; }); }catch(_){}
+}
+function implantacaoDe(e){
+  const conv=EMP_CONV[e.id]||[], df=EMP_DF[e.id]||new Set();
+  const docs=((e.config&&e.config.briefing)||{}).docs||[]; const resp=docs.filter(d=>d&&d.status).length;
+  const semForn=conv.filter(c=>!df.has(c));
+  const items=[
+    {k:'convenção', ok:conv.length>0, quem:'gestão', title:'Padrão de codificação da construtora — a gestão define em Disciplinas'},
+    {k:'pavimentos', ok:(EMP_PAV[e.id]||0)>0, quem:'gestão', title:'Pavimentos e vistas — a gestão cadastra no empreendimento'},
+    {k:docs.length?('ficha '+resp+'/'+docs.length):'ficha', ok:docs.length>0&&resp===docs.length, half:resp>0, quem:'gestão', title:'Ficha (características, viabilidades, documentos) — a gestão preenche'},
+    {k:'logo', ok:!!e.logo_url, quem:'gestão', title:'Logo do empreendimento — a gestão sobe no cadastro'},
+    {k:'fornecedores '+df.size+'/'+(conv.length||'?'), ok:conv.length>0&&semForn.length===0, half:df.size>0, quem:'eu', title:semForn.length?('Sem fornecedor: '+semForn.join(' · ')+' — atribua em Acessos › Fornecedores'):'Todas as disciplinas têm fornecedor', go:"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpAcessos('"+e.id+"')},60)"},
+    {k:'cronograma', ok:(EMP_CRON[e.id]||0)>0, quem:'eu', title:'Marcos e prazos — publique pelo desktop ou edite aqui', href:'cronograma.html?emp='+encodeURIComponent(e.id)},
+  ];
+  return { items, done:items.filter(i=>i.ok).length };
+}
+function implantacaoHtml(e){
+  if(souVisualizador(e.id)) return '';
+  const im=implantacaoDe(e); if(im.done===im.items.length) return '';
+  const docs=(CDE_DOCS_EMP[e.id]||{}).docs||0;
+  return '<div class="stats" style="display:block;padding-top:0">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:11px;font-weight:700;color:var(--cde-txt2,#334155)">'+(docs?'Implantação':'Em implantação')+' '+im.done+' / '+im.items.length+'</span>'
+    +'<div style="flex:1;height:6px;border-radius:4px;background:var(--line,#E2E8F0);overflow:hidden"><i style="display:block;height:100%;width:'+Math.round(im.done/im.items.length*100)+'%;background:var(--accent,#E8960A)"></i></div></div>'
+    +'<div style="display:flex;gap:4px;flex-wrap:wrap">'+im.items.map(i=>{
+      const cls=i.ok?'background:rgba(30,132,73,.12);color:#1E8449':(i.half?'background:rgba(232,150,10,.14);color:#7C3E06':'background:rgba(163,45,45,.10);color:#A32D2D;border:1px dashed rgba(163,45,45,.4)');
+      const inner=(i.ok?'&#10003; ':'')+esc(i.k)+(!i.ok&&i.quem==='gestão'?' <span style="opacity:.7">(gestão)</span>':'');
+      const st='display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px;'+cls;
+      if(!i.ok && i.href) return '<a href="'+i.href+'" title="'+esc(i.title)+'" style="'+st+';text-decoration:none" onclick="event.stopPropagation()">'+inner+'</a>';
+      if(!i.ok && i.go)   return '<button type="button" title="'+esc(i.title)+'" style="'+st+';cursor:pointer;font-family:inherit" onclick="event.stopPropagation();'+i.go+'">'+inner+'</button>';
+      return '<span title="'+esc(i.title)+'" style="'+st+'">'+inner+'</span>'; }).join('')+'</div></div>';
 }
 function empRotulo(e){ return e ? (empSigla(e)+' · '+e.nome) : '—'; }
 function aptEmp(a){ return a.empreendimento_id ? empPorId(a.empreendimento_id) : EMPS.find(e=>e.nome===a.empreendimento); }
@@ -978,6 +1022,7 @@ function paCards(){
       +'<div class="stats"><span class="cd-chip warn">'+s.abertos+' apont. em aberto</span>'
       +(s.atraso?'<span class="cd-chip err">'+s.atraso+' apont. em atraso</span>':'')
       +(s.nf?'<span class="cd-chip acc">'+s.nf+' NF</span>':'')+'</div>'
+      + implantacaoHtml(e)
       +'<div class="acts">'
       + btn('navy','Auria App','app.html?emp='+q)
       + btn('teal','CDE','cde_obra.html?emp='+q)
