@@ -688,12 +688,20 @@ async function boot(){
 // escrita via estacao_edita — item 13). Aqui só para a tela concordar.
 var EMP_PAPEL={};
 function souVisualizador(id){ return EMP_PAPEL[id]==='visualizador'; }
+// Item 42: visualizador pode silenciar o empreendimento — some da fila/contadores e dos e-mails.
+var EMP_SIL={};
+function silenciado(id){ return souVisualizador(id) && !!EMP_SIL[id]; }
+async function paSilenciar(id, sil){
+  try{ const r=await sb.rpc('analista_silenciar',{ p_emp:id, p_sil:!!sil }); if(r.error) throw r.error;
+       EMP_SIL[id]=!!sil; await carregarPrazos(); paRender(); }
+  catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); }
+}
 async function carregarEmps(){
   try{
     const { data } = await sb.from('analista_empreendimento_auria')
-      .select('ativo, papel, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
-    EMP_PAPEL={};
-    (data||[]).forEach(r=>{ if(r.empreendimentos_auria) EMP_PAPEL[r.empreendimentos_auria.id]=r.papel||'coordenador'; });
+      .select('ativo, papel, silenciar, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+    EMP_PAPEL={}; EMP_SIL={};
+    (data||[]).forEach(r=>{ if(r.empreendimentos_auria){ EMP_PAPEL[r.empreendimentos_auria.id]=r.papel||'coordenador'; EMP_SIL[r.empreendimentos_auria.id]=!!r.silenciar; } });
     EMPS = (data||[]).map(r=>r.empreendimentos_auria).filter(e=>e && !e.deleted_at)
                      .sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
   }catch(e){ EMPS=[]; }
@@ -745,6 +753,7 @@ async function carregarPrazos(){
   const lim=new Date(hoje.getTime()+7*864e5);
   APTS.forEach(a=>{
     if(a.status==='Resolvido') return;
+    const e=aptEmp(a); if(e && silenciado(e.id)) return;   // item 42
     const d=pdata(a.prazo_min); if(!d) return;
     if(d>=hoje && d<=lim) PRAZOS7++;
   });
@@ -901,9 +910,9 @@ function paRender(){ paVtool(); paCards(); paFila(); paRail(); paBadges(); }
 // Faixa: contadores clicáveis — cada um é um filtro da fila.
 function paVtool(){
   let atraso=0, abertos=0, terceiros=0, rec=0, ana=0;
-  EMPS.forEach(e=>{ const s=statsDe(e); atraso+=s.atraso; abertos+=s.abertos; });
-  APTS.forEach(a=>{ if(a.status!=='Resolvido' && ['obra','projetista','setor'].includes(a.criado_por_papel||'') && aptEmp(a)) terceiros++; });
-  Object.values(CDE_DOCS_EMP).forEach(o=>{ rec+=o.rec.length; ana+=o.ana; });
+  EMPS.forEach(e=>{ if(silenciado(e.id)) return; const s=statsDe(e); atraso+=s.atraso; abertos+=s.abertos; });
+  APTS.forEach(a=>{ const e=aptEmp(a); if(a.status!=='Resolvido' && ['obra','projetista','setor'].includes(a.criado_por_papel||'') && e && !silenciado(e.id)) terceiros++; });
+  Object.keys(CDE_DOCS_EMP).forEach(id=>{ if(silenciado(id)) return; const o=CDE_DOCS_EMP[id]; rec+=o.rec.length; ana+=o.ana; });
   const nf=NF_PARCS.length;
   const chip=(k,cls,txt,title)=>'<span class="cd-chip '+cls+(PA_FILTRO===k?' on':'')+'" title="'+esc(title||'')+'" onclick="paFiltro(\''+k+'\')">'+txt+'</span>';
   $('vtool').innerHTML =
@@ -943,6 +952,7 @@ function paCards(){
       +'<div class="fc"><span class="dot" style="background:'+dot+'"></span>'+esc(empRotulo(e))+'</div>'
       +'<div class="ft">'+esc(ft||'—')+'</div>'
       +'<div class="chips"><span class="cd-papel'+(vis?' vis':'')+'">'+(vis?'VISUALIZADOR':'COORDENADOR')+'</span>'
+      +(silenciado(e.id)?'<span class="cd-mini" style="color:var(--mut);background:var(--panel2);border-color:var(--line)" title="Fora da fila, dos contadores e dos e-mails">&#128277; silenciado</span>':'')
       +(c.rec.length?'<span class="cd-mini rec">'+c.rec.length+' arq. recebido'+(c.rec.length>1?'s':'')+' (S0)</span>':'')
       +(c.ana?'<span class="cd-mini ana">'+c.ana+' arq. em análise</span>':'')
       +'</div></div></div>'
@@ -954,7 +964,7 @@ function paCards(){
       + btn('teal','CDE','cde_obra.html?emp='+q)
       + btn('','Cronograma','cronograma.html?emp='+q)
       + btn('','Apontamentos','bi.html?emp_id='+q)
-      + (vis ? '<span class="cd-ro">só leitura</span>'
+      + (vis ? btnFn(silenciado(e.id)?'&#128276; Ativar avisos':'&#128277; Silenciar', "paSilenciar('"+e.id+"',"+(silenciado(e.id)?'false':'true')+")") + '<span class="cd-ro">só leitura</span>'
              : btnFn('Contratos',"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpContratos('"+e.id+"')},60)")
              + btnFn('Acessos',"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpAcessos('"+e.id+"')},60)"))
       +'</div></div>';
@@ -1010,9 +1020,10 @@ function paAba(k){
 //  peso 0 = atraso · 1 = recebido S0 · 2 = aberto por terceiro · 3 = NF · 4 = vence em 7d · 5 = resto
 function paItens(){
   const hoje=hojeZero(), itens=[];
+  const mostra=e=>!silenciado(e.id) || PA_EMP===e.id;
   APTS.forEach(a=>{
     if(a.status==='Resolvido') return;
-    const e=aptEmp(a); if(!e) return;
+    const e=aptEmp(a); if(!e || !mostra(e)) return;
     const d=pdata(a.prazo_min); const dias=d?diasAte(d):null;
     const terceiro=['obra','projetista','setor'].includes(a.criado_por_papel||'');
     let peso=5, sit='<span class="cd-pill mut">'+esc(a.status||'Em aberto')+'</span>', urg=false;
@@ -1025,7 +1036,7 @@ function paItens(){
       href:'app.html?emp='+encodeURIComponent(e.id)+'&apt='+encodeURIComponent(a.id), busca:[a.titulo,a.disciplina,aptCod(a),e.nome].join(' ') });
   });
   Object.values(CDE_DOCS_EMP).forEach(o=>o.rec.forEach(r=>{
-    const e=empPorId(r.empreendimento_id); if(!e) return;
+    const e=empPorId(r.empreendimento_id); if(!e || !mostra(e)) return;
     const forn=fornPorId(r.fornecedor_id);
     itens.push({ tipo:'rec', peso:1, urg:true, ord:new Date(r.recebido_em||0).getTime(), emp:e, disc:discCod(r.disciplina), cod:r.codigo,
       item:'Revisão '+esc(r.revisao||'')+' recebida'+(forn?' — '+esc(forn):''), quem:esc(forn||'—'), prazo:haDias(r.recebido_em),
