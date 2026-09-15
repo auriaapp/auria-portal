@@ -978,7 +978,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       <div><label class="form-label">Nome</label><input class="form-inp" id="tmpNome" placeholder="opcional"></div>
     </div>
     <div style="margin-top:8px"><label class="form-label">Disciplinas liberadas</label><div id="tmpDiscs" style="display:flex;gap:5px;flex-wrap:wrap"></div></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:8px;margin-top:8px;align-items:end">
+    <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr 1.6fr;gap:8px;margin-top:8px;align-items:end">
+      <div><label class="form-label">Alcance</label><select class="form-inp" id="tmpAlc"><option value="publicado">Só liberado para obra (A1/B1)</option><option value="compartilhado">Liberado + compartilhado (S1–S4)</option></select></div>
       <div><label class="form-label">Permissão</label><select class="form-inp" id="tmpDown"><option value="0">Somente visualizar</option><option value="1">Ver e baixar</option></select></div>
       <div><label class="form-label">Duração</label><select class="form-inp" id="tmpHoras"><option value="24">24 horas</option><option value="48">48 horas</option><option value="72">3 dias</option><option value="168">7 dias</option></select></div>
       <div><label class="form-label">Mensagem (opcional)</label><input class="form-inp" id="tmpMsg" placeholder="Ex.: para a proposta de estrutura — dúvidas com o coordenador"></div>
@@ -1986,14 +1987,14 @@ function gdTempForm(emp){
 async function gdTempCarregar(){
   const box=document.getElementById('tmpLista'); if(!AC_EMP) return;
   try{
-    const r=await sb.from('cde_acesso_temp_auria').select('id,email,nome,disciplinas,download,expira_em,revogado_em,aberturas,ultimo_acesso,token').eq('empreendimento_id',AC_EMP.id).order('criado_em',{ascending:false}).limit(12);
+    const r=await sb.from('cde_acesso_temp_auria').select('id,email,nome,disciplinas,download,alcance,expira_em,revogado_em,aberturas,ultimo_acesso,token').eq('empreendimento_id',AC_EMP.id).order('criado_em',{ascending:false}).limit(12);
     if(r.error) throw r.error;
     const now=Date.now();
     const rows=(r.data||[]).filter(x=>!x.revogado_em && new Date(x.expira_em)>now || (now-new Date(x.expira_em))<7*864e5);
     box.innerHTML = rows.length ? rows.map(x=>{ const ativo=!x.revogado_em && new Date(x.expira_em)>now;
       const st=x.revogado_em?'<span class="cd-chip mut" style="background:var(--panel2,#F6F9FC);color:var(--text-soft)">encerrado</span>':ativo?'<span class="cd-chip ok" style="background:rgba(30,132,73,.13);color:#1E8449">ativo até '+new Date(x.expira_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span>':'<span class="cd-chip" style="background:rgba(163,45,45,.12);color:#A32D2D">expirou</span>';
       return '<div class="dist-check-item" style="padding:7px 10px;gap:8px"><div style="flex:1;min-width:0"><b style="font-size:12.5px">'+esc(x.nome||x.email)+'</b> <span style="font-size:11.5px;color:var(--text-soft)">'+esc(x.nome?x.email:'')+'</span>'
-        +'<div style="font-size:11px;color:var(--text-mid)"><span style="font-family:ui-monospace,Consolas,monospace">'+esc((x.disciplinas||[]).join(' · '))+'</span> · '+(x.download?'ver e baixar':'só ver')+' · '+(x.aberturas||0)+' abertura'+(x.aberturas===1?'':'s')+'</div></div>'+st
+        +'<div style="font-size:11px;color:var(--text-mid)"><span style="font-family:ui-monospace,Consolas,monospace">'+esc((x.disciplinas||[]).join(' · '))+'</span> · '+(x.alcance==='compartilhado'?'liberado + compartilhado':'só liberado')+' · '+(x.download?'ver e baixar':'só ver')+' · '+(x.aberturas||0)+' abertura'+(x.aberturas===1?'':'s')+'</div></div>'+st
         +(ativo?'<button class="cd-btn" onclick="gdTempCopiar(\''+x.token+'\')" title="Copiar o link">Link</button><button class="cd-btn" onclick="gdTempEstender(\''+x.id+'\')" title="+24 h">+24 h</button><button class="cd-btn" style="border-color:var(--red);color:var(--red)" onclick="gdTempRevogar(\''+x.id+'\')">Encerrar</button>':'<button class="cd-btn" onclick="gdTempEstender(\''+x.id+'\')" title="Reabrir por mais 24 h">Reabrir 24 h</button>')+'</div>'; }).join('')
       : '<div style="font-size:12.5px;color:var(--text-soft);padding:4px 0">Nenhum acesso temporário ativo.</div>';
   }catch(e){ box.innerHTML='<div style="font-size:12px;color:var(--text-soft)">Acessos temporários indisponíveis ('+esc(e.message||e)+').</div>'; }
@@ -2006,7 +2007,8 @@ async function gdTempCriar(){
   const b=document.getElementById('btnTmp'); b.disabled=true; b.textContent='Enviando…';
   try{
     const r=await sb.rpc('cde_temp_criar',{ p_emp:AC_EMP.id, p_email:email, p_nome:nome, p_disciplinas:discs, p_download:document.getElementById('tmpDown').value==='1',
-      p_horas:parseInt(document.getElementById('tmpHoras').value,10)||24, p_mensagem:(document.getElementById('tmpMsg').value||'').trim() });
+      p_horas:parseInt(document.getElementById('tmpHoras').value,10)||24, p_mensagem:(document.getElementById('tmpMsg').value||'').trim(),
+      p_alcance:document.getElementById('tmpAlc').value });
     if(r.error) throw r.error;
     showToast('Link enviado para '+email+'.','green');
     ['tmpEmail','tmpNome','tmpMsg'].forEach(id=>document.getElementById(id).value=''); document.querySelectorAll('.tmp-disc:checked').forEach(x=>x.checked=false);
