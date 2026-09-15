@@ -109,9 +109,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .gd .cd-sech{display:flex;align-items:baseline;gap:12px;margin-bottom:8px;flex-wrap:wrap}
 .gd .cd-sec{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:800}
 .gd .cd-hint{font-size:12px;color:var(--mut)}
-.gd .cd-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-block;line-height:1.3}
-.gd .cd-btn:hover{border-color:var(--accent)}
-.gd .cd-btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
+.gd .cd-btn,#modalImpl .cd-btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-block;line-height:1.3}
+.gd .cd-btn:hover,#modalImpl .cd-btn:hover{border-color:var(--accent)}
+.gd .cd-btn.navy,#modalImpl .cd-btn.navy{background:var(--navy);border-color:var(--navy);color:#fff}
 .gd .cd-btn.teal{background:var(--teal);border-color:var(--teal);color:#fff}
 .gd .cd-btn.acc{background:var(--accent);border-color:var(--accent);color:#231703}
 /* ações rápidas */
@@ -152,10 +152,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .gd .cd-card .acts{padding:7px 12px;border-top:1px solid var(--line);background:var(--panel2);display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .gd .cd-card .acts .cd-btn{padding:4px 8px;font-size:11.5px}
 /* checklist de implantação */
-.gd .ck{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px}
-.gd .ck.ok{background:rgba(30,132,73,.12);color:var(--ok)}
-.gd .ck.no{background:rgba(163,45,45,.10);color:var(--err);border:1px dashed rgba(163,45,45,.4)}
-.gd .ck.half{background:rgba(232,150,10,.14);color:#7C3E06}
+#modalImpl{--navy:#1E3A5F;--accent:#E8960A;--ok:#1E8449;--err:#A32D2D;--line:#E2E8F0;--panel2:#F6F9FC;--txt:#0F172A}
+.gd .ck,#modalImpl .ck{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px}
+.gd .ck.ok,#modalImpl .ck.ok{background:rgba(30,132,73,.12);color:var(--ok)}
+.gd .ck.no,#modalImpl .ck.no{background:rgba(163,45,45,.10);color:var(--err);border:1px dashed rgba(163,45,45,.4)}
+.gd .ck.half,#modalImpl .ck.half{background:rgba(232,150,10,.14);color:#7C3E06}
 .gd .bar{height:7px;border-radius:4px;background:var(--line);overflow:hidden;flex:1}
 .gd .bar>i{display:block;height:100%;background:var(--navy)}
 .gd .bar>i.acc{background:var(--accent)}
@@ -927,6 +928,16 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       <button class="btn-secondary" onclick="closeModal('modalGestor')">Cancelar</button>
       <button class="btn-primary" id="btnConviteGestor" onclick="enviarConviteGestor()">Convidar Gestor</button>
     </div>
+  </div>
+</div>
+
+<!-- Implantação do empreendimento (item 47): pendências com ação direta -->
+<div class="modal-bg" id="modalImpl" onclick="if(event.target===this)closeModal('modalImpl')">
+  <div class="modal" style="width:640px">
+    <div class="modal-title" id="implTitulo">Implantação</div>
+    <div class="modal-sub" id="implSub" style="margin-bottom:12px"></div>
+    <div id="implLista"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn-secondary" onclick="closeModal('modalImpl')">Fechar</button></div>
   </div>
 </div>
 
@@ -1866,7 +1877,43 @@ function gdStripRender(vis, nDecisoes){
 function gdOrdenar(v){ const s=document.getElementById('sortSel'); if(s) s.value=v; renderCards(); }
 function gdEmpresa(id){ DASH_EMPRESA=id||''; const s=document.getElementById('filterEmpresa'); if(s) s.value=DASH_EMPRESA; renderDashboard(); }
 function gdIrConviteFornecedor(){ goPage('fornecedores'); setTimeout(()=>{ const i=document.getElementById('cvEmail'); if(i){ i.scrollIntoView({behavior:'smooth',block:'center'}); i.focus(); } },350); }
-function gdIrImplantacao(){ const c=document.querySelector('.cd-card.impl'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); }
+function gdIrImplantacao(){
+  const pend=empsFiltradas().filter(e=>gdSaude(e).impl);
+  if(pend.length===1){ gdImplantacao(pend[0].id); return; }
+  const c=document.querySelector('.cd-card.impl'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'});
+}
+// ── Implantação (item 47): cada pendência com o caminho para resolver ───────
+function gdImplantacao(empId){
+  const emp=gdEmp(empId); if(!emp) return;
+  const s=gdSaude(emp);
+  const conv=GD.convDisc[emp.construtora_id]||GD.convDisc['g']||[];
+  const df=GD.discForn[emp.id]||{};
+  const semForn=conv.filter(d=>!df[d.v]).map(d=>d.v);
+  const cid=emp.construtora_id||'';
+  const acoes={
+    'convenção':  { txt:'Padrão de codificação (disciplinas) da construtora '+esc(nomeEmpresa(cid)||''), btn:'Disciplinas', go:"gdImplIr('disciplinas','"+cid+"')" },
+    'pavimentos': { txt:'Pavimentos, vistas e grupos do empreendimento', btn:'Pavimentos', go:"closeModal('modalImpl');editarPavimentos('"+emp.id+"')" },
+    'ficha':      { txt:'Características, viabilidades e documentos legais', btn:'Ficha', go:"closeModal('modalImpl');editarBriefing('"+emp.id+"')" },
+    'logo':       { txt:'Logo do empreendimento (aparece nos cards, no CDE e nos e-mails)', btn:'Editar', go:"closeModal('modalImpl');abrirEditarEmp('"+emp.id+"')" },
+    'coordenador':{ txt:'Analista coordenador (laranja) no mapa de vínculos', btn:'Mapa de vínculos', go:"gdImplIr('mapa','"+esc(emp.nome).replace(/'/g,'&#39;')+"')" },
+    'fornecedores':{ txt:(semForn.length?'Sem fornecedor: <span class="mono" style="color:var(--navy)">'+semForn.join(' · ')+'</span>. ':'')+'O coordenador atribui no Painel do Analista › Acessos › Fornecedores; aqui você cadastra e convida escritórios.', btn:'Fornecedores', go:"gdImplIr('fornecedores')" },
+    'cronograma': { txt:'Marcos e prazos (o desktop também publica)', btn:'Cronograma', go:"closeModal('modalImpl');abrirCronograma('"+emp.id+"')" },
+  };
+  setText('implTitulo','Implantação — '+gdSigla(emp)+' · '+emp.nome);
+  setHTML('implSub', s.done+' de '+s.items.length+' itens concluídos · resolva os pendentes para o empreendimento sair de "em implantação"');
+  setHTML('implLista', s.items.map(i=>{ const a=acoes[i.k]||{}; const ok=i.ok;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #F1F5F9">
+      <span class="ck ${ok?'ok':(i.half?'half':'no')}" style="min-width:150px;justify-content:center;font-family:ui-monospace,Consolas,monospace">${ok?'✓ ':''}${esc(i.txt||i.k)}</span>
+      <div style="flex:1;font-size:12.5px;color:var(--text-mid)">${a.txt||''}</div>
+      <button class="cd-btn ${ok?'':'navy'}" onclick="${a.go||''}" style="flex-shrink:0">${a.btn||'Abrir'}</button></div>`; }).join(''));
+  document.getElementById('modalImpl').classList.add('open');
+}
+function gdImplIr(onde, arg){
+  closeModal('modalImpl');
+  if(onde==='disciplinas'){ goPage('disciplinas'); const sel=document.getElementById('discEscopo'); if(sel && arg){ sel.value='c:'+arg; if(sel.value!=='c:'+arg) sel.value='g'; discCarregar(); } return; }
+  if(onde==='mapa'){ goPage('analistas'); anSetView('mapa'); const b=document.getElementById('mmBusca'); if(b){ b.value=arg||''; renderMapa(); } return; }
+  if(onde==='fornecedores'){ goPage('fornecedores'); return; }
+}
 function gdCustos(empId){ const e=gdEmp(empId); FIN_PRESEL_EMP=e?e.nome:null; goPage('financeiro'); }
 async function gdVerMde(id){
   const c=GD.cot.find(x=>x.id===id);
@@ -1961,7 +2008,8 @@ function buildCardGd(emp){
     ${meio}
     <div class="coord">${coord}${visTxt}</div>
     <div class="acts">
-      ${s.impl?`<button class="cd-btn acc" onclick="abrirEditarEmp('${emp.id}')">Continuar implantação</button>`:`<button class="cd-btn navy" onclick="verDetalhe('${emp.id}')">Abrir</button>`}
+      ${s.impl?`<button class="cd-btn acc" onclick="gdImplantacao('${emp.id}')">Continuar implantação</button>`:`<button class="cd-btn navy" onclick="verDetalhe('${emp.id}')">Abrir</button>`}
+      ${!s.impl && s.done<s.items.length?`<button class="cd-btn" onclick="gdImplantacao('${emp.id}')" title="Itens de implantação ainda abertos">Implantação ${s.done}/${s.items.length}</button>`:''}
       <button class="cd-btn teal" onclick="window.open('cde_obra.html?emp=${emp.id}','_blank')" title="Abrir o CDE deste empreendimento">CDE</button>
       <button class="cd-btn" onclick="abrirCronograma('${emp.id}')">Cronograma</button>
       <button class="cd-btn" onclick="gdCustos('${emp.id}')">Custos</button>
