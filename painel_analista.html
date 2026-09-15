@@ -711,8 +711,14 @@ async function paSilenciar(id, sil){
 }
 async function carregarEmps(){
   try{
-    const { data } = await sb.from('analista_empreendimento_auria')
-      .select('ativo, papel, silenciar, aviso_cde, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+    // Colunas novas (silenciar, aviso_cde) podem ainda não existir no banco: se a
+    // consulta completa falhar, cai para a básica — a lista NUNCA some por isso.
+    let data=null;
+    { const r=await sb.from('analista_empreendimento_auria')
+        .select('ativo, papel, silenciar, aviso_cde, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+      if(r.error){ console.warn('vínculos (colunas novas):', r.error.message);
+        const r2=await sb.from('analista_empreendimento_auria').select('ativo, papel, empreendimentos_auria(*)').eq('analista_id', USER.id).eq('ativo', true);
+        data=r2.data; } else data=r.data; }
     EMP_PAPEL={}; EMP_SIL={}; EMP_AVISO={};
     (data||[]).forEach(r=>{ if(r.empreendimentos_auria){ const id=r.empreendimentos_auria.id; EMP_PAPEL[id]=r.papel||'coordenador'; EMP_SIL[id]=!!r.silenciar; EMP_AVISO[id]=r.aviso_cde||'upload'; } });
     EMPS = (data||[]).map(r=>r.empreendimentos_auria).filter(e=>e && !e.deleted_at)
