@@ -937,6 +937,19 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- Disciplinas → aplicar a outras empresas do grupo (item 48) -->
+<div class="modal-bg" id="modalDiscAplicar" onclick="if(event.target===this)closeModal('modalDiscAplicar')">
+  <div class="modal" style="width:520px">
+    <div class="modal-title">Aplicar disciplinas a outras empresas</div>
+    <div class="modal-sub" id="discAplicarSub" style="margin-bottom:10px"></div>
+    <div id="discAplicarLista" style="max-height:46vh;overflow:auto"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn-secondary" onclick="closeModal('modalDiscAplicar')">Cancelar</button>
+      <button class="btn-primary" id="btnDiscAplicar" onclick="discAplicarConfirmar()">Aplicar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Implantação do empreendimento (item 47): pendências com ação direta -->
 <div class="modal-bg" id="modalImpl" onclick="if(event.target===this)closeModal('modalImpl')">
   <div class="modal" style="width:640px">
@@ -3426,8 +3439,36 @@ async function discCarregar(){
     +'<div id="discRows"></div>'
     +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discAdd()">+ Disciplina</button>'
     +'<button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discSort()" title="Ordenar por código (alfanumérico)">&#8693; Ordenar A&#8594;Z</button>'
+    +'<button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discAplicarAbrir()" title="Copiar esta lista de disciplinas para outras empresas do grupo">&#10697; Aplicar a outras empresas&hellip;</button>'
     +'<button class="btn-primary" style="padding:6px 14px;font-size:12px;margin-left:auto" onclick="discSalvar()">Salvar disciplinas</button></div></div>';
   discRenderRows();
+}
+// ── Item 48: aplicar a lista de disciplinas a outras empresas do grupo ─────
+function discAplicarAbrir(){
+  const e=discEscopoAtual();
+  const outras=(CONSTRUTORAS||[]).filter(c=>c.id!==e.construtora);
+  if(!outras.length){ showToast('Não há outras empresas no grupo.',''); return; }
+  const origem = e.construtora ? (nomeEmpresa(e.construtora)||'esta empresa') : 'o padrão do grupo';
+  setHTML('discAplicarLista', outras.map(c=>`<label style="display:flex;align-items:center;gap:9px;padding:7px 4px;border-bottom:1px solid #F1F5F9;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="disc-ap-chk" value="${c.id}"> <b>${esc(c.nome)}</b>${c.sigla?' <span style="font-family:ui-monospace,Consolas,monospace;color:var(--text-soft)">'+esc(c.sigla)+'</span>':''}</label>`).join(''));
+  setHTML('discAplicarSub', 'Copia as <b>'+DISC_DOM.filter(d=>(d.v||'').trim()).length+' disciplinas</b> de <b>'+esc(origem)+'</b> (como estão salvas) para as empresas marcadas. Empresa que já tem padrão: só a lista de disciplinas é substituída. Empresa sem padrão: recebe uma cópia completa da convenção.');
+  document.getElementById('modalDiscAplicar').classList.add('open');
+}
+async function discAplicarConfirmar(){
+  const ids=[...document.querySelectorAll('.disc-ap-chk:checked')].map(x=>x.value);
+  if(!ids.length){ showToast('Marque pelo menos uma empresa.','red'); return; }
+  if(!confirm('Substituir a lista de disciplinas de '+ids.length+' empresa(s)? Isso não altera pranchas já codificadas.')) return;
+  const e=discEscopoAtual();
+  const b=document.getElementById('btnDiscAplicar'); b.disabled=true; b.textContent='Aplicando…';
+  try{
+    const { data, error } = await sb.rpc('cde_disc_aplicar',{ p_origem_construtora:e.construtora, p_grupo:e.grupo, p_destinos:ids });
+    if(error) throw error;
+    const r=data||{}; const nOk=(r.aplicadas||[]).length, nCl=(r.clonadas||[]).length, errs=r.erros||[];
+    closeModal('modalDiscAplicar');
+    showToast('Disciplinas aplicadas: '+nOk+' empresa(s)'+(nCl?' · '+nCl+' receberam a convenção completa':'')+(errs.length?' · '+errs.length+' com erro':''), errs.length?'red':'green');
+    if(errs.length) console.warn('cde_disc_aplicar', errs);
+  }catch(err){ showToast('Erro: '+((err&&err.message)||err),'red'); }
+  b.disabled=false; b.textContent='Aplicar';
 }
 function discRenderRows(){
   const box=document.getElementById('discRows'); if(!box) return;
