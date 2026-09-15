@@ -189,6 +189,14 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .topbar{background:#fff;border-bottom:1px solid var(--gray-border);padding:0 28px;
   height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
 .topbar-title{font-size:16px;font-weight:700}
+/* Logo do GRUPO antes do título (mesmo slot .elogo dos cards: branco + linha laranja;
+   sem logo = tracejado com as iniciais). Clique leva a Empresas, onde a logo é trocada. */
+.topbar-left{display:flex;align-items:center;gap:12px;min-width:0}
+.tb-logo{height:42px;min-width:42px;max-width:150px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid var(--orange);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;padding:3px 6px;cursor:pointer;box-sizing:border-box}
+.tb-logo img{max-height:100%;max-width:100%;object-fit:contain;display:block}
+.tb-logo.ph{border:1.5px dashed var(--gray-border);background:var(--gray-light);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  font-weight:800;font-size:12px;letter-spacing:.04em;color:var(--text-soft);padding:0 10px}
 .topbar-sub{font-size:12px;color:var(--text-soft);margin-top:1px}
 .topbar-right{display:flex;align-items:center;gap:12px}
 .topbar-date{font-size:12px;color:var(--text-soft)}
@@ -592,9 +600,12 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     <!-- MAIN -->
     <div class="main">
       <div class="topbar">
-        <div>
-          <div class="topbar-title" id="topbarTitle">Painel da Gestão</div>
-          <div class="topbar-sub" id="topbarSub">Todos os empreendimentos</div>
+        <div class="topbar-left">
+          <div class="tb-logo ph" id="tbLogo" title="Logo do grupo — troque em Empresas" onclick="goPage('empresas')">&#8230;</div>
+          <div>
+            <div class="topbar-title" id="topbarTitle">Painel da Gestão</div>
+            <div class="topbar-sub" id="topbarSub">Todos os empreendimentos</div>
+          </div>
         </div>
         <div class="topbar-right">
           <span class="topbar-date" id="topbarDate"></span>
@@ -1499,6 +1510,7 @@ async function afterLogin(user){
   document.getElementById('sbUserName').textContent  = profile.nome || user.email;
   document.getElementById('sbUserEmail').textContent = user.email;
   hide('loginWrap'); show('app');
+  gdLogoGrupo();
   await loadAll();
   discCarregarNotifs();   // badge de disciplinas adicionadas por analistas
 }
@@ -1730,7 +1742,7 @@ async function salvarGrupoLogo(input){
     const url = await uploadLogoGenerico(file, 'grupos', EMPRESA.id);
     const { error } = await sb.from('empresas_auria').update({ logo_url:url }).eq('id', EMPRESA.id);
     if(error) throw error;
-    EMPRESA.logo_url = url;
+    EMPRESA.logo_url = url; gdLogoGrupo();
     showToast('Logo do grupo atualizada','green');
     renderEmpresasPage();
   }catch(e){ showToast('Erro ao salvar logo: '+(e.message||e),'red'); }
@@ -1978,6 +1990,13 @@ function gdStripRender(vis, nDecisoes){
 function gdOrdenar(v){ const s=document.getElementById('sortSel'); if(s) s.value=v; renderCards(); }
 function gdEmpresa(id){ DASH_EMPRESA=id||''; const s=document.getElementById('filterEmpresa'); if(s) s.value=DASH_EMPRESA; renderDashboard(); }
 function gdIrConviteFornecedor(){ goPage('fornecedores'); setTimeout(()=>{ const i=document.getElementById('cvEmail'); if(i){ i.scrollIntoView({behavior:'smooth',block:'center'}); i.focus(); } },350); }
+// Logo do grupo na barra superior (antes do título). Sem logo: iniciais do grupo.
+function gdLogoGrupo(){
+  const el=document.getElementById('tbLogo'); if(!el || !EMPRESA) return;
+  if(EMPRESA.logo_url){ el.className='tb-logo'; el.innerHTML='<img src="'+esc(EMPRESA.logo_url)+'" alt="'+_escAttr(EMPRESA.nome||'')+'">'; }
+  else { el.className='tb-logo ph'; el.textContent=String(EMPRESA.nome||'?').replace(/[^\p{L}\p{N} ]/gu,'').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase()||'?'; }
+  el.title=(EMPRESA.nome||'Grupo')+' — logo do grupo; troque em Empresas';
+}
 // ── Acessos do empreendimento (gestão): coordenação (vínculos) + setor/obra (cde_acesso_auria) ──
 var AC_EMP=null, AC_OBRA={};
 var OBRA_NIVEL_ROTULO={ eng_chefe:'Engenheiro chefe', coord_campo:'Coordenação de campo', equipe_campo:'Equipe de campo' };
