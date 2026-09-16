@@ -232,6 +232,9 @@ tr:hover td{background:var(--gray-light)}
         <a class="sb-item" data-page="metricas" onclick="goPage('metricas')">
           <span>&#128202;</span> Metricas
         </a>
+        <a class="sb-item" data-page="perguntas" onclick="goPage('perguntas')">
+          <span>&#10067;</span> Perguntas (ajuda)
+        </a>
         <div class="sb-section">Gestao</div>
         <a class="sb-item" data-page="novoCliente" onclick="goPage('novoCliente')">
           <span>&#43;</span> Novo Grupo
@@ -321,6 +324,35 @@ tr:hover td{background:var(--gray-light)}
             <div style="padding:18px 22px" id="listChamados">
               <div class="loading-row"><div class="spinner"></div></div>
             </div>
+          </div>
+        </div>
+
+        <!-- PERGUNTAS AO ASSISTENTE (item 52) -->
+        <div class="page" id="pagePerguntas">
+          <div class="toolbar">
+            <div class="toolbar-title" style="white-space:nowrap">Perguntas</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="pqDias" onchange="renderPerguntas()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit">
+                <option value="7">Últimos 7 dias</option><option value="30" selected>Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="0">Tudo</option></select>
+              <select id="pqPapel" onchange="renderPerguntas()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit"><option value="">Todos os papéis</option></select>
+              <select id="pqGrupo" onchange="renderPerguntas()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit"><option value="">Todos os grupos</option></select>
+              <label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="pqSoSem" onchange="renderPerguntas()"> só sem resposta</label>
+              <button class="btn-primary" onclick="carregarPerguntas()">&#8635; Atualizar</button>
+            </div>
+          </div>
+          <div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+            <div class="kpi-card blue"><div class="kpi-label">Perguntas</div><div class="kpi-value" id="pqTot">—</div></div>
+            <div class="kpi-card yellow"><div class="kpi-label">Sem resposta no manual</div><div class="kpi-value" id="pqSem">—</div></div>
+            <div class="kpi-card red"><div class="kpi-label">Escaladas (e-mail)</div><div class="kpi-value" id="pqEsc">—</div></div>
+            <div class="kpi-card green"><div class="kpi-label">Usuários que perguntaram</div><div class="kpi-value" id="pqUsr">—</div></div>
+          </div>
+          <div class="tbl-wrap" style="margin-bottom:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Mais frequentes (agrupadas por texto parecido)</div>
+            <div style="padding:0 22px 18px" id="pqTop"></div>
+          </div>
+          <div class="tbl-wrap">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Últimas perguntas</div>
+            <div style="padding:0 22px 18px" id="pqLista"><div class="loading-row"><div class="spinner"></div></div></div>
           </div>
         </div>
 
@@ -787,12 +819,55 @@ function goPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
   const map={overview:'pageOverview',clientes:'pageClientes',usuarios:'pageUsuarios',
-    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente'};
+    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas'};
   const titles={overview:'Overview Geral',clientes:'Clientes',usuarios:'Usuarios',
-    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente'};
+    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda'};
+  if(name==='perguntas' && !PQ_LOADED) carregarPerguntas();
   document.getElementById(map[name]||'pageOverview').classList.add('active');
   document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
   document.getElementById('topbarTitle').textContent = titles[name]||'';
+}
+
+// ── PERGUNTAS AO ASSISTENTE (item 52): banco de dúvidas reais dos usuários ──
+//  Serve para (1) ver o que mais confunde, (2) responder as escaladas, (3) alimentar o
+//  manual — a IA NÃO aprende sozinha: o que entra no manual é revisado por gente.
+let PQ=[], PQ_LOADED=false, PQ_GRUPOS={};
+async function carregarPerguntas(){
+  PQ_LOADED=true;
+  try{
+    const r=await sb.from('ajuda_pergunta_auria').select('id,usuario_id,email,empresa_id,papel,pagina,contexto,pergunta,resposta,sem_resposta,escalado,criado_em').order('criado_em',{ascending:false}).limit(2000);
+    if(r.error) throw r.error; PQ=r.data||[];
+    const g=await sb.from('empresas_auria').select('id,nome'); (g.data||[]).forEach(x=>PQ_GRUPOS[x.id]=x.nome);
+    const sp=document.getElementById('pqPapel'); sp.innerHTML='<option value="">Todos os papéis</option>'+[...new Set(PQ.map(x=>x.papel).filter(Boolean))].sort().map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
+    const sg=document.getElementById('pqGrupo'); sg.innerHTML='<option value="">Todos os grupos</option>'+[...new Set(PQ.map(x=>x.empresa_id).filter(Boolean))].map(id=>'<option value="'+id+'">'+esc(PQ_GRUPOS[id]||id.slice(0,8))+'</option>').join('');
+  }catch(e){ setHTML('pqLista','<div style="padding:14px;color:var(--red)">Não foi possível carregar: '+esc(e.message||e)+' (o SQL supabase_ajuda.sql precisa estar aplicado).</div>'); return; }
+  renderPerguntas();
+}
+// chave de agrupamento: minúsculas, sem acento/pontuação, sem palavras vazias
+function pqChave(t){
+  const stop=new Set(['a','o','os','as','de','do','da','dos','das','um','uma','e','em','no','na','nos','nas','para','pra','por','que','como','onde','qual','quais','é','eu','meu','minha','se','ao','à','com','não','ser','ter','faço','fazer','posso','consigo']);
+  return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w&&!stop.has(w)).sort().join(' ');
+}
+function renderPerguntas(){
+  const dias=parseInt(document.getElementById('pqDias').value,10)||0, papel=document.getElementById('pqPapel').value, grupo=document.getElementById('pqGrupo').value, soSem=document.getElementById('pqSoSem').checked;
+  const lim=dias?Date.now()-dias*864e5:0;
+  const rows=PQ.filter(x=>(!lim||new Date(x.criado_em)>=lim)&&(!papel||x.papel===papel)&&(!grupo||x.empresa_id===grupo)&&(!soSem||x.sem_resposta||x.escalado));
+  setText('pqTot',rows.length); setText('pqSem',rows.filter(x=>x.sem_resposta).length); setText('pqEsc',rows.filter(x=>x.escalado).length);
+  setText('pqUsr',new Set(rows.map(x=>x.usuario_id||x.email)).size);
+  // mais frequentes
+  const grp={}; rows.forEach(x=>{ const k=pqChave(x.pergunta); if(!k) return; const o=grp[k]||(grp[k]={n:0,ex:x.pergunta,sem:0,papeis:new Set()}); o.n++; if(x.sem_resposta) o.sem++; if(x.papel) o.papeis.add(x.papel); });
+  const top=Object.values(grp).sort((a,b)=>b.n-a.n).slice(0,15);
+  setHTML('pqTop', top.length ? '<table style="width:100%;font-size:13px;border-collapse:collapse"><thead><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 0">Pergunta (exemplo)</th><th style="text-align:right">Vezes</th><th style="text-align:right">Sem resposta</th><th style="text-align:left;padding-left:12px">Papéis</th></tr></thead><tbody>'
+    +top.map(o=>'<tr style="border-top:1px solid #F1F5F9"><td style="padding:7px 0">'+esc(o.ex)+'</td><td style="text-align:right;font-weight:700">'+o.n+'</td><td style="text-align:right;color:'+(o.sem?'var(--red)':'var(--text-soft)')+'">'+o.sem+'</td><td style="padding-left:12px;color:var(--text-soft)">'+esc([...o.papeis].join(', '))+'</td></tr>').join('')+'</tbody></table>'
+    : '<div style="padding:10px 0;color:var(--text-soft);font-size:13px">Nenhuma pergunta no período.</div>');
+  // últimas
+  setHTML('pqLista', rows.length ? rows.slice(0,200).map(x=>{ const ctx=x.contexto||{}; const q=new Date(x.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return '<div style="padding:10px 0;border-top:1px solid #F1F5F9">'
+      +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text-soft)"><span>'+q+'</span><span>· <b>'+esc(x.papel||'?')+'</b></span><span>· '+esc(PQ_GRUPOS[x.empresa_id]||'')+'</span><span>· '+esc(x.email||'')+'</span><span>· '+esc(x.pagina||'')+(ctx.empreendimento?' · '+esc(ctx.empreendimento):'')+'</span>'
+      +(x.escalado?'<span style="background:var(--red);color:#fff;border-radius:10px;padding:1px 8px;font-weight:700">escalada</span>':x.sem_resposta?'<span style="background:#FEF3E2;color:#B45309;border-radius:10px;padding:1px 8px;font-weight:700">sem resposta</span>':'')+'</div>'
+      +'<div style="font-size:13.5px;margin-top:3px"><b>'+esc(x.pergunta)+'</b></div>'
+      +(x.resposta?'<div style="font-size:12.5px;color:var(--text-mid);margin-top:3px;white-space:pre-wrap">'+esc(x.resposta).slice(0,600)+(x.resposta.length>600?'…':'')+'</div>':'')+'</div>'; }).join('')
+    : '<div style="padding:14px 0;color:var(--text-soft)">Nenhuma pergunta no período.</div>');
 }
 
 // ── UTILS ─────────────────────────────────────────────
