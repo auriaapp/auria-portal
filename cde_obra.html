@@ -997,8 +997,9 @@ async function boot(){
   STMAP={}; (st||[]).forEach(s=>STMAP[s.codigo]=s);
 
   { const bf=$('btnFicha'); if(bf) bf.style.display=''; }   // ficha do empreend. independe do padrão
-  // Diário de obra: ferramenta de coordenação de campo — não é de consulta.
-  { const br=$('btnRdo'); if(br && FERRAMENTAS_OBRA) br.style.display=''; }
+  // Diário de obra (item 54): o modal existe, mas as funções (abrirRdo/rdoNovo/rdoSalvar…)
+  //  nunca foram escritas — o botão dava ReferenceError. Fica escondido até implementar.
+  { const br=$('btnRdo'); if(br) br.style.display='none'; }
   try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); CONV = (c&&c[0])||null; }catch(err){ CONV=null; }
   if(!CONV){
     $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
@@ -1011,7 +1012,27 @@ async function boot(){
   await carregarDocs();
   await carregarGrupos();
   $('load').style.display='none';
-  window.__ajudaCfg={ sb, papel:USER_ROLE||'', pagina:'CDE', lado:'right', acima:'#cdeTaskbar', encosta:'#navAside', contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  // "Me leva lá" (item 52 fase 2): ações que o assistente pode executar nesta tela.
+  //  quando() = só oferece o que está visível para ESTE usuário (papel/permissão).
+  const _vis=id=>{ const e=$(id); return !!e && e.style.display!=='none' && e.offsetParent!==null; };
+  const _abreNav=()=>{ const n=$('navAside'); if(n && n.classList.contains('collapsed')) toggleNav(); };
+  const AJUDA_ACOES={
+    buscar:            { rotulo:'Abrir a busca por nome', descricao:'campo de busca da coluna de arquivos', run:()=>{ _abreNav(); if(BUSCA_CONTEUDO) toggleConteudo(); const i=$('navBusca'); if(i){ i.focus(); i.select(); } } },
+    buscar_conteudo:   { rotulo:'Ligar a busca dentro dos PDFs (Aa)', descricao:'procura no texto das pranchas', run:()=>{ _abreNav(); if(!BUSCA_CONTEUDO) toggleConteudo(); const i=$('navBusca'); if(i) i.focus(); } },
+    filtrar:           { rotulo:'Abrir o filtro de arquivos', descricao:'disciplina, etapa, status, formato', run:()=>{ _abreNav(); const b=$('btnFiltro'); if(b) b.click(); } },
+    ordenar:           { rotulo:'Abrir a ordenação', run:()=>{ _abreNav(); const b=$('btnOrdem'); if(b) b.click(); } },
+    aba_bim:           { rotulo:'Mostrar só os modelos BIM', descricao:'aba BIM do trilho de disciplinas', quando:()=>DOCS.some(docEhBim), run:()=>{ _abreNav(); if(SEL_DISC!=='__BIM__') selDisc('__BIM__'); } },
+    selecionar_varias: { rotulo:'Ligar "Selecionar várias"', descricao:'marcar pranchas/modelos para federar ou analisar juntos', run:()=>{ _abreNav(); if(!MULTI_MODE) toggleMultiMode(); } },
+    federar:           { rotulo:'Preparar a federação de modelos', descricao:'abre a aba BIM já em modo de seleção; depois é só marcar e clicar em Ver federado aqui', quando:()=>DOCS.some(docEhBim), run:()=>{ _abreNav(); if(SEL_DISC!=='__BIM__') selDisc('__BIM__'); if(!MULTI_MODE) toggleMultiMode(); } },
+    grupos:            { rotulo:'Abrir a aba Grupos', descricao:'coleções de pranchas (automáticas por localização/etapa ou criadas)', run:()=>{ _abreNav(); setNavMode('grupo'); } },
+    disciplinas:       { rotulo:'Voltar à lista por disciplinas', run:()=>{ _abreNav(); setNavMode('disc'); } },
+    enviar_arquivo:    { rotulo:'Abrir Enviar arquivo(s)', quando:()=>_vis('btnReceber'), run:()=>abrirReceber() },
+    ficha:             { rotulo:'Abrir a Ficha do empreendimento', quando:()=>_vis('btnFicha'), run:()=>abrirFicha() },
+    organizar_qr:      { rotulo:'Abrir Organizar QR', quando:()=>_vis('btnOrgQR'), run:()=>abrirOrganizadorQR() },
+    padrao:            { rotulo:'Abrir o Padrão de codificação', quando:()=>_vis('lnkPadrao'), run:()=>{ location.href=$('lnkPadrao').href; } },
+    painel:            { rotulo:'Voltar ao painel', run:()=>{ const a=document.querySelector('a.hbtn[href*="painel"],a.hbtn[href*="portal"],a.hbtn[href*="gerencia"]'); if(a) location.href=a.href; else history.back(); } }
+  };
+  window.__ajudaCfg={ sb, papel:USER_ROLE||'', pagina:'CDE', lado:'right', acima:'#cdeTaskbar', encosta:'#navAside', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
   $('main').style.display='flex';
   restaurarUltimoCDE();   // volta à disciplina + reabre a última prancha (chama renderRail)
   restaurarNavColapsada();

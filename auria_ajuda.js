@@ -40,6 +40,8 @@
   .aj-m.a code{font-family:ui-monospace,Consolas,monospace;background:#F6F9FC;border:1px solid #E2E8F0;border-radius:4px;padding:0 4px;font-size:12px}
   .aj-m.a ul{margin:4px 0 4px 18px;padding:0}
   .aj-m.a li{margin:2px 0}
+  .aj-go{display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:#E8960A;color:#231703;border:none;border-radius:8px;padding:6px 11px;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit}
+  .aj-go:hover{background:#D3860A}
   .aj-sug{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;background:#EEF2F7}
   .aj-sug button{background:#fff;border:1px solid #E2E8F0;border-radius:999px;padding:4px 10px;font-size:11.5px;cursor:pointer;color:#334155;font-family:inherit}
   .aj-sug button:hover{border-color:#E8960A}
@@ -58,7 +60,7 @@
     analista:['Como atribuo um fornecedor a uma disciplina?','Por que o projetista não consegue enviar arquivo?','Como libero uma prancha para a obra?','Como crio um acesso temporário?'],
     projetista:['Como envio uma nota fiscal?','Como solicito o faturamento de uma parcela?','Por que meu arquivo foi devolvido?','Como respondo a um apontamento?'],
     financeiro:['Como abro a janela de recebimento de NFs?','O que significa NF "sem contrato"?','Como baixo as notas de um mês em zip?'],
-    obra:['Por que não vejo uma prancha?','Como abro um apontamento?','O que é o Diário de Obra?'],
+    obra:['Por que não vejo uma prancha?','Como abro um apontamento?','Como imprimo os QR das pranchas?'],
     setor:['O que consigo ver no CDE?','Por que uma prancha aparece bloqueada?'],
     padrao:['Como funciona o CDE?','O que são os estados S0, S1 e A1?','Onde vejo meus empreendimentos?']
   };
@@ -116,7 +118,9 @@
       '3. Dê o caminho concreto quando existir: painel › menu/aba › botão (ex.: "Painel do Analista › card do empreendimento › Acessos › Fornecedores › Atribuir").',
       '4. Considere o papel de quem pergunta: um '+papel+' só faz o que o manual permite ao seu papel. Se a pergunta for sobre uma ação de OUTRO papel (ex.: aprovar cadastro, liberar prancha, abrir janela de NF), responda apenas quem é o responsável ("isso é feito pela gestão/coordenação/adm-fin") — sem descrever telas, menus ou botões que não são do papel de quem pergunta.',
       '5. Não fale de sistemas externos, nem de coisas fora do Auria. Não use conhecimento de fora do manual.',
+      '5b. Se um termo tiver mais de um sentido no manual (ex.: "grupo" = conta-cliente na Gestão OU aba Grupos de pranchas no CDE), responda pelo sentido da PÁGINA ATUAL de quem pergunta e, se couber, cite o outro em uma frase.',
       '6. Use no máximo 6 linhas ou uma lista curta. Negrito para nomes de botões/menus.',
+      acoesPrompt(),
       '',
       'CONTEXTO DE QUEM PERGUNTA: papel = '+papel+'; página atual = '+(CFG.pagina||'—')+(ctx.empreendimento?'; empreendimento aberto = '+ctx.empreendimento:'')+(ctx.extra?'; '+ctx.extra:'')+'.',
       '',
@@ -124,6 +128,31 @@
       (MANUAL&&manualParaPapel(MANUAL, CFG.papel))||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
       '===== FIM DO MANUAL ====='
     ].join('\n');
+  }
+
+  // ── "Me leva lá" (fase 2): a página registra ações (CFG.acoes = {chave:{rotulo, run, quando?}}).
+  //    O prompt lista as chaves disponíveis; a IA termina a resposta com [[acao:chave]] quando
+  //    a resposta é exatamente essa ação; o painel vira isso num botão que executa na hora.
+  function acoesDisponiveis(){
+    const out={}; const A=(CFG&&CFG.acoes)||{};
+    Object.keys(A).forEach(k=>{ const a=A[k]; if(!a||typeof a.run!=='function') return; try{ if(a.quando && !a.quando()) return; }catch(_){ return; } out[k]=a; });
+    return out;
+  }
+  function acoesPrompt(){
+    const A=acoesDisponiveis(); const ks=Object.keys(A); if(!ks.length) return '';
+    return '7. AÇÕES QUE VOCÊ PODE EXECUTAR NESTA TELA (só estas chaves; nunca invente outra): '
+      + ks.map(k=>k+' = '+A[k].rotulo+(A[k].descricao?' ('+A[k].descricao+')':'')).join('; ')
+      + '. Quando a resposta for exatamente uma dessas ações, explique o caminho em uma linha e termine a resposta com uma linha contendo só [[acao:CHAVE]] — o usuário verá um botão que faz isso por ele.';
+  }
+  function extrairAcao(resp){
+    const m=/\[\[\s*acao\s*:\s*([a-z0-9_]+)\s*\]\]/i.exec(resp||''); if(!m) return {texto:resp,acao:null};
+    const chave=m[1].toLowerCase(); const texto=String(resp).replace(/\n?\s*\[\[\s*acao\s*:[^\]]*\]\]\s*/gi,'').trim();
+    return {texto, acao: acoesDisponiveis()[chave] ? chave : null};
+  }
+  function executarAcao(chave){
+    const a=acoesDisponiveis()[chave]; if(!a) return;
+    try{ ABERTO=false; document.getElementById('ajPan').classList.remove('on'); a.run(); }
+    catch(e){ alert('Não consegui abrir: '+((e&&e.message)||e)); }
   }
 
   function ui(){
@@ -153,7 +182,8 @@
     if(!CONV.length){
       const papel=PAPEL_NOME[CFG.papel]||'';
       box.innerHTML='<div class="aj-m a">Olá! Sou a ajuda do Auria. Pergunte <b>como fazer</b> alguma coisa, <b>onde fica</b> uma função ou o que significa uma mensagem. '+(papel?'Vejo que você está como <b>'+esc(papel)+'</b>'+(CFG.pagina?' no '+esc(CFG.pagina):'')+'.':'')+'</div>';
-    } else box.innerHTML=CONV.map(m=>'<div class="aj-m '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):md(m.content))+'</div>').join('')+(CONV.length&&CONV[CONV.length-1].pensando?'<div class="aj-m a" style="color:#64748B">pensando…</div>':'');
+    } else box.innerHTML=CONV.map(m=>'<div class="aj-m '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):md(m.content))
+        +(m.acao&&acoesDisponiveis()[m.acao]?'<br><button class="aj-go" onclick="AuriaAjuda.acao(\''+m.acao+'\')">➜ Me leva lá: '+esc(acoesDisponiveis()[m.acao].rotulo)+'</button>':'')+'</div>').join('')+(CONV.length&&CONV[CONV.length-1].pensando?'<div class="aj-m a" style="color:#64748B">pensando…</div>':'');
     box.scrollTop=box.scrollHeight;
     const sug=document.getElementById('ajSug');
     const lista=SUGESTOES[PAPEL_NOME[CFG.papel]==='adm-fin'?'financeiro':(PAPEL_NOME[CFG.papel]||'').replace(' interno','')]||SUGESTOES.padrao;
@@ -175,7 +205,8 @@
       if(r.error){ let msg=(r.error&&r.error.message)||String(r.error); try{ const j=await r.error.context.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
       resp=(r.data&&(r.data.content||r.data.resposta))||'';
       if(!resp) throw new Error('resposta vazia');
-      CONV.pop(); CONV.push({role:'assistant',content:resp}); ULT={pergunta:q,resposta:resp};
+      const ex=extrairAcao(resp); resp=ex.texto;
+      CONV.pop(); CONV.push({role:'assistant',content:resp,acao:ex.acao}); ULT={pergunta:q,resposta:resp};
       const naoSabe=/não encontrei isso no manual|não está no manual|não encontrei no manual/i.test(resp);
       registrar(q,resp,naoSabe,false);
       render(); document.getElementById('ajEsc').style.display='flex';
@@ -207,7 +238,8 @@
     init(cfg){ CFG=cfg||{}; if(!CFG.sb){ console.warn('AuriaAjuda: sem cliente supabase'); return; } if(document.getElementById('ajPan')) return; ui(); carregarManual(); },
     enviar(){ enviar(); }, perguntar(q){ enviar(q); }, escalar, fechar(){ ABERTO=false; document.getElementById('ajPan').classList.remove('on'); },
     limpar(){ CONV=[]; ULT={pergunta:'',resposta:''}; render(); document.getElementById('ajEsc').style.display='none'; },
-    contexto(fn){ if(CFG) CFG.contexto=fn; }
+    contexto(fn){ if(CFG) CFG.contexto=fn; },
+    acoes(obj){ if(CFG) CFG.acoes=Object.assign(CFG.acoes||{}, obj||{}); }, acao(chave){ executarAcao(chave); }
   };
   // A página pode ter chamado init antes deste script carregar: pega a config deixada.
   if(window.__ajudaCfg) window.AuriaAjuda.init(window.__ajudaCfg);
