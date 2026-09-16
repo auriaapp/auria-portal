@@ -1,7 +1,7 @@
 // ============================================================================
 //  Auria — Assistente de ajuda (suporte por IA) · item 52
 //  Botão flutuante "?" em todos os painéis. Responde dúvidas de uso com base
-//  ÚNICA no manual (docs/manual_auria.md) + contexto da tela (papel, página,
+//  ÚNICA no manual (RPC ajuda_manual, recortado por papel no servidor) + contexto da tela (papel, página,
 //  empreendimento). Não navega na internet: só vê o manual e a pergunta.
 //  Quando não sabe, oferece "Enviar para o Auria" → RPC ajuda_escalar (grava e
 //  manda e-mail ao suporte). Toda pergunta fica registrada (ajuda_pergunta_auria)
@@ -14,7 +14,6 @@
 // ============================================================================
 (function(){
   const IA_FN='dynamic-task';                 // slug real do proxy de IA (groq-proxy)
-  const MANUAL_URL='docs/manual_auria.md';
   const MAX_TURNOS=8;
   let CFG=null, MANUAL='', CONV=[], ABERTO=false, ULT={pergunta:'',resposta:''};
 
@@ -98,10 +97,11 @@
     return out.replace(/\n{3,}/g,'\n\n');
   }
 
+  // O manual vem do banco pela RPC autenticada ajuda_manual(), que já devolve SÓ os
+  // capítulos do papel de quem chama (o recorte é do servidor). Nada público no site.
   async function carregarManual(){
     if(MANUAL) return MANUAL;
-    try{ const c=sessionStorage.getItem('auria_manual_v1'); if(c){ MANUAL=c; return MANUAL; } }catch(_){}
-    try{ const r=await fetch(MANUAL_URL,{cache:'no-cache'}); if(r.ok){ MANUAL=await r.text(); try{ sessionStorage.setItem('auria_manual_v1',MANUAL); }catch(_){} } }catch(_){}
+    try{ const r=await CFG.sb.rpc('ajuda_manual'); if(!r.error && r.data) MANUAL=String(r.data); }catch(_){}
     return MANUAL;
   }
 
