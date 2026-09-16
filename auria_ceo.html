@@ -350,9 +350,42 @@ tr:hover td{background:var(--gray-light)}
             <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Mais frequentes (agrupadas por texto parecido)</div>
             <div style="padding:0 22px 18px" id="pqTop"></div>
           </div>
-          <div class="tbl-wrap">
+          <div class="tbl-wrap" style="margin-bottom:18px">
             <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Últimas perguntas</div>
             <div style="padding:0 22px 18px" id="pqLista"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+          <!-- 52a: FAQ promovida — entra no manual que o assistente lê (ajuda_manual anexa as ativas do papel) -->
+          <div class="tbl-wrap">
+            <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px">
+              <div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">FAQ promovida ao manual <span id="pqFaqN"></span></div>
+              <button class="btn-sm" style="margin-left:auto" onclick="faqAbrir(null)">+ Nova resposta</button>
+            </div>
+            <div style="padding:0 22px 6px;font-size:12px;color:var(--text-soft)">O que está aqui o assistente passa a responder na hora, para os papéis marcados. Não apaga: só liga/desliga.</div>
+            <div style="padding:0 22px 18px" id="pqFaq"></div>
+          </div>
+        </div>
+
+        <div class="modal-bg" id="modalFaq">
+          <div class="modal" style="width:620px">
+            <button class="modal-close" onclick="faqFechar()">&times;</button>
+            <div class="modal-title" id="faqTitulo">Promover ao manual</div>
+            <div class="modal-sub">Escreva a resposta como deve aparecer para o usuário: caminho <i>painel › menu › botão</i>, frases curtas.</div>
+            <input type="hidden" id="faqId"><input type="hidden" id="faqOrigem">
+            <div class="form-group"><label class="form-label">Pergunta</label><input class="form-inp" id="faqPergunta" maxlength="500"></div>
+            <div class="form-group"><label class="form-label">Resposta</label><textarea class="form-inp" id="faqResposta" rows="6" maxlength="4000" style="resize:vertical;font-family:inherit"></textarea></div>
+            <div class="form-group"><label class="form-label">Quem vê</label>
+              <div id="faqPapeis" style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px">
+                <label><input type="checkbox" value="*" onchange="faqTodos(this)"> <b>todos</b></label>
+                <label><input type="checkbox" value="analista"> analista</label>
+                <label><input type="checkbox" value="projetista"> projetista</label>
+                <label><input type="checkbox" value="financeiro"> adm-fin</label>
+                <label><input type="checkbox" value="obra"> obra</label>
+                <label><input type="checkbox" value="setor"> setor</label>
+                <label><input type="checkbox" value="gerente"> gestor</label>
+              </div>
+              <div style="font-size:11.5px;color:var(--text-soft);margin-top:4px">Gestor e super admin sempre veem tudo. Cuidado: não descreva telas de um papel para outro.</div>
+            </div>
+            <div class="modal-footer"><button class="btn-secondary" onclick="faqFechar()">Cancelar</button><button class="btn-primary" id="faqSalvarBtn" onclick="faqSalvar()">Salvar no manual</button></div>
           </div>
         </div>
 
@@ -838,6 +871,7 @@ async function carregarPerguntas(){
     const r=await sb.from('ajuda_pergunta_auria').select('id,usuario_id,email,empresa_id,papel,pagina,contexto,pergunta,resposta,sem_resposta,escalado,criado_em').order('criado_em',{ascending:false}).limit(2000);
     if(r.error) throw r.error; PQ=r.data||[];
     const g=await sb.from('empresas_auria').select('id,nome'); (g.data||[]).forEach(x=>PQ_GRUPOS[x.id]=x.nome);
+    await carregarFaq();
     const sp=document.getElementById('pqPapel'); sp.innerHTML='<option value="">Todos os papéis</option>'+[...new Set(PQ.map(x=>x.papel).filter(Boolean))].sort().map(p=>'<option value="'+esc(p)+'">'+esc(p)+'</option>').join('');
     const sg=document.getElementById('pqGrupo'); sg.innerHTML='<option value="">Todos os grupos</option>'+[...new Set(PQ.map(x=>x.empresa_id).filter(Boolean))].map(id=>'<option value="'+id+'">'+esc(PQ_GRUPOS[id]||id.slice(0,8))+'</option>').join('');
   }catch(e){ setHTML('pqLista','<div style="padding:14px;color:var(--red)">Não foi possível carregar: '+esc(e.message||e)+' (o SQL supabase_ajuda.sql precisa estar aplicado).</div>'); return; }
@@ -855,19 +889,67 @@ function renderPerguntas(){
   setText('pqTot',rows.length); setText('pqSem',rows.filter(x=>x.sem_resposta).length); setText('pqEsc',rows.filter(x=>x.escalado).length);
   setText('pqUsr',new Set(rows.map(x=>x.usuario_id||x.email)).size);
   // mais frequentes
-  const grp={}; rows.forEach(x=>{ const k=pqChave(x.pergunta); if(!k) return; const o=grp[k]||(grp[k]={n:0,ex:x.pergunta,sem:0,papeis:new Set()}); o.n++; if(x.sem_resposta) o.sem++; if(x.papel) o.papeis.add(x.papel); });
+  const grp={}; rows.forEach(x=>{ const k=pqChave(x.pergunta); if(!k) return; const o=grp[k]||(grp[k]={n:0,ex:x.pergunta,id:x.id,sem:0,papeis:new Set()}); o.n++; if(x.sem_resposta) o.sem++; if(x.papel) o.papeis.add(x.papel); if(!x.sem_resposta&&x.resposta&&!o.id_ok){ o.id=x.id; o.id_ok=true; } });
   const top=Object.values(grp).sort((a,b)=>b.n-a.n).slice(0,15);
   setHTML('pqTop', top.length ? '<table style="width:100%;font-size:13px;border-collapse:collapse"><thead><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 0">Pergunta (exemplo)</th><th style="text-align:right">Vezes</th><th style="text-align:right">Sem resposta</th><th style="text-align:left;padding-left:12px">Papéis</th></tr></thead><tbody>'
-    +top.map(o=>'<tr style="border-top:1px solid #F1F5F9"><td style="padding:7px 0">'+esc(o.ex)+'</td><td style="text-align:right;font-weight:700">'+o.n+'</td><td style="text-align:right;color:'+(o.sem?'var(--red)':'var(--text-soft)')+'">'+o.sem+'</td><td style="padding-left:12px;color:var(--text-soft)">'+esc([...o.papeis].join(', '))+'</td></tr>').join('')+'</tbody></table>'
+    +top.map(o=>'<tr style="border-top:1px solid #F1F5F9"><td style="padding:7px 0">'+esc(o.ex)+(FAQ_KEYS.has(pqChave(o.ex))?' <span style="font-size:10.5px;background:#DCFCE7;color:#166534;border-radius:8px;padding:1px 7px;font-weight:700">no manual</span>':'')+'</td><td style="text-align:right;font-weight:700">'+o.n+'</td><td style="text-align:right;color:'+(o.sem?'var(--red)':'var(--text-soft)')+'">'+o.sem+'</td><td style="padding-left:12px;color:var(--text-soft)">'+esc([...o.papeis].join(', '))+' <button class="btn-sm" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="faqAbrir(null,\''+o.id+'\')">&rarr; FAQ</button></td></tr>').join('')+'</tbody></table>'
     : '<div style="padding:10px 0;color:var(--text-soft);font-size:13px">Nenhuma pergunta no período.</div>');
   // últimas
   setHTML('pqLista', rows.length ? rows.slice(0,200).map(x=>{ const ctx=x.contexto||{}; const q=new Date(x.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     return '<div style="padding:10px 0;border-top:1px solid #F1F5F9">'
       +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text-soft)"><span>'+q+'</span><span>· <b>'+esc(x.papel||'?')+'</b></span><span>· '+esc(PQ_GRUPOS[x.empresa_id]||'')+'</span><span>· '+esc(x.email||'')+'</span><span>· '+esc(x.pagina||'')+(ctx.empreendimento?' · '+esc(ctx.empreendimento):'')+'</span>'
       +(x.escalado?'<span style="background:var(--red);color:#fff;border-radius:10px;padding:1px 8px;font-weight:700">escalada</span>':x.sem_resposta?'<span style="background:#FEF3E2;color:#B45309;border-radius:10px;padding:1px 8px;font-weight:700">sem resposta</span>':'')+'</div>'
-      +'<div style="font-size:13.5px;margin-top:3px"><b>'+esc(x.pergunta)+'</b></div>'
+      +'<div style="font-size:13.5px;margin-top:3px;display:flex;gap:8px;align-items:flex-start"><b style="flex:1">'+esc(x.pergunta)+'</b><button class="btn-sm" style="padding:2px 8px;font-size:11px;white-space:nowrap" onclick="faqAbrir(null,\''+x.id+'\')">&rarr; FAQ</button></div>'
       +(x.resposta?'<div style="font-size:12.5px;color:var(--text-mid);margin-top:3px;white-space:pre-wrap">'+esc(x.resposta).slice(0,600)+(x.resposta.length>600?'…':'')+'</div>':'')+'</div>'; }).join('')
     : '<div style="padding:14px 0;color:var(--text-soft)">Nenhuma pergunta no período.</div>');
+  renderFaq();
+}
+
+// ── 52a: FAQ promovida (tabela ajuda_faq_auria; RPCs ajuda_faq_salvar / ajuda_faq_ativar) ──
+let FAQ=[], FAQ_KEYS=new Set();
+async function carregarFaq(){
+  try{ const r=await sb.from('ajuda_faq_auria').select('id,pergunta,resposta,papeis,ativo,origem_id,criado_em').order('criado_em',{ascending:false}); FAQ=r.error?[]:(r.data||[]); }catch(_){ FAQ=[]; }
+  FAQ_KEYS=new Set(FAQ.filter(f=>f.ativo).map(f=>pqChave(f.pergunta)));
+}
+function renderFaq(){
+  setText('pqFaqN', FAQ.length?'('+FAQ.filter(f=>f.ativo).length+' ativas de '+FAQ.length+')':'');
+  setHTML('pqFaq', FAQ.length ? FAQ.map(f=>'<div style="padding:10px 0;border-top:1px solid #F1F5F9;'+(f.ativo?'':'opacity:.55')+'">'
+      +'<div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1"><b style="font-size:13.5px">'+esc(f.pergunta)+'</b>'
+      +'<div style="font-size:12.5px;color:var(--text-mid);margin-top:3px;white-space:pre-wrap">'+esc(f.resposta)+'</div>'
+      +'<div style="font-size:11px;color:var(--text-soft);margin-top:4px">'+(f.papeis&&f.papeis.length?'vê: '+esc(f.papeis.join(', ')):'todos os papéis')+(f.ativo?'':' · <b>desligada</b>')+'</div></div>'
+      +'<div style="display:flex;gap:6px;flex-shrink:0"><button class="btn-sm" style="padding:2px 8px;font-size:11px" onclick="faqAbrir(\''+f.id+'\')">Editar</button>'
+      +'<button class="btn-sm'+(f.ativo?' danger':'')+'" style="padding:2px 8px;font-size:11px" onclick="faqAtivar(\''+f.id+'\','+(!f.ativo)+')">'+(f.ativo?'Desligar':'Religar')+'</button></div></div></div>').join('')
+    : '<div style="padding:10px 0;color:var(--text-soft);font-size:13px">Nenhuma resposta promovida ainda. Use “→ FAQ” numa pergunta acima.</div>');
+}
+function faqTodos(cb){ document.querySelectorAll('#faqPapeis input:not([value="*"])').forEach(i=>{ i.checked=false; i.disabled=cb.checked; }); }
+function faqAbrir(faqId, perguntaId){
+  const f=faqId?FAQ.find(x=>x.id===faqId):null, q=perguntaId?PQ.find(x=>x.id===perguntaId):null;
+  document.getElementById('faqId').value=f?f.id:''; document.getElementById('faqOrigem').value=f?(f.origem_id||''):(q?q.id:'');
+  document.getElementById('faqTitulo').textContent=f?'Editar resposta do manual':'Promover ao manual';
+  document.getElementById('faqPergunta').value=f?f.pergunta:(q?q.pergunta:'');
+  document.getElementById('faqResposta').value=f?f.resposta:(q&&!q.sem_resposta&&q.resposta&&!/Não encontrei isso no manual/i.test(q.resposta)?q.resposta:'');
+  const papeis=f?(f.papeis||[]):(q&&q.papel&&q.papel!=='gerente'&&q.papel!=='super_admin'?[q.papel]:[]);
+  const todos=document.querySelector('#faqPapeis input[value="*"]'); todos.checked=!papeis.length; faqTodos(todos);
+  document.querySelectorAll('#faqPapeis input:not([value="*"])').forEach(i=>{ i.checked=papeis.includes(i.value); });
+  document.getElementById('modalFaq').classList.add('open'); setTimeout(()=>document.getElementById(f||q?'faqResposta':'faqPergunta').focus(),50);
+}
+function faqFechar(){ document.getElementById('modalFaq').classList.remove('open'); }
+async function faqSalvar(){
+  const id=document.getElementById('faqId').value||null, origem=document.getElementById('faqOrigem').value||null;
+  const pergunta=document.getElementById('faqPergunta').value.trim(), resposta=document.getElementById('faqResposta').value.trim();
+  if(!pergunta||!resposta){ alert('Pergunta e resposta são obrigatórias.'); return; }
+  const todos=document.querySelector('#faqPapeis input[value="*"]').checked;
+  const papeis=todos?null:[...document.querySelectorAll('#faqPapeis input:not([value="*"]):checked')].map(i=>i.value);
+  if(papeis&&!papeis.length){ alert('Marque pelo menos um papel (ou "todos").'); return; }
+  const b=document.getElementById('faqSalvarBtn'); b.disabled=true;
+  try{ const r=await sb.rpc('ajuda_faq_salvar',{p_id:id,p_pergunta:pergunta,p_resposta:resposta,p_papeis:papeis,p_origem:origem}); if(r.error) throw r.error;
+       faqFechar(); await carregarFaq(); renderPerguntas(); }
+  catch(e){ alert('Não salvou: '+esc(e.message||e)+' (o SQL supabase_ajuda_faq.sql precisa estar aplicado).'); }
+  finally{ b.disabled=false; }
+}
+async function faqAtivar(id, ativo){
+  try{ const r=await sb.rpc('ajuda_faq_ativar',{p_id:id,p_ativo:ativo}); if(r.error) throw r.error; await carregarFaq(); renderPerguntas(); }
+  catch(e){ alert('Não alterou: '+esc(e.message||e)); }
 }
 
 // ── UTILS ─────────────────────────────────────────────
