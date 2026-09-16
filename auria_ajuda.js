@@ -64,6 +64,25 @@
     padrao:['Como funciona o CDE?','O que são os estados S0, S1 e A1?','Onde vejo meus empreendimentos?']
   };
   const PAPEL_NOME={gerente:'gestor',super_admin:'gestor',analista:'analista',projetista:'projetista',financeiro:'adm-fin',obra:'obra',setor:'setor interno'};
+  // Capítulos do manual que cada papel recebe (nível de acesso da ajuda). Gestor recebe tudo.
+  // Números = "## N." do manual. 1 visão geral · 2 login · 3 gestão · 4 analista · 5 App ·
+  // 6 CDE · 7 projetista · 8 adm-fin · 9 custos · 10 acesso temporário · 11 obra/setor ·
+  // 12 e-mails · 13 erros · 14 FAQ · 15 glossário.
+  const CAPS_POR_PAPEL={
+    gerente:null, super_admin:null,
+    analista:[1,2,4,5,6,9,10,12,13,14,15],
+    projetista:[1,2,6,7,13,15],
+    financeiro:[1,2,8,9,12,13,15],
+    obra:[1,2,6,11,13,15],
+    setor:[1,2,6,11,13,15]
+  };
+  function manualParaPapel(txt, papel){
+    const caps=CAPS_POR_PAPEL[papel];
+    if(caps===null) return txt;
+    const blocos=txt.split(/\n(?=## \d+\.)/);
+    const lista=caps||[1,2,13,15];   // papel desconhecido: só o geral
+    return blocos.filter(b=>{ const m=/^## (\d+)\./.exec(b); return !m || lista.includes(parseInt(m[1],10)); }).join("\n");
+  }
 
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   // markdown mínimo → HTML (negrito, código, listas, quebras)
@@ -95,14 +114,14 @@
       '1. Responda SOMENTE com base no MANUAL abaixo. Não invente funções, telas, botões ou regras que não estejam no manual.',
       '2. Se a resposta não estiver no manual, diga exatamente: "Não encontrei isso no manual." e sugira enviar a pergunta para o Auria. Não tente adivinhar.',
       '3. Dê o caminho concreto quando existir: painel › menu/aba › botão (ex.: "Painel do Analista › card do empreendimento › Acessos › Fornecedores › Atribuir").',
-      '4. Considere o papel de quem pergunta: um '+papel+' só faz o que o manual permite ao seu papel; se a ação é de outro papel, diga quem faz.',
+      '4. Considere o papel de quem pergunta: um '+papel+' só faz o que o manual permite ao seu papel. Se a pergunta for sobre uma ação de OUTRO papel (ex.: aprovar cadastro, liberar prancha, abrir janela de NF), responda apenas quem é o responsável ("isso é feito pela gestão/coordenação/adm-fin") — sem descrever telas, menus ou botões que não são do papel de quem pergunta.',
       '5. Não fale de sistemas externos, nem de coisas fora do Auria. Não use conhecimento de fora do manual.',
       '6. Use no máximo 6 linhas ou uma lista curta. Negrito para nomes de botões/menus.',
       '',
       'CONTEXTO DE QUEM PERGUNTA: papel = '+papel+'; página atual = '+(CFG.pagina||'—')+(ctx.empreendimento?'; empreendimento aberto = '+ctx.empreendimento:'')+(ctx.extra?'; '+ctx.extra:'')+'.',
       '',
       '===== MANUAL DO AURIA =====',
-      MANUAL||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
+      (MANUAL&&manualParaPapel(MANUAL, CFG.papel))||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
       '===== FIM DO MANUAL ====='
     ].join('\n');
   }
