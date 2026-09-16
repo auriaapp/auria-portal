@@ -23,6 +23,12 @@
        grid-template-columns:1fr auto 1fr;align-items:center;gap:13px;position:sticky;top:0;z-index:30}
   .cdh-l{display:flex;align-items:center;gap:13px;justify-self:start}
   .cdh-l img{height:52px;width:auto;display:block}
+  /* Logo do GRUPO no cabeçalho — mesmo slot .elogo do CDE (branco + linha laranja; sem logo = iniciais). */
+  header .glogo{height:46px;min-width:46px;max-width:150px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid #E8960A;
+         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;padding:3px 6px}
+  header .glogo img{max-width:100%;max-height:100%;height:auto;object-fit:contain;display:block}
+  header .glogo.ph{border:1.5px dashed #3A4A66;background:rgba(255,255,255,.06);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+         font-weight:800;font-size:11px;letter-spacing:.04em;color:#8FA6C0;padding:0 10px}
   .cdh .tt b{font-size:14px;font-weight:800;display:block;line-height:1.15}
   .cdh .tt span{font-size:11px;color:#8FA6C0}
   .cdh-c{justify-self:center;text-align:center}
@@ -136,6 +142,7 @@
     <div class="cdh-l">
       <img src="logo_symbol.png" alt="Auria">
       <div class="tt"><b>Auria &mdash; Painel Administrativo Financeiro</b><span>Adm-fin &middot; notas fiscais e contratos</span></div>
+      <div class="glogo ph" id="hLogoGrupo" style="display:none"></div>
     </div>
     <div class="cdh-c"><b id="hdGrupo">&nbsp;</b><span id="hdSub">Notas fiscais e contratos</span></div>
     <div class="cdh-r">
@@ -275,6 +282,13 @@ const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 let NFS = [];   // todas as NFs (decifradas via RPC)
 function $(id){ return document.getElementById(id); }
+// Logo do grupo no cabeçalho (mesma regra da gestão/CDE): com logo = imagem; sem = iniciais tracejadas.
+function logoGrupoRender(el, g, escf){
+  if(!el) return; if(!g){ el.style.display='none'; return; } el.style.display='';
+  if(g.logo_url){ el.className='glogo'; el.innerHTML='<img src="'+escf(g.logo_url)+'" alt="'+escf(g.nome||'')+'">'; }
+  else { el.className='glogo ph'; el.textContent=String(g.nome||'?').replace(/[^\p{L}\p{N} ]/gu,'').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase()||'?'; }
+  el.title=(g.nome||'Grupo');
+}
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function brl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function dbr(s){ if(!s)return '—'; var p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s; }
@@ -285,9 +299,9 @@ async function boot(){
   try{ const r=await sb.auth.getSession(); session=r.data&&r.data.session; }catch(e){}
   if(!session){ location.replace('./'); return; }
   let role=null;
-  try{ const {data}=await sb.from('usuarios_auria').select('nome,email,role,empresas_auria(nome)').eq('id',session.user.id).maybeSingle();
+  try{ const {data}=await sb.from('usuarios_auria').select('nome,email,role,empresas_auria(nome,logo_url)').eq('id',session.user.id).maybeSingle();
        role=data&&data.role; $('uName').textContent=(data&&data.nome)||session.user.email; $('uEmail').textContent=session.user.email;
-       const g=data&&data.empresas_auria&&data.empresas_auria.nome; if(g) $('hdGrupo').textContent=g; }catch(e){}
+       const g=data&&data.empresas_auria; if(g&&g.nome) $('hdGrupo').textContent=g.nome; logoGrupoRender($('hLogoGrupo'), g, esc); }catch(e){}
   // Painel exclusivo do financeiro. Gestor/CEO veem esses dados dentro do
   // PRÓPRIO painel (widget/resumo), não abrindo esta página diretamente.
   if(role !== 'financeiro'){ location.replace('./'); return; }  // sem acesso

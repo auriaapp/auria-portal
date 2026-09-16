@@ -295,6 +295,12 @@
        grid-template-columns:1fr auto 1fr;align-items:center;gap:13px;flex-shrink:0}
   .pjh-l{display:flex;align-items:center;gap:13px;justify-self:start}
   .pjh-l img{height:52px;width:auto;display:block}
+  /* Logo do GRUPO no cabeçalho — mesmo slot .elogo do CDE (branco + linha laranja; sem logo = iniciais). */
+  header .glogo{height:46px;min-width:46px;max-width:150px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid #E8960A;
+         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;padding:3px 6px}
+  header .glogo img{max-width:100%;max-height:100%;height:auto;object-fit:contain;display:block}
+  header .glogo.ph{border:1.5px dashed #3A4A66;background:rgba(255,255,255,.06);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+         font-weight:800;font-size:11px;letter-spacing:.04em;color:#8FA6C0;padding:0 10px}
   .pjh .tt b{font-size:14px;font-weight:800;display:block;line-height:1.15}
   .pjh .tt span{font-size:11px;color:#8FA6C0}
   .pjh-c{justify-self:center;text-align:center;display:flex;flex-direction:column;align-items:center}
@@ -476,6 +482,7 @@
     <div class="pjh-l">
       <img src="logo_symbol.png" alt="Auria">
       <div class="tt"><b>Auria — Painel do Projetista</b><span id="topbar-title">Painel do Projetista</span></div>
+      <div class="glogo ph" id="hLogoGrupo" style="display:none" title="Grupo contratante"></div>
     </div>
     <div class="pjh-c"><b id="pj-forn-nome">&nbsp;</b><span id="pj-forn-sub">Fornecedor</span></div>
     <div class="pjh-r">
@@ -2489,6 +2496,7 @@ function pjRenderHeader(){
   if(nt){ nt.textContent=trendIcon(tg); nt.style.color=trendCor(tg); }
   if(ns){ ns.textContent = rg ? (rg.pos+'º de '+rg.total+' fornecedores') : (tg==='up'?'em alta':tg==='down'?'em queda':'estável'); }
   pjRenderLogo();
+  if(!PJ_GRUPOS.length) pjLogoGrupoCarregar(); else pjLogoGrupo();
 }
 // ── Logo do fornecedor (item 24) ─────────────────────────────────────────────
 //  PJ_FORN vem de forn_meu() (RPC: o projetista não lê fornecedores_auria).
@@ -2499,6 +2507,27 @@ var PJ_FORN=null;
 async function pjCarregarForn(){
   try{ const r=await sb.rpc('forn_meu'); const f=(r.data&&r.data[0])||null; if(f){ PJ_FORN=f; pjRenderHeader(); } }
   catch(e){ console.warn('forn_meu', e.message||e); }
+}
+// Logo do grupo no cabeçalho (mesma regra da gestão/CDE): com logo = imagem; sem = iniciais tracejadas.
+function logoGrupoRender(el, g, escf){
+  if(!el) return; if(!g){ el.style.display='none'; return; } el.style.display='';
+  if(g.logo_url){ el.className='glogo'; el.innerHTML='<img src="'+escf(g.logo_url)+'" alt="'+escf(g.nome||'')+'">'; }
+  else { el.className='glogo ph'; el.textContent=String(g.nome||'?').replace(/[^\p{L}\p{N} ]/gu,'').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,4).toUpperCase()||'?'; }
+  el.title=(g.nome||'Grupo');
+}
+// Grupo(s) contratante(s): logo do grupo do empreendimento selecionado; sem seleção, o único grupo (ou o primeiro).
+var PJ_GRUPOS=[];
+async function pjLogoGrupoCarregar(){
+  try{ var r=await sb.rpc('pj_grupos'); PJ_GRUPOS=(r&&r.data)||[]; }catch(e){ PJ_GRUPOS=[]; }
+  pjLogoGrupo();
+}
+function pjLogoGrupo(){
+  var el=document.getElementById('hLogoGrupo'); if(!el) return;
+  var g=null;
+  if(PJ_EMP_ID) g=PJ_GRUPOS.find(function(x){ return (x.empreendimentos||[]).indexOf(PJ_EMP_ID)>=0; })||null;
+  if(!g) g=PJ_GRUPOS[0]||null;
+  logoGrupoRender(el, g, escH);
+  if(g && PJ_GRUPOS.length>1) el.title=g.nome+' · '+PJ_GRUPOS.length+' grupos contratantes';
 }
 function pjRenderLogo(){
   var el=document.getElementById('pj-forn-logo'); if(!el) return;
@@ -2604,6 +2633,7 @@ function pjEnviarArquivos(i){
   showCde();   // showCde abre CDE_CUR uma vez
 }
 function pjSelectEmp(id, nome){
+  setTimeout(pjLogoGrupo,0);   // logo do grupo acompanha o empreendimento escolhido
   // Clicar no card já selecionado desmarca (volta a "todos").
   if(id && PJ_EMP_ID===id){ PJ_EMP_ID=''; CUR_EMP=''; TODOS=MINE.slice(); }
   else if(id){ PJ_EMP_ID=id; var e=pjEmpAtual(); CUR_EMP=e?e.nome:(nome||''); TODOS=e?pjAptsDe(e):MINE.slice(); }
