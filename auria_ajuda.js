@@ -107,7 +107,30 @@
     return MANUAL;
   }
 
-  function systemPrompt(){
+  // ── Recorte do manual por relevância ───────────────────────────────────────
+  //  O manual inteiro do analista passa de 25k chars (~8k tokens): estoura o limite do
+  //  Groq (reserva quando o Gemini está sobrecarregado) e encarece toda pergunta. Aqui
+  //  o manual é partido em seções (## / ###) e só as que casam com a pergunta vão no
+  //  prompt, dentro de um orçamento. O capítulo 0/1 (o que é, papéis) entra sempre.
+  const STOP=new Set(['a','o','os','as','de','do','da','dos','das','um','uma','e','em','no','na','nos','nas','para','pra','por','que','como','onde','qual','quais','é','eu','meu','minha','se','ao','à','com','não','ser','ter','faço','fazer','posso','consigo','uso','usar','isso','esse','essa','este','esta','aqui','ali','tem','há','the','of']);
+  function termos(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!STOP.has(w)).map(w=>w.length>5?w.slice(0,5):w); }
+  function trechosRelevantes(manual, pergunta, orcamento){
+    if(!manual) return '';
+    if(manual.length<=orcamento) return manual;
+    const secs=manual.split(/\n(?=##+ )/);
+    const q=[...new Set(termos(pergunta))]; if(!q.length) return manual.slice(0,orcamento);
+    const norm=x=>String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const pont=secs.map((sec,i)=>{ const n=norm(sec); let sc=0; q.forEach(t=>{ if(n.includes(t)) sc+=1+(norm(sec.split('\n')[0]).includes(t)?2:0); }); return {i,sc,len:sec.length}; });
+    const sempre=secs.map((sec,i)=>({sec,i})).filter(x=>/^## (0|1)\./.test(x.sec)||!/^##/.test(x.sec)).map(x=>x.i);
+    const ordem=pont.filter(x=>x.sc>0&&!sempre.includes(x.i)).sort((a,b)=>b.sc-a.sc||a.i-b.i);
+    const pega=new Set(sempre); let usado=sempre.reduce((n,i)=>n+secs[i].length,0);
+    for(const x of ordem){ if(usado+x.len>orcamento) continue; pega.add(x.i); usado+=x.len; }
+    // capítulo FAQ (14) e "FAQ promovida" entram se couberem — costumam ser a resposta direta
+    secs.forEach((sec,i)=>{ if(!pega.has(i)&&/^## (14\.|Perguntas frequentes)/.test(sec)&&usado+sec.length<=orcamento*1.15){ pega.add(i); usado+=sec.length; } });
+    return [...pega].sort((a,b)=>a-b).map(i=>secs[i]).join('\n');
+  }
+
+  function systemPrompt(pergunta, orcamento){
     const ctx=(CFG.contexto&&CFG.contexto())||{};
     const papel=PAPEL_NOME[CFG.papel]||CFG.papel||'usuário';
     return [
@@ -125,7 +148,7 @@
       'CONTEXTO DE QUEM PERGUNTA: papel = '+papel+'; página atual = '+(CFG.pagina||'—')+(ctx.empreendimento?'; empreendimento aberto = '+ctx.empreendimento:'')+(ctx.extra?'; '+ctx.extra:'')+'.',
       '',
       '===== MANUAL DO AURIA =====',
-      (MANUAL&&manualParaPapel(MANUAL, CFG.papel))||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
+      (MANUAL&&trechosRelevantes(manualParaPapel(MANUAL, CFG.papel), pergunta, orcamento||12000))||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
       '===== FIM DO MANUAL ====='
     ].join('\n');
   }
@@ -199,11 +222,22 @@
     try{
       await carregarManual();
       const hist=CONV.filter(m=>!m.pensando).slice(-MAX_TURNOS*2);
-      const messages=[{role:'system',content:systemPrompt()}].concat(hist.map(m=>({role:m.role,content:m.content})));
-      const r=await CFG.sb.functions.invoke(IA_FN,{ body:{ messages, temperature:0.2, max_tokens:700 } });
+      // recorte pela pergunta atual + a anterior (continuações tipo "e depois?" têm pouco texto)
+      const perguntas=hist.filter(m=>m.role==='user').slice(-2).map(m=>m.content).join(' ');
+      async function chamar(orcamento){
+        const messages=[{role:'system',content:systemPrompt(perguntas, orcamento)}].concat(hist.map(m=>({role:m.role,content:m.content})));
+        const r=await CFG.sb.functions.invoke(IA_FN,{ body:{ messages, temperature:0.2, max_tokens:700 } });
+        if(r.error){ let msg=(r.error&&r.error.message)||String(r.error); try{ const j=await r.error.context.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+        return (r.data&&(r.data.content||r.data.resposta))||'';
+      }
       let resp='';
-      if(r.error){ let msg=(r.error&&r.error.message)||String(r.error); try{ const j=await r.error.context.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
-      resp=(r.data&&(r.data.content||r.data.resposta))||'';
+      try{ resp=await chamar(12000); }
+      catch(e1){
+        const m=String((e1&&e1.message)||e1);
+        // sobrecarga / limite de tamanho: espera e tenta de novo com o manual bem mais curto
+        if(/high demand|overloaded|503|429|too large|entity too large|rate|limit|tokens/i.test(m)){ await new Promise(r=>setTimeout(r,2500)); resp=await chamar(5000); }
+        else throw e1;
+      }
       if(!resp) throw new Error('resposta vazia');
       const ex=extrairAcao(resp); resp=ex.texto;
       CONV.pop(); CONV.push({role:'assistant',content:resp,acao:ex.acao}); ULT={pergunta:q,resposta:resp};
@@ -211,7 +245,9 @@
       registrar(q,resp,naoSabe,false);
       render(); document.getElementById('ajEsc').style.display='flex';
     }catch(e){
-      CONV.pop(); CONV.push({role:'assistant',content:'Não consegui responder agora ('+((e&&e.message)||e)+'). Você pode enviar a pergunta para o Auria.'}); ULT={pergunta:q,resposta:''};
+      console.warn('[ajuda] IA falhou:', (e&&e.message)||e);
+      const carga=/high demand|overloaded|503|429|too large|rate|limit|tokens/i.test(String((e&&e.message)||e));
+      CONV.pop(); CONV.push({role:'assistant',content: carga ? 'A IA está sobrecarregada neste momento. Tente de novo em alguns instantes — ou envie a pergunta para o Auria, que respondemos por e-mail.' : 'Não consegui responder agora. Você pode tentar de novo ou enviar a pergunta para o Auria.'}); ULT={pergunta:q,resposta:''};
       render(); document.getElementById('ajEsc').style.display='flex';
     }
     go.disabled=false;
