@@ -675,7 +675,25 @@ async function boot(){
   const _timeout = new Promise(r=>setTimeout(()=>r('timeout'), 12000));
   await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
   carregarPrazos();   // depende de APTS já carregado
-  window.__ajudaCfg={ sb, papel:'analista', pagina:'Painel do Analista', contexto:()=>({ empreendimento: PA_EMP ? empRotulo(empPorId(PA_EMP)) : '', extra: 'aba: '+PA_ABA }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  // "Me leva lá" (item 52c): ações do assistente nesta tela. As de empreendimento usam o que está em foco
+  //  (PA_EMP) ou, se só há um, ele; com vários e nenhum em foco a ação não é oferecida.
+  const _empFoco=()=>PA_EMP||(EMPS.length===1?EMPS[0].id:'');
+  const AJUDA_ACOES={
+    fila:          { rotulo:'Abrir a Fila da coordenação', run:()=>paAba('fila') },
+    agenda:        { rotulo:'Abrir a Agenda', run:()=>paAba('agenda') },
+    kanban:        { rotulo:'Abrir o Kanban', run:()=>paAba('kanban') },
+    mensagens:     { rotulo:'Abrir Mensagens', run:()=>paAba('msg') },
+    custos:        { rotulo:'Abrir Custos e NF', run:()=>abrirCustosGeral() },
+    fornecedores:  { rotulo:'Abrir Fornecedores (convidar/cadastros)', run:()=>abrirFornecedoresView() },
+    painel_apont:  { rotulo:'Abrir o Painel de Apontamentos', run:()=>paAba('bi') },
+    empreendimento:{ rotulo:'Abrir o empreendimento em foco', descricao:'card com CDE, contratos, acessos', quando:()=>!!_empFoco(), run:()=>abrirEmp(_empFoco()) },
+    acessos:       { rotulo:'Abrir Acessos do empreendimento', descricao:'fornecedores por disciplina, obra, setor, acesso temporário', quando:()=>!!_empFoco(), run:()=>{ abrirEmp(_empFoco()); setTimeout(()=>abrirEmpAcessos(_empFoco()),150); } },
+    contratos:     { rotulo:'Abrir Contratos & Faturas do empreendimento', quando:()=>!!_empFoco(), run:()=>{ abrirEmp(_empFoco()); setTimeout(()=>abrirEmpContratos(_empFoco()),150); } },
+    cronograma:    { rotulo:'Abrir o Cronograma do empreendimento', quando:()=>!!_empFoco(), run:()=>paCronograma(_empFoco()) },
+    cde:           { rotulo:'Abrir o CDE do empreendimento', quando:()=>!!_empFoco(), run:()=>{ location.href='cde_obra.html?emp='+encodeURIComponent(_empFoco()); } },
+    app:           { rotulo:'Abrir o Auria App do empreendimento', quando:()=>!!_empFoco(), run:()=>{ location.href='app.html?emp='+encodeURIComponent(_empFoco()); } }
+  };
+  window.__ajudaCfg={ sb, papel:'analista', pagina:'Painel do Analista', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: PA_EMP ? empRotulo(empPorId(PA_EMP)) : '', extra: 'aba: '+PA_ABA }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
   carregarImplantacao().then(()=>{ try{ paCards(); }catch(_){ } });   // item 47: checklist no card
 
   // Painéis internos viram filhos do painel de abas (abrem abaixo, não por cima).

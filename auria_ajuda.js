@@ -165,7 +165,8 @@
     const A=acoesDisponiveis(); const ks=Object.keys(A); if(!ks.length) return '';
     return '7. AÇÕES QUE VOCÊ PODE EXECUTAR NESTA TELA (só estas chaves; nunca invente outra): '
       + ks.map(k=>k+' = '+A[k].rotulo+(A[k].descricao?' ('+A[k].descricao+')':'')).join('; ')
-      + '. Quando a resposta for exatamente uma dessas ações, explique o caminho em uma linha e termine a resposta com uma linha contendo só [[acao:CHAVE]] — o usuário verá um botão que faz isso por ele.';
+      + '. Quando a resposta for exatamente uma dessas ações, explique o caminho em uma linha e termine a resposta com uma linha contendo só [[acao:CHAVE]] — o usuário verá um botão que faz isso por ele.'
+      + ' Se o usuário pedir "me leva lá", "abre pra mim", "me leve até lá" ou parecido, responda só "Pronto — é este botão:" e termine com a [[acao:CHAVE]] da resposta anterior (se ela existir nesta lista; senão diga que nesta tela não dá para abrir direto e repita o caminho).';
   }
   function extrairAcao(resp){
     const m=/\[\[\s*acao\s*:\s*([a-z0-9_]+)\s*\]\]/i.exec(resp||''); if(!m) return {texto:resp,acao:null};
