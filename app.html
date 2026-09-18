@@ -3748,7 +3748,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-09-17a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-09-18a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5453,6 +5453,9 @@ async function f3dProps(hit, m){
     });
     let cx=null;
     try{ const bs=await m.model.getBoxes([hit.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
+    // caixa ORIENTADA (dimensões reais) — cai na caixa alinhada se a geometria não vier
+    try{ const dim=B3&&B3.dimOrientadas ? await B3.dimOrientadas(m.model, hit.localId) : null;
+      if(dim && isFinite(dim.altura)) cx={ min:{x:0,y:0,z:0}, max:{x:dim.comprimento,y:dim.altura,z:dim.largura}, orientado:true }; }catch(_){}
     F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // sempre → contexto da IA
     if(showPanel) el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
   }catch(e){
@@ -5546,8 +5549,8 @@ function f3dPropsHtml(data, m, cx){
   if(!qG.length && cx && cx.max && cx.min && isFinite(cx.max.y)){
     const dy=cx.max.y-cx.min.y;
     const hd=[cx.max.x-cx.min.x, cx.max.z-cx.min.z].sort((a,b)=>b-a);
-    out += cat('Dimensões (calculado)', linhas([
-      ['Altura', fmtD(dy)], ['Comprimento', fmtD(hd[0])], ['Largura', fmtD(hd[1])]
+    out += cat(cx.orientado?'Dimensões (medidas na geometria)':'Dimensões (caixa alinhada aos eixos)', linhas([
+      ['Altura', fmtD(dy)], ['Comprimento', fmtD(hd[0])], [cx.orientado?'Largura / espessura':'Largura', fmtD(hd[1])]
     ]));
   }
   out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));

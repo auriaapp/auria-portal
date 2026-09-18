@@ -3013,3 +3013,33 @@ function andarQuadro(V, dt){
   W.pos.addScaledVector(mov.normalize(), v*dt);
   andarAplicar(V);
 }
+
+// Dimensões REAIS do elemento (caixa orientada), não a caixa alinhada aos eixos do
+// modelo: uma parede/painel girado em planta ganhava "largura" de 1,3 m só por causa da
+// projeção. Pega a geometria (getItemsGeometry: posições + transform da amostra), leva
+// os vértices ao mundo, Altura = extensão vertical; em planta acha o eixo principal por
+// PCA e mede ao longo dele (Comprimento) e perpendicular (Largura = espessura real).
+export async function dimOrientadas(model, localId){
+  try{
+    const gs=await model.getItemsGeometry([localId]); const lista=(gs&&gs[0])||[]; if(!lista.length) return null;
+    const pts=[]; let total=0; lista.forEach(g=>{ total+=(g.positions&&g.positions.length||0)/3; });
+    const passo=Math.max(1, Math.floor(total/6000));   // no máx. ~6k vértices amostrados
+    for(const g of lista){
+      const P=g.positions; if(!P||!P.length) continue;
+      const e=(g.transform&&g.transform.elements)||(Array.isArray(g.transform)&&g.transform.length===16?g.transform:null);
+      for(let i=0;i<P.length;i+=3*passo){ let x=P[i],y=P[i+1],z=P[i+2];
+        if(e){ const nx=e[0]*x+e[4]*y+e[8]*z+e[12], ny=e[1]*x+e[5]*y+e[9]*z+e[13], nz=e[2]*x+e[6]*y+e[10]*z+e[14]; x=nx; y=ny; z=nz; }
+        pts.push(x,y,z); }
+    }
+    const n=pts.length/3; if(n<3) return null;
+    let minY=Infinity,maxY=-Infinity,mx=0,mz=0;
+    for(let i=0;i<pts.length;i+=3){ const y=pts[i+1]; if(y<minY)minY=y; if(y>maxY)maxY=y; mx+=pts[i]; mz+=pts[i+2]; }
+    mx/=n; mz/=n; let cxx=0,czz=0,cxz=0;
+    for(let i=0;i<pts.length;i+=3){ const dx=pts[i]-mx, dz=pts[i+2]-mz; cxx+=dx*dx; czz+=dz*dz; cxz+=dx*dz; }
+    const th=0.5*Math.atan2(2*cxz, cxx-czz), c=Math.cos(th), s=Math.sin(th);
+    let minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity;
+    for(let i=0;i<pts.length;i+=3){ const dx=pts[i]-mx, dz=pts[i+2]-mz; const u=dx*c+dz*s, v=-dx*s+dz*c; if(u<minU)minU=u; if(u>maxU)maxU=u; if(v<minV)minV=v; if(v>maxV)maxV=v; }
+    const hd=[maxU-minU, maxV-minV].sort((a,b)=>b-a);
+    return { altura:maxY-minY, comprimento:hd[0], largura:hd[1], angulo:th*180/Math.PI, orientado:true };
+  }catch(_){ return null; }
+}
