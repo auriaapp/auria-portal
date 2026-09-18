@@ -211,7 +211,20 @@
   .cdeWin-bim .bpItem input{cursor:pointer;margin:0;flex:none}
   .cdeWin-bim .bpItem span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cdeWin-bim .bpItem.off span{opacity:.45;text-decoration:line-through}
-  .cdeWin-bim .bpProps{flex:1;min-height:0}
+  .cdeWin-bim .bpProps{flex:1;min-height:0;position:relative}
+  /* Filtro do painel de propriedades (o que mostrar): mesmo desenho do funil da coluna de arquivos */
+  .cdeWin-bim .bpProps h4{display:flex;align-items:center;gap:8px}
+  .cdeWin-bim .bpProps h4 span{flex:1}
+  .cdeWin-bim .bpFiltroBtn{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);border-radius:7px;color:#C9D6E4;cursor:pointer;padding:0;position:relative}
+  .cdeWin-bim .bpFiltroBtn:hover{border-color:#E8960A;color:#fff}
+  .cdeWin-bim .bpFiltroBtn.on{background:#E8960A;border-color:#E8960A;color:#231703}
+  .cdeWin-bim .bpFiltroPop{position:absolute;top:34px;right:8px;left:8px;z-index:7;background:rgba(15,23,42,.98);border:1px solid rgba(255,255,255,.18);border-top:2px solid #E8960A;border-radius:10px;padding:8px 10px;max-height:60%;overflow:auto;box-shadow:0 12px 30px rgba(0,0,0,.45);display:none;font-size:12px}
+  .cdeWin-bim .bpFiltroPop.on{display:block}
+  .cdeWin-bim .bpFiltroPop h5{margin:6px 0 4px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#7FB3D3}
+  .cdeWin-bim .bpFiltroPop label{display:flex;align-items:center;gap:8px;padding:3px 2px;cursor:pointer;color:#e2e8f0}
+  .cdeWin-bim .bpFiltroPop label input{margin:0;accent-color:#E8960A}
+  .cdeWin-bim .bpFiltroPop .acts{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
+  .cdeWin-bim .bpFiltroPop .acts button{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#e2e8f0;border-radius:7px;padding:4px 9px;font-size:11.5px;cursor:pointer;font-family:inherit}
   .cdeWin-bim .bpConteudo{padding:8px 10px;overflow:auto;flex:1;min-height:0;line-height:1.5}
   .cdeWin-bim .bpVazio{color:#94a3b8;font-style:italic}
   .cdeWin-bim .bpCat{margin:0 0 12px}
@@ -1100,7 +1113,7 @@ async function boot(){
     padrao:            { rotulo:'Abrir o Padrão de codificação', quando:()=>_vis('lnkPadrao'), run:()=>{ location.href=$('lnkPadrao').href; } },
     painel:            { rotulo:'Voltar ao painel', run:()=>{ const a=document.querySelector('a.hbtn[href*="painel"],a.hbtn[href*="portal"],a.hbtn[href*="gerencia"]'); if(a) location.href=a.href; else history.back(); } }
   };
-  window.__ajudaCfg={ sb, papel:USER_ROLE||'', pagina:'CDE', lado:'right', encosta:'#navAside', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  window.__ajudaCfg={ sb, papel:USER_ROLE||'', pagina:'CDE', lado:'right', encosta:'#navAside', centroEm:'#cdeTaskbar', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
   $('main').style.display='flex';
   restaurarUltimoCDE();   // volta à disciplina + reabre a última prancha (chama renderRail)
   restaurarNavColapsada();
@@ -1840,7 +1853,22 @@ async function dimOrientadas(model, localId){
     return { altura:maxY-minY, comprimento:hd[0], largura:hd[1], angulo:th*180/Math.PI, orientado:true };
   }catch(_){ return null; }
 }
+// ── Filtro do painel de propriedades (por usuário) ─────────────────────────
+//  Categorias fixas (Identificação, Quantidades, Dimensões, Material) ligam/desligam;
+//  cada Pset/grupo visto nos modelos entra na lista e o usuário escolhe quais aparecem
+//  ao FINAL do painel. Também dá para mostrar os códigos internos (GUID, Tag…).
+//  Salvo em localStorage por usuário (vale neste navegador).
+const BP_CATS=[['ident','Identificação'],['quant','Quantidades'],['dim','Dimensões'],['mat','Material']];
+let BP_PREF=null, BP_PSETS_VISTOS=new Set();
+function bpPrefKey(){ return 'auria_bp_filtro_'+((USER&&USER.id)||'anon'); }
+function bpPref(){ if(BP_PREF) return BP_PREF; try{ BP_PREF=JSON.parse(localStorage.getItem(bpPrefKey())||'null'); }catch(_){ BP_PREF=null; }
+  if(!BP_PREF||typeof BP_PREF!=='object') BP_PREF={ cats:{ident:true,quant:true,dim:true,mat:true}, psets:{}, codigos:false };
+  BP_PREF.cats=BP_PREF.cats||{}; BP_PREF.psets=BP_PREF.psets||{}; return BP_PREF; }
+function bpPrefSalvar(){ try{ localStorage.setItem(bpPrefKey(), JSON.stringify(bpPref())); }catch(_){} }
+function bpPsetLigado(nome){ const p=bpPref(); return p.psets[nome]!==false; }   // desconhecido = ligado
+function bpFiltroAtivo(){ const p=bpPref(); return BP_CATS.some(([k])=>p.cats[k]===false) || Object.values(p.psets).some(v=>v===false) || !!p.codigos; }
 function bimPropsHtml(data, hit, cx, dim){
+  const PREF=bpPref();
   const val = (v)=>{
     if(v===null || v===undefined || v==='') return '—';
     if(typeof v==='number') return String(Math.round(v*1e6)/1e6);
@@ -1866,7 +1894,7 @@ function bimPropsHtml(data, hit, cx, dim){
   }
   // Esconde CÓDIGOS que não ajudam o analista (GUID, Tag, BATID, IDs internos)
   // e linhas vazias — o painel deve mostrar só o interpretável, como no Solibri.
-  const RUIDO=/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash)$/i;
+  const RUIDO=PREF.codigos ? /^(_category|ownerhistory|checksum|hash)$/i : /^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid|_category|ownerhistory|checksum|hash)$/i;
   const vazio=(v)=> v==null || v==='' || v==='—';
   const limpa=(ls)=> ls.filter(([k,v])=> !RUIDO.test(String(k).trim()) && !vazio(v));
   const diretosL = limpa(diretos);
@@ -1902,12 +1930,16 @@ function bimPropsHtml(data, hit, cx, dim){
   // Nome do material só entra se for um nome de verdade — nunca o nome técnico
   // da relação (HasAssociations) nem uma classe IFC crua.
   if(mG.length){ const mn=mG[0].nome; if(mn && !/^(ifc|hasassociations)/i.test(mn)) ident.push(['Material', mn]); }
-  out += cat('Identificação', linhas(ident));
-  out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
+  // registra os grupos vistos (para a lista do filtro) e aplica as escolhas do usuário
+  gruposL.forEach(g=>BP_PSETS_VISTOS.add(g.nome));
+  if(PREF.codigos){ const cods=diretos.filter(([k,v])=>/^(globalid|guid|_guid|tag|batid|expressid|_expressid|localid|_localid)$/i.test(String(k).trim()) && !vazio(v)); cods.forEach(([k,v])=>ident.push([k,v])); }
+  if(PREF.cats.ident!==false) out += cat('Identificação', linhas(ident));
+  if(PREF.cats.quant!==false) out += cat('Quantidades',  qG.filter(g=>bpPsetLigado(g.nome)).map(g=>linhas(g.ls)).join(''));
   // Reserva: se o modelo NÃO trouxe quantidades, calcula as dimensões da caixa
   // 3D (Altura = eixo vertical; horizontais = maior→Comprimento, menor→Largura).
   // Volume/área NÃO são deduzidos da geometria (regra do TQS nervurado).
-  if(!qG.length && dim && isFinite(dim.altura)){
+  if(PREF.cats.dim===false){ /* dimensões desligadas pelo usuário */ }
+  else if(!qG.length && dim && isFinite(dim.altura)){
     out += cat('Dimensões (medidas na geometria)', linhas([
       ['Altura', fmtDist(dim.altura)], ['Comprimento', fmtDist(dim.comprimento)], ['Largura / espessura', fmtDist(dim.largura)]
     ]));
@@ -1918,9 +1950,31 @@ function bimPropsHtml(data, hit, cx, dim){
       ['Altura', fmtDist(dy)], ['Comprimento', fmtDist(hd[0])], ['Largura', fmtDist(hd[1])]
     ]));
   }
-  out += cat('Material',     mG.map(g=>linhas(g.ls)).join(''));
-  out += cat('Propriedades', pG.map(pset).join(''));
+  if(PREF.cats.mat!==false) out += cat('Material', mG.filter(g=>bpPsetLigado(g.nome)).map(g=>linhas(g.ls)).join(''));
+  out += cat('Propriedades', pG.filter(g=>bpPsetLigado(g.nome)).map(pset).join(''));
+  if(!out) out='<div class="bpVazio">Tudo filtrado — use o funil para escolher o que mostrar.</div>';
   return out;
+}
+function bpFiltroToggle(win, force){
+  const pop=win.bpFiltroPop; if(!pop) return; const on = force===undefined ? !pop.classList.contains('on') : !!force;
+  if(on) bpFiltroRender(win); pop.classList.toggle('on', on);
+}
+function bpFiltroRender(win){
+  const pop=win.bpFiltroPop, P=bpPref();
+  const psets=[...BP_PSETS_VISTOS].sort((a,b)=>a.localeCompare(b,'pt'));
+  pop.innerHTML='<h5>Blocos</h5>'+BP_CATS.map(([k,r])=>`<label><input type="checkbox" data-cat="${k}" ${P.cats[k]!==false?'checked':''}>${r}</label>`).join('')
+    +`<label><input type="checkbox" data-cod="1" ${P.codigos?'checked':''}>Códigos internos (GUID, Tag…)</label>`
+    +'<h5>Conjuntos de propriedades'+(psets.length?' ('+psets.length+')':'')+'</h5>'
+    +(psets.length?psets.map(n=>`<label><input type="checkbox" data-pset="${esc(n)}" ${bpPsetLigado(n)?'checked':''}><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n)}">${esc(n)}</span></label>`).join(''):'<div class="bpVazio">Clique em elementos para a lista se formar.</div>')
+    +'<div class="acts"><button data-act="tudo">Tudo</button><button data-act="padrao">Padrão</button><button data-act="fechar">Fechar</button></div>';
+  pop.onchange=(ev)=>{ const t=ev.target; if(!(t instanceof HTMLInputElement)) return;
+    if(t.dataset.cat) P.cats[t.dataset.cat]=t.checked; else if(t.dataset.cod) P.codigos=t.checked; else if(t.dataset.pset){ if(t.checked) delete P.psets[t.dataset.pset]; else P.psets[t.dataset.pset]=false; }
+    bpPrefSalvar(); win.bpFiltroBtn.classList.toggle('on', bpFiltroAtivo()); if(win._bpUltimo) win.bimMostrarProps(win._bpUltimo); };
+  pop.onclick=(ev)=>{ const b=ev.target.closest('button[data-act]'); if(!b) return; ev.stopPropagation();
+    if(b.dataset.act==='tudo'){ P.cats={ident:true,quant:true,dim:true,mat:true}; P.psets={}; }
+    if(b.dataset.act==='padrao'){ P.cats={ident:true,quant:true,dim:true,mat:true}; P.psets={}; P.codigos=false; }
+    if(b.dataset.act==='fechar'){ bpFiltroToggle(win,false); return; }
+    bpPrefSalvar(); bpFiltroRender(win); win.bpFiltroBtn.classList.toggle('on', bpFiltroAtivo()); if(win._bpUltimo) win.bimMostrarProps(win._bpUltimo); };
 }
 
 // three + Fragments só são baixados quando alguém abre um modelo — são pesados
@@ -2891,7 +2945,7 @@ class CdeWin {
       +     '<button class="bpAba" title="Mostrar/ocultar painel">▸</button>'
       +     '<div class="bimPainel">'
       +       '<div class="bpSec"><h4>Modelos</h4><div class="bpLista"></div></div>'
-      +       '<div class="bpSec bpProps"><h4>Propriedades</h4>'
+      +       '<div class="bpSec bpProps"><h4><span>Propriedades</span><button class="bpFiltroBtn" title="Escolher o que mostrar (salvo para você)"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 2.5h13L9.5 8.5v4l-3 1.5v-5.5z"/></svg></button></h4><div class="bpFiltroPop"></div>'
       +         '<div class="bpConteudo"><div class="bpVazio">Clique num elemento do modelo.</div></div>'
       +       '</div>'
       +     '</div>'
@@ -2925,6 +2979,9 @@ class CdeWin {
     this.bimLoadEl= w.querySelector('.cdeWin-bim .bimLoad');
     this.bpLista  = w.querySelector('.cdeWin-bim .bpLista');
     this.bpConteudo = w.querySelector('.cdeWin-bim .bpConteudo');
+    this.bpFiltroBtn = w.querySelector('.cdeWin-bim .bpFiltroBtn'); this.bpFiltroPop = w.querySelector('.cdeWin-bim .bpFiltroPop');
+    if(this.bpFiltroBtn){ this.bpFiltroBtn.classList.toggle('on', bpFiltroAtivo()); this.bpFiltroBtn.addEventListener('click',(e)=>{ e.stopPropagation(); bpFiltroToggle(this); });
+      this.bpFiltroPop.addEventListener('click',e=>e.stopPropagation()); w.addEventListener('pointerdown',(e)=>{ if(this.bpFiltroPop.classList.contains('on') && !e.target.closest('.bpFiltroPop,.bpFiltroBtn')) bpFiltroToggle(this,false); }); }
     const tools = w.querySelector('.cdeWin-bim .bimTools');
     this.bimToolsEl = tools;
     tools.querySelector('[data-t=fit]')  .addEventListener('click', ()=> this.bimEnquadrar());
@@ -4787,6 +4844,7 @@ class CdeWin {
       this.bimXraySync();
     } else { try{ await this.bimRaiosXHover(null); }catch(_){} }
   }
+  bimMostrarProps(u){ if(!u||!this.bpConteudo) return; this.bpConteudo.innerHTML=bimPropsHtml(u.dados, u.melhor, u.cx, u.dim); }
   // ── Seleção: clique num elemento mostra as propriedades do IFC ───────────
   async bimSelecionarEm(ev){
     const B=this.B3; if(!B) return;
@@ -4820,7 +4878,8 @@ class CdeWin {
       let cx=null, dim=null;
       try{ const bs=await melhor.fragments.getBoxes([melhor.localId]); if(bs && bs[0]) cx=bs[0]; }catch(_){}
       dim=await dimOrientadas(melhor.fragments, melhor.localId);
-      this.bpConteudo.innerHTML = bimPropsHtml(dados && dados[0], melhor, cx, dim);
+      this._bpUltimo={ dados:dados&&dados[0], melhor, cx, dim };   // para re-render ao mudar o filtro
+      this.bimMostrarProps(this._bpUltimo);
     }catch(e){
       this.bpConteudo.innerHTML='<div class="bpVazio">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
     }

@@ -185,6 +185,9 @@
     // CFG.acima = seletor de uma barra no rodapé (ex.: #cdeTaskbar): o botão sobe quando ela aparece
     if(CFG.acima){ const el=document.querySelector(CFG.acima); if(el){ const up=()=>{ const h=el.offsetHeight||0; document.documentElement.style.setProperty('--aj-bottom',(h?h+10:14)+'px'); };
       up(); if(window.ResizeObserver) new ResizeObserver(up).observe(el); if(window.MutationObserver) new MutationObserver(up).observe(el,{attributes:true,childList:true}); } }
+    // CFG.centroEm = seletor de uma barra no rodapé (ex.: #cdeTaskbar): o botão fica centralizado na altura dela
+    if(CFG.centroEm){ const el=document.querySelector(CFG.centroEm); if(el){ const c=()=>{ const h=el.offsetHeight||0; document.documentElement.style.setProperty('--aj-bottom',(h>=32?Math.round((h-32)/2):14)+'px'); };
+      c(); if(window.ResizeObserver) new ResizeObserver(c).observe(el); if(window.MutationObserver) new MutationObserver(c).observe(el,{attributes:true,childList:true}); } }
     // CFG.encosta = seletor de uma coluna lateral (ex.: #navAside): o botão fica encostado nela, não por cima
     if(CFG.encosta){ const el=document.querySelector(CFG.encosta); if(el){ const side=()=>{ const r=el.getBoundingClientRect(); const w=lado==='left'?r.right:(window.innerWidth-r.left);
       document.documentElement.style.setProperty('--aj-side',(w>0&&w<window.innerWidth?w+10:14)+'px'); };
