@@ -37,6 +37,9 @@
   #tools{ position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:15; display:none; gap:6px; background:rgba(20,28,43,.92); border:1px solid var(--line); border-radius:12px; padding:6px; backdrop-filter:blur(4px); }
   #tools button{ min-width:38px; height:38px; padding:0 10px; background:#1b2536; border:1px solid var(--line); color:var(--txt); border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; }
   #tools button:hover{ border-color:var(--accent); }
+  #nit{ position:absolute; top:60px; left:50%; transform:translateX(-50%); z-index:16; background:rgba(20,28,43,.9); color:#C9D6E4; border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:12px; display:none; align-items:center; gap:8px; pointer-events:none }
+  #nit i{ width:12px; height:12px; border:2px solid #E8960A; border-right-color:transparent; border-radius:50%; animation:nitg .8s linear infinite; display:inline-block }
+  @keyframes nitg{ to{ transform:rotate(360deg) } }
   #tools button.on{ background:var(--accent); border-color:var(--accent); color:#231703; }
   #tools .sep{ width:1px; background:var(--line); margin:2px; }
   #tools .pg{ display:flex; align-items:center; font-size:12px; color:var(--mut); padding:0 6px; min-width:52px; justify-content:center; }
@@ -65,6 +68,7 @@
   <div id="banner">⚠ Existe uma versão <b>mais atual ainda não liberada para a obra</b>. Esta é a última revisão liberada. <b>Contatar a coordenação de projeto.</b></div>
   <div id="stage">
     <canvas id="pdfCv"></canvas>
+    <div id="nit"><i></i><span>Afinando a nitidez…</span></div>
     <div id="tiles"></div>
     <div id="pins"></div>
     <div id="bim"></div>
@@ -138,7 +142,7 @@ function baseScaleAlvo(){
     // Mobile: base LEVE (carrega rápido; camada fluida do zoom por CSS). A nitidez
     // de leitura vem dos LADRILHOS, que ficam GUARDADOS (cache) — arrastar reusa.
     const teto=Math.min(Math.sqrt(9e6/(pw*ph)), 4096/pw, 4096/ph);
-    const s=Math.min(fitZoom*dpr*2.5, teto);
+    const s=Math.min(fitZoom*dpr*3.5, teto);
     return { s: Math.max(s, Math.min(fitZoom*dpr, teto)), pw, ph };
   }
   const teto=Math.min(Math.sqrt(42e6/(pw*ph)), 16000/pw, 16000/ph);
@@ -212,7 +216,11 @@ let VCACHE = [];
 const _VC_MAX = 6;        // ~6 vistas guardadas
 const _VC_MARGEM = 0.35;  // 35% de folga além da tela (pans pequenos não re-renderizam)
 const _VC_RDPR = Math.min(window.devicePixelRatio||1, 2);
-function _vcVis(nv){ VCACHE.forEach(v=>{ v.cv.style.display = (v.nivel===nv)?'block':'none'; }); }
+function _vcVis(nv){
+  // Todas visíveis; a mais próxima do nível atual por cima (z-index). Uma vista de nível
+  // maior (mais nítida) também fica, escalada por CSS — melhor que cair na base borrada.
+  VCACHE.forEach(v=>{ v.cv.style.display='block'; v.cv.style.zIndex=String(100-Math.round(Math.abs(v.nivel-nv)*10)); });
+}
 function _vcCobre(nv){   // já existe vista no cache (nível nv) cobrindo a tela toda?
   const z=V.zoom, cw=stage.clientWidth, ch=stage.clientHeight;
   const x0=V.panX/z, y0=V.panY/z, x1=(V.panX+cw)/z, y1=(V.panY+ch)/z;
@@ -239,9 +247,9 @@ async function detView(){
   const off=document.createElement('canvas'); off.width=W; off.height=H;
   const ctx=off.getContext('2d'); ctx.setTransform(1,0,0,1,0,0); ctx.save(); ctx.translate(-rx*s,-ry*s);
   const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}) });
-  V._renderTask=task;
-  try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('view:',e); return; }
-  V._renderTask=null; ctx.restore(); if(job!==V._renderJob) return;
+  V._renderTask=task; nitMostrar(true);
+  try{ await task.promise; }catch(e){ nitMostrar(false); if(!/cancel/i.test(String(e&&e.name||e))) console.warn('view:',e); return; }
+  V._renderTask=null; ctx.restore(); nitMostrar(false); if(job!==V._renderJob) return;
   off.style.position='absolute';
   off.style.left=(rx*B.scale)+'px'; off.style.top=(ry*B.scale)+'px';
   off.style.width=(rw*B.scale)+'px'; off.style.height=(rh*B.scale)+'px';
@@ -249,6 +257,7 @@ async function detView(){
   VCACHE.push({ cv:off, nivel:nv, rx, ry, rw, rh });
   _vcPodar(); _vcVis(nv);
 }
+function nitMostrar(on){ const n=$('nit'); if(!n) return; clearTimeout(n._t); if(on){ n._t=setTimeout(()=>{ n.style.display='flex'; },400); } else n.style.display='none'; }
 function revisarBase(){ if(_MOVEL) return;   // no celular NÃO re-renderiza a base (isso limparia o cache dos ladrilhos); a base leve basta + tiles
   if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
 function fitPage(){
