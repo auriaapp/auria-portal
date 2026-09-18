@@ -3698,9 +3698,10 @@ async function discCarregar(){
   if(!data){ DISC_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">Esta construtora ainda não tem <b>padrão de codificação</b>. Defina em <a href="cde.html" style="color:var(--blue)">Padrão de codificação</a> antes de gerenciar as disciplinas.</div>'; return; }
   const campos=data.campos||[]; const f=campos.find(c=>c.mapeia==='disciplina');
   if(!f){ DISC_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">A convenção desta construtora não tem um campo de <b>disciplina</b>.</div>'; return; }
-  DISC_DOM=(f.dominio||[]).map(d=> (typeof d==='object')?{v:d.v||'',rotulo:d.rotulo||''}:{v:d,rotulo:''});
+  DISC_DOM=(f.dominio||[]).map(d=> (typeof d==='object')?{v:d.v||'',rotulo:d.rotulo||'',v0:d.v||''}:{v:d,rotulo:'',v0:d});
   body.innerHTML='<div style="background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:16px">'
     +'<div id="discRows"></div>'
+    +'<div style="font-size:11.5px;color:var(--text-soft);margin-top:6px">Alterar a <b>sigla</b> de uma disciplina já usada <b>renomeia e migra</b> pranchas, códigos, fornecedores, contratos e acessos dela — com registro no histórico (ISO 19650). O nome pode ser trocado livremente.</div>'
     +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discAdd()">+ Disciplina</button>'
     +'<button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discSort()" title="Ordenar por código (alfanumérico)">&#8693; Ordenar A&#8594;Z</button>'
     +'<button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="discAplicarAbrir()" title="Copiar esta lista de disciplinas para outras empresas do grupo">&#10697; Aplicar a outras empresas&hellip;</button>'
@@ -3751,11 +3752,31 @@ function discAdd(){ DISC_DOM.push({v:'',rotulo:''}); discRenderRows();
   const box=document.getElementById('discRows'); const ins=box&&box.querySelectorAll('input'); if(ins&&ins.length) ins[ins.length-2].focus(); }
 function discDel(i){ DISC_DOM.splice(i,1); discRenderRows(); }
 function _discMsg(c){ return ({sem_permissao:'Sem permissão para editar.',sem_convencao:'Construtora sem convenção — defina o padrão primeiro.',sem_campo_disciplina:'A convenção não tem campo de disciplina.',erro_escopo:'Escopo inválido.',invalido:'Preencha código e nome.'})[c]||('Falha: '+c); }
+// Item 63: sigla alterada numa disciplina existente → cde_disc_renomear (migra tudo, com
+// evento por prancha e registro global) ANTES de salvar a lista; senão salvar a lista
+// sozinha deixaria pranchas com a sigla antiga órfãs da convenção.
+async function discRenomearPendentes(e){
+  const ren=DISC_DOM.filter(d=>d.v0 && (d.v||'').trim().toUpperCase()!==d.v0 && (d.v||'').trim());
+  if(!ren.length) return true;
+  if(!e.construtora){ showToast('Renomear sigla só é possível no padrão de uma construtora (escolha a empresa acima).','red'); return false; }
+  const lista=ren.map(d=>d.v0+' → '+(d.v||'').trim().toUpperCase()).join(', ');
+  if(!confirm('Renomear disciplina(s): '+lista+'.\n\nIsso migra as pranchas (código e disciplina), fornecedores, contratos, cotações e acessos dessa construtora, e grava o histórico. Nada é apagado.\n\nContinuar?')) return false;
+  for(const d of ren){
+    const novo=(d.v||'').trim().toUpperCase();
+    const { data, error } = await sb.rpc('cde_disc_renomear',{ p_construtora:e.construtora, p_de:d.v0, p_para:novo, p_rotulo:(d.rotulo||'').trim()||null });
+    if(error){ showToast('Não renomeou '+d.v0+': '+error.message+(/cde_disc_renomear/.test(error.message)?' (rode supabase_cde_disc_renomear.sql)':''),'red'); return false; }
+    const r=(data&&data[0])||{};
+    showToast(d.v0+' → '+novo+': '+(r.documentos||0)+' prancha(s), '+(r.fornecedores||0)+' fornecedor(es), '+(r.contratos||0)+' contrato(s), '+(r.acessos||0)+' acesso(s) migrados','green');
+    d.v0=novo;
+  }
+  return true;
+}
 async function discSalvar(){
   const seen=new Set(), dom=[];
   for(const d of DISC_DOM){ const v=(d.v||'').trim().toUpperCase(), r=(d.rotulo||'').trim();
     if(!v) continue; if(seen.has(v)){ showToast('Código repetido: '+v,'red'); return; } seen.add(v); dom.push({v, rotulo:r||v}); }
   const e=discEscopoAtual();
+  if(!(await discRenomearPendentes(e))) return;
   const { data, error } = await sb.rpc('cde_disc_salvar',{ p_construtora:e.construtora, p_grupo:e.grupo, p_dominio:dom });
   if(error){ showToast('Erro: '+error.message,'red'); return; }
   if(data!=='ok'){ showToast(_discMsg(data),'red'); return; }
