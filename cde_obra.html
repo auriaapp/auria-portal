@@ -648,9 +648,9 @@
 </div>
 
 <!-- Recebimento em lote -->
-<div class="ov" id="ov" onclick="if(event.target===this)fecharReceber()">
+<div class="ov" id="ov" onpointerdown="OV_DOWN=(event.target===this)" onclick="if(event.target===this&&OV_DOWN)fecharReceber(false); OV_DOWN=false">
   <div class="modal">
-    <div class="modal-h"><b>Enviar arquivo(s)</b><button class="x" onclick="fecharReceber()">×</button></div>
+    <div class="modal-h"><b>Enviar arquivo(s)</b><button class="x" onclick="fecharReceber(false)">×</button></div>
     <div class="modal-b">
       <div class="drop" id="drop" onclick="$('fileInput').click()">
         <b>Arraste os arquivos aqui</b>
@@ -671,7 +671,7 @@
         <div class="prog" id="progwrap" style="display:none;margin-bottom:6px"><i id="progbar"></i></div>
         <span class="msg" id="recMsg"></span>
       </div>
-      <button class="btn sec" onclick="fecharReceber()">Cancelar</button>
+      <button class="btn sec" onclick="fecharReceber(false)">Cancelar</button>
       <button class="btn pri" id="btnConfirmar" onclick="confirmarLote()" disabled>Registrar recebimento</button>
     </div>
   </div>
@@ -5989,7 +5989,18 @@ function parseCodigo(nomeArquivo){
 // analista em OUTRA aba não eram reconhecidas até dar F5 no CDE (item 56).
 async function convRecarregar(){ try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); if(c&&c[0]) CONV=c[0]; }catch(_){} }
 function abrirReceber(){ LOTE=[]; convRecarregar(); $('prevWrap').style.display='none'; $('recMsg').textContent=''; $('progwrap').style.display='none'; $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
-function fecharReceber(){ $('ov').classList.remove('on'); }
+// item 61: (1) o "clique fora" só vale se o mouse desceu E subiu no fundo — selecionar texto
+// numa descrição e soltar fora do modal disparava click no #ov e fechava tudo; (2) com arquivos
+// no lote, fechar pede confirmação (X, Cancelar, fundo, Esc). Envio concluído passa forcar=true.
+let OV_DOWN=false;
+function fecharReceber(forcar){
+  const ov=$('ov'); if(!ov.classList.contains('on')) return;
+  const enviando=$('btnConfirmar').disabled && $('progwrap').style.display==='block';
+  if(forcar!==true && (LOTE.length || enviando)){
+    if(!confirm(enviando ? 'O envio ainda está em andamento. Fechar mesmo assim?' : 'Há '+LOTE.length+' arquivo(s) preparado(s) para envio. Abandonar sem enviar?')) return;
+  }
+  ov.classList.remove('on');
+}
 (function(){ const drop=$('drop');
   ['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
   ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
@@ -6137,7 +6148,7 @@ async function confirmarLote(){
     sb.functions.invoke('notify-cde-upload', { body:{ emp_id:EMP_ID, itens:recebidos } }).then(()=>{},()=>{});
   }
   await carregarDocs(); await carregarGrupos(); renderRail();
-  if(!falhas){ setTimeout(()=>{ fecharReceber(); $('progwrap').style.display='none'; }, 1000); }
+  if(!falhas){ setTimeout(()=>{ LOTE=[]; fecharReceber(true); $('progwrap').style.display='none'; }, 1000); }
   b.disabled=false;
 }
 
@@ -6153,7 +6164,7 @@ function fmtBytes(n){ if(!n)return''; const u=['B','KB','MB','GB'];let i=0,v=n; 
 function fmtData(s){ if(!s)return''; try{ return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return''; } }
 function abrirDetalhes(){ if(!DOC_SEL) return; $('dCod').textContent=DOC_SEL.codigo; $('dTit').textContent=DOC_SEL.titulo||DOC_SEL.codigo; $('dBody').innerHTML='<div style="padding:20px;color:var(--mut)">Carregando…</div>'; $('ovDoc').classList.add('on'); renderDetalhe(); }
 function fecharDoc(){ $('ovDoc').classList.remove('on'); }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ fecharDoc(); fecharReceber(); fecharVincular(); fecharComparar(); } });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if($('ov').classList.contains('on')){ fecharReceber(false); return; } fecharDoc(); fecharVincular(); fecharComparar(); } });
 
 async function renderDetalhe(){
   const d=DOC_SEL; if(!d) return;
