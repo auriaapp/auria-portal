@@ -1,8 +1,8 @@
 // ============================================================================
 //  Auria — Assistente de ajuda (suporte por IA) · item 52
-//  Botão flutuante "?" em todos os painéis. Responde dúvidas de uso com base
-//  ÚNICA no manual (RPC ajuda_manual, recortado por papel no servidor) + contexto da tela (papel, página,
-//  empreendimento). Não navega na internet: só vê o manual e a pergunta.
+//  Botão flutuante "?" em todos os painéis. Responde dúvidas de uso por BUSCA no
+//  manual (RPC ajuda_manual, recortado por papel no servidor) + FAQ, aqui no navegador —
+//  sem IA externa (item 72). Gemini fica só para análise/normas no App.
 //  Quando não sabe, oferece "Enviar para o Auria" → RPC ajuda_escalar (grava e
 //  manda e-mail ao suporte). Toda pergunta fica registrada (ajuda_pergunta_auria)
 //  para alimentar o manual.
@@ -13,8 +13,6 @@
 //                      contexto:()=>({ empreendimento:'PINI · Diagonal…' }), lado:'right' });
 // ============================================================================
 (function(){
-  const IA_FN='dynamic-task';                 // slug real do proxy de IA (groq-proxy)
-  const MAX_TURNOS=8;
   let CFG=null, MANUAL='', CONV=[], ABERTO=false, ULT={pergunta:'',resposta:''};
 
   const CSS=`
@@ -42,6 +40,8 @@
   .aj-m.a li{margin:2px 0}
   .aj-go{display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:#E8960A;color:#231703;border:none;border-radius:8px;padding:6px 11px;font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit}
   .aj-go:hover{background:#D3860A}
+  .aj-veja{margin-top:6px;font-size:11.5px;color:#64748B} .aj-veja a{color:#1E3A5F;font-weight:700;text-decoration:none} .aj-veja a:hover{text-decoration:underline}
+  .aj-m.a i.man{color:#64748B;font-style:italic}
   .aj-sug{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px;background:#EEF2F7}
   .aj-sug button{background:#fff;border:1px solid #E2E8F0;border-radius:999px;padding:4px 10px;font-size:11.5px;cursor:pointer;color:#334155;font-family:inherit}
   .aj-sug button:hover{border-color:#E8960A}
@@ -88,7 +88,7 @@
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   // markdown mínimo → HTML (negrito, código, listas, quebras)
   function md(s){
-    let h=esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+    let h=esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/_\(([^)]+)\)_/g,'<i class="man">($1)</i>');
     const lines=h.split('\n'); let out='', inList=false;
     for(const l of lines){
       const m=/^\s*[-•]\s+(.*)$/.exec(l);
@@ -107,52 +107,8 @@
     return MANUAL;
   }
 
-  // ── Recorte do manual por relevância ───────────────────────────────────────
-  //  O manual inteiro do analista passa de 25k chars (~8k tokens): estoura o limite do
-  //  Groq (reserva quando o Gemini está sobrecarregado) e encarece toda pergunta. Aqui
-  //  o manual é partido em seções (## / ###) e só as que casam com a pergunta vão no
-  //  prompt, dentro de um orçamento. O capítulo 0/1 (o que é, papéis) entra sempre.
+  // Palavras vazias da busca local (item 72)
   const STOP=new Set(['a','o','os','as','de','do','da','dos','das','um','uma','e','em','no','na','nos','nas','para','pra','por','que','como','onde','qual','quais','é','eu','meu','minha','se','ao','à','com','não','ser','ter','faço','fazer','posso','consigo','uso','usar','isso','esse','essa','este','esta','aqui','ali','tem','há','the','of']);
-  function termos(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>2&&!STOP.has(w)).map(w=>w.length>5?w.slice(0,5):w); }
-  function trechosRelevantes(manual, pergunta, orcamento){
-    if(!manual) return '';
-    if(manual.length<=orcamento) return manual;
-    const secs=manual.split(/\n(?=##+ )/);
-    const q=[...new Set(termos(pergunta))]; if(!q.length) return manual.slice(0,orcamento);
-    const norm=x=>String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-    const pont=secs.map((sec,i)=>{ const n=norm(sec); let sc=0; q.forEach(t=>{ if(n.includes(t)) sc+=1+(norm(sec.split('\n')[0]).includes(t)?2:0); }); return {i,sc,len:sec.length}; });
-    const sempre=secs.map((sec,i)=>({sec,i})).filter(x=>/^## (0|1)\./.test(x.sec)||!/^##/.test(x.sec)).map(x=>x.i);
-    const ordem=pont.filter(x=>x.sc>0&&!sempre.includes(x.i)).sort((a,b)=>b.sc-a.sc||a.i-b.i);
-    const pega=new Set(sempre); let usado=sempre.reduce((n,i)=>n+secs[i].length,0);
-    for(const x of ordem){ if(usado+x.len>orcamento) continue; pega.add(x.i); usado+=x.len; }
-    // capítulo FAQ (14) e "FAQ promovida" entram se couberem — costumam ser a resposta direta
-    secs.forEach((sec,i)=>{ if(!pega.has(i)&&/^## (14\.|Perguntas frequentes)/.test(sec)&&usado+sec.length<=orcamento*1.15){ pega.add(i); usado+=sec.length; } });
-    return [...pega].sort((a,b)=>a-b).map(i=>secs[i]).join('\n');
-  }
-
-  function systemPrompt(pergunta, orcamento){
-    const ctx=(CFG.contexto&&CFG.contexto())||{};
-    const papel=PAPEL_NOME[CFG.papel]||CFG.papel||'usuário';
-    return [
-      'Você é o assistente de suporte do Auria, plataforma de coordenação de projetos com BIM para construtoras. Responda em português do Brasil, de forma curta, prática e amigável.',
-      'REGRAS OBRIGATÓRIAS:',
-      '1. Responda SOMENTE com base no MANUAL abaixo. Não invente funções, telas, botões ou regras que não estejam no manual.',
-      '2. Se a resposta não estiver no manual, diga exatamente: "Não encontrei isso no manual." e sugira enviar a pergunta para o Auria. Não tente adivinhar.',
-      '3. Dê o caminho concreto quando existir: painel › menu/aba › botão (ex.: "Painel do Analista › card do empreendimento › Acessos › Fornecedores › Atribuir").',
-      '4. Considere o papel de quem pergunta: um '+papel+' só faz o que o manual permite ao seu papel. Se a pergunta for sobre uma ação de OUTRO papel (ex.: aprovar cadastro, liberar prancha, abrir janela de NF), responda apenas quem é o responsável ("isso é feito pela gestão/coordenação/adm-fin") — sem descrever telas, menus ou botões que não são do papel de quem pergunta.',
-      '5. Não fale de sistemas externos, nem de coisas fora do Auria. Não use conhecimento de fora do manual.',
-      '5b. Se um termo tiver mais de um sentido no manual (ex.: "grupo" = conta-cliente na Gestão OU aba Grupos de pranchas no CDE), responda pelo sentido da PÁGINA ATUAL de quem pergunta e, se couber, cite o outro em uma frase.',
-      '6. Use no máximo 6 linhas ou uma lista curta. Negrito para nomes de botões/menus.',
-      acoesPrompt(),
-      '',
-      'CONTEXTO DE QUEM PERGUNTA: papel = '+papel+'; página atual = '+(CFG.pagina||'—')+(ctx.empreendimento?'; empreendimento aberto = '+ctx.empreendimento:'')+(ctx.extra?'; '+ctx.extra:'')+'.',
-      '',
-      '===== MANUAL DO AURIA =====',
-      (MANUAL&&trechosRelevantes(manualParaPapel(MANUAL, CFG.papel), pergunta, orcamento||12000))||'(manual indisponível — responda que o manual não pôde ser carregado e sugira enviar a pergunta para o Auria)',
-      '===== FIM DO MANUAL ====='
-    ].join('\n');
-  }
-
   // ── "Me leva lá" (fase 2): a página registra ações (CFG.acoes = {chave:{rotulo, run, quando?}}).
   //    O prompt lista as chaves disponíveis; a IA termina a resposta com [[acao:chave]] quando
   //    a resposta é exatamente essa ação; o painel vira isso num botão que executa na hora.
@@ -160,18 +116,6 @@
     const out={}; const A=(CFG&&CFG.acoes)||{};
     Object.keys(A).forEach(k=>{ const a=A[k]; if(!a||typeof a.run!=='function') return; try{ if(a.quando && !a.quando()) return; }catch(_){ return; } out[k]=a; });
     return out;
-  }
-  function acoesPrompt(){
-    const A=acoesDisponiveis(); const ks=Object.keys(A); if(!ks.length) return '';
-    return '7. AÇÕES QUE VOCÊ PODE EXECUTAR NESTA TELA (só estas chaves; nunca invente outra): '
-      + ks.map(k=>k+' = '+A[k].rotulo+(A[k].descricao?' ('+A[k].descricao+')':'')).join('; ')
-      + '. Quando a resposta for exatamente uma dessas ações, explique o caminho em uma linha e termine a resposta com uma linha contendo só [[acao:CHAVE]] — o usuário verá um botão que faz isso por ele.'
-      + ' Se o usuário pedir "me leva lá", "abre pra mim", "me leve até lá" ou parecido, responda só "Pronto — é este botão:" e termine com a [[acao:CHAVE]] da resposta anterior (se ela existir nesta lista; senão diga que nesta tela não dá para abrir direto e repita o caminho).';
-  }
-  function extrairAcao(resp){
-    const m=/\[\[\s*acao\s*:\s*([a-z0-9_]+)\s*\]\]/i.exec(resp||''); if(!m) return {texto:resp,acao:null};
-    const chave=m[1].toLowerCase(); const texto=String(resp).replace(/\n?\s*\[\[\s*acao\s*:[^\]]*\]\]\s*/gi,'').trim();
-    return {texto, acao: acoesDisponiveis()[chave] ? chave : null};
   }
   function executarAcao(chave){
     const a=acoesDisponiveis()[chave]; if(!a) return;
@@ -195,11 +139,11 @@
     const btn=document.createElement('button'); btn.className='aj-btn'; btn.title='Ajuda do Auria — pergunte como usar'; btn.innerHTML='?<span class="aj-dot"></span>';
     btn.onclick=toggle; document.body.appendChild(btn);
     const pan=document.createElement('div'); pan.className='aj-pan'; pan.id='ajPan';
-    pan.innerHTML='<div class="aj-hd"><img src="logo_symbol.png" alt=""><div><b>Ajuda do Auria</b><span>Suporte por IA · responde pelo manual</span></div><button onclick="AuriaAjuda.limpar()" title="Limpar conversa">Limpar</button><button onclick="AuriaAjuda.fechar()">✕</button></div><div class="aj-line"></div>'
+    pan.innerHTML='<div class="aj-hd"><img src="logo_symbol.png" alt=""><div><b>Ajuda do Auria</b><span>Responde pelo manual do Auria</span></div><button onclick="AuriaAjuda.limpar()" title="Limpar conversa">Limpar</button><button onclick="AuriaAjuda.fechar()">✕</button></div><div class="aj-line"></div>'
       +'<div class="aj-msgs" id="ajMsgs"></div><div class="aj-sug" id="ajSug"></div>'
       +'<div class="aj-esc" id="ajEsc"><span>Não resolveu? Mando a pergunta para o Auria com o contexto da sua tela.</span><button onclick="AuriaAjuda.escalar()">Enviar para o Auria</button></div>'
       +'<div class="aj-in"><textarea id="ajIn" placeholder="Pergunte como fazer algo no Auria…"></textarea><button id="ajGo" onclick="AuriaAjuda.enviar()">➤</button></div>'
-      +'<div class="aj-ft">Responde só pelo manual do Auria; não consulta a internet. Perguntas ficam registradas para melhorar a ajuda.</div>';
+      +'<div class="aj-ft">Busca no manual do Auria, aqui mesmo — sem IA externa e sem internet. Perguntas ficam registradas para melhorar o manual.</div>';
     document.body.appendChild(pan);
     document.getElementById('ajIn').addEventListener('keydown',ev=>{ if(ev.key==='Enter'&&!ev.shiftKey){ ev.preventDefault(); AuriaAjuda.enviar(); } });
     render();
@@ -210,7 +154,8 @@
       const papel=PAPEL_NOME[CFG.papel]||'';
       box.innerHTML='<div class="aj-m a">Olá! Sou a ajuda do Auria. Pergunte <b>como fazer</b> alguma coisa, <b>onde fica</b> uma função ou o que significa uma mensagem. '+(papel?'Vejo que você está como <b>'+esc(papel)+'</b>'+(CFG.pagina?' no '+esc(CFG.pagina):'')+'.':'')+'</div>';
     } else box.innerHTML=CONV.map(m=>'<div class="aj-m '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):md(m.content))
-        +(m.acao&&acoesDisponiveis()[m.acao]?'<br><button class="aj-go" onclick="AuriaAjuda.acao(\''+m.acao+'\')">➜ Me leva lá: '+esc(acoesDisponiveis()[m.acao].rotulo)+'</button>':'')+'</div>').join('')+(CONV.length&&CONV[CONV.length-1].pensando?'<div class="aj-m a" style="color:#64748B">pensando…</div>':'');
+        +(m.acao&&acoesDisponiveis()[m.acao]?'<br><button class="aj-go" onclick="AuriaAjuda.acao(\''+m.acao+'\')">➜ Me leva lá: '+esc(acoesDisponiveis()[m.acao].rotulo)+'</button>':'')
+        +(m.extras&&m.extras.length?'<div class="aj-veja">Veja também: '+m.extras.map(t=>'<a href="#" onclick="AuriaAjuda.perguntar('+JSON.stringify(t).replace(/"/g,'&quot;')+');return false">'+esc(t)+'</a>').join(' · ')+'</div>':'')+'</div>').join('')+(CONV.length&&CONV[CONV.length-1].pensando?'<div class="aj-m a" style="color:#64748B">pensando…</div>':'');
     box.scrollTop=box.scrollHeight;
     const sug=document.getElementById('ajSug');
     const lista=SUGESTOES[PAPEL_NOME[CFG.papel]==='adm-fin'?'financeiro':(PAPEL_NOME[CFG.papel]||'').replace(' interno','')]||SUGESTOES.padrao;
@@ -218,6 +163,88 @@
   }
   function toggle(){ ABERTO=!ABERTO; document.getElementById('ajPan').classList.toggle('on',ABERTO); if(ABERTO){ carregarManual(); setTimeout(()=>{ const i=document.getElementById('ajIn'); if(i) i.focus(); },0); } }
 
+  // ── Item 72: "IA própria" — busca no manual + FAQ, sem modelo externo ─────
+  //  Para "como faço X / onde fica Y" não precisa de gerador: precisa de busca boa.
+  //  Índice = FAQ promovida (peso máximo) + cap. 14 + cada seção ##/### do manual
+  //  (já recortado por papel). Casamento por termos normalizados (acento, plural,
+  //  radical) + dicionário de sinônimos do vocabulário do Auria; título pesa mais.
+  //  Sem casamento confiável → "Não encontrei isso no manual" + Enviar para o Auria
+  //  (que vira FAQ). O Gemini NÃO é usado aqui (fica só para análise/normas no App).
+  const SIN=[['baixar','download','descarregar','salvar'],['prancha','folha','desenho','arquivo','documento','pdf'],['pin','apontamento','ocorrencia','pendencia','marcacao'],
+    ['liberar','publicar','aprovar','a1','b1','liberado'],['federar','federado','juntar','sobrepor'],['foto','print','imagem','captura','screenshot'],['enviar','subir','upload','mandar','anexar','postar'],
+    ['apagar','excluir','remover','deletar'],['renomear','recodificar','codigo','nome'],['senha','login','entrar','acesso','logar','ativar'],['nota','nf','fatura','faturamento','notas'],
+    ['girar','rotacionar','rotacao','virar'],['zip','lote','varios','juntos','compactar'],['diario','rdo'],['qr','qrcode','codigo qr','etiqueta'],['fornecedor','escritorio','projetista','contratado'],
+    ['etapa','fase','ex','pe','ep'],['buscar','procurar','pesquisar','encontrar','achar','localizar','busca'],['filtro','filtrar','filtrando'],['modelo','ifc','bim','3d','rvt','maquete'],
+    ['cotacao','proposta','mde','equalizacao','orcamento'],['contrato','parcela','aditivo'],['disciplina','sigla'],['revisao','versao','rev'],['status','estado','situacao'],
+    ['obra','canteiro','campo','engenheiro'],['gestor','gerente','gestao','diretoria'],['analista','coordenador','coordenacao'],['grupo','pasta','colecao'],['pavimento','andar','nivel','piso'],
+    ['agenda','calendario','compromisso'],['kanban','quadro'],['mensagem','conversa','chat','responder','resposta'],['cronograma','prazo','marco'],['logo','marca','imagem da empresa'],
+    ['acesso temporario','link temporario','24h','convidado'],['medir','trena','medida','cota','distancia'],['corte','secao','cortar'],['caminhar','walk','andar dentro'],['propriedade','pset','atributo','informacao'],
+    ['quantitativo','quantidade','area','volume','m2','m3'],['exportar','excel','bcf','relatorio','planilha'],['ficha','briefing','cadastro do empreendimento'],['empreendimento','projeto','obra nova','emp']];
+  const SIN_MAP={}; SIN.forEach((g,i)=>g.forEach(w=>{ if(w.includes(' ')) return; SIN_MAP[_norm1(w)]='~'+i; SIN_MAP[_stem(_norm1(w))]='~'+i; }));
+  function _norm1(w){ return String(w||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+  // radical leve para PT: tira plural e terminações verbais/nominais comuns (enviar/envio/enviando → envi; girar/gira → gir)
+  function _stem(w){ w=w.replace(/(coes|oes)$/,'ao').replace(/(ais|eis|ois)$/,'al').replace(/s$/,'');
+    for(const suf of ['ando','endo','indo','aram','eram','iram','ada','ado','ida','ido','mente','ar','er','ir','ou','ei','o','a','e']){ if(w.length-suf.length>=3 && w.endsWith(suf)){ w=w.slice(0,-suf.length); break; } }
+    return w.length>6?w.slice(0,6):w; }
+  function toks(t){
+    const base=_norm1(t).replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>1&&!STOP.has(w));
+    const out=[]; base.forEach(w=>{ const st=_stem(w); out.push(st); const s=SIN_MAP[w]||SIN_MAP[st]; if(s) out.push(s); });
+    // expressões compostas do dicionário ("acesso temporario") — casa no texto inteiro
+    const full=' '+_norm1(t)+' '; SIN.forEach((g,i)=>{ if(g.some(x=>x.includes(' ')&&full.includes(' '+_norm1(x)+' '))) out.push('~'+i); });
+    return out;
+  }
+  let INDICE=null, INDICE_SRC='';
+  function indexar(manual){
+    if(INDICE && INDICE_SRC===manual) return INDICE;
+    const itens=[]; const blocos=String(manual||'').split(/\n(?=##+ )/);
+    let cap='';
+    blocos.forEach(b=>{
+      const m=/^(##+)\s+(.+)/.exec(b); if(!m) return;
+      const nivel=m[1].length, titulo=m[2].trim(); const corpo=b.slice(m[0].length).trim();
+      if(nivel===2) cap=titulo;
+      const ehFaq=/^14\.|perguntas frequentes/i.test(titulo);
+      if(ehFaq){
+        // linhas "- **Pergunta?** resposta" e blocos "**P: pergunta**\nresposta"
+        const re1=/^- \*\*(.+?)\*\*\s*(.+)$/gm; let x; while((x=re1.exec(corpo))) itens.push({tipo:'faq',pergunta:x[1].trim(),resposta:x[2].trim(),cap});
+        const re2=/\*\*P:\s*(.+?)\*\*\s*\n([\s\S]*?)(?=\n\*\*P:|\n*$)/g; while((x=re2.exec(corpo))) itens.push({tipo:'faq',pergunta:x[1].trim(),resposta:x[2].trim(),cap,promovida:true});
+        return;
+      }
+      if(corpo.length>30) itens.push({tipo:'sec',titulo,corpo,cap,nivel});
+    });
+    itens.forEach(it=>{ it.tt=new Set(toks(it.tipo==='faq'?it.pergunta:it.titulo)); it.tb=new Set(toks(it.tipo==='faq'?it.resposta:it.corpo)); });
+    // frequência de documento por token → peso IDF (palavra que está em tudo vale pouco)
+    const df={}; itens.forEach(it=>{ new Set([...it.tt,...it.tb]).forEach(t=>{ df[t]=(df[t]||0)+1; }); });
+    const N=itens.length||1; itens.idf=(t)=>{ const d=df[t]; if(!d) return 0.3; return Math.max(0.25, Math.log((N+1)/(d+0.5))/Math.log(N+1)); };
+    INDICE=itens; INDICE_SRC=manual; return itens;
+  }
+  function buscar(pergunta, manual){
+    const idx=indexar(manual); const q=[...new Set(toks(pergunta))]; if(!q.length) return [];
+    const idf=idx.idf||(()=>1);
+    const base=q.filter(t=>t[0]!=='~').reduce((s,t)=>s+idf(t)*3,0)||1;
+    const res=idx.map(it=>{
+      let sc=0, casou=0;
+      q.forEach(t=>{ const eSin=t[0]==='~', w=eSin?0.7:idf(t); if(it.tt.has(t)){ sc+=w*3; casou++; } else if(it.tb.has(t)){ sc+=w*1.6; casou++; } });
+      let conf=sc/base;   // sem teto aqui: os multiplicadores desempatam; teto só no fim
+      if(it.tipo==='faq') conf*=1.25; if(it.promovida) conf*=1.15;
+      // especificidade: seção curta e profunda vale mais que capítulo-panorama (o cap. 1 casa com tudo)
+      if(it.tipo==='sec'){ if(it.nivel>=3) conf*=1.1; else conf*=0.85; if(/^1\./.test(it.titulo)) conf*=0.6; if(it.corpo.length>1800) conf*=0.85; }
+      return {it, conf, casou};
+    }).filter(r=>r.casou>0).sort((a,b)=>b.conf-a.conf||b.casou-a.casou);
+    res.forEach(r=>{ r.conf=Math.min(1,r.conf); });
+    return res.slice(0,4);
+  }
+  function acaoPara(texto){   // melhor ação da tela para o texto (pergunta + resposta)
+    const A=acoesDisponiveis(); const t=new Set(toks(texto)); let best=null, bs=0;
+    Object.keys(A).forEach(k=>{ const a=A[k]; const forte=new Set(toks(k.replace(/_/g,' ')+' '+(a.rotulo||''))), fraco=new Set(toks(a.descricao||''));
+      const GEN=new Set(['abr','obr','pain','cde','arqu','list','tel','mostr','model']);   // palavras que estão em várias ações: valem pouco
+      let s=0, sf=0; forte.forEach(x=>{ if(t.has(x)){ const g=GEN.has(x); s+=(x[0]==='~'?0.6:(g?0.3:1.5)); if(x[0]!=='~'&&!g) sf++; } }); fraco.forEach(x=>{ if(!forte.has(x)&&t.has(x)) s+=(x[0]==='~'?0.4:0.5); });
+      if(sf>0 && s>bs){ bs=s; best=k; } });
+    return bs>=2 ? best : null;
+  }
+  function secaoHtmlTexto(it){
+    let corpo=it.corpo; if(corpo.length>1100){ const cut=corpo.slice(0,1100); corpo=cut.slice(0, Math.max(cut.lastIndexOf('\n'), 700))+'\n…'; }
+    return '📖 **'+it.titulo+'**'+(it.cap&&it.cap!==it.titulo?'  _(manual › '+it.cap.replace(/^\d+\.\s*/,'')+')_':'')+'\n'+corpo;
+  }
   async function enviar(texto){
     const inp=document.getElementById('ajIn'); const q=(texto||inp.value||'').trim(); if(!q) return;
     inp.value=''; CONV.push({role:'user',content:q}); CONV.push({role:'assistant',content:'',pensando:true}); render();
@@ -225,33 +252,33 @@
     document.getElementById('ajEsc').style.display='none';
     try{
       await carregarManual();
-      const hist=CONV.filter(m=>!m.pensando).slice(-MAX_TURNOS*2);
-      // recorte pela pergunta atual + a anterior (continuações tipo "e depois?" têm pouco texto)
-      const perguntas=hist.filter(m=>m.role==='user').slice(-2).map(m=>m.content).join(' ');
-      async function chamar(orcamento){
-        const messages=[{role:'system',content:systemPrompt(perguntas, orcamento)}].concat(hist.map(m=>({role:m.role,content:m.content})));
-        const r=await CFG.sb.functions.invoke(IA_FN,{ body:{ messages, temperature:0.2, max_tokens:700 } });
-        if(r.error){ let msg=(r.error&&r.error.message)||String(r.error); try{ const j=await r.error.context.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
-        return (r.data&&(r.data.content||r.data.resposta))||'';
+      const man=manualParaPapel(MANUAL||'', CFG.papel);
+      let resp='', acao=null, naoSabe=false, extras=[];
+      // "me leva lá" / "abre pra mim" como continuação da resposta anterior
+      if(/(me lev|leva l[aá]|leve l[aá]|abr[ae] (pra|para) mim|me manda|vai l[aá]|abrir isso|pode abrir)/i.test(q) && ULT.acao && acoesDisponiveis()[ULT.acao]){
+        resp='Pronto — é este botão:'; acao=ULT.acao;
+      } else if(!man){
+        resp='O manual não pôde ser carregado agora. Tente de novo em instantes ou envie a pergunta para o Auria.'; naoSabe=true;
+      } else {
+        const r=buscar(q, man); const top=r[0];
+        if(top && top.conf>=0.42 && (top.casou>=2 || toks(q).filter(t=>t[0]!=='~').length<=1)){
+          if(top.it.tipo==='faq') resp=top.it.resposta;
+          else resp=secaoHtmlTexto(top.it);
+          extras=r.slice(1).filter(x=>x.conf>=0.35 && x.it.tipo==='sec').map(x=>x.it.titulo).slice(0,2);
+          acao=acaoPara(q+' '+(top.it.tipo==='faq'?top.it.pergunta+' '+top.it.resposta:top.it.titulo));
+        } else {
+          resp='Não encontrei isso no manual.'; naoSabe=true;
+          const sug=r.filter(x=>x.conf>=0.2).map(x=>x.it.tipo==='faq'?x.it.pergunta:x.it.titulo).slice(0,3);
+          if(sug.length) resp+='\nTalvez ajude: '+sug.map(s=>'“'+s+'”').join(', ')+'.';
+          resp+='\nSe for uma dúvida de uso, envie para o Auria — a resposta entra no manual para todos.';
+        }
       }
-      let resp='';
-      try{ resp=await chamar(12000); }
-      catch(e1){
-        const m=String((e1&&e1.message)||e1);
-        // sobrecarga / limite de tamanho: espera e tenta de novo com o manual bem mais curto
-        if(/high demand|overloaded|503|429|too large|entity too large|rate|limit|tokens/i.test(m)){ await new Promise(r=>setTimeout(r,2500)); resp=await chamar(5000); }
-        else throw e1;
-      }
-      if(!resp) throw new Error('resposta vazia');
-      const ex=extrairAcao(resp); resp=ex.texto;
-      CONV.pop(); CONV.push({role:'assistant',content:resp,acao:ex.acao}); ULT={pergunta:q,resposta:resp};
-      const naoSabe=/não encontrei isso no manual|não está no manual|não encontrei no manual/i.test(resp);
+      CONV.pop(); CONV.push({role:'assistant',content:resp,acao,extras}); ULT={pergunta:q,resposta:resp,acao};
       registrar(q,resp,naoSabe,false);
       render(); document.getElementById('ajEsc').style.display='flex';
     }catch(e){
-      console.warn('[ajuda] IA falhou:', (e&&e.message)||e);
-      const carga=/high demand|overloaded|503|429|too large|rate|limit|tokens/i.test(String((e&&e.message)||e));
-      CONV.pop(); CONV.push({role:'assistant',content: carga ? 'A IA está sobrecarregada neste momento. Tente de novo em alguns instantes — ou envie a pergunta para o Auria, que respondemos por e-mail.' : 'Não consegui responder agora. Você pode tentar de novo ou enviar a pergunta para o Auria.'}); ULT={pergunta:q,resposta:''};
+      console.warn('[ajuda] busca falhou:', (e&&e.message)||e);
+      CONV.pop(); CONV.push({role:'assistant',content:'Não consegui responder agora. Você pode tentar de novo ou enviar a pergunta para o Auria.'}); ULT={pergunta:q,resposta:''};
       render(); document.getElementById('ajEsc').style.display='flex';
     }
     go.disabled=false;
