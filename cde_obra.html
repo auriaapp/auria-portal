@@ -746,6 +746,19 @@
   .org-tit{color:var(--txt);font-size:12.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .org-hint{padding:24px;text-align:center;color:var(--mut)}
   .org-row input,.org-grp-h input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0}
+  /* Item 54 — Diário de obra */
+  .rdo-g{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+  .rdo-sec{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .rdo-sec h4{margin:0 0 8px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);display:flex;align-items:center;gap:8px}
+  .rdo-sec h4 .add{margin-left:auto;background:none;border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:2px 9px;font-size:11.5px;cursor:pointer;font-family:inherit}
+  .rdo-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:6px}
+  .rdo-row input,.rdo-row select,.rdo-row textarea,.rdo-in{padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:12.5px}
+  .rdo-row textarea{flex:1;min-height:40px;resize:vertical}
+  .rdo-row .del{background:none;border:none;color:var(--mut);font-size:16px;cursor:pointer;padding:4px}
+  .rdo-fotos{display:flex;gap:8px;flex-wrap:wrap}
+  .rdo-fotos img{height:84px;border-radius:8px;border:1px solid var(--line);object-fit:cover;cursor:pointer}
+  .rdo-ro .rdo-row input,.rdo-ro .rdo-row select,.rdo-ro .rdo-row textarea,.rdo-ro .rdo-in{pointer-events:none;opacity:.85}
+  .rdo-ro .add,.rdo-ro .del{display:none}
 </style>
 <div class="ov" id="orgQR" onclick="if(event.target===this)fecharOrgQR()">
   <div class="modal">
@@ -1047,7 +1060,7 @@ async function boot(){
   { const bf=$('btnFicha'); if(bf) bf.style.display=''; }   // ficha do empreend. independe do padrão
   // Diário de obra (item 54): o modal existe, mas as funções (abrirRdo/rdoNovo/rdoSalvar…)
   //  nunca foram escritas — o botão dava ReferenceError. Fica escondido até implementar.
-  { const br=$('btnRdo'); if(br) br.style.display='none'; }
+  { const br=$('btnRdo'); if(br) br.style.display = (RAMO_OBRA || !SEM_ESCRITA) ? '' : 'none'; }
   try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); CONV = (c&&c[0])||null; }catch(err){ CONV=null; }
   if(!CONV){
     $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
@@ -1078,6 +1091,7 @@ async function boot(){
     enviar_arquivo:    { rotulo:'Abrir Enviar arquivo(s)', quando:()=>_vis('btnReceber'), run:()=>abrirReceber() },
     ficha:             { rotulo:'Abrir a Ficha do empreendimento', quando:()=>_vis('btnFicha'), run:()=>abrirFicha() },
     organizar_qr:      { rotulo:'Abrir Organizar QR', quando:()=>_vis('btnOrgQR'), run:()=>abrirOrganizadorQR() },
+    diario:            { rotulo:'Abrir o Diário de Obra', quando:()=>_vis('btnRdo'), run:()=>abrirRdo() },
     padrao:            { rotulo:'Abrir o Padrão de codificação', quando:()=>_vis('lnkPadrao'), run:()=>{ location.href=$('lnkPadrao').href; } },
     painel:            { rotulo:'Voltar ao painel', run:()=>{ const a=document.querySelector('a.hbtn[href*="painel"],a.hbtn[href*="portal"],a.hbtn[href*="gerencia"]'); if(a) location.href=a.href; else history.back(); } }
   };
@@ -5865,6 +5879,130 @@ function renderMultiBar(){
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
 }
 
+// ── Item 54: Diário de Obra (RDO) ───────────────────────────────────────────
+//  1 registro por dia por empreendimento (cde_rdo_auria). Escreve: coordenação,
+//  eng. chefe e coord. de campo (RLS cde_rdo_pode_escrever); os demais só leem.
+//  Fotos: comprimidas no navegador (JPEG ≤1600px) e gravadas no bucket público
+//  'apontamentos' em rdo/<emp>/<data>/ (mesmo caminho dos prints de apontamento).
+const RDO_CLIMA=['','Bom','Nublado','Chuva fraca','Chuva forte','Impraticável'];
+const RDO_FUNCOES=['Pedreiro','Servente','Carpinteiro','Armador','Eletricista','Encanador','Pintor','Gesseiro','Azulejista','Operador','Encarregado','Mestre','Engenheiro','Estagiário','Outro'];
+let RDO={ dias:[], atual:null, dirty:false };
+function rdoPodeEscrever(){ return FERRAMENTAS_OBRA || !SEM_ESCRITA; }
+function rdoHoje(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function rdoFmt(d){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(d||'')); return m?m[3]+'/'+m[2]+'/'+m[1]:String(d||''); }
+async function abrirRdo(){
+  $('ovRdo').classList.add('on'); $('rdoBody').innerHTML='<div style="padding:30px;color:var(--mut)">Carregando…</div>'; $('rdoMsg').textContent='';
+  $('rdoSalvarBtn').style.display = rdoPodeEscrever() ? '' : 'none';
+  const nb=$('ovRdo').querySelector('button[onclick="rdoNovo()"]'); if(nb) nb.style.display = rdoPodeEscrever() ? '' : 'none';
+  try{
+    const { data, error } = await sb.from('cde_rdo_auria').select('id,data,clima_manha,clima_tarde,efetivo,atividades,ocorrencias,observacoes,fotos,autor_nome,criado_em,atualizado_em').eq('empreendimento_id',EMP_ID).order('data',{ascending:false}).limit(400);
+    if(error) throw error; RDO.dias=data||[];
+  }catch(e){ $('rdoBody').innerHTML='<div style="padding:30px;color:var(--err,#A32D2D)">Não foi possível carregar o diário: '+esc((e&&e.message)||e)+'<br><small>Se for a primeira vez, o SQL supabase_cde_rdo_v2.sql precisa ser aplicado.</small></div>'; return; }
+  const sel=$('rdoDias');
+  sel.innerHTML = RDO.dias.length ? RDO.dias.map(d=>`<option value="${esc(d.data)}">${rdoFmt(d.data)}${d.autor_nome?' · '+esc(d.autor_nome):''}</option>`).join('') : '<option value="">— nenhum dia registrado —</option>';
+  const hoje=RDO.dias.find(d=>d.data===rdoHoje());
+  if(hoje) rdoCarregarDia(hoje.data);
+  else if(rdoPodeEscrever()) rdoNovo();
+  else if(RDO.dias.length) rdoCarregarDia(RDO.dias[0].data);
+  else $('rdoBody').innerHTML='<div style="padding:30px;color:var(--mut);text-align:center">Nenhum diário registrado ainda.</div>';
+}
+function fecharRdo(){ if(RDO.dirty && rdoPodeEscrever() && !confirm('Há alterações não salvas no diário. Fechar mesmo assim?')) return; RDO.dirty=false; $('ovRdo').classList.remove('on'); }
+function rdoNovo(){
+  if(!rdoPodeEscrever()) return;
+  const d=rdoHoje(); const ja=RDO.dias.find(x=>x.data===d);
+  if(ja){ rdoCarregarDia(d); return; }
+  RDO.atual={ id:null, data:d, clima_manha:'', clima_tarde:'', efetivo:[{funcao:'Pedreiro',qtd:''},{funcao:'Servente',qtd:''}], atividades:[{pavimento_cod:'',descricao:''}], ocorrencias:[], observacoes:'', fotos:[], autor_nome:USER_NOME };
+  $('rdoDias').value=''; rdoRender(); RDO.dirty=false;
+}
+function rdoCarregarDia(data){
+  const d=RDO.dias.find(x=>x.data===data); if(!d){ return; }
+  RDO.atual=JSON.parse(JSON.stringify(d)); ['efetivo','atividades','ocorrencias','fotos'].forEach(k=>{ if(!Array.isArray(RDO.atual[k])) RDO.atual[k]=[]; });
+  $('rdoDias').value=data; rdoRender(); RDO.dirty=false;
+}
+function rdoRender(){
+  const a=RDO.atual; if(!a) return; const ro=!rdoPodeEscrever();
+  const clima=(k)=>`<select class="rdo-in" onchange="rdoSet('${k}',this.value)">${RDO_CLIMA.map(c=>`<option ${a[k]===c?'selected':''}>${c}</option>`).join('')}</select>`;
+  const pavOpts=(v)=>`<option value="">— pavimento / local —</option>`+PAVS.map(p=>`<option value="${esc(p.codigo||p.nome)}" ${v===(p.codigo||p.nome)?'selected':''}>${esc(p.codigo?p.codigo+' · ':'')}${esc(p.nome||'')}</option>`).join('')+(v&&!PAVS.some(p=>(p.codigo||p.nome)===v)?`<option selected>${esc(v)}</option>`:'');
+  $('rdoBody').innerHTML=`<div class="${ro?'rdo-ro':''}">
+    <div class="rdo-g" style="margin-bottom:12px">
+      <div class="rdo-row"><label style="min-width:60px;padding-top:8px;color:var(--mut)">Data</label><input type="date" value="${esc(a.data)}" ${a.id?'disabled':''} onchange="rdoSet('data',this.value)"></div>
+      <div class="rdo-row"><label style="min-width:60px;padding-top:8px;color:var(--mut)">Autor</label><input value="${esc(a.autor_nome||USER_NOME)}" onchange="rdoSet('autor_nome',this.value)" style="flex:1"></div>
+      <div class="rdo-row"><label style="min-width:60px;padding-top:8px;color:var(--mut)">Manhã</label>${clima('clima_manha')}</div>
+      <div class="rdo-row"><label style="min-width:60px;padding-top:8px;color:var(--mut)">Tarde</label>${clima('clima_tarde')}</div>
+    </div>
+    <div class="rdo-g">
+      <div class="rdo-sec"><h4>👷 Efetivo<button class="add" onclick="rdoAdd('efetivo',{funcao:'Outro',qtd:''})">+ função</button></h4>
+        ${(a.efetivo||[]).map((e,i)=>`<div class="rdo-row"><select onchange="rdoSetRow('efetivo',${i},'funcao',this.value)" style="flex:1">${RDO_FUNCOES.map(f=>`<option ${e.funcao===f?'selected':''}>${f}</option>`).join('')}${e.funcao&&!RDO_FUNCOES.includes(e.funcao)?`<option selected>${esc(e.funcao)}</option>`:''}</select><input type="number" min="0" placeholder="qtd" value="${esc(e.qtd)}" onchange="rdoSetRow('efetivo',${i},'qtd',this.value)" style="width:72px"><button class="del" onclick="rdoDel('efetivo',${i})">×</button></div>`).join('')||'<div style="color:var(--mut);font-size:12px">—</div>'}
+        <div style="font-size:11.5px;color:var(--mut);margin-top:4px">Total: <b>${(a.efetivo||[]).reduce((s,e)=>s+(Number(e.qtd)||0),0)}</b></div></div>
+      <div class="rdo-sec"><h4>📸 Fotos${ro?'':'<label class="add" style="cursor:pointer">+ fotos<input type="file" accept="image/*" multiple style="display:none" onchange="rdoFotos(this.files)"></label>'}</h4>
+        <div class="rdo-fotos" id="rdoFotos">${(a.fotos||[]).map((f,i)=>`<div style="position:relative"><img src="${esc(f.url)}" onclick="window.open('${esc(f.url)}','_blank')" title="${esc(f.nome||'')}">${ro?'':`<button class="del" style="position:absolute;top:-6px;right:-6px;background:var(--panel);border:1px solid var(--line);border-radius:50%;width:22px;height:22px;line-height:1" onclick="rdoDel('fotos',${i})">×</button>`}</div>`).join('')||'<div style="color:var(--mut);font-size:12px">sem fotos</div>'}</div>
+        <div id="rdoFotoMsg" style="font-size:11.5px;color:var(--mut);margin-top:4px"></div></div>
+    </div>
+    <div class="rdo-sec"><h4>🏗 Atividades executadas<button class="add" onclick="rdoAdd('atividades',{pavimento_cod:'',descricao:''})">+ atividade</button></h4>
+      ${(a.atividades||[]).map((t,i)=>`<div class="rdo-row"><select onchange="rdoSetRow('atividades',${i},'pavimento_cod',this.value)" style="width:200px">${pavOpts(t.pavimento_cod)}</select><textarea placeholder="O que foi feito…" onchange="rdoSetRow('atividades',${i},'descricao',this.value)">${esc(t.descricao||'')}</textarea><button class="del" onclick="rdoDel('atividades',${i})">×</button></div>`).join('')||'<div style="color:var(--mut);font-size:12px">—</div>'}</div>
+    <div class="rdo-sec"><h4>⚠ Ocorrências<button class="add" onclick="rdoAdd('ocorrencias',{texto:''})">+ ocorrência</button></h4>
+      ${(a.ocorrencias||[]).map((o,i)=>`<div class="rdo-row"><textarea placeholder="Chuva, falta de material, acidente, visita, paralisação…" onchange="rdoSetRow('ocorrencias',${i},'texto',this.value)">${esc(o.texto||'')}</textarea><button class="del" onclick="rdoDel('ocorrencias',${i})">×</button></div>`).join('')||'<div style="color:var(--mut);font-size:12px">nenhuma</div>'}</div>
+    <div class="rdo-sec"><h4>📝 Observações</h4><div class="rdo-row"><textarea onchange="rdoSet('observacoes',this.value)" style="min-height:60px">${esc(a.observacoes||'')}</textarea></div></div>
+    ${a.id?`<div style="font-size:11px;color:var(--mut)">Registrado ${esc(fmtData(a.criado_em))}${a.atualizado_em&&a.atualizado_em!==a.criado_em?' · atualizado '+esc(fmtData(a.atualizado_em)):''}</div>`:''}
+  </div>`;
+}
+function rdoSet(k,v){ if(!RDO.atual) return; RDO.atual[k]=v; RDO.dirty=true; }
+function rdoSetRow(arr,i,k,v){ if(!RDO.atual||!RDO.atual[arr]||!RDO.atual[arr][i]) return; RDO.atual[arr][i][k]=v; RDO.dirty=true; if(k==='qtd') rdoRender(); }
+function rdoAdd(arr,obj){ if(!RDO.atual) return; (RDO.atual[arr]=RDO.atual[arr]||[]).push(obj); RDO.dirty=true; rdoRender(); }
+function rdoDel(arr,i){ if(!RDO.atual||!RDO.atual[arr]) return; RDO.atual[arr].splice(i,1); RDO.dirty=true; rdoRender(); }
+async function rdoFotos(files){
+  if(!RDO.atual||!files||!files.length) return; const msg=$('rdoFotoMsg'); let n=0;
+  for(const f of [...files]){
+    if(!/^image\//.test(f.type)) continue;
+    if(window.AuriaValida){ const v=await AuriaValida.checar(f,'imagem'); if(!v.ok){ msg.textContent=f.name+': '+v.motivo; continue; } }
+    msg.textContent='Enviando '+(++n)+'/'+files.length+'…';
+    try{
+      const blob=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const k=Math.min(1,1600/Math.max(im.width,im.height)); const cv=document.createElement('canvas'); cv.width=Math.round(im.width*k); cv.height=Math.round(im.height*k); cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height); cv.toBlob(b=>b?res(b):rej(new Error('canvas')),'image/jpeg',0.82); }; im.onerror=rej; im.src=URL.createObjectURL(f); });
+      const path='rdo/'+EMP_ID+'/'+RDO.atual.data+'/'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+'.jpg';
+      const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:false}); if(up.error) throw up.error;
+      RDO.atual.fotos.push({ url: sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, nome:f.name }); RDO.dirty=true;
+    }catch(e){ msg.textContent=f.name+': '+((e&&e.message)||e); }
+  }
+  rdoRender(); const m2=$('rdoFotoMsg'); if(m2&&n) m2.textContent=n+' foto(s) anexada(s) — salve o diário.';
+}
+async function rdoSalvar(){
+  const a=RDO.atual; if(!a||!rdoPodeEscrever()) return;
+  if(!a.data){ $('rdoMsg').textContent='Informe a data.'; return; }
+  const b=$('rdoSalvarBtn'); b.disabled=true; $('rdoMsg').textContent='Salvando…';
+  const row={ empreendimento_id:EMP_ID, data:a.data, clima_manha:a.clima_manha||null, clima_tarde:a.clima_tarde||null,
+    efetivo:(a.efetivo||[]).filter(e=>e.funcao).map(e=>({funcao:e.funcao,qtd:Number(e.qtd)||0})), atividades:(a.atividades||[]).filter(t=>(t.descricao||'').trim()),
+    ocorrencias:(a.ocorrencias||[]).filter(o=>(o.texto||'').trim()), observacoes:(a.observacoes||'').trim()||null, fotos:a.fotos||[], autor_nome:a.autor_nome||USER_NOME };
+  try{
+    const r=await sb.from('cde_rdo_auria').upsert(row,{ onConflict:'empreendimento_id,data' }).select('id,data,criado_em,atualizado_em').single();
+    if(r.error) throw r.error;
+    a.id=r.data.id; a.criado_em=r.data.criado_em; a.atualizado_em=r.data.atualizado_em; RDO.dirty=false;
+    const i=RDO.dias.findIndex(x=>x.data===a.data); const cp=JSON.parse(JSON.stringify(a)); if(i>=0) RDO.dias[i]=cp; else { RDO.dias.push(cp); RDO.dias.sort((x,y)=>String(y.data).localeCompare(String(x.data))); }
+    $('rdoDias').innerHTML=RDO.dias.map(d=>`<option value="${esc(d.data)}">${rdoFmt(d.data)}${d.autor_nome?' · '+esc(d.autor_nome):''}</option>`).join(''); $('rdoDias').value=a.data;
+    $('rdoMsg').textContent='Diário de '+rdoFmt(a.data)+' salvo.'; rdoRender();
+  }catch(e){ const m=(e&&e.message)||String(e); $('rdoMsg').textContent=/permission|row-level|policy|42501/i.test(m)?'Sem permissão para escrever no diário (só coordenação, eng. chefe e coord. de campo).':'Erro: '+m; }
+  b.disabled=false;
+}
+function rdoExportarPDF(){
+  const a=RDO.atual; if(!a){ alert('Abra um dia do diário.'); return; }
+  const emp=EMP?((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome):'';
+  const tot=(a.efetivo||[]).reduce((s,e)=>s+(Number(e.qtd)||0),0);
+  const h=`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de obra ${esc(rdoFmt(a.data))}</title>
+  <style>body{font-family:"Segoe UI",system-ui,sans-serif;color:#0F172A;margin:0;padding:16mm;font-size:12px}.hd{display:flex;align-items:center;gap:12px;border-bottom:2px solid #E8960A;padding-bottom:8px;margin-bottom:12px}.hd img{height:32px}.hd h1{margin:0;font-size:17px;color:#1E3A5F}.hd .sub{color:#64748B;font-size:11px}
+  h3{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748B;border-bottom:1px solid #E2E8F0;padding-bottom:3px;margin:14px 0 6px}table{border-collapse:collapse;width:100%}td,th{padding:4px 6px;border-bottom:1px solid #F1F5F9;text-align:left;vertical-align:top}th{color:#64748B;font-weight:600;font-size:11px}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fotos{display:flex;flex-wrap:wrap;gap:6px}.fotos img{height:60mm;max-width:48%;object-fit:contain;border:1px solid #E2E8F0;border-radius:6px}.foot{margin-top:18px;font-size:10px;color:#64748B;border-top:1px solid #E2E8F0;padding-top:4px;display:flex;justify-content:space-between}@page{size:A4;margin:12mm}</style></head><body>
+  <div class="hd"><img src="${location.origin+location.pathname.replace(/[^/]*$/,'')}logo_symbol.png"><div><h1>Diário de obra — ${esc(rdoFmt(a.data))}</h1><div class="sub">${esc(emp)} · autor: ${esc(a.autor_nome||'')}</div></div></div>
+  <div class="g"><div><b>Clima manhã:</b> ${esc(a.clima_manha||'—')}</div><div><b>Clima tarde:</b> ${esc(a.clima_tarde||'—')}</div></div>
+  <h3>Efetivo — total ${tot}</h3><table><tr><th>Função</th><th style="text-align:right">Qtd</th></tr>${(a.efetivo||[]).map(e=>`<tr><td>${esc(e.funcao)}</td><td style="text-align:right">${esc(e.qtd)}</td></tr>`).join('')||'<tr><td colspan="2">—</td></tr>'}</table>
+  <h3>Atividades executadas</h3><table><tr><th style="width:26%">Pavimento / local</th><th>Descrição</th></tr>${(a.atividades||[]).map(t=>`<tr><td>${esc(t.pavimento_cod||'—')}</td><td>${esc(t.descricao||'')}</td></tr>`).join('')||'<tr><td colspan="2">—</td></tr>'}</table>
+  <h3>Ocorrências</h3>${(a.ocorrencias||[]).length?'<ul>'+(a.ocorrencias||[]).map(o=>'<li>'+esc(o.texto)+'</li>').join('')+'</ul>':'<div>nenhuma</div>'}
+  <h3>Observações</h3><div style="white-space:pre-wrap">${esc(a.observacoes||'—')}</div>
+  ${(a.fotos||[]).length?'<h3>Fotos</h3><div class="fotos">'+(a.fotos||[]).map(f=>`<img src="${esc(f.url)}">`).join('')+'</div>':''}
+  <div class="foot"><span>Auria · Diário de obra</span><span>${esc(emp)} · gerado em ${new Date().toLocaleString('pt-BR')}</span></div>
+  <script>const imgs=[...document.images];let p=imgs.filter(i=>!i.complete).length;const go=()=>setTimeout(()=>window.print(),300);if(!p)go();else{imgs.forEach(i=>{if(!i.complete)i.onload=i.onerror=()=>{if(--p<=0)go();}});setTimeout(go,8000);}<\/script></body></html>`;
+  const w=window.open('','_blank'); if(!w){ alert('O navegador bloqueou a janela do PDF. Permita pop-ups para este site.'); return; }
+  w.document.open(); w.document.write(h); w.document.close();
+}
+
 // ── Item 67: recodificar pranchas em lote ─────────────────────────────────
 //  Um campo editável por segmento da convenção (exceto revisão, que não é do
 //  documento). Validação: domínio/regex do campo + unicidade no empreendimento.
@@ -5948,6 +6086,9 @@ async function filaObraCarregar(){
         titulo:(d.codigo||'')+' · rev '+(r.revisao||''), sub:(anteriores?'Nova revisão liberada — substitui a anterior. ':'Liberada para obra. ')+(_docTit(d)||'')+(r.status==='B1'?' · com ressalvas':''), cod:d.codigo, disc:d.disciplina });
     });
   });
+  // 1b) diário de obra registrado/atualizado
+  try{ const { data:rd } = await sb.from('cde_rdo_auria').select('data,autor_nome,atualizado_em').eq('empreendimento_id',EMP_ID).gte('atualizado_em',new Date(desde).toISOString()).order('atualizado_em',{ascending:false}).limit(60);
+    (rd||[]).forEach(r=>itens.push({ key:'rdo|'+r.data+'|'+r.atualizado_em, tipo:'rdo', quando:r.atualizado_em, titulo:'Diário de obra · '+rdoFmt(r.data), sub:'registrado por '+(r.autor_nome||'—'), rdoData:r.data })); }catch(_){}
   // 2) apontamentos abertos pela obra: status e respostas
   try{
     const { data:apts } = await sb.from('apontamentos').select('id,id_num,titulo,status,prioridade,disciplina,data_criacao,criado_por_papel,log_json,prancha_id,cde_revisao_id').eq('empreendimento_id',EMP_ID).eq('criado_por_papel','obra').limit(500);
@@ -5978,9 +6119,9 @@ function filaObraRender(){
   const bad=$('filaObraBad'); const novos=FO_ITENS.filter(i=>!FO_VISTOS[i.key]).length;
   if(bad){ bad.textContent=novos; bad.style.display=novos?'':'none'; }
   const n=t=>FO_ITENS.filter(i=>t==='todos'||i.tipo===t).length;
-  $('filaObraChips').innerHTML=[['todos','Tudo'],['liberada','Revisões liberadas'],['resposta','Respostas'],['apt','Status dos meus apontamentos']].map(([k,r])=>`<span class="fo-chip ${FO_FILTRO===k?'on':''}" onclick="FO_FILTRO='${k}';filaObraRender()">${r} <span style="opacity:.7">${n(k)}</span></span>`).join('');
+  $('filaObraChips').innerHTML=[['todos','Tudo'],['liberada','Revisões liberadas'],['resposta','Respostas'],['apt','Status dos meus apontamentos'],['rdo','Diário']].map(([k,r])=>`<span class="fo-chip ${FO_FILTRO===k?'on':''}" onclick="FO_FILTRO='${k}';filaObraRender()">${r} <span style="opacity:.7">${n(k)}</span></span>`).join('');
   const lista=FO_ITENS.filter(i=>FO_FILTRO==='todos'||i.tipo===FO_FILTRO);
-  const ic={liberada:'📐',resposta:'💬',apt:'🔁'};
+  const ic={liberada:'📐',resposta:'💬',apt:'🔁',rdo:'📓'};
   $('filaObraList').innerHTML = lista.length ? lista.map((i,idx)=>`<div class="fo-it ${FO_VISTOS[i.key]?'':'novo'}" onclick="filaObraAbrir(${FO_ITENS.indexOf(i)})" title="${FO_VISTOS[i.key]?'':'novo · '}clique para abrir">
       <span class="fo-ic">${ic[i.tipo]||'•'}</span><div class="fo-b"><div class="fo-t">${i.cod?'<span class="cod">'+esc(i.cod)+'</span> · rev '+esc(i.titulo.split('· rev ')[1]||''):esc(i.titulo)}</div><div class="fo-s">${esc(i.sub||'')}</div></div><span class="fo-dt">${fmtData(i.quando)}</span></div>`).join('')
     : `<div class="fo-vazio">Nada novo nos últimos ${FO_JANELA_DIAS} dias.</div>`;
@@ -5991,6 +6132,7 @@ async function filaObraAbrir(idx){
   const i=FO_ITENS[idx]; if(!i) return;
   FO_VISTOS[i.key]=Date.now(); _foSave(); filaObraRender();
   if(i.tipo==='liberada' && i.docId){ filaObraToggle(false); await openDocInWindow(i.docId); const w=cdeAtiva&&cdeAtiva(); if(w) focarMax(w); return; }
+  if(i.tipo==='rdo'){ filaObraToggle(false); await abrirRdo(); if(i.rdoData) rdoCarregarDia(i.rdoData); return; }
   if(i.cdeRev || i.prancha){   // apontamento: abre a prancha onde ele está; o pin aparece nela
     let d=i.cdeRev ? DOCS.find(x=>(x.revs||[]).some(r=>r.id===i.cdeRev)) : null;
     if(!d && i.prancha){ try{ const r=await sb.from('pranchas_auria').select('cde_documento_id').eq('id',i.prancha).maybeSingle(); if(r.data&&r.data.cde_documento_id) d=DOCS.find(x=>x.id===r.data.cde_documento_id); }catch(_){} }
