@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Auria — Relatório de apontamentos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<!--
+  Item 66 — Relatório PDF de apontamentos. Página de IMPRESSÃO: o App monta o pacote
+  (empreendimento, filtro, opções de detalhe, apontamentos, conversas) em localStorage
+  e abre esta página; ela renderiza 1ª página = BI do conjunto + um bloco por apontamento
+  com o nível de detalhe escolhido, e chama a impressão (Salvar como PDF).
+  Gráficos em SVG inline (nítidos na impressão); paleta validada (dataviz): aberto
+  #3465A4 · análise #C2410C · resolvido #2F855A; navy/laranja do Auria na moldura.
+-->
+<style>
+  :root{ --navy:#1E3A5F; --ink:#0F172A; --mid:#334155; --soft:#64748B; --line:#E2E8F0; --zebra:#F6F9FC; --accent:#E8960A;
+         --aberto:#3465A4; --analise:#C2410C; --resolvido:#2F855A; --atraso:#A93226; --mono:ui-monospace,"Cascadia Mono",Consolas,monospace }
+  *{ box-sizing:border-box }
+  html,body{ margin:0; background:#E9EDF3; color:var(--ink); font-family:"Segoe UI",system-ui,sans-serif; font-size:11.5px; line-height:1.45 }
+  .bar{ position:sticky; top:0; z-index:5; background:#0B1220; color:#fff; padding:10px 18px; display:flex; align-items:center; gap:12px; border-bottom:2px solid var(--accent) }
+  .bar b{ font-size:14px } .bar span{ color:#8FA6C0; font-size:12px }
+  .bar button{ margin-left:auto; background:var(--accent); color:#231703; border:none; border-radius:8px; padding:8px 14px; font-weight:800; cursor:pointer; font-family:inherit }
+  .bar button.sec{ background:#1B2942; color:#C9D6E4; border:1px solid #2A3850; margin-left:0 }
+  .page{ width:210mm; min-height:297mm; margin:14px auto; background:#fff; padding:14mm 14mm 16mm; box-shadow:0 10px 30px rgba(15,23,42,.15); position:relative }
+  .hd{ display:flex; align-items:center; gap:14px; border-bottom:2px solid var(--accent); padding-bottom:10px; margin-bottom:12px }
+  .hd img.auria{ height:34px } .hd .elogo{ margin-left:auto; height:40px; max-width:150px; object-fit:contain }
+  .hd h1{ font-size:18px; margin:0; color:var(--navy) } .hd .sub{ color:var(--soft); font-size:11px }
+  .kpis{ display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin:12px 0 14px }
+  .kpi{ border:1px solid var(--line); border-left:3px solid var(--navy); border-radius:8px; padding:8px 10px }
+  .kpi b{ display:block; font-size:20px; color:var(--navy); line-height:1.1 } .kpi span{ font-size:10px; color:var(--soft); text-transform:uppercase; letter-spacing:.04em }
+  .kpi.at{ border-left-color:var(--atraso) } .kpi.at b{ color:var(--atraso) } .kpi.ok{ border-left-color:var(--resolvido) } .kpi.ok b{ color:var(--resolvido) }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:14px }
+  .fig{ border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:12px; break-inside:avoid }
+  .fig h3{ margin:0 0 4px; font-size:12px; color:var(--navy) } .fig .sub{ color:var(--soft); font-size:10px; margin-bottom:6px }
+  .legend{ display:flex; gap:12px; font-size:10px; color:var(--mid); margin-top:6px } .legend i{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px }
+  svg text{ font-family:"Segoe UI",system-ui,sans-serif }
+  table.lst{ width:100%; border-collapse:collapse; font-size:10.5px } table.lst th{ text-align:left; color:var(--soft); font-weight:600; border-bottom:1px solid var(--line); padding:4px 6px }
+  table.lst td{ padding:4px 6px; border-bottom:1px solid #F1F5F9; vertical-align:top } table.lst tr:nth-child(even) td{ background:var(--zebra) }
+  .cod{ font-family:var(--mono); font-weight:700; color:var(--navy) }
+  .apt{ border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:0 0 10px; break-inside:avoid; page-break-inside:avoid }
+  .apt .top{ display:flex; align-items:center; gap:8px; flex-wrap:wrap } .apt .top .cod{ font-size:13px } .apt .top .tit{ font-weight:700; font-size:12.5px; flex:1 }
+  .badge{ font-size:9.5px; font-weight:700; border-radius:999px; padding:2px 8px; color:#fff; background:var(--navy) }
+  .badge.aberto{ background:var(--aberto) } .badge.analise{ background:var(--analise) } .badge.resolvido{ background:var(--resolvido) } .badge.late{ background:var(--atraso) } .badge.prio{ background:#475569 } .badge.disc{ background:#0E7C86 }
+  .meta{ display:grid; grid-template-columns:repeat(4,1fr); gap:4px 12px; margin:6px 0; font-size:10.5px; color:var(--mid) } .meta b{ color:var(--soft); font-weight:600; display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.03em }
+  .desc{ white-space:pre-wrap; margin:6px 0; font-size:11px }
+  .imgs{ display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 } .imgs img{ height:70mm; max-width:100%; object-fit:contain; border:1px solid var(--line); border-radius:6px; background:#fff }
+  .imgs img.thumb{ height:34mm }
+  .sec{ margin-top:8px } .sec h4{ margin:0 0 4px; font-size:10px; color:var(--soft); text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--line); padding-bottom:2px }
+  .msg{ padding:4px 0 4px 8px; border-left:2px solid var(--line); margin:3px 0; font-size:10.5px } .msg.proj{ border-left-color:var(--accent) } .msg .who{ color:var(--soft); font-size:9.5px } .msg .who b{ color:var(--mid) }
+  .log{ font-size:10px; color:var(--mid) } .log div{ padding:1px 0 } .log span{ color:var(--soft); font-family:var(--mono); margin-right:6px }
+  .foot{ position:absolute; left:14mm; right:14mm; bottom:8mm; display:flex; justify-content:space-between; font-size:9px; color:var(--soft); border-top:1px solid var(--line); padding-top:4px }
+  .empty{ color:var(--soft); font-style:italic }
+  @media print{
+    html,body{ background:#fff } .bar{ display:none } .page{ margin:0; box-shadow:none; width:auto; min-height:auto; padding:0 }
+    @page{ size:A4; margin:12mm 12mm 14mm } .foot{ display:none } .pb{ break-before:page; page-break-before:always }
+    .apt{ break-inside:avoid } .fig{ break-inside:avoid }
+  }
+</style>
+</head>
+<body>
+<div class="bar"><img src="logo_symbol.png" alt="" style="height:26px"><b>Relatório de apontamentos</b><span id="bsub">preparando…</span>
+  <button class="sec" onclick="window.close()">Fechar</button><button onclick="window.print()">🖨 Imprimir / Salvar PDF</button></div>
+<div id="root"></div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const dt=s=>{ if(!s) return ''; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); if(m) return m[3]+'/'+m[2]+'/'+m[1]; const d=new Date(s); return isNaN(d)?String(s):d.toLocaleDateString('pt-BR'); };
+const dth=s=>{ const d=new Date(s); return isNaN(d)?String(s||''):d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}); };
+const norm=s=>String(s||'').trim().toLowerCase();
+const stKey=a=>{ const s=norm(a.status); return s==='resolvido'?'resolvido':(/an[áa]lise/.test(s)?'analise':'aberto'); };
+const stRot={aberto:'Em aberto',analise:'Em análise',resolvido:'Resolvido'};
+const stCor={aberto:'#3465A4',analise:'#C2410C',resolvido:'#2F855A'};
+
+function carregar(){
+  const k=new URLSearchParams(location.search).get('k')||'';
+  let raw=null; try{ raw=localStorage.getItem('auria_rel_'+k); }catch(_){}
+  if(!raw){ $('root').innerHTML='<div class="page"><p class="empty">Nenhum relatório para mostrar. Gere de novo pelo Auria App (Apontamentos › ⬇ › Relatório PDF).</p></div>'; return null; }
+  try{ return JSON.parse(raw); }catch(_){ return null; }
+}
+
+// ── gráficos (SVG) ──────────────────────────────────────────────────────────
+// barras horizontais empilhadas por status, uma linha por categoria; rótulo direto do total
+function barrasEmpilhadas(linhas, W){
+  W=W||330; const rowH=18, gap=6, labW=92, valW=26, top=4;
+  const max=Math.max(1,...linhas.map(l=>l.tot));
+  const H=top+linhas.length*(rowH+gap);
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">`;
+  linhas.forEach((l,i)=>{ const y=top+i*(rowH+gap); let x=labW; const escala=(W-labW-valW)/max;
+    s+=`<text x="${labW-6}" y="${y+rowH-5}" text-anchor="end" font-size="10" fill="#334155">${esc(l.rot.length>16?l.rot.slice(0,15)+'…':l.rot)}</text>`;
+    ['aberto','analise','resolvido'].forEach(k=>{ const v=l[k]||0; if(!v) return; const w=Math.max(0,v*escala-2);
+      s+=`<rect x="${x}" y="${y}" width="${w}" height="${rowH}" rx="${k==='resolvido'||x+w>=labW+l.tot*escala-2?4:0}" fill="${stCor[k]}"/>`;
+      if(w>16) s+=`<text x="${x+w/2}" y="${y+rowH-5}" text-anchor="middle" font-size="9.5" fill="#fff" font-weight="700">${v}</text>`;
+      x+=w+2; });
+    s+=`<text x="${x+4}" y="${y+rowH-5}" font-size="10" fill="#0F172A" font-weight="700">${l.tot}</text>`; });
+  return s+'</svg>';
+}
+// barras simples (uma série) — navy
+function barrasSimples(linhas, cor, W){
+  W=W||330; const rowH=16, gap=5, labW=110, valW=24, top=4; const max=Math.max(1,...linhas.map(l=>l.v)); const H=top+linhas.length*(rowH+gap);
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">`;
+  linhas.forEach((l,i)=>{ const y=top+i*(rowH+gap), w=Math.max(0,l.v*(W-labW-valW)/max);
+    s+=`<text x="${labW-6}" y="${y+rowH-4}" text-anchor="end" font-size="10" fill="#334155">${esc(l.rot)}</text><rect x="${labW}" y="${y}" width="${w}" height="${rowH}" rx="4" fill="${cor||'#1E3A5F'}"/><text x="${labW+w+4}" y="${y+rowH-4}" font-size="10" fill="#0F172A" font-weight="700">${l.v}</text>`; });
+  return s+'</svg>';
+}
+
+function render(P){
+  const A=P.apts||[], O=P.opcoes||{}, emp=P.emp||{};
+  $('bsub').textContent=(emp.codigo?emp.codigo+' · ':'')+(emp.nome||'')+' · '+A.length+' apontamento(s)';
+  document.title='Auria — Apontamentos '+(emp.codigo||emp.nome||'');
+  const hoje=new Date().toLocaleDateString('pt-BR');
+  const late=a=>!!a._late, dias=a=>a._dias;
+  // KPIs
+  const n=A.length, ab=A.filter(a=>stKey(a)==='aberto').length, an=A.filter(a=>stKey(a)==='analise').length, re=A.filter(a=>stKey(a)==='resolvido').length;
+  const at=A.filter(late).length, sev=A.filter(a=>/severa/i.test(a.prioridade||'')).length;
+  // por disciplina
+  const pd={}; A.forEach(a=>{ const d=a._disc||a.disciplina||'—'; const o=pd[d]||(pd[d]={rot:d,aberto:0,analise:0,resolvido:0,tot:0}); o[stKey(a)]++; o.tot++; });
+  const discs=Object.values(pd).sort((x,y)=>y.tot-x.tot);
+  // por criticidade
+  const pp={}; A.forEach(a=>{ const p=(a.prioridade||'—').split('/')[0].trim(); pp[p]=(pp[p]||0)+1; });
+  const prios=Object.entries(pp).map(([rot,v])=>({rot,v})).sort((x,y)=>y.v-x.v);
+  // aging dos abertos em atraso
+  const buckets=[{rot:'1–7 dias',v:0},{rot:'8–30 dias',v:0},{rot:'31–60 dias',v:0},{rot:'> 60 dias',v:0}];
+  A.forEach(a=>{ if(!late(a)||stKey(a)==='resolvido') return; const d=dias(a); if(!(d>0)) return; (d<=7?buckets[0]:d<=30?buckets[1]:d<=60?buckets[2]:buckets[3]).v++; });
+  // por responsável (disciplina do participante)
+  const top=A.filter(a=>late(a)&&stKey(a)!=='resolvido').sort((x,y)=>(dias(y)||0)-(dias(x)||0)).slice(0,10);
+  const legend='<div class="legend"><span><i style="background:#3465A4"></i>Em aberto</span><span><i style="background:#C2410C"></i>Em análise</span><span><i style="background:#2F855A"></i>Resolvido</span></div>';
+  let h=`<div class="page">
+    <div class="hd"><img class="auria" src="logo_symbol.png" alt="Auria"><div><h1>Relatório de apontamentos</h1><div class="sub">${esc((emp.codigo?emp.codigo+' · ':'')+(emp.nome||''))} · ${hoje}${P.gerado_por?' · gerado por '+esc(P.gerado_por):''}</div><div class="sub">Filtro: ${esc(P.filtro||'todos os apontamentos')}</div></div>${emp.logo_url?`<img class="elogo" src="${esc(emp.logo_url)}" alt="">`:''}</div>
+    <div class="kpis"><div class="kpi"><b>${n}</b><span>Apontamentos</span></div><div class="kpi"><b>${ab}</b><span>Em aberto</span></div><div class="kpi"><b>${an}</b><span>Em análise</span></div><div class="kpi ok"><b>${re}</b><span>Resolvidos</span></div><div class="kpi at"><b>${at}</b><span>Em atraso</span></div><div class="kpi"><b>${sev}</b><span>Severos</span></div></div>
+    <div class="grid2">
+      <div class="fig"><h3>Por disciplina</h3><div class="sub">quantidade por status</div>${discs.length?barrasEmpilhadas(discs):'<p class="empty">—</p>'}${legend}</div>
+      <div class="fig"><h3>Por criticidade</h3><div class="sub">todos os status</div>${prios.length?barrasSimples(prios,'#1E3A5F'):'<p class="empty">—</p>'}</div>
+      <div class="fig"><h3>Atraso dos abertos</h3><div class="sub">dias além do prazo</div>${buckets.some(b=>b.v)?barrasSimples(buckets,'#A93226'):'<p class="empty">Nenhum apontamento aberto em atraso.</p>'}</div>
+      <div class="fig"><h3>Mais atrasados</h3><div class="sub">até 10</div>${top.length?`<table class="lst"><tr><th>Código</th><th>Título</th><th>Disc.</th><th style="text-align:right">Dias</th></tr>${top.map(a=>`<tr><td class="cod">${esc(a.id)}</td><td>${esc((a.titulo||'').slice(0,48))}</td><td>${esc(a.disciplina||'')}</td><td style="text-align:right;color:#A93226;font-weight:700">${dias(a)||''}</td></tr>`).join('')}</table>`:'<p class="empty">—</p>'}</div>
+    </div>
+    <div class="fig"><h3>Lista</h3><table class="lst"><tr><th>Código</th><th>Título</th><th>Disciplina</th><th>Criticidade</th><th>Status</th><th>Prazo</th><th style="text-align:right">Dias</th></tr>
+      ${A.map(a=>`<tr><td class="cod">${esc(a.id)}</td><td>${esc((a.titulo||'').slice(0,60))}</td><td>${esc(a._disc||a.disciplina||'')}</td><td>${esc((a.prioridade||'').split('/')[0])}</td><td style="color:${stCor[stKey(a)]};font-weight:700">${esc(a.status||'')}</td><td>${esc(a._prazo||'')}</td><td style="text-align:right;${late(a)?'color:#A93226;font-weight:700':''}">${(dias(a)>0&&stKey(a)!=='resolvido')?dias(a):''}</td></tr>`).join('')}</table></div>
+    <div class="foot"><span>Auria · coordenação de projetos com BIM</span><span>${esc(emp.nome||'')} · ${hoje}</span></div>
+  </div>`;
+  // ── detalhe por apontamento ──
+  if(O.detalhe!==false){
+    h+='<div class="page pb">';
+    A.forEach(a=>{
+      const k=stKey(a); const msgs=(P.msgs&&P.msgs[a.id])||[];
+      const conv = O.respostas && !O.comentarios ? msgs.filter(m=>m.de==='projetista') : (O.comentarios ? msgs : []);
+      h+=`<div class="apt"><div class="top"><span class="cod">${esc(a.id)}</span><span class="tit">${esc(a.titulo||'')}</span>
+        <span class="badge disc">${esc(a.disciplina||'')}</span><span class="badge prio">${esc((a.prioridade||'—').split('/')[0].trim())}</span><span class="badge ${k}">${esc(stRot[k])}</span>${late(a)&&k!=='resolvido'?`<span class="badge late">${dias(a)} d em atraso</span>`:''}</div>
+        <div class="meta"><div><b>Aberto em</b>${esc(dt(a.data_criacao))}${a.criado_por_nome?' · '+esc(a.criado_por_nome):''}</div><div><b>Prazo</b>${esc(a._prazo||'—')}</div><div><b>Concluído</b>${esc(a._concl||'—')}</div><div><b>Prancha / modelo</b>${esc(a.arquivo_nome||a.codigo||(a.tipo==='bim'?'Modelo BIM':'—'))}${a.local_txt?' · '+esc(a.local_txt):''}</div>
+        ${O.responsaveis!==false?`<div style="grid-column:1/5"><b>Responsáveis</b>${esc(a._resp||'—')}</div>`:''}</div>
+        ${O.descricao!==false&&a.descricao?`<div class="desc">${esc(a.descricao)}</div>`:''}
+        ${O.imagens&&(a.imagens_json||[]).length?`<div class="imgs">${(a.imagens_json||[]).slice(0,O.imagens==='todas'?12:2).map((u,i)=>`<img class="${i?'thumb':''}" src="${esc(u)}" alt="">`).join('')}</div>`:''}
+        ${conv.length?`<div class="sec"><h4>${O.comentarios?'Conversa':'Respostas do projetista'}</h4>${conv.map(m=>`<div class="msg ${m.de==='projetista'?'proj':''}"><div class="who"><b>${esc(m.autor_nome||m.autor_email||m.de)}</b> · ${esc(m.de==='projetista'?'projetista':'coordenação')} · ${esc(dth(m.criado_em))}</div>${esc(m.texto||'')}</div>`).join('')}</div>`:(O.comentarios||O.respostas?`<div class="sec"><h4>${O.comentarios?'Conversa':'Respostas do projetista'}</h4><span class="empty">sem mensagens</span></div>`:'')}
+        ${O.log&&(a.log_json||[]).length?`<div class="sec"><h4>Log</h4><div class="log">${(a.log_json||[]).map(l=>`<div><span>${esc(l.data||'')}</span>${esc(l.texto||'')}</div>`).join('')}</div></div>`:''}
+      </div>`;
+    });
+    h+='</div>';
+  }
+  $('root').innerHTML=h;
+  // aguarda as imagens antes de imprimir automaticamente
+  if(O.auto_print!==false){
+    const imgs=[...document.images]; let pend=imgs.filter(i=>!i.complete).length;
+    const go=()=>setTimeout(()=>window.print(),300);
+    if(!pend) go(); else { imgs.forEach(i=>{ if(!i.complete){ i.onload=i.onerror=()=>{ if(--pend<=0) go(); }; } }); setTimeout(go, 8000); }
+  }
+}
+const P=carregar(); if(P) render(P);
+</script>
+</body>
+</html>

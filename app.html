@@ -4628,10 +4628,61 @@ function expMenu(ev){
   m.innerHTML='<div style="padding:4px 10px 6px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em">Exportar '+n+' apontamento(s) do filtro</div>'
     + item('📊 Excel (.xlsx) — resumo + lista','expApontamentosXlsx();$(\'expMenu\').remove()', !n)
     + item('🧊 BCF 2.1 (.bcfzip) — em breve','',true)
-    + item('📄 Relatório PDF — em breve','',true);
+    + item('📄 Relatório PDF — BI + detalhe por apontamento','expRelatorioAbrir();$(\'expMenu\').remove()', !n);
   document.body.appendChild(m);
   const r=ev.currentTarget.getBoundingClientRect(); m.style.left=Math.max(8,Math.min(window.innerWidth-240, r.left))+'px'; m.style.top=(r.bottom+6)+'px';
   setTimeout(()=>document.addEventListener('click',()=>{ const x=$('expMenu'); if(x) x.remove(); },{once:true}),0);
+}
+// ── Item 66: relatório PDF (BI na 1ª página + um bloco por apontamento, com o nível de detalhe escolhido) ──
+function expRelatorioAbrir(){
+  const old=$('expRelPop'); if(old) old.remove();
+  const n=aptsFiltrados().length;
+  const p=document.createElement('div'); p.id='expRelPop';
+  p.style.cssText='position:fixed;inset:0;z-index:9600;background:rgba(8,14,26,.55);display:flex;align-items:center;justify-content:center';
+  const cb=(id,rot,on,sub)=>'<label style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;cursor:pointer"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' style="margin-top:3px"><span><b>'+rot+'</b>'+(sub?'<br><span style="color:var(--mut);font-size:11.5px">'+sub+'</span>':'')+'</span></label>';
+  p.innerHTML='<div style="background:var(--panel);color:var(--txt);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:14px;padding:18px 20px;width:420px;max-width:94vw;font-size:13px;box-shadow:0 20px 60px rgba(0,0,0,.4)">'
+    +'<div style="font-size:15px;font-weight:800;color:var(--accent2)">Relatório PDF — '+n+' apontamento(s)</div>'
+    +'<div style="color:var(--mut);font-size:12px;margin:2px 0 10px">1ª página: BI do conjunto (por disciplina, criticidade, atraso). Depois, um bloco por apontamento com o que você marcar.</div>'
+    +cb('rl_desc','Descrição',true)
+    +cb('rl_resp','Responsáveis e prazos',true)
+    +cb('rl_img','Prints / imagens',true,'a primeira em tamanho grande; as demais em miniatura')
+    +cb('rl_conv','Comentários (conversa completa)',false,'coordenação e projetista')
+    +cb('rl_proj','Só as respostas do projetista',true,'ignorado se a conversa completa estiver marcada')
+    +cb('rl_log','Log do apontamento',false,'criação, mudanças de status, IA')
+    +cb('rl_det','Incluir a parte de detalhe',true,'desmarque para sair só a página do BI')
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="tb" onclick="$(\'expRelPop\').remove()">Cancelar</button><button class="tb" id="rl_go" style="background:var(--accent);color:#231703;border-color:var(--accent)" onclick="expRelatorioGerar()">📄 Gerar relatório</button></div></div>';
+  document.body.appendChild(p);
+}
+async function expRelatorioGerar(){
+  const rows=aptsFiltrados(); if(!rows.length){ alert('Nenhum apontamento no filtro.'); return; }
+  const O={ descricao:$('rl_desc').checked, responsaveis:$('rl_resp').checked, imagens:$('rl_img').checked?'todas':false, comentarios:$('rl_conv').checked, respostas:$('rl_proj').checked, log:$('rl_log').checked, detalhe:$('rl_det').checked };
+  const go=$('rl_go'); go.disabled=true; go.textContent='Montando…';
+  try{
+    // conversas (threads do tipo apontamento → mensagens), só se o relatório pedir
+    const msgs={};
+    if(O.detalhe && (O.comentarios||O.respostas)){
+      const ids=rows.map(a=>a.id);
+      for(let i=0;i<ids.length;i+=150){
+        const lote=ids.slice(i,i+150);
+        const th=await sb.from('threads_auria').select('id,apontamento_id').eq('tipo','apontamento').eq('empreendimento_id',EMP.id).in('apontamento_id',lote);
+        const ths=th.data||[]; if(!ths.length) continue;
+        const ms=await sb.from('mensagens_auria').select('thread_id,de,autor_nome,autor_email,texto,criado_em').in('thread_id',ths.map(t=>t.id)).order('criado_em');
+        const porTh={}; ths.forEach(t=>porTh[t.id]=t.apontamento_id);
+        (ms.data||[]).forEach(m=>{ const ap=porTh[m.thread_id]; if(!ap) return; (msgs[ap]=msgs[ap]||[]).push(m); });
+      }
+    }
+    const apts=rows.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id),'pt',{numeric:true})).map(a=>({
+      id:a.id, titulo:a.titulo, descricao:a.descricao, disciplina:a.disciplina, _disc:discFullName(a.disciplina)||a.disciplina, prioridade:a.prioridade, status:a.status,
+      data_criacao:a.data_criacao, criado_por_nome:a.criado_por_nome, arquivo_nome:a.arquivo_nome, codigo:a.codigo, tipo:a.tipo, local_txt:a.local_txt,
+      imagens_json:O.imagens?(a.imagens_json||[]):[], log_json:O.log?(a.log_json||[]):[],
+      _late:estaAtrasado(a), _dias:_expDias(a), _prazo:_expPrazo(a), _concl:_expConclusao(a), _resp:_expResp(a) }));
+    const P={ emp:{ id:EMP.id, nome:EMP.nome, codigo:EMP.codigo||'', logo_url:EMP.logo_url||'' }, filtro:aptFiltroTxt(), gerado_por:(USER&&USER.nome)||'', opcoes:O, apts, msgs, quando:new Date().toISOString() };
+    const k=Date.now().toString(36);
+    try{ Object.keys(localStorage).filter(x=>x.startsWith('auria_rel_')).forEach(x=>localStorage.removeItem(x)); }catch(_){}
+    localStorage.setItem('auria_rel_'+k, JSON.stringify(P));
+    window.open('relatorio.html?k='+k, '_blank');
+    $('expRelPop').remove();
+  }catch(e){ alert('Não foi possível montar o relatório: '+((e&&e.message)||e)); go.disabled=false; go.textContent='📄 Gerar relatório'; }
 }
 function _expDias(a){ if(a.status==='Resolvido') return ''; const d=_parseData(a.prazo_min); if(!d) return ''; const t=new Date(); t.setHours(0,0,0,0); return Math.round((t-d)/864e5); }
 function _expResp(a){ const ps=a.participantes||{}; return Object.entries(ps).map(([d,p])=>{ const em=(p&&p.emails)||[]; return d+(em.length?' ('+em.join(', ')+')':''); }).join(' | '); }
