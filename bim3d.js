@@ -1603,6 +1603,7 @@ export async function linhasQuantitativo(V, porMod){
     const boxOf=new Map(); ids.forEach((id,i)=>{ if(boxes&&boxes[i]) boxOf.set(id,boxes[i]); });
     for(const id of ids){ const d=dOf.get(id); const cat=catOf.get(id)||'';
       const numPref=(rx,excl)=>{ if(!d) return ''; const cs=_valoresProfundos(d,rx);
+        if(rx===RX.area){ const g=_melhorArea(cs, cat); return g?g.val:''; }   // item 57
         const g=(excl?cs.find(c=>!excl(c.nome)):null)||cs.find(c=>/net/i.test(c.nome))||cs.find(c=>!/gross/i.test(c.nome))||cs[0]; return g?g.val:''; };
       const txt=(rx)=>{ if(!d) return ''; const v=_achaValorQualquer(d,rx); return v==null?'':String(v); };
       // aceita número OU texto numérico ("30", "30 cm") — TQS exporta dims como texto.
@@ -2284,11 +2285,34 @@ function _valoresProfundos(d, rx){
   }
   return cands;
 }
-function _achaValorProfundo(d, rx){
+// ÁREA: qual das quantidades IFC vale como "área do elemento" (item 57). O critério antigo
+// ("1ª que tem Net") pegava NetFootprintArea em parede (comprimento × espessura — a pegada
+// no piso), por isso a área de parede saía errada. Ordem: face lateral (Side) > área
+// líquida > bruta > superfície > seção; pegada (Footprint) só se não houver mais nada.
+// Elemento LINEAR (pilar/viga/estaca) mantém a seção (CrossSectionArea) — é a base do volume.
+function _rankArea(nome, cat){
+  const n=String(nome||'').toLowerCase();
+  const linear=/IFCCOLUMN|IFCBEAM|IFCMEMBER|IFCPILE/.test(cat||'');
+  if(linear && /cross|se[cç][aã]o|section/.test(n)) return 20;
+  if(/netside/.test(n)) return 19;  if(/grossside/.test(n)) return 18;
+  if(/^netarea$|netarea|[áa]rea ?l[íi]quida/.test(n) && !/footprint|pegada/.test(n)) return 17;
+  if(/^grossarea$|grossarea|[áa]rea ?bruta/.test(n) && !/footprint|pegada/.test(n)) return 16;
+  if(/surface|superf/.test(n)) return 12;
+  if(/cross|se[cç][aã]o|section/.test(n)) return 10;
+  if(/footprint|pegada/.test(n)) return /net/.test(n) ? 2 : 1;
+  if(/net/.test(n)) return 9; if(!/gross/.test(n)) return 8; return 7;
+}
+function _melhorArea(cands, cat){
+  if(!cands||!cands.length) return null;
+  let best=null, bs=-1; cands.forEach(c=>{ const s=_rankArea(c.nome, cat); if(s>bs){ bs=s; best=c; } }); return best;
+}
+function _achaValorProfundo(d, rx, cat){
   const cands=_valoresProfundos(d, rx); if(!cands.length) return null;
-  // Preferência p/ somar CONSISTENTE: Net > (não-Gross) > primeiro.
+  if(/area|[áa]rea/i.test(String(rx))) return _melhorArea(cands, cat);
+  // Demais quantidades (volume/comprimento): Net > (não-Gross) > primeiro.
   return cands.find(c=>/net/i.test(c.nome)) || cands.find(c=>!/gross/i.test(c.nome)) || cands[0];
 }
+export function rankArea(nome, cat){ return _rankArea(nome, cat); }
 // Soma a quantidade SEPARADA por NOME de propriedade (ex.: NetArea × GrossArea ×
 // Área): mostra ao usuário qual bater o esperado, em vez de misturar. Uma medição
 // por elemento por nome (pega o 1º valor daquele nome). Retorna [{nome,soma,n}].
@@ -2329,7 +2353,7 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
     let dd=[]; try{ dd=await x.model.getItemsData(ids, { attributesDefault:true,
       relations:{ IsDefinedBy:{attributes:true,relations:true} }, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
     const faltam=[];
-    (dd||[]).forEach((d,i)=>{ const r=_achaValorProfundo(d, rx);
+    (dd||[]).forEach((d,i)=>{ const r=_achaValorProfundo(d, rx, String((regexes||[]).map(x=>x&&x.source||x).join('|')));
       if(r && typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); }
       else faltam.push(ids[i]);
     });
