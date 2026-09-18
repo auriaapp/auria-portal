@@ -1747,19 +1747,22 @@ function renderEmpresasPage(){
 async function salvarGrupoNome(){
   const nome = (document.getElementById('grupoNomeInp').value||'').trim();
   if(!nome){ showToast('Informe o nome do grupo','red'); return; }
-  const { error } = await sb.from('empresas_auria').update({ nome }).eq('id', EMPRESA.id);
-  if(error){ showToast('Erro: '+error.message,'red'); return; }
-  EMPRESA.nome = nome;
-  showToast('Nome do grupo atualizado','green');
+  // RPC grupo_set: o UPDATE direto afetava 0 linhas sem erro (empresas_auria não tem
+  // policy de update para o gerente) e a tela dizia "atualizado" sem salvar nada.
+  const { data, error } = await sb.rpc('grupo_set', { p_nome: nome, p_logo: null });
+  if(error){ showToast('Erro: '+error.message+(/grupo_set/.test(error.message)?' (rode supabase_grupo_set.sql)':''),'red'); return; }
+  const g = data && data[0]; if(g){ EMPRESA.nome = g.nome; } else EMPRESA.nome = nome;
+  gdLogoGrupo(); showToast('Nome do grupo atualizado','green');
 }
 
 async function salvarGrupoLogo(input){
   const file = input.files?.[0]; if(!file) return;
   try{
-    const url = await uploadLogoGenerico(file, 'grupos', EMPRESA.id);
-    const { error } = await sb.from('empresas_auria').update({ logo_url:url }).eq('id', EMPRESA.id);
-    if(error) throw error;
-    EMPRESA.logo_url = url; gdLogoGrupo();
+    // ?v= para o navegador não mostrar a imagem antiga (o path é sempre o mesmo, upsert)
+    const url = (await uploadLogoGenerico(file, 'grupos', EMPRESA.id)) + '?v=' + Date.now();
+    const { data, error } = await sb.rpc('grupo_set', { p_nome: null, p_logo: url });
+    if(error) throw new Error(error.message+(/grupo_set/.test(error.message)?' (rode supabase_grupo_set.sql)':''));
+    EMPRESA.logo_url = (data && data[0] && data[0].logo_url) || url; gdLogoGrupo();
     showToast('Logo do grupo atualizada','green');
     renderEmpresasPage();
   }catch(e){ showToast('Erro ao salvar logo: '+(e.message||e),'red'); }
