@@ -598,6 +598,9 @@
             <polyline points="14,5.5 14,2 10.5,2"/><line x1="14" y1="2" x2="9.6" y2="6.4"/>
             <polyline points="2,10.5 2,14 5.5,14"/><line x1="2" y1="14" x2="6.4" y2="9.6"/>
             <polyline points="14,10.5 14,14 10.5,14"/><line x1="14" y1="14" x2="9.6" y2="9.6"/></svg></button>
+        <button class="tb ico" id="btnGirar" onclick="pdfGirar()" title="Girar a prancha 90° (a posição fica salva para todos)">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13 8a5 5 0 1 1-1.5-3.6"/><polyline points="13,1.5 13,5 9.5,5"/></svg></button>
         <button class="tb ico" onclick="pdfZoom(1)" title="Aumentar">
           <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="8" cy="8" r="6"/><line x1="5.2" y1="8" x2="10.8" y2="8"/><line x1="8" y1="5.2" x2="8" y2="10.8"/></svg></button>
@@ -1160,9 +1163,11 @@ async function carregarDocs(){
     revs=r||[];
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
-      const { data:a } = await sb.from('cde_arquivo_auria')
-        .select('id,revisao_id,nome,extensao,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress').in('revisao_id',revIds);
-      arqs=a||[];
+      // 'rotacao' (item 60) é coluna nova: se o SQL ainda não rodou, cai para a lista sem ela.
+      const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress';
+      let q = await sb.from('cde_arquivo_auria').select(COLS+',rotacao').in('revisao_id',revIds);
+      if(q.error) q = await sb.from('cde_arquivo_auria').select(COLS).in('revisao_id',revIds);
+      arqs=q.data||[];
     }
   }
   // Anexa os arquivos a cada revisão (o card mostra os formatos; o recebimento
@@ -2637,11 +2642,12 @@ function _dxfWorkerFactory(){
 // exibida — não no mediabox bruto do PDF, que pode ter offset/rotação
 // próprios; getViewport() já absorve isso, tanto aqui quanto no render()
 // principal, então os dois espaços de pixel são diretamente comparáveis).
-async function computeContentBBoxPx(page){
+async function computeContentBBoxPx(page, rot){
   const ALVO_PX = 900;             // resolução de detecção — não precisa ser nítido, só preciso
-  const vp0 = page.getViewport({ scale:1 });
+  const rotation = (((page.rotate||0)+(rot||0))%360+360)%360;
+  const vp0 = page.getViewport({ scale:1, rotation });
   const s = ALVO_PX / Math.max(vp0.width, vp0.height);
-  const vp = page.getViewport({ scale:s });
+  const vp = page.getViewport({ scale:s, rotation });
   const cv = document.createElement('canvas');
   cv.width  = Math.max(1, Math.ceil(vp.width));
   cv.height = Math.max(1, Math.ceil(vp.height));
@@ -3224,7 +3230,7 @@ class CdeWin {
     this.VIEW_FILES = {}; this.VIEW_FRAG = null;
     const rev = doc.atual;
     ((rev&&rev.arqs)||[]).forEach(a=>{ const e=(a.extensao||'').toLowerCase();
-      if((e==='pdf'||e==='dxf') && !this.VIEW_FILES[e]) this.VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase' };
+      if((e==='pdf'||e==='dxf') && !this.VIEW_FILES[e]) this.VIEW_FILES[e]={ path:a.storage_path, nome:a.nome, provider:a.storage_provider||'supabase', arqId:a.id, rotacao:Number(a.rotacao||0) };
       // O 3D não abre o IFC: abre o .frag gerado a partir dele. Sem conversão
       // pronta não há o que mostrar, e o card da aba BIM é quem oferece converter.
       // Lista (e não um só) porque a mesma cena também serve o modo federado.
@@ -4771,6 +4777,7 @@ class CdeWin {
       this._cacheBbox = r.bbox || {};
       this.V.doc = await pdfjsLib.getDocument({ data:r.bytes }).promise;
       this.V.pageNum=1; this.B.valido=false;
+      this.V.rot = Number((this.VIEW_FILES&&this.VIEW_FILES.pdf&&this.VIEW_FILES.pdf.rotacao)||0);   // rotação salva (item 60)
       this.V.page = await this.V.doc.getPage(this.V.pageNum);
       // bbox primeiro (define o enquadramento e, com ele, a resolução do
       // bitmap). Se já veio do cache, nem o scan é necessário. Depois UMA
@@ -4788,16 +4795,17 @@ class CdeWin {
   // isso logo depois, com o bbox já pronto). Reaproveita o valor do cache
   // quando existe: o scan é um render de página inteira, ainda que leve.
   async _ajustarBBox(){
-    const page=this.V.page, n=this.V.pageNum;
-    const salvo = this._cacheBbox && this._cacheBbox[n];
+    const page=this.V.page, n=this.V.pageNum, rot=this._rot();
+    const chave = rot ? (n+'r'+rot) : n;   // bbox muda com a rotação
+    const salvo = this._cacheBbox && this._cacheBbox[chave];
     if(salvo){ this._bbox = salvo; return; }
     try{
-      const bb = await computeContentBBoxPx(page);
-      if(this.V.page!==page) return;   // trocou de página/prancha enquanto calculava
+      const bb = await computeContentBBoxPx(page, rot);
+      if(this.V.page!==page || this._rot()!==rot) return;   // trocou de página/prancha/rotação enquanto calculava
       this._bbox = bb;
       if(this._cachePath){
         this._cacheBbox = this._cacheBbox || {};
-        this._cacheBbox[n] = bb;
+        this._cacheBbox[chave] = bb;
         cacheGravarBbox(this._cachePath, n, bb);
       }
     }catch(e){ console.warn('bbox:', (e&&e.message)||e); }
@@ -4842,7 +4850,30 @@ class CdeWin {
   // de CAD costuma ser exportada como retrato + /Rotate 90, e aí a MediaBox diz
   // "retrato" enquanto o render sai paisagem — largura e altura trocadas. Era o
   // que fazia o recorte/enquadramento sair errado em todas as pranchas.
-  _dims(){ const vp=this.V.page.getViewport({ scale:1 }); return { pw:vp.width, ph:vp.height }; }
+  // Item 60: rotação extra da prancha (0/90/180/270), somada ao /Rotate do PDF.
+  // É só exibição: bitmap, bbox, pins e cliques passam por _vp()/_rotIn()/_rotOut().
+  _rot(){ return ((this.V.rot||0)%360+360)%360; }
+  _vp(scale, page){ const p=page||this.V.page; return p.getViewport({ scale, rotation:(((p.rotate||0)+this._rot())%360) }); }
+  _dims(){ const vp=this._vp(1); return { pw:vp.width, ph:vp.height }; }
+  // pin gravado (sem rotação extra) → posição na tela girada; e o inverso.
+  _rotOut(nx,ny){ switch(this._rot()){ case 90: return {nx:1-ny, ny:nx}; case 180: return {nx:1-nx, ny:1-ny}; case 270: return {nx:ny, ny:1-nx}; default: return {nx,ny}; } }
+  _rotIn(nx,ny){  switch(this._rot()){ case 90: return {nx:ny, ny:1-nx}; case 180: return {nx:1-nx, ny:1-ny}; case 270: return {nx:1-ny, ny:nx}; default: return {nx,ny}; } }
+  async girar(delta){
+    if(!this.V.page || this.VIEW_FMT!=='pdf') return;
+    this.V.rot = (this._rot() + (delta||90) + 360) % 360;
+    this.B.valido=false; this._bbox=null;
+    this.msg('Girando…');
+    try{ await this._ajustarBBox(); this.fitPage(); await this._renderBase(); }catch(_){}
+    this.hideMsg(); this.renderPinsCDE();
+    // salva para todos (só a coordenação consegue; os demais ficam só na sessão)
+    const arq=this.VIEW_FILES&&this.VIEW_FILES.pdf&&this.VIEW_FILES.pdf.arqId;
+    if(arq && !SEM_ESCRITA){
+      try{ const r=await sb.rpc('cde_arquivo_rotacao',{ p_arquivo:arq, p_rotacao:this.V.rot }); if(r.error) throw r.error;
+        const a=this._arqObj(arq); if(a) a.rotacao=this.V.rot; }
+      catch(e){ console.warn('rotação não salva:', e&&e.message||e); }
+    }
+  }
+  _arqObj(arqId){ for(const d of DOCS){ for(const r of (d.revs||[])){ const a=(r.arqs||[]).find(x=>x.id===arqId); if(a) return a; } } return null; }
   pageSizePx(){ const d=this._dims(); return { w:d.pw*this.V.zoom, h:d.ph*this.V.zoom }; }
   // Zoom e pan são APENAS transformação CSS sobre o bitmap da página inteira
   // (composição na GPU, sem repaint). Nenhum page.render() acontece aqui — é
@@ -4912,7 +4943,7 @@ class CdeWin {
     // no mesmo canvas é uma das causas clássicas de travada no PDF.js.
     const pintar=async(page,ctx,bg)=>{
       ctx.save(); ctx.translate(-rx*s, -ry*s);
-      const task=page.render({ canvasContext:ctx, viewport:page.getViewport({ scale:s }), background:bg });
+      const task=page.render({ canvasContext:ctx, viewport:this._vp(s, page), background:bg });
       this._renderTask=task;
       try{ await task.promise; }
       catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
@@ -5184,8 +5215,9 @@ class CdeWin {
       if(encerrado && !CDE_HIST_ON) return;
       (a.pontos_json||[]).forEach((pt,idx)=>{
         if(!pt) return; const ptPg = pt.pg || 1; if(ptPg !== pg) return;
-        const x = (pt.nx||0) * pw * this.V.zoom - this.V.panX;
-        const y = (pt.ny||0) * ph * this.V.zoom - this.V.panY;
+        const q = this._rotOut(pt.nx||0, pt.ny||0);   // item 60: pin acompanha a rotação
+        const x = q.nx * pw * this.V.zoom - this.V.panX;
+        const y = q.ny * ph * this.V.zoom - this.V.panY;
         if(x < -30 || y < -40 || x > this.stage.clientWidth+30 || y > this.stage.clientHeight+10) return;
         const el = document.createElement('div');
         el.className = 'cdePin' + (this.CDE_PIN_SEL===a.id?' sel':'');
@@ -5203,9 +5235,10 @@ class CdeWin {
     const r=this.stage.getBoundingClientRect();
     const sx=ev.clientX-r.left, sy=ev.clientY-r.top;
     const { pw, ph } = this._dims();
-    const nx=(sx + this.V.panX)/(pw*this.V.zoom);
-    const ny=(sy + this.V.panY)/(ph*this.V.zoom);
-    if(nx<0||nx>1||ny<0||ny>1) return;   // clicou fora da página
+    const dx=(sx + this.V.panX)/(pw*this.V.zoom);
+    const dy=(sy + this.V.panY)/(ph*this.V.zoom);
+    if(dx<0||dx>1||dy<0||dy>1) return;   // clicou fora da página
+    const { nx, ny } = this._rotIn(dx, dy);   // grava SEM a rotação extra (item 60)
     abrirFormApontarCDE(this, { nx, ny, pg:this.V.pageNum });
   }
   // Print automático: recorta a região do bitmap base ao redor do ponto e
@@ -5214,6 +5247,7 @@ class CdeWin {
   capturarVistaCDE(nx, ny){
     try{
       const cv=this.canvas; if(!cv||!cv.width||!this.B.valido) return null;
+      { const q=this._rotOut(nx, ny); nx=q.nx; ny=q.ny; }   // item 60: o bitmap está girado
       const { pw, ph } = this._dims(), bs=this.B.scale, z=this.V.zoom;
       const cx=nx*pw*bs, cy=ny*ph*bs;                          // ponto no bitmap base
       const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
@@ -5473,6 +5507,7 @@ function cdeMostrarFormato(fmt){ const w=cdeAtiva(); if(w) w.abrirFormato(fmt); 
 function pdfZoom(dir){ const w=cdeAtiva(); if(!w||!w.V.doc) return;
   w.zoomAt(dir>0?1.25:0.8, w.stage.clientWidth/2, w.stage.clientHeight/2); }
 function pdfFit(){ const w=cdeAtiva(); if(w) w.fitPage(); }
+function pdfGirar(){ const w=cdeAtiva(); if(w&&w.V.page&&w.VIEW_FMT==='pdf') w.girar(90); }
 function pdfPage(delta){ const w=cdeAtiva(); if(w) w.pdfPage(delta); }
 // Setas ◀ ▶ (e teclado ← →): prancha de VÁRIAS páginas → pagina; prancha de 1
 // página → navega entre PRANCHAS. delta -1 = anterior, +1 = próxima.
