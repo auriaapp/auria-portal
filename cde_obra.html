@@ -435,6 +435,8 @@
   .folder-h{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;background:var(--panel2)}
   .folder-h .fic{font-size:14px}
   .folder-h .fnm{font-weight:700;font-size:13px;flex:1}
+  .folder-h .fnm .fsig{font-family:var(--mono);color:var(--accent);margin-right:6px}
+  .folder-h .fnm .fdesc{font-weight:500;color:var(--mut);font-size:12px}
   .folder-h .fct{font-family:var(--mono);font-size:11px;color:var(--mut);background:var(--panel);
                  border:1px solid var(--line);border-radius:10px;padding:0 7px}
   .folder-b{display:none;padding:4px}
@@ -1074,11 +1076,17 @@ async function carregarGrupos(){
 // Campo da etapa: prioriza o mapeamento; se não houver, cai na chave "fase".
 function faseCampo(){ const cs=CONV.campos||[]; return cs.find(c=>c.mapeia==='fase') || cs.find(c=>c.chave==='fase') || null; }
 function faseKey(){ return (faseCampo()||{}).chave; }
-function faseLabel(v){
+// Nomes usuais das etapas de projeto — usados quando a convenção só tem a sigla (item 59).
+const FASES_PADRAO={ LV:'Levantamento', EV:'Estudo de Viabilidade', EP:'Estudo Preliminar', AP:'Anteprojeto', PL:'Projeto Legal', PB:'Projeto Básico',
+  PE:'Pré-executivo', EX:'Executivo', PX:'Projeto Executivo', DE:'Detalhamento', AB:'As-Built', AS:'As-Built', LB:'Liberado para obra', CO:'Compatibilização', MA:'Manutenção' };
+function faseNome(v){   // nome da etapa ou '' quando desconhecida
   const c=faseCampo();
   if(c&&c.dominio){ const d=c.dominio.find(x=>((typeof x==='object')?x.v:x)===v); if(d&&typeof d==='object'&&d.rotulo) return d.rotulo; }
-  return v||'—';
+  return FASES_PADRAO[String(v||'').toUpperCase()]||'';
 }
+function faseLabel(v){ const n=faseNome(v); return n ? (v+' · '+n) : (v||'—'); }
+// Pasta de etapa: sigla em mono (laranja) + nome; o hover mostra "SIGLA — Nome".
+function faseHtml(v){ const n=faseNome(v); return `<span class="fsig" title="${esc(v+(n?' — '+n:''))}">${esc(v||'—')}</span>`+(n?`<span class="fdesc" title="${esc(v+' — '+n)}">${esc(n)}</span>`:''); }
 // Título do documento para o card: só mostra se houver um resumo REAL (diferente
 // do código). Documentos antigos vinham com titulo=código (placeholder) — assim
 // não repetimos o código duas vezes na linha de baixo.
@@ -1917,7 +1925,7 @@ function navFiltrado(){
       const open = PASTAS_ABERTAS.has(disc+'::'+et);
       return `<div class="folder ${open?'open':''}">
         <div class="folder-h" onclick="toggleEtapa('${esc(disc)}','${esc(et)}')">
-          <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${esc(faseLabel(et))}</span><span class="fct">${ds.length}</span>
+          <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${faseHtml(et)}</span><span class="fct">${ds.length}</span>
         </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
     }).join('');
     return `<h3>${esc(discLabel(disc))}</h3>` + folders;
@@ -1977,14 +1985,14 @@ function navAutoGrupo(modo){
   if(AUTOGRP_SEL && porValor[AUTOGRP_SEL]){
     const ds=porValor[AUTOGRP_SEL].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     return `<div class="grp-back" onclick="AUTOGRP_SEL=null;renderNav()">← Por ${titulo}</div>
-      <h3>${icone} ${esc(label(AUTOGRP_SEL))}</h3>
+      <h3>${icone} ${isLocal?esc(label(AUTOGRP_SEL)):faseHtml(AUTOGRP_SEL)}</h3>
       <button class="btn sec sm" style="margin-bottom:8px" onclick='selecionarTodosGrupo(${JSON.stringify(ds.map(d=>d.id))})'>☑ Selecionar todas (${ds.length})</button>
       ${ds.map(cardFdoc).join('')}`;
   }
   return `<div class="grp-back" onclick="AUTOGRP_MODE=null;renderNav()">← Grupos</div>
     <h3>${icone} Por ${titulo}</h3>` +
     (valores.length ? valores.map(v=>`<div class="folder"><div class="folder-h" onclick="AUTOGRP_SEL='${esc(v)}';renderNav()">
-        <span class="fic">${icone}</span><span class="fnm">${esc(label(v))}</span><span class="fct">${porValor[v].length}</span></div></div>`).join('')
+        <span class="fic">${icone}</span><span class="fnm">${isLocal?esc(label(v)):faseHtml(v)}</span><span class="fct">${porValor[v].length}</span></div></div>`).join('')
       : `<div class="nav-hint">Nenhum documento com ${titulo} definida ainda.</div>`);
 }
 // F3-b: pasta "Por localização" agora reflete a associação doc↔pavimento (multi),
