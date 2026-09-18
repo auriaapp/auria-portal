@@ -58,6 +58,26 @@
         padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none}
   .hbtn:hover{background:#243452}
   .hbtn.pri{background:var(--accent);border-color:var(--accent);color:#231703}
+  /* Item 69 — Fila da obra (perfil obra): o que mudou desde a última visita */
+  .hbtn .fbad{display:inline-block;min-width:18px;height:18px;line-height:18px;border-radius:9px;background:var(--accent);color:#231703;font-size:11px;font-weight:800;text-align:center;margin-left:6px;padding:0 5px}
+  .filaObra{position:fixed;top:56px;right:12px;width:420px;max-width:calc(100vw - 24px);max-height:calc(100vh - 80px);z-index:8600;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:14px;box-shadow:0 18px 50px rgba(8,14,26,.4);display:none;flex-direction:column;overflow:hidden}
+  .filaObra.on{display:flex}
+  .filaObra .fo-h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+  .filaObra .fo-h b{font-size:13.5px;flex:1}
+  .filaObra .fo-chips{display:flex;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line)}
+  .filaObra .fo-chip{font-size:11px;font-weight:700;border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer;color:var(--txt2,var(--txt))}
+  .filaObra .fo-chip.on{background:var(--accent);border-color:var(--accent);color:#231703}
+  .filaObra .fo-list{overflow:auto;padding:6px 8px 10px}
+  .fo-it{display:flex;gap:10px;align-items:flex-start;padding:9px 8px;border-radius:10px;cursor:pointer;border-left:3px solid transparent}
+  .fo-it:hover{background:var(--panel2)}
+  .fo-it.novo{border-left-color:var(--accent)}
+  .fo-it .fo-ic{font-size:16px;width:22px;text-align:center;flex-shrink:0}
+  .fo-it .fo-b{flex:1;min-width:0}
+  .fo-it .fo-t{font-size:12.5px;font-weight:700;line-height:1.3}
+  .fo-it .fo-t .cod{font-family:var(--mono);color:var(--accent)}
+  .fo-it .fo-s{font-size:11.5px;color:var(--mut);margin-top:2px}
+  .fo-it .fo-dt{font-size:10.5px;color:var(--mut);white-space:nowrap;font-family:var(--mono)}
+  .fo-vazio{padding:22px 14px;color:var(--mut);font-size:12.5px;text-align:center}
 
   .main{flex:1;display:flex;overflow:hidden;position:relative}
 
@@ -573,6 +593,7 @@
   <a class="hbtn" href="painel_analista.html">← Painel</a>
   <button class="hbtn" id="btnFicha" onclick="abrirFicha()" style="display:none" title="Ficha do empreendimento (características, viabilidades, documentação)">📋 Ficha</button>
   <button class="hbtn" id="btnRdo" onclick="abrirRdo()" style="display:none" title="Diário de Obra — registro diário da equipe de campo">📓 Diário</button>
+  <button class="hbtn" id="btnFilaObra" onclick="filaObraToggle()" style="display:none" title="O que chegou para a obra: revisões liberadas, respostas aos apontamentos da obra">📋 Fila da obra<span class="fbad" id="filaObraBad" style="display:none">0</span></button>
   <button class="hbtn" id="btnOrgQR" onclick="abrirOrganizadorQR()" style="display:none" title="Organizar vários QR para impressão (A4/A3 paisagem)">🖨 Organizar QR</button>
   <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Enviar arquivo(s)</button>
 </header>
@@ -632,6 +653,11 @@
     <div id="cdePinCard" class="cdePinCard" style="display:none"></div>
   </div>
   <div id="multiBar" class="multiBar"></div>
+<div id="filaObra" class="filaObra">
+  <div class="fo-h"><span>📋</span><b>Fila da obra</b><button class="btn sec sm" onclick="filaObraVistoTudo()" title="Marca tudo como visto">✓ Tudo visto</button><button class="x" onclick="filaObraToggle(false)" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--mut)">×</button></div>
+  <div class="fo-chips" id="filaObraChips"></div>
+  <div class="fo-list" id="filaObraList"></div>
+</div>
 
   <!-- Navegação -->
   <aside class="nav" id="navAside">
@@ -1023,6 +1049,7 @@ async function boot(){
   if(!SEM_ESCRITA) $('btnReceber').style.display='';
   // Organizador de QR: mesma régua do diário (coordenação, eng. chefe, coord. de campo).
   if(FERRAMENTAS_OBRA){ const b=$('btnOrgQR'); if(b) b.style.display=''; }
+  if(RAMO_OBRA){ const b=$('btnFilaObra'); if(b) b.style.display=''; setTimeout(filaObraCarregar, 800); }
   await carregarDocs();
   await carregarGrupos();
   $('load').style.display='none';
@@ -5828,6 +5855,84 @@ function renderMultiBar(){
     ${baixaveis?`<button class="sec" id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
 }
+
+// ── Item 69: Fila da obra — o que mudou para quem toca a obra ──────────────
+//  Fontes: revisões LIBERADAS (A1/B1, aprovado_em) das pranchas que a obra vê (DOCS),
+//  marcando quando substituem uma revisão anterior; apontamentos abertos pela OBRA com
+//  mudança de status ou mensagem da coordenação. "Visto" fica no navegador (por
+//  usuário e empreendimento). Clique na revisão abre a prancha no CDE.
+let FO_ITENS=[], FO_FILTRO='todos', FO_VISTOS={};
+const FO_JANELA_DIAS=60;
+function _foKey(){ return 'auria_fila_obra_'+EMP_ID+'_'+((USER&&USER.id)||''); }
+function _foData(s){ if(!s) return null; s=String(s); let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s); if(m) return new Date(+m[1],+m[2]-1,+m[3]); m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if(m) return new Date(+m[3],+m[2]-1,+m[1]); const d=new Date(s); return isNaN(d)?null:d; }
+function _foLoad(){ try{ FO_VISTOS=JSON.parse(localStorage.getItem(_foKey())||'{}')||{}; }catch(_){ FO_VISTOS={}; } }
+function _foSave(){ try{ localStorage.setItem(_foKey(), JSON.stringify(FO_VISTOS)); }catch(_){} }
+async function filaObraCarregar(){
+  if(!RAMO_OBRA) return; _foLoad();
+  const desde=Date.now()-FO_JANELA_DIAS*864e5; const itens=[];
+  // 1) revisões liberadas
+  DOCS.forEach(d=>{
+    const libs=(d.revs||[]).filter(r=>['A1','B1','AS_BUILT'].includes(r.status)&&r.aprovado_em&&new Date(r.aprovado_em).getTime()>=desde);
+    libs.forEach(r=>{
+      const anteriores=(d.revs||[]).filter(x=>x.id!==r.id && x.recebido_em && r.recebido_em && new Date(x.recebido_em)<new Date(r.recebido_em)).length;
+      itens.push({ key:'rev|'+r.id, tipo:'liberada', quando:r.aprovado_em, docId:d.id,
+        titulo:(d.codigo||'')+' · rev '+(r.revisao||''), sub:(anteriores?'Nova revisão liberada — substitui a anterior. ':'Liberada para obra. ')+(_docTit(d)||'')+(r.status==='B1'?' · com ressalvas':''), cod:d.codigo, disc:d.disciplina });
+    });
+  });
+  // 2) apontamentos abertos pela obra: status e respostas
+  try{
+    const { data:apts } = await sb.from('apontamentos').select('id,id_num,titulo,status,prioridade,disciplina,data_criacao,criado_por_papel,log_json,prancha_id,cde_revisao_id').eq('empreendimento_id',EMP_ID).eq('criado_por_papel','obra').limit(500);
+    const lista=apts||[];
+    lista.forEach(a=>{
+      (a.log_json||[]).forEach((l,i)=>{ if(i===0) return; const t=_foData(l.data); if(!t||t.getTime()<desde) return;
+        if(/status|resolvid|em an[áa]lise|reprovad|conclu/i.test(l.texto||'')) itens.push({ key:'log|'+a.id+'|'+i, tipo:'apt', quando:t.toISOString(), aptId:a.id, titulo:a.id+' · '+(a.titulo||''), sub:(l.texto||'')+' · status: '+(a.status||''), prancha:a.prancha_id, cdeRev:a.cde_revisao_id }); });
+    });
+    if(lista.length){
+      const ids=lista.map(a=>a.id);
+      const th=await sb.from('threads_auria').select('id,apontamento_id').eq('tipo','apontamento').eq('empreendimento_id',EMP_ID).in('apontamento_id',ids);
+      const ths=th.data||[];
+      if(ths.length){
+        const ms=await sb.from('mensagens_auria').select('thread_id,de,autor_nome,texto,criado_em').in('thread_id',ths.map(t=>t.id)).gte('criado_em',new Date(desde).toISOString()).order('criado_em',{ascending:false});
+        const porTh={}; ths.forEach(t=>porTh[t.id]=t.apontamento_id);
+        (ms.data||[]).forEach(m=>{ const ap=porTh[m.thread_id]; const a=lista.find(x=>x.id===ap); if(!a||m.de==='obra') return;
+          itens.push({ key:'msg|'+m.thread_id+'|'+m.criado_em, tipo:'resposta', quando:m.criado_em, aptId:a.id, titulo:a.id+' · '+(a.titulo||''), sub:(m.autor_nome||(m.de==='projetista'?'Projetista':'Coordenação'))+': '+(m.texto||'').slice(0,140), prancha:a.prancha_id, cdeRev:a.cde_revisao_id }); });
+      }
+    }
+  }catch(e){ console.warn('fila obra apts:', e&&e.message||e); }
+  itens.sort((a,b)=>new Date(b.quando)-new Date(a.quando));
+  FO_ITENS=itens; filaObraRender();
+  // 1ª vez com novidade na sessão: abre sozinho
+  const novos=itens.filter(i=>!FO_VISTOS[i.key]).length;
+  if(novos && !sessionStorage.getItem(_foKey()+'_auto')){ sessionStorage.setItem(_foKey()+'_auto','1'); filaObraToggle(true); }
+}
+function filaObraRender(){
+  const bad=$('filaObraBad'); const novos=FO_ITENS.filter(i=>!FO_VISTOS[i.key]).length;
+  if(bad){ bad.textContent=novos; bad.style.display=novos?'':'none'; }
+  const n=t=>FO_ITENS.filter(i=>t==='todos'||i.tipo===t).length;
+  $('filaObraChips').innerHTML=[['todos','Tudo'],['liberada','Revisões liberadas'],['resposta','Respostas'],['apt','Status dos meus apontamentos']].map(([k,r])=>`<span class="fo-chip ${FO_FILTRO===k?'on':''}" onclick="FO_FILTRO='${k}';filaObraRender()">${r} <span style="opacity:.7">${n(k)}</span></span>`).join('');
+  const lista=FO_ITENS.filter(i=>FO_FILTRO==='todos'||i.tipo===FO_FILTRO);
+  const ic={liberada:'📐',resposta:'💬',apt:'🔁'};
+  $('filaObraList').innerHTML = lista.length ? lista.map((i,idx)=>`<div class="fo-it ${FO_VISTOS[i.key]?'':'novo'}" onclick="filaObraAbrir(${FO_ITENS.indexOf(i)})" title="${FO_VISTOS[i.key]?'':'novo · '}clique para abrir">
+      <span class="fo-ic">${ic[i.tipo]||'•'}</span><div class="fo-b"><div class="fo-t">${i.cod?'<span class="cod">'+esc(i.cod)+'</span> · rev '+esc(i.titulo.split('· rev ')[1]||''):esc(i.titulo)}</div><div class="fo-s">${esc(i.sub||'')}</div></div><span class="fo-dt">${fmtData(i.quando)}</span></div>`).join('')
+    : `<div class="fo-vazio">Nada novo nos últimos ${FO_JANELA_DIAS} dias.</div>`;
+}
+function filaObraToggle(force){ const p=$('filaObra'); const on = force===undefined ? !p.classList.contains('on') : !!force; p.classList.toggle('on', on); if(on && !FO_ITENS.length && RAMO_OBRA) filaObraCarregar(); }
+function filaObraVistoTudo(){ FO_ITENS.forEach(i=>FO_VISTOS[i.key]=Date.now()); _foSave(); filaObraRender(); }
+async function filaObraAbrir(idx){
+  const i=FO_ITENS[idx]; if(!i) return;
+  FO_VISTOS[i.key]=Date.now(); _foSave(); filaObraRender();
+  if(i.tipo==='liberada' && i.docId){ filaObraToggle(false); await openDocInWindow(i.docId); const w=cdeAtiva&&cdeAtiva(); if(w) focarMax(w); return; }
+  if(i.cdeRev || i.prancha){   // apontamento: abre a prancha onde ele está; o pin aparece nela
+    let d=i.cdeRev ? DOCS.find(x=>(x.revs||[]).some(r=>r.id===i.cdeRev)) : null;
+    if(!d && i.prancha){ try{ const r=await sb.from('pranchas_auria').select('cde_documento_id').eq('id',i.prancha).maybeSingle(); if(r.data&&r.data.cde_documento_id) d=DOCS.find(x=>x.id===r.data.cde_documento_id); }catch(_){} }
+    filaObraToggle(false);
+    if(d){ await openDocInWindow(d.id); const w=cdeAtiva&&cdeAtiva(); if(w) focarMax(w); }
+    else alert('A prancha deste apontamento não está disponível para o seu perfil.');
+    return;
+  }
+  filaObraToggle(false);
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ const p=$('filaObra'); if(p&&p.classList.contains('on')) filaObraToggle(false); } });
 
 // ── Item 58: download em lote (.zip) da seleção ─────────────────────────────
 //  Arquivos da revisão VIGENTE de cada prancha marcada, respeitando o que o papel
