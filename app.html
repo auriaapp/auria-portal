@@ -497,6 +497,7 @@
           <input id="fApTxt" oninput="renderListaApts()" placeholder="Buscar…"
                  style="flex:1;border:1.5px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;outline:none;background:var(--panel);color:var(--txt)">
           <button class="tb" id="fApFiltBtn" onclick="toggleFiltros()" title="Filtros" style="font-size:12px;padding:6px 10px;white-space:nowrap">⏵ Filtros</button>
+          <button class="tb" id="fApExpBtn" onclick="expMenu(event)" title="Exportar os apontamentos da lista (respeita o filtro)" style="font-size:12px;padding:6px 10px;white-space:nowrap">⬇</button>
         </div>
         <div id="fApPanel" style="display:none;margin-bottom:8px">
           <div id="fApChips" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px"></div>
@@ -4617,6 +4618,90 @@ function _fScript(src){ return new Promise((res,rej)=>{ if([...document.scripts]
 async function _fLogoB64(){ try{ const buf=await fetch('logo_symbol.png').then(r=>r.arrayBuffer()); let bin='',u=new Uint8Array(buf); for(let i=0;i<u.length;i++) bin+=String.fromCharCode(u[i]); return btoa(bin); }catch(_){ return null; } }
 function _fFiltroTxt(){ return FILT.conds.filter(c=>c&&c.campo&&String(c.valor||'').trim()).map(c=>{ const F=FILT_FIELDS[c.campo]; return (F?F.label:c.campo)+(c.sub?' '+c.sub:'')+' '+c.op+' '+c.valor+(F&&F.dim?(' '+(F.unit[c.sub]||'')):''); }).join(FILT.comb==='any'?'  OU  ':'  E  '); }
 function _fR2(v){ return (v===''||v==null||isNaN(v))?'':Math.round(v*100)/100; }
+// ── Item 65: exportar apontamentos (Excel; BCF e PDF vêm nos itens seguintes) ──
+function expMenu(ev){
+  ev.stopPropagation(); const old=$('expMenu'); if(old){ old.remove(); return; }
+  const n=aptsFiltrados().length;
+  const m=document.createElement('div'); m.id='expMenu';
+  m.style.cssText='position:fixed;z-index:9500;background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:10px;box-shadow:0 12px 32px rgba(8,14,26,.35);padding:6px;min-width:230px;font-size:12.5px';
+  const item=(t,fn,dis)=>'<div onclick="'+(dis?'':fn)+'" style="padding:8px 10px;border-radius:7px;cursor:'+(dis?'default':'pointer')+';color:'+(dis?'var(--mut)':'var(--txt)')+'" onmouseover="this.style.background=\'var(--panel2)\'" onmouseout="this.style.background=\'\'">'+t+'</div>';
+  m.innerHTML='<div style="padding:4px 10px 6px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em">Exportar '+n+' apontamento(s) do filtro</div>'
+    + item('📊 Excel (.xlsx) — resumo + lista','expApontamentosXlsx();$(\'expMenu\').remove()', !n)
+    + item('🧊 BCF 2.1 (.bcfzip) — em breve','',true)
+    + item('📄 Relatório PDF — em breve','',true);
+  document.body.appendChild(m);
+  const r=ev.currentTarget.getBoundingClientRect(); m.style.left=Math.max(8,Math.min(window.innerWidth-240, r.left))+'px'; m.style.top=(r.bottom+6)+'px';
+  setTimeout(()=>document.addEventListener('click',()=>{ const x=$('expMenu'); if(x) x.remove(); },{once:true}),0);
+}
+function _expDias(a){ if(a.status==='Resolvido') return ''; const d=_parseData(a.prazo_min); if(!d) return ''; const t=new Date(); t.setHours(0,0,0,0); return Math.round((t-d)/864e5); }
+function _expResp(a){ const ps=a.participantes||{}; return Object.entries(ps).map(([d,p])=>{ const em=(p&&p.emails)||[]; return d+(em.length?' ('+em.join(', ')+')':''); }).join(' | '); }
+function _expPrazo(a){ if(a.prazo_min) return _dispData(a.prazo_min); const ps=a.participantes||{}; const pr=Object.values(ps).map(p=>p&&p.prazo).filter(Boolean).sort()[0]; return pr?_dispData(pr):''; }
+function _expConclusao(a){ const ps=a.participantes||{}; const c=Object.values(ps).map(p=>p&&p.conclusao).filter(Boolean).sort().pop(); return c?_dispData(c):''; }
+async function expApontamentosXlsx(){
+  const rows=aptsFiltrados(); if(!rows.length){ alert('Nenhum apontamento no filtro.'); return; }
+  const btn=$('fApExpBtn'); const old=btn.textContent; btn.textContent='…'; btn.disabled=true;
+  try{
+    await _fScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
+    const ExcelJS=window.ExcelJS; if(!ExcelJS) throw new Error('ExcelJS não carregou');
+    const wb=new ExcelJS.Workbook(); wb.creator='Auria'; wb.created=new Date();
+    const NAVY='FF1E3A5F', LARANJA='FFE8960A', ZEBRA='FFF6F9FC', LINHA='FFE2E8F0', CINZA='FF64748B', BRANCO='FFFFFFFF';
+    const emp=(EMP&&EMP.nome)?EMP.nome:'—', sigla=(EMP&&EMP.codigo)||'', hoje=new Date().toLocaleDateString('pt-BR'), filtro=aptFiltroTxt();
+    // logos: Auria (símbolo) + empreendimento (se houver)
+    let logoId=null, logoExt={width:40,height:40};
+    try{ const b64=await _fLogoB64(); if(b64){ const dim=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res({w:im.naturalWidth||1,h:im.naturalHeight||1}); im.onerror=rej; im.src='data:image/png;base64,'+b64; });
+      logoExt={ width:Math.round(40*(dim.w/dim.h)), height:40 }; logoId=wb.addImage({base64:'data:image/png;base64,'+b64,extension:'png'}); } }catch(_){}
+    let empLogoId=null, empLogoExt=null;
+    if(EMP&&EMP.logo_url){ try{ const blob=await fetch(EMP.logo_url).then(r=>r.ok?r.blob():null); if(blob){ const b64=await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+      const ext=/png/i.test(blob.type)?'png':'jpeg'; const dim=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res({w:im.naturalWidth||1,h:im.naturalHeight||1}); im.onerror=rej; im.src=URL.createObjectURL(blob); });
+      empLogoExt={ width:Math.round(40*(dim.w/dim.h)), height:40 }; empLogoId=wb.addImage({base64:'data:image/'+ext+';base64,'+b64, extension:ext}); } }catch(_){} }
+    const cab=(ws, titulo, cols)=>{
+      if(logoId!=null) ws.addImage(logoId,{ tl:{col:0.15,row:0.15}, ext:logoExt });
+      if(empLogoId!=null) ws.addImage(empLogoId,{ tl:{col:Math.max(1,cols-1)+0.1,row:0.15}, ext:empLogoExt });
+      ws.mergeCells(1,2,1,Math.max(2,cols-1)); const t=ws.getCell(1,2); t.value=titulo; t.font={bold:true,size:15,color:{argb:NAVY}}; t.alignment={vertical:'middle'};
+      ws.mergeCells(2,2,2,Math.max(2,cols-1)); const s=ws.getCell(2,2); s.value=(sigla?sigla+' · ':'')+emp+'   ·   '+hoje+'   ·   '+rows.length+' apontamento(s)'; s.font={size:10,color:{argb:CINZA}};
+      ws.mergeCells(3,1,3,cols); const f=ws.getCell(3,1); f.value='Filtro: '+(filtro||'todos'); f.font={size:9,italic:true,color:{argb:CINZA}};
+      ws.getRow(1).height=30; ws.getRow(4).height=4;
+      for(let c=1;c<=cols;c++) ws.getCell(4,c).fill={type:'pattern',pattern:'solid',fgColor:{argb:LARANJA}};   // a linha laranja do Auria
+    };
+    const header=(ws, cols, row)=>{ const hr=ws.getRow(row); cols.forEach((c,i)=>{ const cell=hr.getCell(i+1); cell.value=c.h; cell.font={bold:true,color:{argb:BRANCO},size:11}; cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}}; cell.alignment={vertical:'middle',wrapText:true}; }); hr.height=22; };
+    // ── Resumo ─────────────────────────────────────────────────────────────
+    const st=['Em aberto','Em análise','Resolvido']; const norm=s=>String(s||'').trim();
+    const porDisc={}; rows.forEach(a=>{ const d=discFullName(a.disciplina)||a.disciplina||'—'; const o=porDisc[d]||(porDisc[d]={tot:0,aberto:0,analise:0,resolvido:0,atraso:0,severa:0}); o.tot++;
+      const s=norm(a.status); if(s==='Resolvido') o.resolvido++; else if(/an[áa]lise/i.test(s)) o.analise++; else o.aberto++; if(estaAtrasado(a)) o.atraso++; if(/severa/i.test(a.prioridade||'')) o.severa++; });
+    const rCols=[{key:'d',h:'Disciplina',w:30},{key:'tot',h:'Total',w:9},{key:'aberto',h:'Em aberto',w:11},{key:'analise',h:'Em análise',w:11},{key:'resolvido',h:'Resolvidos',w:11},{key:'atraso',h:'Em atraso',w:11},{key:'severa',h:'Severos',w:10}];
+    const wsR=wb.addWorksheet('Resumo',{ views:[{state:'frozen',ySplit:5}] }); wsR.columns=rCols.map(c=>({key:c.key,width:c.w}));
+    cab(wsR,'Apontamentos — Resumo',rCols.length); header(wsR,rCols,5);
+    const discs=Object.keys(porDisc).sort(); const tot={tot:0,aberto:0,analise:0,resolvido:0,atraso:0,severa:0};
+    discs.forEach((d,i)=>{ const o=porDisc[d]; const r=wsR.getRow(6+i); rCols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=c.key==='d'?d:o[c.key]; if(c.key!=='d') cell.alignment={horizontal:'center'}; if(i%2) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:ZEBRA}}; cell.border={bottom:{style:'thin',color:{argb:LINHA}}}; if(c.key==='atraso'&&o.atraso) cell.font={bold:true,color:{argb:'FFA93226'}}; });
+      Object.keys(tot).forEach(k=>tot[k]+=o[k]); });
+    { const r=wsR.getRow(6+discs.length); rCols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=c.key==='d'?'TOTAL':tot[c.key]; cell.font={bold:true,color:{argb:NAVY}}; if(c.key!=='d') cell.alignment={horizontal:'center'}; cell.border={top:{style:'medium',color:{argb:LARANJA}}}; }); }
+    // ── Apontamentos ───────────────────────────────────────────────────────
+    const cols=[{key:'id',h:'Código',w:11},{key:'titulo',h:'Título',w:40},{key:'disc',h:'Disciplina',w:20},{key:'prio',h:'Criticidade',w:20},{key:'status',h:'Status',w:12},
+      {key:'criado',h:'Aberto em',w:12},{key:'por',h:'Aberto por',w:20},{key:'origem',h:'Origem',w:11},{key:'prazo',h:'Prazo',w:12},{key:'dias',h:'Dias em atraso',w:10},{key:'concl',h:'Concluído em',w:12},
+      {key:'resp',h:'Responsáveis',w:34},{key:'prancha',h:'Prancha / modelo',w:26},{key:'local',h:'Local',w:16},{key:'desc',h:'Descrição',w:60},{key:'link',h:'Abrir no Auria',w:16}];
+    const ws=wb.addWorksheet('Apontamentos',{ views:[{state:'frozen',ySplit:5}] }); ws.columns=cols.map(c=>({key:c.key,width:c.w}));
+    cab(ws,'Apontamentos — '+emp,cols.length); header(ws,cols,5); ws.autoFilter={ from:{row:5,column:1}, to:{row:5,column:cols.length} };
+    const base=location.origin+location.pathname.replace(/[^/]*$/,'');
+    const ord=rows.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id),'pt',{numeric:true}));
+    ord.forEach((a,ri)=>{ const r=ws.getRow(6+ri); const late=estaAtrasado(a); const dias=_expDias(a);
+      const v={ id:a.id||'', titulo:a.titulo||'', disc:discFullName(a.disciplina)||a.disciplina||'', prio:a.prioridade||'', status:a.status||'', criado:_dispData(a.data_criacao)||'', por:a.criado_por_nome||'',
+        origem:(aptOrigem(a)||{}).rot||'Coordenação', prazo:_expPrazo(a), dias:(dias!==''&&dias>0)?dias:'', concl:_expConclusao(a), resp:_expResp(a), prancha:a.arquivo_nome||a.codigo||(a.tipo==='bim'?'Modelo BIM':''), local:a.local_txt||'', desc:(a.descricao||'').slice(0,3000),
+        link:{ text:'abrir', hyperlink: base+'app.html?emp='+encodeURIComponent(EMP.id)+'&apt='+encodeURIComponent(a.id) } };
+      cols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=v[c.key]; cell.alignment={vertical:'top',wrapText:(c.key==='desc'||c.key==='titulo'||c.key==='resp')}; cell.border={bottom:{style:'thin',color:{argb:LINHA}}};
+        if(ri%2) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:ZEBRA}};
+        if(c.key==='status'){ const s=norm(a.status); cell.font={bold:true,color:{argb: s==='Resolvido'?'FF1E8449': late?'FFA93226':'FF1B4F72'}}; }
+        if(c.key==='dias'&&v.dias) cell.font={bold:true,color:{argb:'FFA93226'}};
+        if(c.key==='link') cell.font={color:{argb:'FF185FA5'},underline:true};
+        if(c.key==='id') cell.font={name:'Consolas',bold:true,color:{argb:NAVY}}; });
+    });
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='apontamentos_'+String(sigla||emp).replace(/[^a-z0-9]/gi,'_').slice(0,28)+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),30000);
+  }catch(e){ alert('Não foi possível exportar: '+((e&&e.message)||e)); }
+  btn.textContent=old; btn.disabled=false;
+}
 // Gera o quantitativo em .xlsx com a estética Auria (logo + cabeçalho), abas por
 // disciplina (Esquadrias/Estrutura/Revestimentos), agrupado por tipologia.
 async function fGerarXlsx(rows){
@@ -7057,6 +7142,33 @@ function popularFiltroDisc(){
   const discs=[...new Set(APTS.map(a=>discFullName(a.disciplina)).filter(Boolean))].sort();
   sel.innerHTML='<option value="">Todas as disciplinas</option>'+discs.map(d=>`<option${d===cur?' selected':''}>${esc(d)}</option>`).join('');
 }
+// Apontamentos que passam no filtro atual da lista (mesma regra da tela e do exportador).
+function aptsFiltrados(){
+  const txt=($('fApTxt')&&$('fApTxt').value||'').toLowerCase();
+  const prio=($('fApPrio')&&$('fApPrio').value)||'';
+  const disc=($('fApDisc')&&$('fApDisc').value)||'';
+  // Normaliza (apara espaços + caixa) — status de apontamentos externos (obra/
+  // projetista) às vezes vinham com espaço/caixa diferente, e a comparação exata
+  // filtrava TUDO por engano.
+  const _norm=(s)=>String(s==null?'':s).trim().toLowerCase();
+  const statuses=[...APT_FILT].filter(t=>t!=='Em atraso').map(_norm);   // status são OR entre si
+  const atrasoOn=APT_FILT.has('Em atraso');                   // "Em atraso" é filtro adicional (AND)
+  return APTS.filter(a=>{
+    if(statuses.length && statuses.indexOf(_norm(a.status))<0) return false;
+    if(atrasoOn && !estaAtrasado(a)) return false;
+    if(prio && a.prioridade!==prio) return false;
+    if(disc && discFullName(a.disciplina)!==disc) return false;
+    if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+discFullName(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
+    return true;
+  });
+}
+function aptFiltroTxt(){
+  const p=[]; if(APT_FILT.size) p.push([...APT_FILT].join(' / '));
+  const prio=($('fApPrio')&&$('fApPrio').value)||''; if(prio) p.push('criticidade '+prio);
+  const disc=($('fApDisc')&&$('fApDisc').value)||''; if(disc) p.push(disc);
+  const txt=($('fApTxt')&&$('fApTxt').value||'').trim(); if(txt) p.push('busca "'+txt+'"');
+  return p.join(' · ');
+}
 function renderListaApts(){
   const el=$('aptLista'); if(!el) return;
   try{ _atualizaBtnFiltro(); }catch(e){}
@@ -7067,17 +7179,7 @@ function renderListaApts(){
   // Normaliza (apara espaços + caixa) — status de apontamentos externos (obra/
   // projetista) às vezes vinham com espaço/caixa diferente, e a comparação exata
   // filtrava TUDO por engano.
-  const _norm=(s)=>String(s==null?'':s).trim().toLowerCase();
-  const statuses=[...APT_FILT].filter(t=>t!=='Em atraso').map(_norm);   // status são OR entre si
-  const atrasoOn=APT_FILT.has('Em atraso');                   // "Em atraso" é filtro adicional (AND)
-  const rows=APTS.filter(a=>{
-    if(statuses.length && statuses.indexOf(_norm(a.status))<0) return false;
-    if(atrasoOn && !estaAtrasado(a)) return false;
-    if(prio && a.prioridade!==prio) return false;
-    if(disc && discFullName(a.disciplina)!==disc) return false;
-    if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+discFullName(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
-    return true;
-  });
+  const rows=aptsFiltrados();
   // Ordem DENTRO de cada grupo: externos (obra/projetista) no topo p/ triagem;
   // depois por código.
   const ordena=(arr)=>arr.slice().sort((a,b)=>{
