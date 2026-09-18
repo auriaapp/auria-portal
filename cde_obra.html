@@ -2108,6 +2108,21 @@ let DOC_MENU_EL=null;
 function docMenuClose(){ if(DOC_MENU_EL){ DOC_MENU_EL.remove(); DOC_MENU_EL=null; } }
 document.addEventListener('mousedown',e=>{ if(DOC_MENU_EL && !DOC_MENU_EL.contains(e.target)) docMenuClose(); }, true);
 window.addEventListener('resize',docMenuClose);
+// item 64: a coordenação corrige a descrição (título) depois da postagem. Grava em
+// cde_documento_auria.titulo e deixa evento na revisão vigente (de → para).
+async function editarTituloDoc(id){
+  const d=DOCS.find(x=>x.id===id); if(!d) return;
+  const atual=_docTit(d);
+  const novo=prompt('Descrição / título da prancha '+(d.codigo||'')+':', atual); if(novo===null) return;
+  const t=novo.trim().slice(0,90); if(!t){ alert('A descrição não pode ficar vazia.'); return; }
+  if(t===atual) return;
+  try{
+    const { error } = await sb.from('cde_documento_auria').update({ titulo:t }).eq('id', id);
+    if(error) throw error;
+    if(d.atual&&d.atual.id) sb.from('cde_evento_auria').insert({ revisao_id:d.atual.id, acao:'titulo', usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:'Descrição: “'+(atual||'—')+'” → “'+t+'”' }).then(()=>{},()=>{});
+    d.titulo=t; renderNav(); if(DOC_SEL&&DOC_SEL.id===id){ DOC_SEL.titulo=t; renderDetalhe&&renderDetalhe(); }
+  }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para editar a descrição.':'Erro: '+m); }
+}
 function docMenuOpen(ev,id){
   ev.stopPropagation();
   const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc===id;
@@ -2149,6 +2164,7 @@ function docMenuOpen(ev,id){
     rows.push(`<button onclick="docMenuAct('${id}','','link')"><span class="mi">🔗</span>Vincular apontamentos existentes</button>`);
   }
   rows.push('<div class="dm-sep"></div>');
+  if(!SEM_ESCRITA) rows.push(`<button onclick="docMenuAct('${id}','','titulo')"><span class="mi">✎</span>Editar descrição (título)</button>`);   // item 64
   rows.push(`<button onclick="docMenuAct('${id}','','rev')"><span class="mi">🕓</span>Controle de revisão</button>`);
   const m=document.createElement('div'); m.className='docmenu'; m._doc=id; m.innerHTML=rows.join('');
   document.body.appendChild(m);
@@ -2167,6 +2183,7 @@ async function docMenuAct(id,ext,mode){
   if(mode==='link'){ abrirVincular(id); return; }
   if(mode==='cmp'){ abrirComparar(id); return; }
   if(mode==='qrimp'){ baixarPranchaComQr(id); return; }
+  if(mode==='titulo'){ editarTituloDoc(id); return; }
   if(mode==='qrimg'){ baixarQrImagem(id); return; }
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext); if(!a) return;
   if(mode==='view') openDocInWindow(id, ext);
@@ -6201,7 +6218,7 @@ async function renderDetalhe(){
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
 
   // Histórico / log do documento
-  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada' };
+  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada', titulo:'✎ Descrição editada' };
   const logHtml = evs.length ? `<div class="det-log"><h4>Histórico</h4>${evs.map(e=>{
       let txt=ACAO[e.acao]||e.acao;
       if(e.acao==='status') txt='🔁 '+(STMAP[e.de_status]?STMAP[e.de_status].rotulo:e.de_status||'')+' → '+(STMAP[e.para_status]?STMAP[e.para_status].rotulo:e.para_status||'');
