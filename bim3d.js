@@ -2847,9 +2847,18 @@ export async function corteArestas(V){
         ]);
         if(vis && todas && vis.length && vis.length < todas.length) ids = vis;
       }catch(_){ ids = undefined; }
-      const s = ids ? await x.model.getSection(V.corte.plano, ids)
-                    : await x.model.getSection(V.corte.plano);
+      // getSection roda no worker, em coordenadas LOCAIS do modelo (sample transforms),
+      // sem o object.matrixWorld que o autoCoordinate/recentragem aplica na cena. Plano
+      // em mundo → local antes; resultado local → mundo depois. Com matriz identidade
+      // (1º modelo) nada muda; era isto que jogava a aresta laranja para fora do corte
+      // nos demais modelos e no CDE (item 62).
+      x.model.object.updateMatrixWorld(true);
+      const M = x.model.object.matrixWorld.clone();
+      const planoLocal = V.corte.plano.clone().applyMatrix4(M.clone().invert());
+      const s = ids ? await x.model.getSection(planoLocal, ids)
+                    : await x.model.getSection(planoLocal);
       if(!s||!s.buffer||!s.buffer.length) continue;
+      const gModelo=new T.Group(); gModelo.applyMatrix4(M); grupo.add(gModelo);
       const temFill = V.hachura!==false && s.fillsIndices && s.fillsIndices.length;
 
       // Aresta FINA por baixo: todas as arestas do getSection. Ficam como
@@ -2860,7 +2869,7 @@ export async function corteArestas(V){
       const mFina=new T.LineBasicMaterial({ color:LARANJA, depthTest:false,
         transparent:true, opacity: temFill ? 0.45 : 1.0 });
       const linhaFina=new T.LineSegments(gFina, mFina); linhaFina.renderOrder=997;
-      grupo.add(linhaFina);
+      gModelo.add(linhaFina);
 
       // Hachura sólida.
       if(temFill){
@@ -2869,7 +2878,7 @@ export async function corteArestas(V){
         g2.setIndex(s.fillsIndices);
         const m2=new T.MeshBasicMaterial({ color:HACHURA, side:T.DoubleSide, depthTest:false });
         const malha=new T.Mesh(g2,m2); malha.renderOrder=998;
-        grupo.add(malha);
+        gModelo.add(malha);
       }
 
       // Contorno GROSSO só no perímetro do fill.
@@ -2886,7 +2895,7 @@ export async function corteArestas(V){
           const mGr=new L.LineMaterial({ color:LARANJA, linewidth:2.6, depthTest:false });
           mGr.resolution.set(V.cont.clientWidth||1, V.cont.clientHeight||1);
           const linha=new L.LineSegments2(gGr, mGr); linha.renderOrder=999;
-          grupo.add(linha);
+          gModelo.add(linha);
         }
       }
     }catch(_){}

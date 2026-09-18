@@ -3912,7 +3912,12 @@ class CdeWin {
     for(const x of D.modelos){
       if(x.visivel===false) continue;
       try{
-        const s = await x.model.getSection(D.corte.plano);
+        // Item 62: getSection é em coordenadas LOCAIS do modelo (worker não conhece o
+        // object.matrixWorld da cena). Plano mundo→local antes, aresta local→mundo depois.
+        x.model.object.updateMatrixWorld(true);
+        const M = x.model.object.matrixWorld.clone();
+        const planoLocal = D.corte.plano.clone().applyMatrix4(M.clone().invert());
+        const s = await x.model.getSection(planoLocal);
         if(!s || !s.buffer || !s.buffer.length) continue;
         const geo = new L.LineSegmentsGeometry();
         geo.setPositions(s.buffer);
@@ -3920,6 +3925,7 @@ class CdeWin {
         mat.resolution.set(this.bimWrap.clientWidth||1, this.bimWrap.clientHeight||1);
         const linha = new L.LineSegments2(geo, mat);
         linha.renderOrder = 997;
+        linha.applyMatrix4(M);
         grupo.add(linha);
       }catch(_){ /* modelo sem seção nesse plano */ }
     }
