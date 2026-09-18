@@ -4627,11 +4627,110 @@ function expMenu(ev){
   const item=(t,fn,dis)=>'<div onclick="'+(dis?'':fn)+'" style="padding:8px 10px;border-radius:7px;cursor:'+(dis?'default':'pointer')+';color:'+(dis?'var(--mut)':'var(--txt)')+'" onmouseover="this.style.background=\'var(--panel2)\'" onmouseout="this.style.background=\'\'">'+t+'</div>';
   m.innerHTML='<div style="padding:4px 10px 6px;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em">Exportar '+n+' apontamento(s) do filtro</div>'
     + item('📊 Excel (.xlsx) — resumo + lista','expApontamentosXlsx();$(\'expMenu\').remove()', !n)
-    + item('🧊 BCF 2.1 (.bcfzip) — em breve','',true)
+    + item('🧊 BCF 2.1 (.bcfzip) — Revit, Navisworks, Solibri, BIMcollab','expApontamentosBcf();$(\'expMenu\').remove()', !n)
     + item('📄 Relatório PDF — BI + detalhe por apontamento','expRelatorioAbrir();$(\'expMenu\').remove()', !n);
   document.body.appendChild(m);
   const r=ev.currentTarget.getBoundingClientRect(); m.style.left=Math.max(8,Math.min(window.innerWidth-240, r.left))+'px'; m.style.top=(r.bottom+6)+'px';
   setTimeout(()=>document.addEventListener('click',()=>{ const x=$('expMenu'); if(x) x.remove(); },{once:true}),0);
+}
+// ── Item 65b: BCF 2.1 (.bcfzip) — um Topic por apontamento; viewpoint com câmera (e o
+//    componente IFC quando o modelo está carregado) para os 3D; snapshot do print para os 2D.
+//    Coordenadas: o pin 3D guarda a âncora LOCAL do modelo (lx,ly,lz, Y-up do three) →
+//    IFC Z-up: X=lx, Y=-lz, Z=ly. GUID do tópico = SHA-1(emp|apontamento) em forma de UUID
+//    (estável entre exportações → o outro software reconhece o mesmo tópico).
+async function _bcfGuid(txt){
+  const b=new Uint8Array(await crypto.subtle.digest('SHA-1', new TextEncoder().encode(txt)));
+  b[6]=(b[6]&0x0f)|0x50; b[8]=(b[8]&0x3f)|0x80;
+  const h=[...b.slice(0,16)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20,32);
+}
+function _bcfX(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,''); }
+function _bcfData(s){ if(!s) return new Date().toISOString(); const d=_parseData(s)||new Date(s); return isNaN(d)?new Date().toISOString():new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString(); }
+function _bcfStatus(a){ const s=String(a.status||'').toLowerCase(); return s==='resolvido'?'Closed':(/an[áa]lise/.test(s)?'In Progress':'Open'); }
+function _bcfPrio(a){ const p=String(a.prioridade||'').toLowerCase(); return /severa/.test(p)?'High':(/import/.test(p)?'Normal':(p?'Low':'')); }
+async function _bcfPng(url){   // snapshot: qualquer imagem → PNG (spec 2.1 pede snapshot.png)
+  try{ const blob=await fetch(url).then(r=>r.ok?r.blob():null); if(!blob) return null;
+    const bmp=await createImageBitmap(blob); const cv=document.createElement('canvas'); const k=Math.min(1,1600/Math.max(bmp.width,bmp.height));
+    cv.width=Math.round(bmp.width*k); cv.height=Math.round(bmp.height*k); cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
+    return await new Promise(res=>cv.toBlob(res,'image/png')); }catch(_){ return null; }
+}
+async function _bcfGuidIfc(pt){   // GUID IFC do elemento apontado, se o modelo estiver carregado no 3D
+  try{ if(!F3D||!F3D.modelos||pt.localId==null) return null;
+    const m=F3D.modelos.find(x=>x.arquivoId===pt.cde_arquivo_id)||F3D.modelos.find(x=>(x.disciplina||x.nome)===pt.mdisc); if(!m) return null;
+    const d=await m.model.getItemsData([pt.localId],{ attributesDefault:true, relationsDefault:{attributes:false,relations:false} });
+    const g=d&&d[0]&&(d[0]._guid||d[0].GlobalId); const v=g&&(typeof g==='object'?g.value:g); return v?String(v):null; }catch(_){ return null; }
+}
+async function expApontamentosBcf(){
+  const rows=aptsFiltrados(); if(!rows.length){ alert('Nenhum apontamento no filtro.'); return; }
+  const btn=$('fApExpBtn'); const old=btn.textContent; btn.textContent='…'; btn.disabled=true;
+  try{
+    await _fScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+    if(!window.JSZip) throw new Error('JSZip não carregou');
+    // conversas (comentários do BCF)
+    const msgs={}; const ids=rows.map(a=>a.id);
+    for(let i=0;i<ids.length;i+=150){
+      const lote=ids.slice(i,i+150);
+      const th=await sb.from('threads_auria').select('id,apontamento_id').eq('tipo','apontamento').eq('empreendimento_id',EMP.id).in('apontamento_id',lote);
+      const ths=th.data||[]; if(!ths.length) continue;
+      const ms=await sb.from('mensagens_auria').select('thread_id,de,autor_nome,autor_email,texto,criado_em').in('thread_id',ths.map(t=>t.id)).order('criado_em');
+      const porTh={}; ths.forEach(t=>porTh[t.id]=t.apontamento_id);
+      (ms.data||[]).forEach(m=>{ const ap=porTh[m.thread_id]; if(ap) (msgs[ap]=msgs[ap]||[]).push(m); });
+    }
+    const zip=new JSZip(); const autor=(USER&&(USER.email||USER.nome))||'auria';
+    zip.file('bcf.version','<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="2.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><DetailedVersion>2.1</DetailedVersion></Version>');
+    const projGuid=await _bcfGuid('auria-proj|'+EMP.id);
+    zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n<ProjectExtension><Project ProjectId="'+projGuid+'"><Name>'+_bcfX((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome)+'</Name></Project><ExtensionSchema></ExtensionSchema></ProjectExtension>');
+    const base=location.origin+location.pathname.replace(/[^/]*$/,'');
+    let n3d=0, nSnap=0;
+    for(const a of rows){
+      const guid=await _bcfGuid('auria-apt|'+EMP.id+'|'+a.id);
+      const pt=(a.pontos_json||[]).find(p=>p&&p.k3d)||null;
+      const emails=[...new Set(Object.values(a.participantes||{}).flatMap(p=>(p&&p.emails)||[]).map(e=>String(e).split(/[;,]/)).flat().map(e=>e.trim()).filter(Boolean))];
+      const prazo=_expPrazo(a); const prazoIso=prazo?_bcfData(prazo.split('/').reverse().join('-')):'';
+      const descr=[a.descricao||'', a.arquivo_nome?('Prancha: '+a.arquivo_nome):'' , a.local_txt?('Local: '+a.local_txt):'' , 'Auria: '+base+'app.html?emp='+encodeURIComponent(EMP.id)+'&apt='+encodeURIComponent(a.id)].filter(Boolean).join('\n');
+      // viewpoint
+      let vp='', vpGuid=null, snap=null;
+      if(pt){
+        vpGuid=await _bcfGuid('auria-vp|'+EMP.id+'|'+a.id);
+        const lx=(pt.lx!=null?pt.lx:pt.x)||0, ly=(pt.ly!=null?pt.ly:pt.y)||0, lz=(pt.lz!=null?pt.lz:pt.z)||0;
+        const P={ x:lx, y:-lz, z:ly };                     // three Y-up → IFC Z-up
+        const dist=8, dir={ x:-0.577, y:-0.577, z:-0.577 };  // câmera na diagonal, olhando para o ponto
+        const C={ x:P.x-dir.x*dist, y:P.y-dir.y*dist, z:P.z-dir.z*dist };
+        const ifcGuid=await _bcfGuidIfc(pt); if(ifcGuid) n3d++;
+        vp='<?xml version="1.0" encoding="UTF-8"?>\n<VisualizationInfo Guid="'+vpGuid+'">'
+          +'<Components>'+(ifcGuid?'<Selection><Component IfcGuid="'+_bcfX(ifcGuid)+'"/></Selection>':'')+'<Visibility DefaultVisibility="true"/></Components>'
+          +'<PerspectiveCamera><CameraViewPoint><X>'+C.x.toFixed(4)+'</X><Y>'+C.y.toFixed(4)+'</Y><Z>'+C.z.toFixed(4)+'</Z></CameraViewPoint>'
+          +'<CameraDirection><X>'+dir.x+'</X><Y>'+dir.y+'</Y><Z>'+dir.z+'</Z></CameraDirection><CameraUpVector><X>0</X><Y>0</Y><Z>1</Z></CameraUpVector><FieldOfView>60</FieldOfView></PerspectiveCamera>'
+          +'</VisualizationInfo>';
+        zip.file(guid+'/viewpoint.bcfv', vp);
+      }
+      const img=(a.imagens_json||[])[0]; if(img){ snap=await _bcfPng(img); if(snap){ zip.file(guid+'/snapshot.png', snap); nSnap++; } }
+      if(!vpGuid && snap) vpGuid=await _bcfGuid('auria-vp|'+EMP.id+'|'+a.id);
+      const comments=(msgs[a.id]||[]).map((m,i)=>'<Comment Guid="'+guid.slice(0,24)+(i+1000).toString(16).padStart(12,'0')+'"><Date>'+_bcfData(m.criado_em)+'</Date><Author>'+_bcfX(m.autor_email||m.autor_nome||m.de)+'</Author><Comment>'+_bcfX((m.de==='projetista'?'[projetista] ':'')+(m.texto||''))+'</Comment></Comment>').join('');
+      const markup='<?xml version="1.0" encoding="UTF-8"?>\n<Markup>'
+        +'<Topic Guid="'+guid+'" TopicType="Issue" TopicStatus="'+_bcfStatus(a)+'">'
+        +'<ReferenceLink>'+_bcfX(base+'app.html?emp='+encodeURIComponent(EMP.id)+'&apt='+encodeURIComponent(a.id))+'</ReferenceLink>'
+        +'<Title>'+_bcfX(a.id+' — '+(a.titulo||''))+'</Title>'
+        +(_bcfPrio(a)?'<Priority>'+_bcfPrio(a)+'</Priority>':'')
+        +'<Index>'+(Number(a.id_num)||0)+'</Index>'
+        +(a.disciplina?'<Labels>'+_bcfX(discFullName(a.disciplina)||a.disciplina)+'</Labels>':'')
+        +'<CreationDate>'+_bcfData(a.data_criacao)+'</CreationDate><CreationAuthor>'+_bcfX(a.criado_por_nome||autor)+'</CreationAuthor>'
+        +(prazoIso?'<DueDate>'+prazoIso+'</DueDate>':'')
+        +(emails.length?'<AssignedTo>'+_bcfX(emails.join(', '))+'</AssignedTo>':'')
+        +'<Description>'+_bcfX(descr)+'</Description></Topic>'
+        +comments
+        +(vpGuid?'<Viewpoints Guid="'+vpGuid+'">'+(pt?'<Viewpoint>viewpoint.bcfv</Viewpoint>':'')+(snap?'<Snapshot>snapshot.png</Snapshot>':'')+'</Viewpoints>':'')
+        +'</Markup>';
+      zip.file(guid+'/markup.bcf', markup);
+    }
+    const blob=await zip.generateAsync({ type:'blob', compression:'DEFLATE' });
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='apontamentos_'+String(EMP.codigo||EMP.nome).replace(/[^a-z0-9]/gi,'_').slice(0,28)+'_'+new Date().toISOString().slice(0,10)+'.bcfzip';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),30000);
+    const aviso=[]; if(rows.some(x=>(x.pontos_json||[]).some(p=>p&&p.k3d)) && !n3d) aviso.push('Para levar o elemento IFC junto (o outro software abre já na peça), abra os modelos no 3D antes de exportar — desta vez foi só a câmera.');
+    if(aviso.length) alert('BCF gerado ('+rows.length+' tópicos, '+nSnap+' com print).\n\n'+aviso.join('\n'));
+  }catch(e){ alert('Não foi possível exportar o BCF: '+((e&&e.message)||e)); }
+  btn.textContent=old; btn.disabled=false;
 }
 // ── Item 66: relatório PDF (BI na 1ª página + um bloco por apontamento, com o nível de detalhe escolhido) ──
 function expRelatorioAbrir(){
