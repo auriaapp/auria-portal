@@ -1210,6 +1210,7 @@ async function enviarNF(){
   if(!(valor>0)){ err.textContent='Informe um valor válido.'; return; }
   if(!file){ err.textContent='Anexe o PDF da NF.'; return; }
   if(file.type!=='application/pdf'){ err.textContent='O arquivo precisa ser PDF.'; return; }
+  if(window.AuriaValida){ const v=await AuriaValida.checar(file,'nf'); if(!v.ok){ err.textContent=v.motivo; return; } }
   const emitida=document.getElementById('nf-emitida').value||null;
   const cnpj=(document.getElementById('nf-cnpj').value||'').replace(/\D/g,'');
   const conteudo=(document.getElementById('nf-conteudo').value||'').trim();
@@ -1223,6 +1224,7 @@ async function enviarNF(){
     const path=USER.id+'/'+NF_PARC.parcId+'/'+Date.now()+'_'+safe;
     const up=await sb.storage.from('notas-fiscais').upload(path, file, {contentType:'application/pdf', upsert:false});
     if(up.error) throw up.error;
+    if(window.AuriaValida){ const vs=await AuriaValida.verificarServidor(sb,{ provider:'supabase', bucket:'notas-fiscais', path, nome:file.name, contexto:'nf' }); if(!vs.ok) throw new Error(vs.motivo); }
     const { error }=await sb.rpc('nf_enviar', { p_parcela_id:NF_PARC.parcId, p_valor:valor, p_nf_numero:numero, p_pdf_path:path,
                                                  p_conteudo:conteudo, p_emitida_em:emitida, p_cnpj:cnpj||null });
     if(error) throw error;
@@ -1242,6 +1244,7 @@ async function enviarSolicitacao(){
   let pdfData=null, pdfNome=null;
   if(f){
     if(f.size>8*1024*1024){ alert('PDF muito grande (máx ~8 MB).'); return; }
+    if(window.AuriaValida){ const v=await AuriaValida.checar(f,'pdf'); if(!v.ok){ alert(v.motivo); return; } }
     try{ pdfData=await _fileToDataURLp(f); pdfNome=f.name; }catch(e){ alert('Falha ao ler o PDF.'); return; }
   }
   const btn=document.getElementById('sol-save'); btn.disabled=true; const t=btn.textContent; btn.textContent='Enviando…';
@@ -2229,8 +2232,13 @@ function cdeDocsHtml(){
     +'</tbody></table></div>';
 }
 
-function cdeAddFiles(fileList){
-  const files=Array.prototype.slice.call(fileList||[]); if(!files.length) return;
+async function cdeAddFiles(fileList){
+  let files=Array.prototype.slice.call(fileList||[]); if(!files.length) return;
+  if(window.AuriaValida){   // item 32: só entra o que passa na validação de conteúdo
+    const v=await AuriaValida.checarVarios(files,'cde'); files=v.ok;
+    const m=cdeEl('cde-msg'); if(m) m.textContent = v.ruins.length ? '⚠ Recusado(s): '+v.ruins.map(function(x){ return x.file.name+' — '+x.motivo; }).join(' | ') : '';
+    if(!files.length) return;
+  }
   const grupos={}; CDE_LOTE.forEach(function(g){ grupos[g.base]=g; });
   files.forEach(function(f){
     const p=cdeParse(f.name); const key=p.base;
@@ -2341,7 +2349,8 @@ async function cdeConfirmar(){
         const prov = cdeProvedorPara(f.name, f.size);
         cdeEl('cde-msg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
         const path=CDE_CUR.id+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        await cdeUploadArquivo(path, f);
+        const provUsado = await cdeUploadArquivo(path, f);
+        if(window.AuriaValida){ const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' }); if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo); }
         await sb.from('cde_arquivo_auria').insert({
           revisao_id:rev.id, nome:f.name, extensao:ext, tamanho_bytes:f.size,
           sha256:(f.size<10*1024*1024?await cdeSha256(f):null), storage_path:path,
@@ -2408,13 +2417,14 @@ async function cdeUploadArquivo(path, file){
   if(prov==='supabase'){
     const up=await sb.storage.from('cde').upload(path, file, {upsert:false, contentType:file.type||undefined});
     if(up.error && !/exists/i.test(up.error.message||'')) throw up.error;
-    return;
+    return 'supabase';
   }
   const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'upload', path, contentType:file.type||'application/octet-stream' } });
   if(error){ let m=error.message; try{ const b=await error.context.json(); if(b&&b.error)m=b.error; }catch(_){} throw new Error('R2: '+m); }
   if(!data||!data.url) throw new Error('R2 não devolveu URL');
   const put = await fetch(data.url, { method:'PUT', headers:{ 'Content-Type': file.type||'application/octet-stream' }, body:file });
   if(!put.ok){ const t=await put.text().catch(function(){return'';}); throw new Error('R2 PUT '+put.status+': '+(t||put.statusText).slice(0,200)); }
+  return 'r2';
 }
 async function cdeSignedUrl(path, provider, opts){
   opts = opts||{};
@@ -2703,6 +2713,7 @@ function pjFin(){
   pjCarregarForn(); // nome + logo da empresa do projetista (independe de ter disciplina atribuída)
 })();
 </script>
+<script src="auria_valida.js"></script>
 <script src="auria_ajuda.js"></script>
 </body>
 </html>

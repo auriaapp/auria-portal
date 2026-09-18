@@ -5992,8 +5992,15 @@ function fecharReceber(){ $('ov').classList.remove('on'); }
   ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
   drop.addEventListener('drop',e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
 })();
-function addFiles(fileList){
-  const files=[...fileList]; if(!files.length) return;
+async function addFiles(fileList){
+  let files=[...fileList]; if(!files.length) return;
+  // item 32: extensão permitida + assinatura do conteúdo + PDF sem script. Ruim = fica de fora, com o motivo.
+  if(window.AuriaValida){
+    $('recMsg').textContent='Conferindo '+files.length+' arquivo(s)…';
+    const v=await AuriaValida.checarVarios(files,'cde'); files=v.ok;
+    $('recMsg').textContent = v.ruins.length ? '⚠ '+v.ruins.length+' arquivo(s) recusado(s):\n'+AuriaValida.resumoRuins(v.ruins) : '';
+    if(!files.length){ avaliarLote(); return; }
+  }
   const grupos={}; LOTE.forEach(g=>grupos[g.base]=g);
   for(const f of files){
     const p=parseCodigo(f.name); const key=p.base;
@@ -6089,7 +6096,11 @@ async function confirmarLote(){
         const prov = provedorPara(f.name, f.size);
         $('recMsg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
         const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        await cdeUpload(path, f);
+        const provUsado = await cdeUpload(path, f);
+        if(window.AuriaValida){   // item 32: o servidor confere o objeto gravado e apaga se for inválido
+          const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' });
+          if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo);
+        }
         const ehPdf = el==='pdf' && !temPdf; if(el==='pdf') temPdf=true;
         await sb.from('cde_arquivo_auria').insert({
           revisao_id:revId, nome:f.name, extensao:el, tamanho_bytes:f.size,
@@ -6342,6 +6353,7 @@ function abrirAptNoApp(aptId){
 
 boot();
 </script>
+<script src="auria_valida.js"></script>
 <script src="auria_ajuda.js"></script>
 </body>
 </html>
