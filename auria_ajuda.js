@@ -141,7 +141,7 @@
     const pan=document.createElement('div'); pan.className='aj-pan'; pan.id='ajPan';
     pan.innerHTML='<div class="aj-hd"><img src="logo_symbol.png" alt=""><div><b>Ajuda do Auria</b><span>Responde pelo manual do Auria</span></div><button onclick="AuriaAjuda.limpar()" title="Limpar conversa">Limpar</button><button onclick="AuriaAjuda.fechar()">✕</button></div><div class="aj-line"></div>'
       +'<div class="aj-msgs" id="ajMsgs"></div><div class="aj-sug" id="ajSug"></div>'
-      +'<div class="aj-esc" id="ajEsc"><span>Não resolveu? Mando a pergunta para o Auria com o contexto da sua tela.</span><button onclick="AuriaAjuda.escalar()">Enviar para o Auria</button></div>'
+      +'<div class="aj-esc" id="ajEsc"><span>Não resolveu? Fale com o suporte — a pergunta vai com o contexto da sua tela.</span><button onclick="AuriaAjuda.escalar()">Enviar ao suporte</button></div>'
       +'<div class="aj-in"><textarea id="ajIn" placeholder="Pergunte como fazer algo no Auria…"></textarea><button id="ajGo" onclick="AuriaAjuda.enviar()">➤</button></div>'
       +'<div class="aj-ft">Busca no manual do Auria, aqui mesmo — sem IA externa e sem internet. Perguntas ficam registradas para melhorar o manual.</div>';
     document.body.appendChild(pan);
@@ -258,7 +258,7 @@
       if(/(me lev|leva l[aá]|leve l[aá]|abr[ae] (pra|para) mim|me manda|vai l[aá]|abrir isso|pode abrir)/i.test(q) && ULT.acao && acoesDisponiveis()[ULT.acao]){
         resp='Pronto — é este botão:'; acao=ULT.acao;
       } else if(!man){
-        resp='O manual não pôde ser carregado agora. Tente de novo em instantes ou envie a pergunta para o Auria.'; naoSabe=true;
+        resp='O manual não pôde ser carregado agora. Tente de novo em instantes ou fale com o suporte.'; naoSabe=true;
       } else {
         const r=buscar(q, man); const top=r[0];
         if(top && top.conf>=0.42 && (top.casou>=2 || toks(q).filter(t=>t[0]!=='~').length<=1)){
@@ -266,11 +266,16 @@
           else resp=secaoHtmlTexto(top.it);
           extras=r.slice(1).filter(x=>x.conf>=0.35 && x.it.tipo==='sec').map(x=>x.it.titulo).slice(0,2);
           acao=acaoPara(q+' '+(top.it.tipo==='faq'?top.it.pergunta+' '+top.it.resposta:top.it.titulo));
+        } else if(top && top.conf>=0.25){
+          // faz de tudo para responder: mostra o melhor candidato com a ressalva, e deixa o suporte à mão
+          resp='Não tenho certeza se é isto, mas talvez ajude:\n\n'+(top.it.tipo==='faq'?top.it.resposta:secaoHtmlTexto(top.it)); naoSabe=true;
+          extras=r.slice(1).filter(x=>x.conf>=0.22).map(x=>x.it.tipo==='faq'?x.it.pergunta:x.it.titulo).slice(0,2);
+          acao=acaoPara(q+' '+(top.it.tipo==='faq'?top.it.pergunta:top.it.titulo));
         } else {
           resp='Não encontrei isso no manual.'; naoSabe=true;
-          const sug=r.filter(x=>x.conf>=0.2).map(x=>x.it.tipo==='faq'?x.it.pergunta:x.it.titulo).slice(0,3);
+          const sug=r.filter(x=>x.conf>=0.15).map(x=>x.it.tipo==='faq'?x.it.pergunta:x.it.titulo).slice(0,3);
           if(sug.length) resp+='\nTalvez ajude: '+sug.map(s=>'“'+s+'”').join(', ')+'.';
-          resp+='\nSe for uma dúvida de uso, envie para o Auria — a resposta entra no manual para todos.';
+          resp+='\nSe quiser, fale com o suporte — respondemos por e-mail.';
         }
       }
       CONV.pop(); CONV.push({role:'assistant',content:resp,acao,extras}); ULT={pergunta:q,resposta:resp,acao};
@@ -278,7 +283,7 @@
       render(); document.getElementById('ajEsc').style.display='flex';
     }catch(e){
       console.warn('[ajuda] busca falhou:', (e&&e.message)||e);
-      CONV.pop(); CONV.push({role:'assistant',content:'Não consegui responder agora. Você pode tentar de novo ou enviar a pergunta para o Auria.'}); ULT={pergunta:q,resposta:''};
+      CONV.pop(); CONV.push({role:'assistant',content:'Não consegui responder agora. Você pode tentar de novo ou falar com o suporte.'}); ULT={pergunta:q,resposta:''};
       render(); document.getElementById('ajEsc').style.display='flex';
     }
     go.disabled=false;
@@ -295,10 +300,10 @@
       const r=await CFG.sb.rpc('ajuda_registrar',{ p_pergunta:ULT.pergunta, p_resposta:ULT.resposta||null, p_pagina:CFG.pagina||null, p_papel:CFG.papel||null,
         p_contexto:JSON.stringify(ctx), p_sem_resposta:true, p_escalar:true });
       if(r.error) throw r.error;
-      CONV.push({role:'assistant',content:'Pronto — mandei a sua pergunta para o Auria com o contexto da tela. Você recebe a resposta por e-mail.'}); render();
+      CONV.push({role:'assistant',content:'Pronto — sua mensagem foi para o suporte do Auria. Você recebe a resposta por e-mail.'}); render();
       document.getElementById('ajEsc').style.display='none';
     }catch(e){ alert('Não foi possível enviar: '+((e&&e.message)||e)); }
-    b.disabled=false; b.textContent='Enviar para o Auria';
+    b.disabled=false; b.textContent='Enviar ao suporte';
   }
 
   window.AuriaAjuda={

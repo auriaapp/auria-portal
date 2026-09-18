@@ -235,6 +235,9 @@ tr:hover td{background:var(--gray-light)}
         <a class="sb-item" data-page="perguntas" onclick="goPage('perguntas')">
           <span>&#10067;</span> Perguntas (ajuda)
         </a>
+        <a class="sb-item" data-page="uso" onclick="goPage('uso')">
+          <span>&#128190;</span> Uso &amp; armazenamento
+        </a>
         <div class="sb-section">Gestao</div>
         <a class="sb-item" data-page="novoCliente" onclick="goPage('novoCliente')">
           <span>&#43;</span> Novo Grupo
@@ -324,6 +327,45 @@ tr:hover td{background:var(--gray-light)}
             <div style="padding:18px 22px" id="listChamados">
               <div class="loading-row"><div class="spinner"></div></div>
             </div>
+          </div>
+        </div>
+
+        <!-- USO & ARMAZENAMENTO (item 74) -->
+        <div class="page" id="pageUso">
+          <div class="toolbar">
+            <div class="toolbar-title">Uso de dados</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="usoGrupo" onchange="usoRender()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit"><option value="">Todos os grupos</option></select>
+              <label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="usoArq" onchange="usoRender()"> incluir arquivados</label>
+              <button class="btn-secondary" onclick="usoCotasAbrir()">&#9881; Cotas e preços</button>
+              <button class="btn-primary" onclick="usoCarregar()">&#8635; Atualizar</button>
+            </div>
+          </div>
+          <div id="usoBarras" class="kpi-row" style="grid-template-columns:repeat(3,1fr)"></div>
+          <div class="kpi-row" style="grid-template-columns:repeat(6,1fr);margin-top:12px" id="usoKpis"></div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px"><div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Por grupo &rsaquo; empresa &rsaquo; empreendimento</div><span style="font-size:11.5px;color:var(--text-soft);margin-left:auto" id="usoNota"></span></div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="usoTabela"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Banco de dados — maiores tabelas</div>
+            <div style="padding:0 22px 18px" id="usoDb"></div>
+          </div>
+        </div>
+        <div class="modal-bg" id="modalCotas">
+          <div class="modal" style="width:520px">
+            <button class="modal-close" onclick="document.getElementById('modalCotas').classList.remove('open')">&times;</button>
+            <div class="modal-title">Cotas e preços</div>
+            <div class="modal-sub">O que o plano inclui e quanto custa o excedente — a estimativa de gasto usa estes valores.</div>
+            <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px">
+              <div><label class="form-label">Storage Supabase (GB)</label><input class="form-inp" id="ct_sb" type="number" step="1"></div>
+              <div><label class="form-label">Excedente Supabase (USD/GB-mês)</label><input class="form-inp" id="ct_psb" type="number" step="0.001"></div>
+              <div><label class="form-label">R2 (GB)</label><input class="form-inp" id="ct_r2" type="number" step="1"></div>
+              <div><label class="form-label">Excedente R2 (USD/GB-mês)</label><input class="form-inp" id="ct_pr2" type="number" step="0.001"></div>
+              <div><label class="form-label">Banco (GB)</label><input class="form-inp" id="ct_db" type="number" step="0.5"></div>
+              <div><label class="form-label">Câmbio (R$ por USD)</label><input class="form-inp" id="ct_fx" type="number" step="0.01"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-secondary" onclick="document.getElementById('modalCotas').classList.remove('open')">Cancelar</button><button class="btn-primary" onclick="usoCotasSalvar()">Salvar</button></div>
           </div>
         </div>
 
@@ -852,13 +894,77 @@ function goPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
   const map={overview:'pageOverview',clientes:'pageClientes',usuarios:'pageUsuarios',
-    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas'};
+    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas',uso:'pageUso'};
   const titles={overview:'Overview Geral',clientes:'Clientes',usuarios:'Usuarios',
-    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda'};
+    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda',uso:'Uso de dados e armazenamento'};
   if(name==='perguntas' && !PQ_LOADED) carregarPerguntas();
+  if(name==='uso' && !USO) usoCarregar();
   document.getElementById(map[name]||'pageOverview').classList.add('active');
   document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
   document.getElementById('topbarTitle').textContent = titles[name]||'';
+}
+
+// ── USO & ARMAZENAMENTO (item 74): quanto cada grupo/empresa/empreendimento ocupa e custa ──
+let USO=null;
+const GB=1024*1024*1024;
+function fmtB(b){ b=Number(b||0); if(b<1024) return b+' B'; if(b<1048576) return (b/1024).toFixed(0)+' KB'; if(b<GB) return (b/1048576).toFixed(1)+' MB'; return (b/GB).toFixed(2)+' GB'; }
+async function usoCarregar(){
+  setHTML('usoTabela','<div class="loading-row"><div class="spinner"></div></div>');
+  try{ const r=await sb.rpc('ceo_uso'); if(r.error) throw r.error; USO=r.data; }
+  catch(e){ setHTML('usoTabela','<div style="padding:14px;color:var(--red)">Não foi possível carregar: '+esc(e.message||e)+' (rode supabase_ceo_uso.sql).</div>'); return; }
+  const sg=document.getElementById('usoGrupo'); const grupos=[...new Map((USO.emps||[]).map(e=>[e.grupo_id,e.grupo||'—'])).entries()];
+  sg.innerHTML='<option value="">Todos os grupos</option>'+grupos.map(([id,n])=>'<option value="'+esc(id)+'">'+esc(n)+'</option>').join('');
+  usoRender();
+}
+function usoBarra(rot, usado, cotaGb, cor){
+  const cota=Number(cotaGb||0)*GB; const pct=cota?Math.min(100, usado/cota*100):0;
+  return '<div class="kpi-card '+cor+'"><div class="kpi-label">'+esc(rot)+'</div><div class="kpi-value" style="font-size:20px">'+fmtB(usado)+' <span style="font-size:12px;color:var(--text-soft);font-weight:500">de '+(cota?fmtB(cota):'—')+'</span></div>'
+    +'<div style="height:8px;background:#EEF2F7;border-radius:4px;margin-top:8px;overflow:hidden"><div style="height:100%;width:'+pct.toFixed(1)+'%;background:'+(pct>90?'var(--red)':pct>70?'#D9820A':'var(--green)')+'"></div></div>'
+    +'<div style="font-size:11px;color:var(--text-soft);margin-top:4px">'+(cota?pct.toFixed(1)+'% da cota':'defina a cota em "Cotas e preços"')+'</div></div>';
+}
+function usoRender(){
+  if(!USO) return; const P=USO.cotas||{}; const grupo=document.getElementById('usoGrupo').value; const incArq=document.getElementById('usoArq').checked;
+  const emps=(USO.emps||[]).filter(e=>(!grupo||e.grupo_id===grupo)&&(incArq||!e.arquivado));
+  const bk=USO.buckets||{}; const sbBytes=Object.values(bk).reduce((s,b)=>s+Number(b.bytes||0),0);
+  const r2Bytes=Number((USO.totais||{}).r2_bytes||0); const dbBytes=Number((USO.db||{}).total_bytes||0);
+  // gasto estimado (só excedente das cotas)
+  const excSb=Math.max(0, sbBytes-Number(P.storage_supabase_gb||0)*GB)/GB, excR2=Math.max(0, r2Bytes-Number(P.r2_gb||0)*GB)/GB;
+  const usd=excSb*Number(P.preco_gb_supabase||0)+excR2*Number(P.preco_gb_r2||0); const brl=usd*Number(P.cambio||0);
+  setHTML('usoBarras', usoBarra('Storage Supabase (pranchas, NFs, fotos, logos)', sbBytes, P.storage_supabase_gb, 'blue')+usoBarra('R2 (modelos BIM pesados)', r2Bytes, P.r2_gb, 'green')+usoBarra('Banco de dados', dbBytes, P.db_gb, 'yellow'));
+  const T=USO.totais||{};
+  setHTML('usoKpis', [['Grupos',T.grupos],['Empresas',T.empresas],['Empreendimentos',T.empreendimentos],['Documentos CDE',T.documentos],['Apontamentos',T.apontamentos],['Excedente estimado/mês', usd?('US$ '+usd.toFixed(2)+' ≈ R$ '+brl.toFixed(2)):'R$ 0,00']]
+    .map(([r,v])=>'<div class="kpi-card"><div class="kpi-label">'+r+'</div><div class="kpi-value" style="font-size:'+(String(v).length>8?'15px':'22px')+'">'+esc(v==null?'—':v)+'</div></div>').join(''));
+  // tabela hierárquica grupo › empresa › empreendimento
+  const tot=e=>Number(e.cde_bytes||0)+Number(e.r2_bytes||0)+Number(e.nf_bytes||0)+Number(e.rdo_bytes||0)+Number(e.logo_bytes||0)+Number(e.cot_bytes||0);
+  const prints={}; (USO.prints_por_grupo||[]).forEach(p=>{ prints[p.grupo_id]=Number(p.bytes||0); });
+  const porG={}; emps.forEach(e=>{ const g=porG[e.grupo_id]||(porG[e.grupo_id]={nome:e.grupo||'—',emps:{},tot:0,docs:0,apts:0}); g.tot+=tot(e); g.docs+=Number(e.docs||0); g.apts+=Number(e.apts||0);
+    const c=g.emps[e.construtora_id]||(g.emps[e.construtora_id]={nome:e.construtora||'—',lista:[],tot:0}); c.lista.push(e); c.tot+=tot(e); });
+  const grand=Object.values(porG).reduce((s,g)=>s+g.tot,0)||1;
+  const pct=v=>(v/grand*100).toFixed(1)+'%';
+  const th='<tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 4px">Nome</th><th style="text-align:right">Total</th><th style="text-align:right">%</th><th style="text-align:right">Pranchas (Storage)</th><th style="text-align:right">BIM (R2)</th><th style="text-align:right">NFs</th><th style="text-align:right">Fotos/diário</th><th style="text-align:right">Docs</th><th style="text-align:right">Rev.</th><th style="text-align:right">Arq.</th><th style="text-align:right">Apont.</th></tr>';
+  let rows='';
+  Object.entries(porG).sort((a,b)=>b[1].tot-a[1].tot).forEach(([gid,g])=>{
+    const pr=prints[gid]||0;
+    rows+='<tr style="background:#F1F5F9;font-weight:800"><td style="padding:7px 4px">'+esc(g.nome)+(pr?' <span style="font-weight:500;color:var(--text-soft);font-size:11px">+ '+fmtB(pr)+' em prints de apontamentos</span>':'')+'</td><td style="text-align:right">'+fmtB(g.tot+pr)+'</td><td style="text-align:right">'+pct(g.tot+pr)+'</td><td colspan="4"></td><td style="text-align:right">'+g.docs+'</td><td></td><td></td><td style="text-align:right">'+g.apts+'</td></tr>';
+    Object.values(g.emps).sort((a,b)=>b.tot-a.tot).forEach(c=>{
+      rows+='<tr style="background:#F8FAFC;font-weight:700"><td style="padding:6px 4px 6px 18px">'+esc(c.nome)+'</td><td style="text-align:right">'+fmtB(c.tot)+'</td><td style="text-align:right">'+pct(c.tot)+'</td><td colspan="8"></td></tr>';
+      c.lista.sort((a,b)=>tot(b)-tot(a)).forEach(e=>{
+        rows+='<tr style="border-top:1px solid #F1F5F9'+(e.arquivado?';opacity:.55':'')+'"><td style="padding:6px 4px 6px 34px"><span style="font-family:ui-monospace,Consolas,monospace;color:var(--navy);font-weight:700">'+esc(e.sigla||'')+'</span> '+esc(e.emp)+(e.arquivado?' <span style="font-size:10px">(arquivado)</span>':'')+'</td>'
+          +'<td style="text-align:right;font-weight:700">'+fmtB(tot(e))+'</td><td style="text-align:right;color:var(--text-soft)">'+pct(tot(e))+'</td><td style="text-align:right">'+fmtB(e.cde_bytes)+'</td><td style="text-align:right">'+fmtB(e.r2_bytes)+'</td><td style="text-align:right">'+fmtB(e.nf_bytes)+'</td><td style="text-align:right">'+fmtB(Number(e.rdo_bytes||0)+Number(e.logo_bytes||0))+'</td>'
+          +'<td style="text-align:right">'+e.docs+'</td><td style="text-align:right">'+e.revs+'</td><td style="text-align:right">'+e.arqs+'</td><td style="text-align:right">'+e.apts+'</td></tr>'; });
+    });
+  });
+  setHTML('usoTabela', emps.length ? '<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+th+rows+'</table>' : '<div style="padding:12px;color:var(--text-soft)">Nenhum empreendimento.</div>');
+  setText('usoNota', 'Storage por bucket: '+Object.entries(bk).map(([b,v])=>b+' '+fmtB(v.bytes)).join(' · ')+' · modelos 3D convertidos (.frag) ainda não contados · '+new Date(USO.gerado_em).toLocaleString('pt-BR'));
+  const tabs=((USO.db||{}).tabelas||[]).slice(0,12);
+  setHTML('usoDb', tabs.length ? '<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+tabs.map(t=>'<tr style="border-top:1px solid #F1F5F9"><td style="padding:5px 4px;font-family:ui-monospace,Consolas,monospace">'+esc(t.nome)+'</td><td style="text-align:right">'+fmtB(t.bytes)+'</td><td style="width:40%;padding-left:12px"><div style="height:6px;background:#EEF2F7;border-radius:3px"><div style="height:100%;width:'+Math.min(100,Number(t.bytes)/Number(tabs[0].bytes||1)*100).toFixed(1)+'%;background:var(--navy);border-radius:3px"></div></div></td></tr>').join('')+'</table>' : '—');
+}
+function usoCotasAbrir(){ const P=(USO&&USO.cotas)||{}; document.getElementById('ct_sb').value=P.storage_supabase_gb||''; document.getElementById('ct_psb').value=P.preco_gb_supabase||''; document.getElementById('ct_r2').value=P.r2_gb||''; document.getElementById('ct_pr2').value=P.preco_gb_r2||''; document.getElementById('ct_db').value=P.db_gb||''; document.getElementById('ct_fx').value=P.cambio||''; document.getElementById('modalCotas').classList.add('open'); }
+async function usoCotasSalvar(){
+  const v=id=>Number(document.getElementById(id).value||0);
+  const r=await sb.from('ceo_cotas_auria').update({ storage_supabase_gb:v('ct_sb'), preco_gb_supabase:v('ct_psb'), r2_gb:v('ct_r2'), preco_gb_r2:v('ct_pr2'), db_gb:v('ct_db'), cambio:v('ct_fx'), atualizado_em:new Date().toISOString() }).eq('id',1);
+  if(r.error){ showToast('Erro: '+r.error.message,'red'); return; }
+  document.getElementById('modalCotas').classList.remove('open'); showToast('Cotas salvas','green'); usoCarregar();
 }
 
 // ── PERGUNTAS AO ASSISTENTE (item 52): banco de dúvidas reais dos usuários ──
