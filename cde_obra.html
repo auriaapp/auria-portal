@@ -807,6 +807,14 @@
   </div>
 </div>
 
+<!-- Item 67: recodificar pranchas (ISO 19650: o nome do arquivo É o identificador; muda só como correção controlada, com rastro) -->
+<div class="ov" id="ovRecod" onclick="if(event.target===this)recodFechar()">
+  <div class="modal">
+    <div class="modal-h"><div style="flex:1"><b>Recodificar pranchas</b><div style="font-size:12px;color:var(--mut)">Edite os campos do código conforme o padrão de codificação. O arquivo gravado, o QR e o histórico não mudam; cada prancha recebe o evento "recodificada".</div></div><button class="x" onclick="recodFechar()">×</button></div>
+    <div class="modal-b" id="recodBody"></div>
+    <div class="modal-f"><span class="msg" id="recodMsg"></span><span style="flex:1"></span><button class="btn sec" onclick="recodFechar()">Cancelar</button><button class="btn pri" id="recodGo" onclick="recodAplicar()" disabled>Aplicar</button></div>
+  </div>
+</div>
 <div class="ov" id="ovLink" onclick="if(event.target===this)fecharVincular()">
   <div class="modal">
     <div class="modal-h">
@@ -5853,7 +5861,68 @@ function renderMultiBar(){
   bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
     ${acao}
     ${baixaveis?`<button class="sec" id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
+    ${!SEM_ESCRITA&&!ehBim?`<button class="sec" onclick="recodAbrir()" title="Corrigir o código das pranchas selecionadas (campos da convenção), com histórico">✎ Recodificar</button>`:''}
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
+}
+
+// ── Item 67: recodificar pranchas em lote ─────────────────────────────────
+//  Um campo editável por segmento da convenção (exceto revisão, que não é do
+//  documento). Validação: domínio/regex do campo + unicidade no empreendimento.
+//  Grava cde_documento_auria (codigo, campos, disciplina, numero, local_txt) e
+//  evento 'recodificado' na revisão vigente. storage_path/nome/QR ficam.
+let RECOD=[];
+function recodAbrir(){
+  const docs=[...MULTI_SEL].map(id=>DOCS.find(x=>x.id===id)).filter(d=>d&&!docEhBim(d)); if(!docs.length) return;
+  const campos=(CONV.campos||[]).filter(c=>c.mapeia!=='revisao'); const sep=CONV.separador||'-';
+  RECOD=docs.map(d=>({ doc:d, partes:String(d.codigo||'').split(sep), novo:null, erro:'' }));
+  $('recodBody').innerHTML=`<div style="font-size:12px;color:var(--mut);margin-bottom:10px">${RECOD.length} prancha(s) · separador “${esc(sep)}” · campos: ${campos.map(c=>esc(c.rotulo||c.chave)).join(' · ')}</div>
+    <table class="cde-tbl" style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:6px 4px;color:var(--mut)">Atual</th>${campos.map(c=>`<th style="text-align:left;padding:6px 4px;color:var(--mut)">${esc(c.rotulo||c.chave)}</th>`).join('')}<th style="text-align:left;padding:6px 4px;color:var(--mut)">Novo código</th></tr></thead>
+    <tbody>${RECOD.map((r,i)=>`<tr id="recodRow${i}"><td style="padding:6px 4px;font-family:var(--mono);font-weight:700;color:var(--navy);white-space:nowrap">${esc(r.doc.codigo)}</td>
+      ${campos.map((c,ci)=>`<td style="padding:4px"><input value="${esc(r.partes[ci]||'')}" data-i="${i}" data-c="${ci}" oninput="recodInput(this)" style="width:${Math.max(60,Math.min(160,(r.partes[ci]||'').length*11+30))}px;padding:6px 8px;border:1px solid var(--line);border-radius:7px;font-family:var(--mono);font-size:12.5px;background:var(--panel2);color:var(--txt);text-transform:uppercase"></td>`).join('')}
+      <td style="padding:6px 4px;font-family:var(--mono);white-space:nowrap" id="recodNovo${i}"><span style="color:var(--mut)">— sem alteração</span></td></tr>`).join('')}</tbody></table>`;
+  $('recodMsg').textContent=''; $('recodGo').disabled=true; $('ovRecod').classList.add('on');
+}
+function recodFechar(){ $('ovRecod').classList.remove('on'); }
+function recodInput(inp){
+  const i=+inp.getAttribute('data-i'), ci=+inp.getAttribute('data-c'); const r=RECOD[i]; if(!r) return;
+  const campos=(CONV.campos||[]).filter(c=>c.mapeia!=='revisao'); const sep=CONV.separador||'-';
+  r.partes[ci]=inp.value.trim().toUpperCase(); inp.value=r.partes[ci];
+  // valida cada segmento pelo campo
+  let erro='';
+  campos.forEach((c,k)=>{ const p=r.partes[k]||''; if(!p){ if(c.obrigatorio) erro=erro||('falta '+(c.rotulo||c.chave)); return; }
+    const vs=valoresDe(c); const ok=vs?vs.includes(p):(c.regex?(()=>{try{return new RegExp(c.regex).test(p)}catch(e){return true}})():true);
+    if(!ok) erro=erro||((c.rotulo||c.chave)+': “'+p+'” fora do padrão'); });
+  const novo=campos.map((c,k)=>r.partes[k]||'').join(sep);
+  if(!erro && novo!==r.doc.codigo){
+    if(DOCS.some(d=>d.id!==r.doc.id && d.codigo===novo) || RECOD.some(o=>o!==r && o.novo===novo)) erro='já existe uma prancha com o código '+novo;
+  }
+  r.erro=erro; r.novo=(novo!==r.doc.codigo && !erro)?novo:null;
+  const cell=$('recodNovo'+i);
+  cell.innerHTML = erro ? '<span style="color:var(--err,#A32D2D)">⚠ '+esc(erro)+'</span>' : (r.novo ? '<b style="color:var(--accent)">'+esc(r.novo)+'</b>' : '<span style="color:var(--mut)">— sem alteração</span>');
+  const nAlt=RECOD.filter(x=>x.novo).length, nErr=RECOD.filter(x=>x.erro).length;
+  $('recodMsg').textContent = nErr ? nErr+' com erro' : (nAlt ? nAlt+' prancha(s) a recodificar' : '');
+  $('recodGo').disabled = !nAlt || !!nErr;
+}
+async function recodAplicar(){
+  const alts=RECOD.filter(r=>r.novo&&!r.erro); if(!alts.length) return;
+  if(!confirm('Recodificar '+alts.length+' prancha(s)?\n\n'+alts.map(r=>r.doc.codigo+' → '+r.novo).join('\n')+'\n\nO arquivo gravado, o QR e o histórico de revisões não mudam; cada prancha recebe o evento "recodificada".')) return;
+  const go=$('recodGo'); go.disabled=true; go.textContent='Aplicando…';
+  const campos=(CONV.campos||[]).filter(c=>c.mapeia!=='revisao'); const chaveDe=m=>(campos.find(c=>c.mapeia===m)||{}).chave;
+  const kDisc=chaveDe('disciplina'), kNum=chaveDe('numero'), kLoc=chaveDe('local');
+  let ok=0, falhas=[];
+  for(const r of alts){
+    const vals={}; campos.forEach((c,k)=>{ vals[c.chave]=r.partes[k]||''; });
+    const upd={ codigo:r.novo, campos:Object.assign({}, r.doc.campos||{}, vals) };
+    if(kDisc) upd.disciplina=vals[kDisc]||null; if(kNum) upd.numero=vals[kNum]||null; if(kLoc) upd.local_txt=vals[kLoc]||null;
+    try{
+      const { error } = await sb.from('cde_documento_auria').update(upd).eq('id', r.doc.id); if(error) throw error;
+      if(r.doc.atual&&r.doc.atual.id) await sb.from('cde_evento_auria').insert({ revisao_id:r.doc.atual.id, acao:'recodificado', usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:'Código '+r.doc.codigo+' → '+r.novo });
+      ok++;
+    }catch(e){ falhas.push(r.doc.codigo+': '+((e&&e.message)||e)); }
+  }
+  go.textContent='Aplicar';
+  recodFechar(); multiConcluir(); await carregarDocs(); renderRail(); renderNav();
+  if(falhas.length) alert(ok+' recodificada(s). Falharam '+falhas.length+':\n'+falhas.join('\n'));
 }
 
 // ── Item 69: Fila da obra — o que mudou para quem toca a obra ──────────────
@@ -6443,7 +6512,7 @@ async function renderDetalhe(){
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
 
   // Histórico / log do documento
-  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada', titulo:'✎ Descrição editada', renomeado:'🏷 Disciplina renomeada' };
+  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada', titulo:'✎ Descrição editada', renomeado:'🏷 Disciplina renomeada', recodificado:'✎ Recodificada' };
   const logHtml = evs.length ? `<div class="det-log"><h4>Histórico</h4>${evs.map(e=>{
       let txt=ACAO[e.acao]||e.acao;
       if(e.acao==='status') txt='🔁 '+(STMAP[e.de_status]?STMAP[e.de_status].rotulo:e.de_status||'')+' → '+(STMAP[e.para_status]?STMAP[e.para_status].rotulo:e.para_status||'');
