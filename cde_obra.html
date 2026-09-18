@@ -7,6 +7,7 @@
 <link rel="icon" href="logo_symbol.png" type="image/png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <!-- Visualizador 3D (aba BIM). O importmap existe para o Fragments e o nosso
      código usarem A MESMA cópia do three: duas instâncias carregadas em
      paralelo quebram todo `instanceof THREE.*` em silêncio (objeto some da
@@ -350,6 +351,14 @@
     padding:10px 16px;display:none;align-items:center;gap:12px;font-size:13px;font-weight:700}
   .multiBar button{background:var(--accent);color:#231703;border:none;border-radius:9px;padding:8px 16px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit}
   .multiBar button.sec{background:rgba(255,255,255,.14);color:#fff}
+  .multiBar button:disabled{opacity:.6;cursor:default}
+  .zipPop{position:fixed;left:50%;bottom:74px;transform:translateX(-50%);z-index:8001;background:var(--panel);color:var(--txt);border:1px solid var(--line);
+    border-top:2px solid var(--accent);border-radius:12px;box-shadow:0 14px 40px rgba(8,14,26,.35);padding:12px 14px;min-width:300px;font-size:12.5px}
+  .zipPop h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  .zipPop label{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer}
+  .zipPop .fmt{font-family:var(--mono);font-weight:700;color:var(--accent);min-width:42px}
+  .zipPop .tot{color:var(--mut);margin-top:6px}
+  .zipPop .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
   .vempty .big{font-size:40px}
   .vmsg2{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#e2e8f0;font-size:13.5px;
          text-align:center;background:rgba(15,23,42,.75);padding:14px 20px;border-radius:10px;max-width:80%;line-height:1.5}
@@ -5750,7 +5759,7 @@ function toggleMultiMode(){
 }
 // Depois de agir sobre a seleção (federar / abrir no App) ela já cumpriu o
 // papel: desmarca e sai do modo, senão os checkboxes ficam ligados à toa.
-function multiConcluir(){ MULTI_SEL.clear(); MULTI_MODE=false; renderNav(); }
+function multiConcluir(){ MULTI_SEL.clear(); MULTI_MODE=false; zipFechar(); renderNav(); }
 function toggleMultiSel(docId){
   if(MULTI_SEL.has(docId)) MULTI_SEL.delete(docId); else MULTI_SEL.add(docId);
   renderNav();
@@ -5778,9 +5787,72 @@ function renderMultiBar(){
     ? `<button onclick="abrirBimFederado()">🧊 Ver federado aqui</button>`
       + `<button onclick="abrirBimNoApp([...MULTI_SEL]);multiConcluir()">🔍 Analisar no App</button>`
     : `<button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>`;
+  const baixaveis = zipArquivosDe(selDocs).length;
   bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
     ${acao}
+    ${baixaveis?`<button class="sec" id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
+}
+
+// ── Item 58: download em lote (.zip) da seleção ─────────────────────────────
+//  Arquivos da revisão VIGENTE de cada prancha marcada, respeitando o que o papel
+//  pode baixar (statusBaixavel / docBloqueado). Pastas por disciplina dentro do zip.
+//  Zip montado no navegador (JSZip) com as mesmas URLs assinadas do download normal.
+function zipArquivosDe(docs){
+  const out=[];
+  (docs||[]).forEach(d=>{
+    if(!d||!d.atual||docBloqueado(d)) return;
+    if(!statusBaixavel(d.atual.status)) return;
+    (d.atual.arqs||[]).forEach(a=>{ if(a&&a.storage_path) out.push({ doc:d, a, ext:(a.extensao||'').toLowerCase() }); });
+  });
+  return out;
+}
+function zipAbrir(){
+  zipFechar();
+  const selDocs=[...MULTI_SEL].map(id=>DOCS.find(x=>x.id===id)).filter(Boolean);
+  const itens=zipArquivosDe(selDocs); if(!itens.length) return;
+  const porFmt={}; itens.forEach(i=>{ const k=i.ext||'?'; (porFmt[k]=porFmt[k]||{n:0,bytes:0}); porFmt[k].n++; porFmt[k].bytes+=Number(i.a.tamanho_bytes||0); });
+  const fmts=Object.keys(porFmt).sort((a,b)=>(a==='pdf'?-1:b==='pdf'?1:a.localeCompare(b)));
+  const semAcesso=selDocs.length - new Set(itens.map(i=>i.doc.id)).size;
+  const pop=document.createElement('div'); pop.className='zipPop'; pop.id='zipPop';
+  pop.innerHTML=`<h4>Baixar ${itens.length} arquivo(s) de ${selDocs.length-semAcesso} prancha(s)</h4>`
+    + fmts.map(f=>`<label><input type="checkbox" data-fmt="${esc(f)}" checked onchange="zipTotal()"><span class="fmt">${esc(f.toUpperCase())}</span><span>${porFmt[f].n} arquivo(s)</span><span style="margin-left:auto;color:var(--mut)">${fmtBytes(porFmt[f].bytes)}</span></label>`).join('')
+    + (semAcesso?`<div class="tot">${semAcesso} prancha(s) fora: não liberada(s) para o seu perfil.</div>`:'')
+    + `<div class="tot" id="zipTot"></div>
+       <div class="acts"><button class="btn sec sm" onclick="zipFechar()">Cancelar</button><button class="btn pri sm" id="zipGo" onclick="zipBaixar()">⬇ Gerar .zip</button></div>`;
+  document.body.appendChild(pop); pop._itens=itens; zipTotal();
+}
+function zipFechar(){ const p=$('zipPop'); if(p) p.remove(); }
+function fmtBytes(b){ b=Number(b||0); return b<1024*1024 ? Math.max(1,Math.round(b/1024))+' KB' : (b<1024*1024*1024 ? (b/1048576).toFixed(1)+' MB' : (b/1073741824).toFixed(2)+' GB'); }
+function zipSelecionados(){ const p=$('zipPop'); if(!p) return []; const on=new Set([...p.querySelectorAll('input[data-fmt]:checked')].map(i=>i.getAttribute('data-fmt'))); return (p._itens||[]).filter(i=>on.has(i.ext||'?')); }
+function zipTotal(){ const it=zipSelecionados(); const bytes=it.reduce((s,i)=>s+Number(i.a.tamanho_bytes||0),0); const t=$('zipTot'); if(t) t.textContent=it.length?(it.length+' arquivo(s) · '+fmtBytes(bytes)+(bytes>700*1048576?' — grande: pode demorar e usar bastante memória':'')):'nada selecionado'; const g=$('zipGo'); if(g) g.disabled=!it.length; }
+async function zipBaixar(){
+  const itens=zipSelecionados(); if(!itens.length) return;
+  if(!window.JSZip){ alert('Biblioteca de zip não carregou. Recarregue a página.'); return; }
+  const go=$('zipGo'); go.disabled=true; const cancel=$('zipPop').querySelector('.btn.sec'); cancel.disabled=true;
+  const zip=new JSZip(); let ok=0, falhas=[];
+  const sanit=s=>String(s||'').replace(/[\\/:*?"<>|]+/g,'_').trim()||'_';
+  for(let i=0;i<itens.length;i++){
+    const it=itens[i]; go.textContent='⬇ '+(i+1)+'/'+itens.length;
+    try{
+      const url=await cdeSignedUrl(it.a.storage_path, it.a.storage_provider);
+      const r=await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status);
+      const blob=await r.blob();
+      const pasta=sanit(it.doc.disciplina||'SEM_DISC')+'/';
+      zip.file(pasta+sanit(it.a.nome||(it.doc.codigo+'.'+it.ext)), blob);
+      ok++;
+    }catch(e){ falhas.push((it.a.nome||it.doc.codigo)+': '+((e&&e.message)||e)); }
+  }
+  if(!ok){ alert('Nenhum arquivo pôde ser baixado.\n'+falhas.join('\n')); go.disabled=false; cancel.disabled=false; go.textContent='⬇ Gerar .zip'; return; }
+  go.textContent='Compactando…';
+  try{
+    const blob=await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{ level:3 } }, m=>{ go.textContent='Compactando '+Math.round(m.percent)+'%'; });
+    const nome=sanit((EMP&&(EMP.codigo||EMP.nome))||'CDE')+'_CDE_'+new Date().toISOString().slice(0,10)+'.zip';
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nome; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+    if(falhas.length) alert(ok+' arquivo(s) no zip. Falharam '+falhas.length+':\n'+falhas.slice(0,8).join('\n'));
+    zipFechar(); multiConcluir();
+  }catch(e){ alert('Não foi possível gerar o zip: '+((e&&e.message)||e)); go.disabled=false; cancel.disabled=false; go.textContent='⬇ Gerar .zip'; }
 }
 function abrirMultiNoApp(){
   if(!MULTI_SEL.size) return;
