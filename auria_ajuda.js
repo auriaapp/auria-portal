@@ -18,11 +18,11 @@
   let CFG=null, MANUAL='', CONV=[], ABERTO=false, ULT={pergunta:'',resposta:''};
 
   const CSS=`
-  .aj-btn{position:fixed;bottom:var(--aj-bottom,14px);RIGHTSIDE:var(--aj-side,14px);z-index:9000;width:32px;height:32px;border-radius:50%;border:2px solid #E8960A;background:#1E3A5F;color:#fff;
+  .aj-btn{position:fixed;bottom:var(--aj-bottom,14px);RIGHTSIDE:var(--aj-side,14px);z-index:8900;width:32px;height:32px;border-radius:50%;border:2px solid #E8960A;background:#1E3A5F;color:#fff;
     font:800 15px/1 'Segoe UI',system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 18px rgba(15,23,42,.35);display:flex;align-items:center;justify-content:center}
   .aj-btn:hover{background:#163050}
   .aj-btn .aj-dot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;background:#E8960A;border:2px solid #fff;display:none}
-  .aj-pan{position:fixed;bottom:calc(var(--aj-bottom,14px) + 42px);RIGHTSIDE:var(--aj-side,14px);z-index:9001;width:380px;max-width:calc(100vw - 24px);height:560px;max-height:calc(100vh - 100px);
+  .aj-pan{position:fixed;bottom:calc(var(--aj-bottom,14px) + 42px);RIGHTSIDE:var(--aj-side,14px);z-index:8901;width:380px;max-width:calc(100vw - 24px);height:560px;max-height:calc(100vh - 100px);
     background:#fff;border:1px solid #E2E8F0;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.28);display:none;flex-direction:column;overflow:hidden;
     font-family:'Segoe UI',system-ui,sans-serif;color:#0F172A}
   .aj-pan.on{display:flex}
