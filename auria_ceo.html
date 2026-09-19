@@ -407,6 +407,27 @@ tr:hover td{background:var(--gray-light)}
           </div>
         </div>
 
+        <div class="modal-bg" id="modalResp">
+          <div class="modal" style="width:620px">
+            <button class="modal-close" onclick="document.getElementById('modalResp').classList.remove('open')">&times;</button>
+            <div class="modal-title">Responder pelo suporte</div>
+            <div class="modal-sub">A resposta vai por e-mail para quem perguntou (como "Suporte do Auria") e, se marcado, entra na ajuda para todos do papel escolhido.</div>
+            <input type="hidden" id="respId">
+            <div class="form-group"><label class="form-label">Pergunta</label><div id="respPergunta" style="font-size:13px;background:#F6F9FC;border:1px solid var(--gray-border);border-radius:9px;padding:9px 12px"></div><div id="respQuem" style="font-size:11.5px;color:var(--text-soft);margin-top:4px"></div></div>
+            <div class="form-group"><label class="form-label">Resposta</label><textarea class="form-inp" id="respTexto" rows="6" maxlength="4000" style="resize:vertical;font-family:inherit" placeholder="Caminho concreto: painel › menu › botão…"></textarea></div>
+            <div class="form-group"><label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="respPromover" checked> <b>Também entra na ajuda (FAQ)</b></label>
+              <div id="respPapeis" style="display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;margin-top:6px">
+                <label><input type="checkbox" value="*" onchange="respTodos(this)"> <b>todos</b></label>
+                <label><input type="checkbox" value="analista"> analista</label>
+                <label><input type="checkbox" value="projetista"> projetista</label>
+                <label><input type="checkbox" value="financeiro"> adm-fin</label>
+                <label><input type="checkbox" value="obra"> obra</label>
+                <label><input type="checkbox" value="setor"> setor</label>
+                <label><input type="checkbox" value="gerente"> gestor</label>
+              </div></div>
+            <div class="modal-footer"><button class="btn-secondary" onclick="document.getElementById('modalResp').classList.remove('open')">Cancelar</button><button class="btn-primary" id="respGo" onclick="respEnviar()">&#9993; Enviar resposta</button></div>
+          </div>
+        </div>
         <div class="modal-bg" id="modalFaq">
           <div class="modal" style="width:620px">
             <button class="modal-close" onclick="faqFechar()">&times;</button>
@@ -974,7 +995,9 @@ let PQ=[], PQ_LOADED=false, PQ_GRUPOS={};
 async function carregarPerguntas(){
   PQ_LOADED=true;
   try{
-    const r=await sb.from('ajuda_pergunta_auria').select('id,usuario_id,email,empresa_id,papel,pagina,contexto,pergunta,resposta,sem_resposta,escalado,criado_em').order('criado_em',{ascending:false}).limit(2000);
+    const COLS='id,usuario_id,email,empresa_id,papel,pagina,contexto,pergunta,resposta,sem_resposta,escalado,criado_em';
+    let r=await sb.from('ajuda_pergunta_auria').select(COLS+',resposta_suporte,respondida_em').order('criado_em',{ascending:false}).limit(2000);
+    if(r.error) r=await sb.from('ajuda_pergunta_auria').select(COLS).order('criado_em',{ascending:false}).limit(2000);   // sem supabase_ajuda_responder.sql
     if(r.error) throw r.error; PQ=r.data||[];
     const g=await sb.from('empresas_auria').select('id,nome'); (g.data||[]).forEach(x=>PQ_GRUPOS[x.id]=x.nome);
     await carregarFaq();
@@ -991,8 +1014,8 @@ function pqChave(t){
 function renderPerguntas(){
   const dias=parseInt(document.getElementById('pqDias').value,10)||0, papel=document.getElementById('pqPapel').value, grupo=document.getElementById('pqGrupo').value, soSem=document.getElementById('pqSoSem').checked;
   const lim=dias?Date.now()-dias*864e5:0;
-  const rows=PQ.filter(x=>(!lim||new Date(x.criado_em)>=lim)&&(!papel||x.papel===papel)&&(!grupo||x.empresa_id===grupo)&&(!soSem||x.sem_resposta||x.escalado));
-  setText('pqTot',rows.length); setText('pqSem',rows.filter(x=>x.sem_resposta).length); setText('pqEsc',rows.filter(x=>x.escalado).length);
+  const rows=PQ.filter(x=>(!lim||new Date(x.criado_em)>=lim)&&(!papel||x.papel===papel)&&(!grupo||x.empresa_id===grupo)&&(!soSem||((x.sem_resposta||x.escalado)&&!x.respondida_em)));
+  setText('pqTot',rows.length); setText('pqSem',rows.filter(x=>x.sem_resposta&&!x.respondida_em).length); setText('pqEsc',rows.filter(x=>x.escalado&&!x.respondida_em).length);
   setText('pqUsr',new Set(rows.map(x=>x.usuario_id||x.email)).size);
   // mais frequentes
   const grp={}; rows.forEach(x=>{ const k=pqChave(x.pergunta); if(!k) return; const o=grp[k]||(grp[k]={n:0,ex:x.pergunta,id:x.id,sem:0,papeis:new Set()}); o.n++; if(x.sem_resposta) o.sem++; if(x.papel) o.papeis.add(x.papel); if(!x.sem_resposta&&x.resposta&&!o.id_ok){ o.id=x.id; o.id_ok=true; } });
@@ -1004,9 +1027,11 @@ function renderPerguntas(){
   setHTML('pqLista', rows.length ? rows.slice(0,200).map(x=>{ const ctx=x.contexto||{}; const q=new Date(x.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     return '<div style="padding:10px 0;border-top:1px solid #F1F5F9">'
       +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text-soft)"><span>'+q+'</span><span>· <b>'+esc(x.papel||'?')+'</b></span><span>· '+esc(PQ_GRUPOS[x.empresa_id]||'')+'</span><span>· '+esc(x.email||'')+'</span><span>· '+esc(x.pagina||'')+(ctx.empreendimento?' · '+esc(ctx.empreendimento):'')+'</span>'
-      +(x.escalado?'<span style="background:var(--red);color:#fff;border-radius:10px;padding:1px 8px;font-weight:700">escalada</span>':x.sem_resposta?'<span style="background:#FEF3E2;color:#B45309;border-radius:10px;padding:1px 8px;font-weight:700">sem resposta</span>':'')+'</div>'
-      +'<div style="font-size:13.5px;margin-top:3px;display:flex;gap:8px;align-items:flex-start"><b style="flex:1">'+esc(x.pergunta)+'</b><button class="btn-sm" style="padding:2px 8px;font-size:11px;white-space:nowrap" onclick="faqAbrir(null,\''+x.id+'\')">&rarr; FAQ</button></div>'
-      +(x.resposta?'<div style="font-size:12.5px;color:var(--text-mid);margin-top:3px;white-space:pre-wrap">'+esc(x.resposta).slice(0,600)+(x.resposta.length>600?'…':'')+'</div>':'')+'</div>'; }).join('')
+      +(x.respondida_em?'<span style="background:#DCFCE7;color:#166534;border-radius:10px;padding:1px 8px;font-weight:700">respondida pelo suporte</span>':x.escalado?'<span style="background:var(--red);color:#fff;border-radius:10px;padding:1px 8px;font-weight:700">escalada</span>':x.sem_resposta?'<span style="background:#FEF3E2;color:#B45309;border-radius:10px;padding:1px 8px;font-weight:700">sem resposta</span>':'')+'</div>'
+      +'<div style="font-size:13.5px;margin-top:3px;display:flex;gap:8px;align-items:flex-start"><b style="flex:1">'+esc(x.pergunta)+'</b>'
+      +((x.escalado||x.sem_resposta)&&!x.respondida_em?'<button class="btn-sm" style="padding:2px 8px;font-size:11px;white-space:nowrap;border-color:var(--red);color:var(--red)" onclick="respAbrir(\''+x.id+'\')">&#9993; Responder</button>':'')
+      +'<button class="btn-sm" style="padding:2px 8px;font-size:11px;white-space:nowrap" onclick="faqAbrir(null,\''+x.id+'\')">&rarr; FAQ</button></div>'
+      +(x.resposta_suporte?'<div style="font-size:12.5px;color:#166534;margin-top:3px;white-space:pre-wrap"><b>Suporte:</b> '+esc(x.resposta_suporte).slice(0,600)+'</div>':x.resposta?'<div style="font-size:12.5px;color:var(--text-mid);margin-top:3px;white-space:pre-wrap">'+esc(x.resposta).slice(0,600)+(x.resposta.length>600?'…':'')+'</div>':'')+'</div>'; }).join('')
     : '<div style="padding:14px 0;color:var(--text-soft)">Nenhuma pergunta no período.</div>');
   renderFaq();
 }
@@ -1026,6 +1051,35 @@ function renderFaq(){
       +'<div style="display:flex;gap:6px;flex-shrink:0"><button class="btn-sm" style="padding:2px 8px;font-size:11px" onclick="faqAbrir(\''+f.id+'\')">Editar</button>'
       +'<button class="btn-sm'+(f.ativo?' danger':'')+'" style="padding:2px 8px;font-size:11px" onclick="faqAtivar(\''+f.id+'\','+(!f.ativo)+')">'+(f.ativo?'Desligar':'Religar')+'</button></div></div></div>').join('')
     : '<div style="padding:10px 0;color:var(--text-soft);font-size:13px">Nenhuma resposta promovida ainda. Use “→ FAQ” numa pergunta acima.</div>');
+}
+// ── Item 71: responder pelo suporte (e-mail + FAQ) ──────────────────────────
+function respTodos(cb){ document.querySelectorAll('#respPapeis input:not([value="*"])').forEach(i=>{ i.checked=false; i.disabled=cb.checked; }); }
+function respAbrir(perguntaId){
+  const q=PQ.find(x=>x.id===perguntaId); if(!q) return;
+  document.getElementById('respId').value=q.id;
+  document.getElementById('respPergunta').textContent=q.pergunta;
+  document.getElementById('respQuem').textContent=(q.email||'sem e-mail')+' · '+(q.papel||'?')+' · '+(PQ_GRUPOS[q.empresa_id]||'')+(q.pagina?' · '+q.pagina:'');
+  document.getElementById('respTexto').value='';
+  document.getElementById('respPromover').checked=true;
+  const papeis=(q.papel&&q.papel!=='gerente'&&q.papel!=='super_admin')?[q.papel]:[];
+  const todos=document.querySelector('#respPapeis input[value="*"]'); todos.checked=!papeis.length; respTodos(todos);
+  document.querySelectorAll('#respPapeis input:not([value="*"])').forEach(i=>{ i.checked=papeis.includes(i.value); });
+  document.getElementById('modalResp').classList.add('open'); setTimeout(()=>document.getElementById('respTexto').focus(),50);
+}
+async function respEnviar(){
+  const id=document.getElementById('respId').value, texto=document.getElementById('respTexto').value.trim();
+  if(!texto){ alert('Escreva a resposta.'); return; }
+  const promover=document.getElementById('respPromover').checked;
+  const todos=document.querySelector('#respPapeis input[value="*"]').checked;
+  const papeis=todos?null:[...document.querySelectorAll('#respPapeis input:not([value="*"]):checked')].map(i=>i.value);
+  if(promover&&papeis&&!papeis.length){ alert('Marque pelo menos um papel (ou "todos").'); return; }
+  const b=document.getElementById('respGo'); b.disabled=true;
+  try{ const r=await sb.rpc('ajuda_responder',{ p_pergunta:id, p_resposta:texto, p_promover:promover, p_papeis:papeis }); if(r.error) throw r.error;
+       const d=r.data||{}; document.getElementById('modalResp').classList.remove('open');
+       showToast((d.enviado?'E-mail enviado para '+d.email:'Sem e-mail para avisar')+(d.faq_id?' · entrou na FAQ':''),'green');
+       await carregarPerguntas(); }
+  catch(e){ alert('Não enviou: '+esc(e.message||e)+' (o SQL supabase_ajuda_responder.sql precisa estar aplicado).'); }
+  finally{ b.disabled=false; }
 }
 function faqTodos(cb){ document.querySelectorAll('#faqPapeis input:not([value="*"])').forEach(i=>{ i.checked=false; i.disabled=cb.checked; }); }
 function faqAbrir(faqId, perguntaId){
