@@ -1220,10 +1220,17 @@ function pavExpand(codUpper){
 }
 
 async function carregarDocs(){
-  const { data: docs } = await sb.from('cde_documento_auria')
-    .select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
+  // Colunas explícitas: 'texto_busca' (o texto indexado do PDF inteiro) NÃO vem aqui — com
+  // select('*') cada recarga da lista baixava megabytes de texto que ninguém lia. A busca por
+  // conteúdo continua igual (é feita no servidor pelo índice GIN).
+  const DOC_COLS='id,empreendimento_id,codigo,titulo,disciplina,fornecedor_id,tipo,campos,numero,local_txt,qr_token,criado_por,criado_em,arquivado';
+  let dq = await sb.from('cde_documento_auria').select(DOC_COLS).eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
+  if(dq.error) dq = await sb.from('cde_documento_auria').select('*').eq('empreendimento_id',EMP_ID).eq('arquivado',false).order('codigo');
+  const docs = dq.data;
   const ids = (docs||[]).map(d=>d.id);
   let revs=[], arqs=[];
+  // pavimentos e pranchas vinculadas não dependem das revisões: já saem em paralelo
+  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas()]);
   if(ids.length){
     const { data:r } = await sb.from('cde_revisao_auria')
       .select('id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas').in('documento_id',ids);
@@ -1247,8 +1254,23 @@ async function carregarDocs(){
     const fk=faseKey();
     return { ...d, revs:rs, atual:rs[0]||null, etapa:(d.campos&&fk)?d.campos[fk]:null };
   });
-  await carregarPavimentos();
-  await carregarPranchasVinculadas();
+  await paralelo;
+}
+// Atualiza em memória uma revisão que acabou de mudar (status/estado/…) e repinta o que
+// mostra isso — lista, trilho, detalhe e a faixa de status das janelas abertas — SEM
+// recarregar o acervo inteiro do servidor (eram ~6 consultas + reabrir a prancha).
+function atualizarRevisaoLocal(revId, upd){
+  let doc=null, rev=null;
+  for(const d of DOCS){ const r=(d.revs||[]).find(x=>x.id===revId); if(r){ doc=d; rev=r; break; } }
+  if(!rev) return null;
+  Object.assign(rev, upd);
+  if(DOC_SEL && DOC_SEL.id===doc.id) DOC_SEL=doc;
+  WIN_STATE.list.forEach(w=>{ if(w.DOC_SEL && w.DOC_SEL.id===doc.id && !w.isCmp && !w.isFed){
+    w.DOC_SEL=doc; const s=doc.atual?STMAP[doc.atual.status]:null;
+    if(w.statusEl){ w.statusEl.textContent=s?s.rotulo:'sem revisão'; w.statusEl.style.background=s?s.cor:'#94A3B8'; }
+    const emAnalise=docEmAnalise(doc); if(w.analiseEl) w.analiseEl.classList.toggle('on', emAnalise); if(w.marcaEl) w.marcaEl.classList.toggle('on', emAnalise); } });
+  renderRail(); renderNav();
+  return doc;
 }
 
 // Elo B — quais documentos já têm prancha do App amarrada (cde_documento_id).
@@ -6828,18 +6850,23 @@ async function confirmarRecepcao(){
   if(!DOC_SEL) return;
   const disc=discLabel(DOC_SEL.disciplina)||'—';
   if(!confirm('Enviar confirmação de recebimento ao projetista da disciplina "'+disc+'"?')) return;
-  try{
-    const { data, error } = await sb.functions.invoke('notify-cde-recepcao', { body:{ documento_id:DOC_SEL.id, disciplina_label:disc } });
-    if(error){ let m=error.message; try{ const jb=await error.context.json(); if(jb&&jb.error)m=jb.error; }catch(_){} throw new Error(m); }
-    if(data && data.enviados>0){
-      const rev=DOC_SEL.atual;
-      if(rev) await sb.from('cde_evento_auria').insert({ revisao_id:rev.id, acao:'recepcao', usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:'Avisado o projetista ('+data.enviados+')' });
-      alert('Recepção confirmada e projetista avisado ('+data.enviados+' destinatário(s)).');
-      renderDetalhe();
-    }else{
-      alert((data&&data.aviso)||'Nenhum projetista cadastrado para essa disciplina. Cadastre-o no painel do analista (Fornecedores).');
-    }
-  }catch(e){ alert('Erro: '+((e&&e.message)||e)); }
+  // A Edge Function manda e-mail (2–5 s). Não segura a tela: avisa que está enviando e a
+  // pessoa pode seguir (mudar status etc.); o resultado chega como aviso discreto.
+  const docId=DOC_SEL.id, rev=DOC_SEL.atual;
+  _cdeToast('Avisando o projetista de "'+disc+'"…');
+  (async()=>{
+    try{
+      const { data, error } = await sb.functions.invoke('notify-cde-recepcao', { body:{ documento_id:docId, disciplina_label:disc } });
+      if(error){ let m=error.message; try{ const jb=await error.context.json(); if(jb&&jb.error)m=jb.error; }catch(_){} throw new Error(m); }
+      if(data && data.enviados>0){
+        if(rev) await sb.from('cde_evento_auria').insert({ revisao_id:rev.id, acao:'recepcao', usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:'Avisado o projetista ('+data.enviados+')' });
+        _cdeToast('✓ Recepção confirmada — projetista avisado ('+data.enviados+' destinatário(s)).');
+        if(DOC_SEL && DOC_SEL.id===docId) renderDetalhe();
+      }else{
+        _cdeToast((data&&data.aviso)||'Nenhum projetista cadastrado para essa disciplina. Cadastre-o no painel do analista (Fornecedores).');
+      }
+    }catch(e){ _cdeToast('Não foi possível avisar o projetista: '+((e&&e.message)||e)); }
+  })();
 }
 async function baixar(path,nome,provider){
   try{ const url = await cdeSignedUrl(path, provider, {download:nome}); window.open(url,'_blank'); }
@@ -6852,11 +6879,14 @@ async function mudarStatus(revId,novo){
   if(novo==='B1'){ const r=prompt('Descreva as ressalvas (pendências que a obra deve saber):',''); if(r===null)return; upd.ressalvas=r.trim(); }
   if(novo==='DEVOLVIDO'){ const r=prompt('Motivo da devolução ao projetista:',''); if(r===null)return; upd.motivo_devolucao=r.trim(); }
   const rev=(DOC_SEL.revs||[]).find(x=>x.id===revId); const de=rev?rev.status:null;
+  const b=document.querySelector('#dBody .st-btn.on, #dBody [data-st="'+novo+'"]'); if(b) b.disabled=true;
   try{
     const { error } = await sb.from('cde_revisao_auria').update(upd).eq('id',revId); if(error) throw error;
-    sb.from('cde_evento_auria').insert({ revisao_id:revId, acao:'status', de_status:de, para_status:novo, usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:upd.ressalvas||upd.motivo_devolucao||null }).then(()=>{},()=>{});
-    await carregarDocs(); DOC_SEL=DOCS.find(d=>d.id===DOC_SEL.id)||null; renderRail();
-    if(DOC_SEL){ await renderDetalhe(); abrirDoc(DOC_SEL.id); } else fecharDoc();
+    // o evento vai em segundo plano; o detalhe é repintado quando ele chegar
+    const ev=sb.from('cde_evento_auria').insert({ revisao_id:revId, acao:'status', de_status:de, para_status:novo, usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:upd.ressalvas||upd.motivo_devolucao||null });
+    atualizarRevisaoLocal(revId, upd);          // lista/trilho/janelas na hora, sem ir ao servidor
+    if(DOC_SEL){ await renderDetalhe(); ev.then(()=>{ if(DOC_SEL) renderDetalhe(); },()=>{}); } else fecharDoc();
+    if(RAMO_OBRA===false && typeof filaObraCarregar==='function'){ /* nada: fila é do perfil obra */ }
   }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para alterar o status.':'Erro: '+m); }
 }
 
