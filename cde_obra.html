@@ -1481,7 +1481,8 @@ function renderNav(){
     <button class="${NAV_MODE==='disc'?'on':''}" onclick="setNavMode('disc')">Disciplinas</button>
     <button class="${NAV_MODE==='grupo'?'on':''}" onclick="setNavMode('grupo')">Grupos${GRUPOS.length?(' ('+GRUPOS.length+')'):''}</button>
   </div>
-  <button class="btn sec sm" onclick="toggleMultiMode()" style="width:100%;margin-top:8px${MULTI_MODE?';background:var(--accent);border-color:var(--accent);color:#231703':''}">☑ ${MULTI_MODE?'Cancelar seleção':'Selecionar várias'}</button>`;
+  <button class="btn sec sm" onclick="toggleMultiMode()" style="width:100%;margin-top:8px${MULTI_MODE?';background:var(--accent);border-color:var(--accent);color:#231703':''}">☑ ${MULTI_MODE?'Cancelar seleção':'Selecionar várias'}</button>`
+  + (MULTI_MODE ? `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sec sm" style="flex:1" onclick="selecionarVisiveis()" title="Marca todas as pranchas que estão na lista atual (disciplina/filtro/busca)">☑ Todas as visíveis (${docsNaVista().length})</button><button class="btn sec sm" onclick="MULTI_SEL.clear();renderNav()" title="Desmarcar tudo">☐</button></div>` : '');
   if(!DOCS.length){ p.innerHTML=toggle+'<div class="nav-hint">Nenhum documento ainda. Clique em <b>Enviar arquivo(s)</b> para registrar a primeira entrega.</div>'; return; }
   p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
   renderMultiBar();
@@ -2080,7 +2081,7 @@ function navFiltrado(){
       const open = PASTAS_ABERTAS.has(disc+'::'+et);
       return `<div class="folder ${open?'open':''}">
         <div class="folder-h" onclick="toggleEtapa('${esc(disc)}','${esc(et)}')">
-          <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${faseHtml(et)}</span><span class="fct">${ds.length}</span>
+          <span class="fic">${open?'📂':'📁'}</span><span class="fnm">${faseHtml(et)}</span>${MULTI_MODE?`<input type="checkbox" class="multiChk" title="Marcar/desmarcar toda a pasta" ${ds.every(d=>MULTI_SEL.has(d.id))?'checked':''} onclick="event.stopPropagation();selecionarPasta(${JSON.stringify(ds.map(d=>d.id)).replace(/"/g,'&quot;')},this.checked)">`:''}<span class="fct">${ds.length}</span>
         </div><div class="folder-b">${ds.map(cardFdoc).join('')}</div></div>`;
     }).join('');
     return `<h3>${esc(discLabel(disc))}</h3>` + folders;
@@ -5941,10 +5942,71 @@ function toggleMultiMode(){
 }
 // Depois de agir sobre a seleção (federar / abrir no App) ela já cumpriu o
 // papel: desmarca e sai do modo, senão os checkboxes ficam ligados à toa.
-function multiConcluir(){ MULTI_SEL.clear(); MULTI_MODE=false; zipFechar(); renderNav(); }
+function multiConcluir(){ MULTI_SEL.clear(); MULTI_MODE=false; zipFechar(); const sp=$('stLotePop'); if(sp) sp.remove(); renderNav(); }
 function toggleMultiSel(docId){
   if(MULTI_SEL.has(docId)) MULTI_SEL.delete(docId); else MULTI_SEL.add(docId);
   renderNav();
+}
+// Item 75: os documentos que a lista da direita está mostrando agora (mesma fonte de cada visão)
+function docsNaVista(){
+  if(BUSCA){
+    const q=BUSCA.toLowerCase();
+    if(BUSCA_CONTEUDO) return BUSCA_IDS ? DOCS.filter(d=>BUSCA_IDS.has(d.id)&&docPassaFiltro(d)) : [];
+    const bate=d=>(d.codigo||'').toLowerCase().includes(q)||(d.titulo||'').toLowerCase().includes(q)||(d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
+    return DOCS.filter(d=>bate(d)&&docPassaFiltro(d));
+  }
+  if(SEL_DISC==='__BIM__') return DOCS.filter(docEhBim);
+  if(NAV_MODE==='grupo'){
+    if(GRUPO_SEL){ const g=GRUPOS.find(x=>x.id===GRUPO_SEL); return g?DOCS.filter(d=>g.docIds.includes(d.id)):[]; }
+    return [];
+  }
+  return temFiltro() ? DOCS.filter(docPassaFiltro) : [];
+}
+function selecionarVisiveis(){ MULTI_MODE=true; docsNaVista().forEach(d=>MULTI_SEL.add(d.id)); renderNav(); }
+function selecionarPasta(ids, on){ MULTI_MODE=true; ids.forEach(id=>{ if(on) MULTI_SEL.add(id); else MULTI_SEL.delete(id); }); renderNav(); }
+// Status em LOTE (coordenação): a mesma transição do "Detalhes / status", aplicada à revisão
+// vigente de cada prancha marcada — cada revisão recebe o próprio evento (e o e-mail do item 53).
+function statusLoteAbrir(){
+  const docs=[...MULTI_SEL].map(id=>DOCS.find(x=>x.id===id)).filter(d=>d&&d.atual); if(!docs.length){ alert('Nenhuma prancha com revisão selecionada.'); return; }
+  const old=$('stLotePop'); if(old) old.remove();
+  const ordem=Object.values(STMAP).sort((a,b)=>(a.ordem||99)-(b.ordem||99)).filter(s=>s.codigo!=='SUBSTITUIDO');
+  const atuais={}; docs.forEach(d=>{ const k=d.atual.status; atuais[k]=(atuais[k]||0)+1; });
+  const pop=document.createElement('div'); pop.className='zipPop'; pop.id='stLotePop';
+  pop.innerHTML=`<h4>Mudar status de ${docs.length} prancha(s)</h4>
+    <div style="font-size:11.5px;color:var(--mut);margin-bottom:8px">Hoje: ${Object.entries(atuais).map(([k,n])=>n+'× '+esc((STMAP[k]||{}).rotulo||k)).join(' · ')}</div>
+    <select id="stLoteSel" class="rdo-in" style="width:100%" onchange="statusLoteCampo()">${ordem.map(s=>`<option value="${esc(s.codigo)}">${esc(s.rotulo)}${s.iso?' ('+esc(s.iso)+')':''}</option>`).join('')}</select>
+    <div id="stLoteExtra" style="margin-top:8px;display:none"><textarea id="stLoteTxt" class="rdo-in" style="width:100%;min-height:56px" placeholder=""></textarea></div>
+    <div class="tot" style="margin-top:8px">A revisão vigente de cada prancha recebe o novo status e um evento no histórico. Devolvida / liberada avisa o projetista por e-mail.</div>
+    <div class="acts"><button class="btn sec sm" onclick="$('stLotePop').remove()">Cancelar</button><button class="btn pri sm" id="stLoteGo" onclick="statusLoteAplicar()">Aplicar</button></div>`;
+  document.body.appendChild(pop); pop._docs=docs; statusLoteCampo();
+}
+function statusLoteCampo(){
+  const v=$('stLoteSel').value, ex=$('stLoteExtra'), t=$('stLoteTxt');
+  if(v==='B1'){ ex.style.display=''; t.placeholder='Ressalvas (pendências que a obra deve saber) — valem para todas'; }
+  else if(v==='DEVOLVIDO'){ ex.style.display=''; t.placeholder='Motivo da devolução ao projetista — vale para todas'; }
+  else ex.style.display='none';
+}
+async function statusLoteAplicar(){
+  const pop=$('stLotePop'); if(!pop) return; const docs=pop._docs||[]; const novo=$('stLoteSel').value; const txt=($('stLoteTxt').value||'').trim();
+  if((novo==='B1'||novo==='DEVOLVIDO') && !txt){ alert(novo==='B1'?'Descreva as ressalvas.':'Informe o motivo da devolução.'); return; }
+  if(!confirm('Mudar '+docs.length+' prancha(s) para "'+((STMAP[novo]||{}).rotulo||novo)+'"?')) return;
+  const go=$('stLoteGo'); go.disabled=true;
+  const est=(STMAP[novo]&&STMAP[novo].estado)||'RECEBIDO'; const agora=new Date().toISOString(); let ok=0, falhas=[];
+  for(let i=0;i<docs.length;i++){
+    const d=docs[i]; go.textContent=(i+1)+'/'+docs.length;
+    const upd={status:novo,estado:est};
+    if(novo==='S3'){ upd.analisado_por=USER.id; upd.analisado_em=agora; }
+    if(['A1','B1'].includes(novo)){ upd.aprovado_por=USER.id; upd.aprovado_em=agora; }
+    if(novo==='B1') upd.ressalvas=txt; if(novo==='DEVOLVIDO') upd.motivo_devolucao=txt;
+    try{
+      const { error } = await sb.from('cde_revisao_auria').update(upd).eq('id', d.atual.id); if(error) throw error;
+      await sb.from('cde_evento_auria').insert({ revisao_id:d.atual.id, acao:'status', de_status:d.atual.status, para_status:novo, usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email, nota:(txt||null) }).then(()=>{},()=>{});
+      ok++;
+    }catch(e){ falhas.push((d.codigo||'?')+': '+((e&&e.message)||e)); }
+  }
+  pop.remove(); multiConcluir(); await carregarDocs(); renderRail(); renderNav();
+  if(DOC_SEL){ DOC_SEL=DOCS.find(x=>x.id===DOC_SEL.id)||null; if(DOC_SEL) renderDetalhe(); }
+  if(falhas.length) alert(ok+' alterada(s). Falharam '+falhas.length+':\n'+falhas.join('\n'));
 }
 function selecionarTodosGrupo(ids){
   MULTI_MODE=true;
@@ -5973,6 +6035,7 @@ function renderMultiBar(){
   bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
     ${acao}
     ${baixaveis?`<button class="sec" id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
+    ${!SEM_ESCRITA?`<button class="sec" onclick="statusLoteAbrir()" title="Mudar o status da revisão vigente de todas as pranchas selecionadas">🔁 Mudar status</button>`:''}
     ${!SEM_ESCRITA&&!ehBim?`<button class="sec" onclick="recodAbrir()" title="Corrigir o código das pranchas selecionadas (campos da convenção), com histórico">✎ Recodificar</button>`:''}
     <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
 }
