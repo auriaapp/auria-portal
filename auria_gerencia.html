@@ -2817,7 +2817,8 @@ async function cronRegistrarLog(empId,acao){
     usuario_nome:(USER&&(USER.nome||USER.email))||'', usuario_email:(USER&&USER.email)||'' }); }catch(e){}
 }
 
-let CRON_PV=null;
+let CRON_PV=null, CRON_PEND=false;   // CRON_PEND: só atividades pendentes (tarefas e fases <100%)
+function cronTogglePend(){ CRON_PEND=!CRON_PEND; try{ localStorage.setItem('auria_cron_pend', CRON_PEND?'1':'0'); }catch(_){} if(CRON_PV) cronRenderPv(); }
 function cronModoEditor(on){
   ['cronSalvarBtn'].forEach(id=>{ const b=document.getElementById(id); if(b) b.style.display=on?'':'none'; });
   const add=document.querySelector('#modalCronograma button[onclick="cronAddTarefa()"]'); if(add) add.style.display=on?'':'none';
@@ -2826,23 +2827,26 @@ function cronModoEditor(on){
 }
 function cronRenderPv(){
   cronModoEditor(false);
-  const d=CRON_PV, v=d.vinculo||{}, ts=d.tarefas||[];
+  const d=CRON_PV, v=d.vinculo||{}; try{ CRON_PEND=(localStorage.getItem('auria_cron_pend')==='1'); }catch(_){}
+  const ts=(d.tarefas||[]).filter(t=>!CRON_PEND || (t.progresso||0)<100);   // pendentes: some tarefa E fase a 100%
   const fases=(d.fases||[]).map(f=>`<span class="cd-chip ${f.fase===v.fase?'acc':'navy'}" style="cursor:pointer" onclick="cronTrocarFase('${esc(f.fase)}')" title="Ver ${_escAttr(f.projeto_nome||'')}">${esc(f.fase)}${f.padrao?' ★':''}</span>`).join(' ');
   const pad=(d.fases||[]).find(f=>f.padrao); const quem=pad&&pad.padrao_por_nome?` · padrão ${esc(pad.fase)} definido por <b>${esc(pad.padrao_por_nome)}</b>${pad.padrao_em?' em '+cronFmtDT(pad.padrao_em):''}`:'';
   const logs=(d.log||[]).slice(0,3).map(l=>`${cronFmtDT(l.quando)} · ${esc(l.por_nome||'—')} · ${esc(l.detalhe||l.acao)}`).join('<br>');
   setHTML('cronLogLine', `<span style="font-weight:700;color:var(--text)">Fonte: Prevision</span> · ${esc(v.projeto_nome||'')}${v.sincronizado_em?' · sincronizado em '+cronFmtDT(v.sincronizado_em):''}${quem} &nbsp; ${fases} &nbsp; <a class="cd-btn" style="text-decoration:none" href="cronograma.html?emp=${CRON_EMP.id}" target="_blank">Abrir Gantt completo</a>${logs?`<div style="margin-top:4px;font-size:11px;color:var(--text-soft)" title="Últimos registros (quem vinculou, sincronizou ou definiu a fase padrão)">${logs}</div>`:''}`);
   // resumo (mesma conta do editor: folhas com datas)
-  const folhas=ts.filter(t=>t.tipo!=='fase').map(t=>({ nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'', progresso:t.progresso||0 }));
+  const todas=d.tarefas||[];   // resumo sempre sobre o cronograma inteiro (o filtro de pendentes só esconde linhas)
+  const folhas=todas.filter(t=>t.tipo!=='fase').map(t=>({ nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'', progresso:t.progresso||0 }));
   const r=cronResumoCalc(folhas); const corPlan = r.prog+1 < r.plan ? 'var(--red)' : 'var(--green)';
-  const crit=ts.filter(t=>t.critica && t.tipo!=='fase' && (t.progresso||0)<100 && t.data_fim && t.data_fim<gdHoje().toISOString().slice(0,10)).length;
+  const crit=todas.filter(t=>t.critica && t.tipo!=='fase' && (t.progresso||0)<100 && t.data_fim && t.data_fim<gdHoje().toISOString().slice(0,10)).length;
   setHTML('cronResumo',
     `<div class="s-card"><div class="s-val" style="color:var(--blue)">${_fmtPct(r.prog)}</div><div class="s-lbl">Avanço geral</div></div>
      <div class="s-card"><div class="s-val" style="color:${corPlan}">${_fmtPct(r.plan)}</div><div class="s-lbl">Planejado (data)</div></div>
      <div class="s-card"><div class="s-val">${r.concl}/${r.total}</div><div class="s-lbl">Concluídas</div></div>
      <div class="s-card"><div class="s-val" style="color:${r.atrasadas?'var(--red)':'var(--green)'}">${r.atrasadas}</div><div class="s-lbl">Atrasadas</div></div>
-     <div class="s-card"><div class="s-val" style="color:${crit?'var(--red)':'var(--green)'}">${crit}</div><div class="s-lbl">Críticas vencidas</div></div>`);
+     <div class="s-card"><div class="s-val" style="color:${crit?'var(--red)':'var(--green)'}">${crit}</div><div class="s-lbl">Críticas vencidas</div></div>
+     <button class="cd-btn${CRON_PEND?' acc':''}" style="align-self:center;margin-left:auto" onclick="cronTogglePend()" title="Mostrar só o que ainda não chegou a 100% — tarefas e fases concluídas ficam ocultas">${CRON_PEND?'☑':'☐'} Só atividades pendentes</button>`);
   // extensão da linha do tempo = TODAS as tarefas (a raiz/fases começam antes das folhas abertas)
-  let proj0=null, proj1=null; ts.forEach(t=>{ const a=_parseD(t.data_inicio), b=_parseD(t.data_fim); if(a&&(!proj0||a<proj0)) proj0=a; if(b&&(!proj1||b>proj1)) proj1=b; });
+  let proj0=null, proj1=null; todas.forEach(t=>{ const a=_parseD(t.data_inicio), b=_parseD(t.data_fim); if(a&&(!proj0||a<proj0)) proj0=a; if(b&&(!proj1||b>proj1)) proj1=b; });
   const projSpan=(proj0&&proj1)?Math.max(1,_dias(proj0,proj1)):0;
   setHTML('cronBody', ts.map(t=>{
     const c=cronCalc({ nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'', progresso:t.progresso||0 });
