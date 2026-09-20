@@ -26,9 +26,8 @@
   #top .rev{ margin-left:auto; flex:none; font-size:11px; font-weight:800; color:#231703; background:var(--accent); border-radius:20px; padding:3px 10px; }
   #stage{ position:absolute; inset:52px 0 0 0; overflow:hidden; background:#eef2f7; touch-action:none; }
   #stage.grab{ cursor:grabbing; }
-  #pdfCv{ position:absolute; left:0; top:0; transform-origin:0 0; background:#fff; box-shadow:0 4px 30px rgba(0,0,0,.5); }
-  #tiles{ position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; }
-  #tiles canvas{ position:absolute; background:transparent; }
+  #paper{ position:absolute; left:0; top:0; transform-origin:0 0; background:#fff; box-shadow:0 4px 30px rgba(0,0,0,.5); will-change:transform; }
+  #pdfCv{ position:absolute; left:0; top:0; transform-origin:0 0; background:transparent; will-change:transform; }
   #pins{ position:absolute; inset:0; pointer-events:none; }
   .pin{ position:absolute; transform:translate(-50%,-100%); cursor:pointer; pointer-events:auto; }
   .pin svg{ display:block; filter:drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
@@ -67,9 +66,9 @@
   </div>
   <div id="banner">⚠ Existe uma versão <b>mais atual ainda não liberada para a obra</b>. Esta é a última revisão liberada. <b>Contatar a coordenação de projeto.</b></div>
   <div id="stage">
+    <div id="paper"></div>
     <canvas id="pdfCv"></canvas>
     <div id="nit"><i></i><span>Afinando a nitidez…</span></div>
-    <div id="tiles"></div>
     <div id="pins"></div>
     <div id="bim"></div>
   </div>
@@ -98,13 +97,16 @@ function pinSvg(num,cor){ return '<svg width="30" height="38" viewBox="0 0 30 38
 //  são só transform CSS (sem re-render = sem piscar/sumir). Sem o modo de
 //  comparação nem o cache em IndexedDB (o QR não precisa). Mesma nitidez/fluidez.
 // ════════════════════════════════════════════════════════════════════════════
-const BASE_FOLGA = 7, DET_SS = 1.5, TILE_PX = 512, TILE_MAX = 90;
-const V = { doc:null, page:null, pageNum:1, nPages:1, zoom:1, panX:0, panY:0,
-            _renderJob:0, _renderTask:null, _detTimer:null, _rafId:null, _panPend:null, _fitted:false, _baseTimer:null };
-const B = { scale:1, pw:0, ph:0, valido:false };
-const T = { mapa:new Map(), nivel:null, escala:1, tam:0 };
+//  MODELO DO APP (item 68b): rasteriza SÓ a área visível (+ margem) na resolução
+//  exata do zoom atual, num canvas invisível (double-buffer), e troca de uma vez.
+//  Pan/zoom são transform CSS sobre o último quadro (nunca some da tela); o raster
+//  nítido chega logo depois (debounce). Sem bitmap da página inteira, sem ladrilhos:
+//  no celular isso é o que cabe na memória e fica nítido em qualquer zoom.
+const V = { doc:null, page:null, pageNum:1, nPages:1, zoom:1, panX:0, panY:0, _rafId:null, _panPend:null, _fitted:false };
+const F = { zoom:1, panX:0, panY:0, cssW:0, cssH:0, valido:false };   // último quadro rasterizado
 let BBOX = null, APTS = [], DADOS = null;
-const stage = $('stage'), cvBase = $('pdfCv'), tilesEl = $('tiles'), pinsEl = $('pins');
+const stage = $('stage'), cvBase = $('pdfCv'), paperEl = $('paper'), pinsEl = $('pins');
+let _renderTimer=null, _rendering=false, _renderJob=0, _renderTask=null;
 
 async function computeContentBBoxPx(page){
   const ALVO_PX=900, vp0=page.getViewport({scale:1});
@@ -123,143 +125,67 @@ async function computeContentBBoxPx(page){
   return { left, top, w, h };
 }
 function dims(){ const vp=V.page.getViewport({scale:1}); return { pw:vp.width, ph:vp.height }; }
-function cancelarRender(){ if(V._renderTask){ try{ V._renderTask.cancel(); }catch(_){} V._renderTask=null; } }
-// No CELULAR o canvas tem limite bem menor de ÁREA/LADO — um bitmap grande demais
-// renderiza só em pedaços ou sai branco. Reduzimos MAXPIX/lado/folga e capamos o
-// dpr. Os TILES de detalhe (512px cada) continuam refinando ao ampliar.
 const _MOVEL = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Math.min(window.innerWidth, window.innerHeight) < 820;
-// Parâmetros dos LADRILHOS ajustados por dispositivo. No celular: ladrilhos
-// MAIORES (menos renders por vista), menos supersample, e cache LRU menor
-// (memória). O cache é o que faz arrastar REAPROVEITAR o que já foi renderizado.
-const _TILE_PX  = _MOVEL ? 640 : TILE_PX;   // 640² ≈ 1,6MB/ladrilho
-const _DET_SS   = _MOVEL ? 1.2 : DET_SS;
-const _TILE_MAX = _MOVEL ? 64  : TILE_MAX;   // ~100MB / ~5 telas guardadas → arrastar p/ os lados NÃO re-renderiza o que já viu
-function baseScaleAlvo(){
-  const {pw,ph}=dims(), cw=stage.clientWidth||1200, ch=stage.clientHeight||800, b=BBOX;
-  const dpr=Math.min(window.devicePixelRatio||1, _MOVEL?2:3);
-  const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-  if(_MOVEL){
-    // Mobile: base LEVE (carrega rápido; camada fluida do zoom por CSS). A nitidez
-    // de leitura vem dos LADRILHOS, que ficam GUARDADOS (cache) — arrastar reusa.
-    const teto=Math.min(Math.sqrt(9e6/(pw*ph)), 4096/pw, 4096/ph);
-    const s=Math.min(fitZoom*dpr*3.5, teto);
-    return { s: Math.max(s, Math.min(fitZoom*dpr, teto)), pw, ph };
-  }
-  const teto=Math.min(Math.sqrt(42e6/(pw*ph)), 16000/pw, 16000/ph);
-  let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto); s=Math.max(s, Math.min(fitZoom*dpr, teto));
-  return { s, pw, ph };
-}
-async function rasterizar(job, s, rx, ry, W, H, cv){
-  cv.width=W; cv.height=H; const ctx=cv.getContext('2d'); ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.save(); ctx.translate(-rx*s,-ry*s);
-  const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}), background:'#fff' });
-  V._renderTask=task; try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
-  V._renderTask=null; ctx.restore(); return job===V._renderJob;
-}
-async function renderBase(scaleForcado){
-  if(!V.page) return; const job=++V._renderJob; cancelarRender();
-  try{
-    const b=baseScaleAlvo(), pw=b.pw, ph=b.ph, s=(scaleForcado!=null?scaleForcado:b.s);
-    const W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
-    const direto=!B.valido, cvA=direto?cvBase:document.createElement('canvas');
-    const ok=await rasterizar(job,s,0,0,W,H,cvA); if(!ok||job!==V._renderJob) return;
-    if(!direto){ cvBase.width=W; cvBase.height=H; cvBase.getContext('2d').drawImage(cvA,0,0); }
-    cvBase.style.width=W+'px'; cvBase.style.height=H+'px';
-    B.scale=s; B.pw=pw; B.ph=ph; B.valido=true; tilesLimpar(); updateCss();
-  }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
-}
-async function ajustarBBox(){ if(_MOVEL){ BBOX=null; return; }   // no celular pula o scan (render caro); enquadra a folha inteira
+async function ajustarBBox(){   // scan leve (900 px) para enquadrar o CONTEÚDO e não a folha com margens
   const page=V.page; try{ const bb=await computeContentBBoxPx(page); if(V.page===page) BBOX=bb; }catch(e){ BBOX=null; } }
+const MARGEM   = _MOVEL ? 0.30 : 0.45;   // fração da janela rasterizada além de cada borda
+const MAXPIX   = _MOVEL ? 9e6 : 24e6;    // teto do backing store (celular: limite de canvas/memória)
+const DPR_MAX  = _MOVEL ? 3 : 3;
+function cancelarRender(){ if(_renderTask){ try{ _renderTask.cancel(); }catch(_){} _renderTask=null; } }
+// Reposiciona o ÚLTIMO quadro conforme a vista atual (CSS puro — instantâneo).
 function updateCss(){
-  if(!B.valido) return;
-  const k=V.zoom/B.scale, tr='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')';
-  cvBase.style.transform=tr;
+  const {pw,ph}=V.page?dims():{pw:0,ph:0};
+  paperEl.style.width=pw+'px'; paperEl.style.height=ph+'px';
+  paperEl.style.transform='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+V.zoom+')';
+  if(F.valido){ const k=V.zoom/F.zoom; cvBase.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')'; }
   renderPins();
-  tilesPosicionar();
-  if(_MOVEL) detAgendarView(); else detAgendar();
+  scheduleRender();
 }
-// ── Detalhe em ladrilhos ──
-function detEscalaAlvo(){ return V.zoom*(window.devicePixelRatio||1)*_DET_SS; }
-function detNivel(){ const a=detEscalaAlvo(); if(!(a>0)) return null; return Math.ceil(Math.log2(a)*2)/2; }
-function detPrecisa(){ if(!B.valido||!V.page) return false; const r=detEscalaAlvo()/B.scale; return r>1.05||r<0.65; }
-function tilesLimpar(){ T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove(); }); T.mapa.clear(); T.nivel=null; _vcLimpar(); }
-function tilesPosicionar(){ if(!B.valido) return; const k=V.zoom/B.scale; tilesEl.style.transform='translate('+(-V.panX)+'px,'+(-V.panY)+'px) scale('+k+')'; }
-function tilesVisibilidade(nivel){ T.mapa.forEach(t=>{ t.el.style.display=(t.nivel===nivel)?'block':'none'; }); }
-function detAgendar(){ clearTimeout(V._detTimer); if(!detPrecisa()){ tilesVisibilidade(null); return; } const n=detNivel(); if(n!==T.nivel) tilesVisibilidade(n); V._detTimer=setTimeout(tilesGarantir, _MOVEL?150:200); }
-async function tilesGarantir(){
-  if(!detPrecisa()||!B.valido) return; const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
-  const nivel=detNivel(); if(nivel==null) return; const s=Math.pow(2,nivel), tam=_TILE_PX/s;
-  T.nivel=nivel; T.escala=s; T.tam=tam; tilesVisibilidade(nivel);
-  const z=V.zoom, x0=V.panX/z-tam/2, y0=V.panY/z-tam/2, x1=(V.panX+cw)/z+tam/2, y1=(V.panY+ch)/z+tam/2;
-  const i0=Math.max(0,Math.floor(x0/tam)), i1=Math.floor(Math.min(B.pw,x1)/tam);
-  const j0=Math.max(0,Math.floor(y0/tam)), j1=Math.floor(Math.min(B.ph,y1)/tam);
-  const job=++V._renderJob; cancelarRender();
-  for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
-    if(job!==V._renderJob) return;
-    const chave=V.pageNum+'|'+nivel+'|'+i+'|'+j, achado=T.mapa.get(chave);
-    if(achado){ T.mapa.delete(chave); T.mapa.set(chave,achado); continue; }
-    const px=i*tam, py=j*tam, w=Math.min(tam,B.pw-px), h=Math.min(tam,B.ph-py); if(w<=0||h<=0) continue;
-    const W=Math.max(1,Math.round(w*s)), H=Math.max(1,Math.round(h*s)), cvA=document.createElement('canvas');
-    const ok=await rasterizar(job,s,px,py,W,H,cvA); if(!ok||job!==V._renderJob) return;
-    cvA.style.left=(px*B.scale)+'px'; cvA.style.top=(py*B.scale)+'px'; cvA.style.width=(w*B.scale)+'px'; cvA.style.height=(h*B.scale)+'px';
-    tilesEl.appendChild(cvA); T.mapa.set(chave,{ nivel, el:cvA }); tilesPodar();
-  }
+// O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
+function frameCobre(){
+  if(!F.valido || F.zoom!==V.zoom) return false;
+  return V.panX>=F.panX && V.panY>=F.panY && V.panX+stage.clientWidth<=F.panX+F.cssW && V.panY+stage.clientHeight<=F.panY+F.cssH;
 }
-function tilesPodar(){ while(T.mapa.size>_TILE_MAX){ const c=T.mapa.keys().next().value, t=T.mapa.get(c); if(t&&t.el) t.el.remove(); T.mapa.delete(c); } }
-
-// ── CACHE DE VISTAS (mobile) ────────────────────────────────────────────────
-//  Em vez de ladrilhos pequenos (lento, quadradinho por quadradinho), renderiza a
-//  ÁREA VISÍVEL INTEIRA (+ margem) de UMA vez, num canvas só, e GUARDA. Arrastar
-//  move os canvas guardados por CSS (instantâneo); só renderiza de novo quando a
-//  vista sai da área já coberta. Voltar a uma área já vista é imediato (cache).
-let VCACHE = [];
-const _VC_MAX = 6;        // ~6 vistas guardadas
-const _VC_MARGEM = 0.35;  // 35% de folga além da tela (pans pequenos não re-renderizam)
-const _VC_RDPR = Math.min(window.devicePixelRatio||1, 2);
-function _vcVis(nv){
-  // Todas visíveis; a mais próxima do nível atual por cima (z-index). Uma vista de nível
-  // maior (mais nítida) também fica, escalada por CSS — melhor que cair na base borrada.
-  VCACHE.forEach(v=>{ v.cv.style.display='block'; v.cv.style.zIndex=String(100-Math.round(Math.abs(v.nivel-nv)*10)); });
-}
-function _vcCobre(nv){   // já existe vista no cache (nível nv) cobrindo a tela toda?
-  const z=V.zoom, cw=stage.clientWidth, ch=stage.clientHeight;
-  const x0=V.panX/z, y0=V.panY/z, x1=(V.panX+cw)/z, y1=(V.panY+ch)/z;
-  const v = VCACHE.find(v=> v.nivel===nv && v.rx<=x0+0.5 && v.ry<=y0+0.5 && v.rx+v.rw>=x1-0.5 && v.ry+v.rh>=y1-0.5);
-  if(v){ VCACHE.splice(VCACHE.indexOf(v),1); VCACHE.push(v); }   // LRU: renova
-  return v;
-}
-function _vcPodar(){ while(VCACHE.length>_VC_MAX){ const v=VCACHE.shift(); if(v&&v.cv&&v.cv.parentNode) v.cv.remove(); } }
-function _vcLimpar(){ VCACHE.forEach(v=>{ if(v.cv&&v.cv.parentNode) v.cv.remove(); }); VCACHE=[]; }
-function detAgendarView(){ clearTimeout(V._detTimer); V._detTimer=setTimeout(detView, _MOVEL?150:200); }
-async function detView(){
-  if(!V.page || !B.valido || $('bim').style.display==='block') return;
+function scheduleRender(delay){ clearTimeout(_renderTimer); _renderTimer=setTimeout(render, delay==null?(_MOVEL?150:120):delay); }
+async function render(){
+  if(!V.page || $('bim').style.display==='block') return;
+  if(_rendering){ cancelarRender(); scheduleRender(80); return; }   // vista mudou no meio: descarta o raster velho
+  if(frameCobre()) return;
   const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return;
-  const nv=detNivel(); if(nv==null) return;
-  _vcVis(nv);
-  if(_vcCobre(nv)) return;                 // já coberto pelo cache → nada a renderizar
-  const z=V.zoom, s=z*_VC_RDPR;            // resolução exata da vista atual
-  const mx=(cw/z)*_VC_MARGEM, my=(ch/z)*_VC_MARGEM;
-  let rx=Math.max(0, V.panX/z - mx), ry=Math.max(0, V.panY/z - my);
-  let rw=Math.min(B.pw-rx, cw/z + 2*mx), rh=Math.min(B.ph-ry, ch/z + 2*my);
-  if(rw<=0||rh<=0) return;
-  const W=Math.max(1,Math.round(rw*s)), H=Math.max(1,Math.round(rh*s));
-  const job=++V._renderJob; cancelarRender();
-  const off=document.createElement('canvas'); off.width=W; off.height=H;
-  const ctx=off.getContext('2d'); ctx.setTransform(1,0,0,1,0,0); ctx.save(); ctx.translate(-rx*s,-ry*s);
-  const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}) });
-  V._renderTask=task; nitMostrar(true);
-  try{ await task.promise; }catch(e){ nitMostrar(false); if(!/cancel/i.test(String(e&&e.name||e))) console.warn('view:',e); return; }
-  V._renderTask=null; ctx.restore(); nitMostrar(false); if(job!==V._renderJob) return;
-  off.style.position='absolute';
-  off.style.left=(rx*B.scale)+'px'; off.style.top=(ry*B.scale)+'px';
-  off.style.width=(rw*B.scale)+'px'; off.style.height=(rh*B.scale)+'px';
-  tilesEl.appendChild(off);
-  VCACHE.push({ cv:off, nivel:nv, rx, ry, rw, rh });
-  _vcPodar(); _vcVis(nv);
+  _rendering=true; const job=++_renderJob;
+  try{
+    const dpr=Math.min(window.devicePixelRatio||1, DPR_MAX);
+    const mx=Math.round(cw*MARGEM), my=Math.round(ch*MARGEM);
+    const zoom=V.zoom, panX=V.panX-mx, panY=V.panY-my, cssW=cw+2*mx, cssH=ch+2*my;
+    // SUPERSAMPLING: de longe as linhas finas viram <1px e ficam serrilhadas;
+    // renderiza acima da tela e o navegador reduz (antialiasing), com teto de área.
+    let ss = zoom<0.5 ? 2.5 : zoom<1 ? 2 : zoom<2 ? 1.5 : 1;
+    let rScale = dpr*ss;
+    while(cssW*rScale*cssH*rScale > MAXPIX && rScale>dpr) rScale=Math.max(dpr, rScale-0.25);
+    while(cssW*rScale*cssH*rScale > MAXPIX && rScale>1) rScale=Math.max(1, rScale-0.25);   // celular pequeno com dpr 3
+    const off=document.createElement('canvas'); off.width=Math.round(cssW*rScale); off.height=Math.round(cssH*rScale);
+    const ctx=off.getContext('2d');
+    // só a FOLHA fica branca (fora dela o quadro é transparente → aparece o fundo do palco)
+    const {pw,ph}=dims(); const s=zoom*rScale;
+    ctx.fillStyle='#fff'; ctx.fillRect(-panX*rScale, -panY*rScale, pw*s, ph*s);
+    ctx.save(); ctx.translate(-panX*rScale, -panY*rScale);
+    const task=V.page.render({ canvasContext:ctx, viewport:V.page.getViewport({scale:s}), background:'rgba(0,0,0,0)' });
+    _renderTask=task; nitMostrar(true);
+    try{ await task.promise; }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); ctx.restore(); _rendering=false; nitMostrar(false); return; }
+    _renderTask=null; ctx.restore();
+    if(job!==_renderJob){ _rendering=false; nitMostrar(false); scheduleRender(0); return; }
+    // troca SÍNCRONA: redimensiona + copia no mesmo frame de pintura (sem branco)
+    const c2=cvBase.getContext('2d'); cvBase.width=off.width; cvBase.height=off.height;
+    cvBase.style.width=cssW+'px'; cvBase.style.height=cssH+'px'; c2.drawImage(off,0,0);
+    F.zoom=zoom; F.panX=panX; F.panY=panY; F.cssW=cssW; F.cssH=cssH; F.valido=true;
+    const k=V.zoom/F.zoom; cvBase.style.transform='translate('+(F.panX*k-V.panX)+'px,'+(F.panY*k-V.panY)+'px) scale('+k+')';
+  }catch(e){ if(!/cancel/i.test(String(e))) console.error('render:',e); }
+  _rendering=false; nitMostrar(false);
+  if(!frameCobre()) scheduleRender(60);                  // usuário continuou mexendo
 }
-function nitMostrar(on){ const n=$('nit'); if(!n) return; clearTimeout(n._t); if(on){ n._t=setTimeout(()=>{ n.style.display='flex'; },400); } else n.style.display='none'; }
-function revisarBase(){ if(_MOVEL) return;   // no celular NÃO re-renderiza a base (isso limparia o cache dos ladrilhos); a base leve basta + tiles
-  if(!V.page||!B.valido) return; if(stage.clientWidth<=0||stage.clientHeight<=0) return; const {s}=baseScaleAlvo(); if(s>B.scale*1.25) renderBase(); }
+function nitMostrar(on){ const n=$('nit'); if(!n) return; clearTimeout(n._t); if(on){ n._t=setTimeout(()=>{ n.style.display='flex'; },500); } else n.style.display='none'; }
+function limparQuadro(){ F.valido=false; cvBase.width=1; cvBase.height=1; cvBase.style.transform='none'; }
+
 function fitPage(){
   if(!V.page) return; const d=dims(), b=BBOX, left=b?b.left:0, top=b?b.top:0, pw=b?b.w:d.pw, ph=b?b.h:d.ph;
   const cw=stage.clientWidth, ch=stage.clientHeight; if(cw<=0||ch<=0) return; V._fitted=true;
@@ -292,16 +218,16 @@ async function abrirPdf(url, tem3D){
   try{
     V.doc=await pdfjsLib.getDocument({url}).promise; V.nPages=V.doc.numPages; V.pageNum=1;
     V.page=await V.doc.getPage(V.pageNum);
-    B.valido=false; V._fitted=false;
+    limparQuadro(); V._fitted=false;
     await ajustarBBox(); fitPage();
-    await renderBase(); hideMsg(); montarTools(tem3D); gestos();
+    await render(); hideMsg(); montarTools(tem3D); gestos();
   }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o PDF.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 async function irPagina(delta){
   const n=V.pageNum+delta; if(n<1||n>V.nPages) return; V.pageNum=n; $('card').style.display='none';
-  V.page=await V.doc.getPage(V.pageNum); B.valido=false; V._fitted=false;
+  V.page=await V.doc.getPage(V.pageNum); limparQuadro(); V._fitted=false;
   await ajustarBBox(); fitPage();
-  await renderBase();
+  await render();
   atualizaPg();
 }
 function atualizaPg(){ const el=document.querySelector('#tools .pg'); if(el) el.textContent=V.nPages>1?(V.pageNum+' / '+V.nPages):''; }
@@ -330,7 +256,7 @@ function gestos(){
   stage.addEventListener('touchend', e=>{ if(e.touches.length<2){ pinch=null; V._pinch=false; } });
   if(window.ResizeObserver){ new ResizeObserver(()=>{ if(!V.page||$('bim').style.display==='block') return;
     if(stage.clientWidth<=0||stage.clientHeight<=0) return; if(!V._fitted){ fitPage(); return; }
-    clearTimeout(V._baseTimer); V._baseTimer=setTimeout(revisarBase,250); updateCss(); }).observe(stage); }
+    updateCss(); }).observe(stage); }
 }
 function montarTools(tem3D){
   const t=$('tools'); t.style.display='flex';
@@ -343,10 +269,10 @@ function montarTools(tem3D){
 }
 async function verModo(m){
   const b2=$('b2d'), b3=$('b3d');
-  if(m==='3d'){ cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('bim').style.display='block';
+  if(m==='3d'){ cvBase.style.display='none'; paperEl.style.display='none'; pinsEl.style.display='none'; $('bim').style.display='block';
     if(b2) b2.classList.remove('on'); if(b3) b3.classList.add('on'); $('card').style.display='none';
     if(!V._3dReady){ V._3dReady=true; await abrir3D(DADOS.released.frag, true); } }
-  else{ $('bim').style.display='none'; cvBase.style.display=''; tilesEl.style.display=''; pinsEl.style.display='';
+  else{ $('bim').style.display='none'; cvBase.style.display=''; paperEl.style.display=''; pinsEl.style.display=''; scheduleRender(0);
     if(b3) b3.classList.remove('on'); if(b2) b2.classList.add('on'); }
 }
 
@@ -360,7 +286,7 @@ async function abrir3D(fragUrl, jaAberto){
     const nome=(DADOS&&DADOS.doc&&DADOS.doc.codigo)||'modelo';
     await B3.carregar(F3D, [{ nome, id:'qr', arquivoId:'qr', url:()=>fragUrl }], t=>{ if(!jaAberto) carregando(t); });
     $('bim').style.display='block';
-    if(!jaAberto){ hideMsg(); cvBase.style.display='none'; tilesEl.style.display='none'; pinsEl.style.display='none'; $('tools').style.display='flex'; }
+    if(!jaAberto){ hideMsg(); cvBase.style.display='none'; paperEl.style.display='none'; pinsEl.style.display='none'; $('tools').style.display='flex'; }
   }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 
