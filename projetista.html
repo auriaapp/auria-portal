@@ -1041,10 +1041,13 @@ async function showContratos(){
     const { data: minhasNfs } = await sb.rpc('nf_minhas', {});
     (minhasNfs||[]).forEach(function(n){ NF_POR_PARCELA[n.parcela_id]=n; });
   }catch(e){ console.error('nf_minhas:', e); }
+  // Item 77d: parcelas cujo marco de medição concluiu no Prevision (pode solicitar faturamento)
+  P_LIBERAVEIS = {};
+  try{ const { data: lib } = await sb.rpc('parcelas_liberaveis', {}); (lib||[]).forEach(function(l){ P_LIBERAVEIS[l.parcela_id]=l; }); }catch(e){}
   renderContratosProjetista();
   atualizarBadgeContratos();
 }
-var NF_POR_PARCELA = {};
+var NF_POR_PARCELA = {}, P_LIBERAVEIS = {};
 async function pVerNF(path){
   try{
     const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
@@ -1106,7 +1109,7 @@ function renderContratosProjetista(){
         <tbody>
           ${parcs.length?parcs.map(p=>{
             const podeSolic = p.status==='a_faturar' || p.status==='recusada';
-            const nf = NF_POR_PARCELA[p.id];
+            const nf = NF_POR_PARCELA[p.id]; const lib = (typeof P_LIBERAVEIS!=='undefined') && P_LIBERAVEIS[p.id];
             const acoes = [];
             if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
             if(p.status==='autorizada') acoes.push(`<button class="pmini warn" onclick="abrirEnviarNF('${p.id}','${c._ci}')">📤 Enviar NF</button>`);
@@ -1119,7 +1122,7 @@ function renderContratosProjetista(){
               <td>${escH(p.descricao||'—')}</td>
               <td>${pBRL(p.valor)}</td>
               <td>${pFmtDt(p.vencimento)||'—'}</td>
-              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${nf?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">${nf.emitida_em?('Fat. '+pFmtDt(nf.emitida_em)):''}${nf.nf_numero?(' · NF '+escH(nf.nf_numero)):''}</div>`:''}</td>
+              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${lib?`<span class="pctr-st pst-pg" style="margin-left:4px" title="Marco de medição concluído no cronograma (${escH(lib.tarefa||'')}) — solicite o faturamento">✔ marco concluído</span>`:''}${nf?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">${nf.emitida_em?('Fat. '+pFmtDt(nf.emitida_em)):''}${nf.nf_numero?(' · NF '+escH(nf.nf_numero)):''}</div>`:''}</td>
               <td>${acoes.join(' ')}</td>
             </tr>`;
           }).join(''):'<tr><td colspan="6" style="text-align:center;color:#94A3B8;padding:14px">Sem parcelas definidas.</td></tr>'}
