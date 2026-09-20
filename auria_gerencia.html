@@ -1974,7 +1974,9 @@ async function loadGestaoExtras(){
   const t=[];
   // Prevision (item 77): vínculos ativos por empreendimento (tabela pode não existir ainda → ignora)
   t.push((async()=>{ try{ const r=await sb.from('prevision_vinculo_auria').select('empreendimento_id,fase,padrao,sincronizado_em,n_tarefas,sync_erro').eq('ativo',true);
-    (r.data||[]).forEach(v=>{ (G.pv[v.empreendimento_id]=G.pv[v.empreendimento_id]||[]).push(v); }); }catch(_){} })());
+    (r.data||[]).forEach(v=>{ (G.pv[v.empreendimento_id]=G.pv[v.empreendimento_id]||[]).push(v); });
+    const ids=Object.keys(G.pv); if(ids.length){ const px=await sb.rpc('prevision_proximas',{ p_emps:ids, p_dias:30 });
+      if(!px.error){ G.pvCron=(px.data||[]).map(t=>({ empreendimento_id:t.empreendimento_id, nome:t.nome, data_fim:t.data_fim, progresso:t.progresso||0, pv:true, fase:t.fase, critica:t.critica })); } } }catch(_){} })());
   // cotações em andamento + propostas recebidas
   t.push((async()=>{ G.cot=await gq(sb.from('cotacao_auria').select('id,empreendimento_id,disciplina,titulo,prazo_envio,status,mde_gerado_em,mde_assinado_em,mde_pdf_path').in('status',['aberta','em_analise']));
     if(G.cot.length) G.props=await gq(sb.from('proposta_auria').select('id,cotacao_id,valor_total,status,empresa_nome').in('cotacao_id',G.cot.map(c=>c.id))); })());
@@ -2013,6 +2015,8 @@ async function loadGestaoExtras(){
   Object.keys(G.discForn).forEach(eid=>{ const e=EMPS.find(x=>x.id===eid); const o={}; Object.keys(G.discForn[eid]).forEach(k=>{ const c=gdDiscCodWith(G,e,k); if(!o[c]) o[c]=G.discForn[eid][k]; }); G.discForn[eid]=o; });
   Object.keys(G.rev).forEach(eid=>{ const e=EMPS.find(x=>x.id===eid); const o={}; Object.keys(G.rev[eid].disc).forEach(k=>{ const c=gdDiscCodWith(G,e,k); if(!o[c]||o[c]<G.rev[eid].disc[k]) o[c]=G.rev[eid].disc[k]; }); G.rev[eid].disc=o; });
   G.quando=new Date();
+  // Prevision (item 77): empreendimentos vinculados não mostram o cronograma importado no widget
+  try{ G.cron=G.cron.filter(c=>!G.pv[c.empreendimento_id]).concat(G.pvCron||[]); }catch(_){}
   GD=G;
   const badge=document.getElementById('discNotifBadge'); if(badge){ badge.style.display=G.discNotif?'':'none'; badge.textContent=G.discNotif; }
 }
@@ -2345,7 +2349,7 @@ function gdSaude(emp){
   const vinc=a=>(a.analista_empreendimento_auria||[]).filter(v=>v.empreendimento_id===emp.id&&v.ativo!==false);
   const coord=ANALISTAS.filter(a=>vinc(a).some(v=>v.papel!=='visualizador'));
   const vis=ANALISTAS.filter(a=>vinc(a).some(v=>v.papel==='visualizador'));
-  const cronN=GD.cron.filter(c=>c.empreendimento_id===emp.id).length;
+  const cronN=GD.cron.filter(c=>c.empreendimento_id===emp.id).length + (((GD.pv&&GD.pv[emp.id])||[]).length?1:0);
   // ficha: todos os documentos/viabilidades respondidos (Sim/Não/Em processo/Não se aplica contam) — item 46
   const bdocs=((emp.config&&emp.config.briefing)||{}).docs||[]; const bresp=bdocs.filter(d=>d&&d.status).length;
   const ficha=bdocs.length>0 && bresp===bdocs.length;
@@ -2418,8 +2422,10 @@ function gdCronRender(vis){
     .sort((a,b)=>String(a.data_fim).localeCompare(String(b.data_fim))).slice(0,8);
   const li=rows.map(c=>{ const d=gdDias(c.data_fim); const e=gdEmp(c.empreendimento_id);
     const chip = d>0 ? `<span class="cd-chip err">venceu ${gdDbr(c.data_fim)} · ${d} d</span>` : d===0 ? `<span class="cd-chip acc">hoje</span>` : (-d<=7 ? `<span class="cd-chip acc">em ${-d} d · ${gdDbr(c.data_fim)}</span>` : `<span class="cd-chip navy">em ${-d} d · ${gdDbr(c.data_fim)}</span>`);
-    return `<div class="gd-row" style="cursor:pointer" onclick="abrirCronograma('${c.empreendimento_id}')"><span class="ecode">${esc(e?gdSigla(e):'')}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_escAttr(c.nome)}">${esc(c.nome)}</span>${chip}</div>`; }).join('');
-  const pub=vis.map(e=>{ const n=GD.cron.some(c=>c.empreendimento_id===e.id); const q=GD.cronLog[e.id];
+    return `<div class="gd-row" style="cursor:pointer" onclick="abrirCronograma('${c.empreendimento_id}')"><span class="ecode">${esc(e?gdSigla(e):'')}</span>${c.pv?`<span class="cd-chip navy" title="Tarefa do Prevision · fase ${esc(c.fase||'')}">${esc(c.fase||'PV')}</span>`:''}${c.critica?'<span class="cd-chip acc" title="Caminho crítico">crítica</span>':''}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_escAttr(c.nome)}">${esc(c.nome)}</span>${chip}</div>`; }).join('');
+  const pub=vis.map(e=>{ const pv=(GD.pv&&GD.pv[e.id])||[]; const pad=pv.find(v=>v.padrao)||pv[0];
+    if(pad){ const q=pad.sincronizado_em; const d=q?gdDias(q):null; return pad.sync_erro?`<span class="warn-tag" title="${_escAttr(pad.sync_erro)}">⚠ ${esc(gdSigla(e))} Prevision com erro</span>`:(d!=null&&d>7?`<span class="warn-tag">⚠ ${esc(gdSigla(e))} Prevision ${gdDbr(q)} · ${d} d</span>`:`<span class="ok-tag">${esc(gdSigla(e))} Prevision${q?' '+gdDbr(q):''}</span>`); }
+    const n=GD.cron.some(c=>c.empreendimento_id===e.id); const q=GD.cronLog[e.id];
     if(!n) return `<span class="ck no">${esc(gdSigla(e))} sem cronograma</span>`;
     if(!q) return `<span class="ok-tag">${esc(gdSigla(e))} sem registro</span>`;
     const d=gdDias(q); return d>30?`<span class="warn-tag">⚠ ${esc(gdSigla(e))} ${gdDbr(q)} · ${d} d</span>`:`<span class="ok-tag">${esc(gdSigla(e))} ${gdDbr(q)}</span>`; }).join('');
@@ -2767,6 +2773,13 @@ async function abrirCronograma(empId){
   { const b=document.getElementById('cronBtnPv'), pv=(GD.pv&&GD.pv[emp.id])||[]; if(b){ b.className='cd-btn'+(pv.length?' teal':''); b.textContent=pv.length?'Prevision · '+pv.map(v=>v.fase+(v.padrao?' ★':'')).join(' '):'Prevision'; } }
   document.getElementById('modalCronograma').classList.add('open');
   setHTML('cronBody','<tr><td colspan="9" style="color:var(--text-soft)">Carregando…</td></tr>');
+  // Item 77: com vínculo Prevision, o modal vira leitura das tarefas espelho (fase padrão); o editor/importação some
+  CRON_PV=null;
+  if(((GD.pv&&GD.pv[empId])||[]).length){
+    try{ const rr=await sb.rpc('cronograma_ler',{ p_emp:empId, p_fase:null });
+      if(!rr.error && rr.data && rr.data.fonte==='prevision'){ CRON_PV=rr.data; cronRenderPv(); return; } }catch(_){}
+  }
+  cronModoEditor(true);
   const { data, error } = await sb.from('cronograma_auria')
     .select('*').eq('empreendimento_id', empId).order('ordem');
   if(error){
@@ -2802,6 +2815,46 @@ async function cronRegistrarLog(empId,acao){
     usuario_nome:(USER&&(USER.nome||USER.email))||'', usuario_email:(USER&&USER.email)||'' }); }catch(e){}
 }
 
+let CRON_PV=null;
+function cronModoEditor(on){
+  ['cronSalvarBtn'].forEach(id=>{ const b=document.getElementById(id); if(b) b.style.display=on?'':'none'; });
+  const add=document.querySelector('#modalCronograma button[onclick="cronAddTarefa()"]'); if(add) add.style.display=on?'':'none';
+  const seed=document.getElementById('cronSeedBtn'); if(seed && !on) seed.style.display='none';
+  const del=document.querySelector('#modalCronograma th:last-child'); if(del) del.style.display=on?'':'none';
+}
+function cronRenderPv(){
+  cronModoEditor(false);
+  const d=CRON_PV, v=d.vinculo||{}, ts=d.tarefas||[];
+  const fases=(d.fases||[]).map(f=>`<span class="cd-chip ${f.fase===v.fase?'acc':'navy'}" style="cursor:pointer" onclick="cronTrocarFase('${esc(f.fase)}')" title="${_escAttr(f.projeto_nome||'')}">${esc(f.fase)}${f.padrao?' ★':''}</span>`).join(' ');
+  setHTML('cronLogLine', `<span style="font-weight:700;color:var(--text)">Fonte: Prevision</span> · ${esc(v.projeto_nome||'')}${v.sincronizado_em?' · sincronizado em '+cronFmtDT(v.sincronizado_em):''} &nbsp; ${fases} &nbsp; <a class="cd-btn" style="text-decoration:none" href="cronograma.html?emp=${CRON_EMP.id}" target="_blank">Abrir Gantt completo</a>`);
+  // resumo (mesma conta do editor: folhas com datas)
+  const folhas=ts.filter(t=>t.tipo!=='fase').map(t=>({ nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'', progresso:t.progresso||0 }));
+  const r=cronResumoCalc(folhas); const corPlan = r.prog+1 < r.plan ? 'var(--red)' : 'var(--green)';
+  const crit=ts.filter(t=>t.critica && t.tipo!=='fase' && (t.progresso||0)<100 && t.data_fim && t.data_fim<gdHoje().toISOString().slice(0,10)).length;
+  setHTML('cronResumo',
+    `<div class="s-card"><div class="s-val" style="color:var(--blue)">${_fmtPct(r.prog)}</div><div class="s-lbl">Avanço geral</div></div>
+     <div class="s-card"><div class="s-val" style="color:${corPlan}">${_fmtPct(r.plan)}</div><div class="s-lbl">Planejado (data)</div></div>
+     <div class="s-card"><div class="s-val">${r.concl}/${r.total}</div><div class="s-lbl">Concluídas</div></div>
+     <div class="s-card"><div class="s-val" style="color:${r.atrasadas?'var(--red)':'var(--green)'}">${r.atrasadas}</div><div class="s-lbl">Atrasadas</div></div>
+     <div class="s-card"><div class="s-val" style="color:${crit?'var(--red)':'var(--green)'}">${crit}</div><div class="s-lbl">Críticas vencidas</div></div>`);
+  // extensão da linha do tempo = TODAS as tarefas (a raiz/fases começam antes das folhas abertas)
+  let proj0=null, proj1=null; ts.forEach(t=>{ const a=_parseD(t.data_inicio), b=_parseD(t.data_fim); if(a&&(!proj0||a<proj0)) proj0=a; if(b&&(!proj1||b>proj1)) proj1=b; });
+  const projSpan=(proj0&&proj1)?Math.max(1,_dias(proj0,proj1)):0;
+  setHTML('cronBody', ts.map(t=>{
+    const c=cronCalc({ nome:t.nome, data_inicio:t.data_inicio||'', data_fim:t.data_fim||'', progresso:t.progresso||0 });
+    let gleft=0, gwidth=100; if(c.ini&&c.fim&&projSpan){ gleft=Math.max(0,Math.min(100,_dias(proj0,c.ini)/projSpan*100)); gwidth=Math.max(3,Math.min(100-gleft,(_dias(c.ini,c.fim)+1)/projSpan*100)); }
+    const fase=t.tipo==='fase';
+    return `<tr style="${fase?'background:var(--panel2,#F6F9FC);font-weight:700':''}">
+      <td><span style="padding-left:${(t.nivel||0)*14}px"><span style="font-family:var(--mono);color:var(--text-soft);font-size:11px;margin-right:6px">${esc(t.wbs||'')}</span>${esc(t.nome)}${t.critica&&!fase?' <span class="cd-chip acc" title="Caminho crítico">crítica</span>':''}</span></td>
+      <td>${t.data_inicio?gdDbr(t.data_inicio):'—'}</td><td>${t.data_fim?gdDbr(t.data_fim):'—'}</td>
+      <td style="text-align:center;color:var(--text-soft)">${c.dur||'—'}</td>
+      <td>${fase?'':'<b>'+(t.progresso||0)+'%</b>'}${t.previsto!=null&&!fase?` <span style="color:var(--text-soft)">/ ${t.previsto}%</span>`:''}</td>
+      <td style="color:var(--text-soft)">${(t.data_inicio&&t.data_fim)?_fmtPct(c.plan):'—'}</td>
+      <td>${t.kanban?`<span class="cron-st ${t.kanban_status==='finished'?'st-ok':'st-run'}">${esc(t.kanban)}</span>`:`<span class="cron-st ${c.cls}">${c.status}</span>`}</td>
+      <td><div class="gantt-track" style="overflow:hidden"><div class="gantt-bar" style="left:${gleft}%;width:${gwidth}%${t.critica?';outline:2px solid var(--accent)':''}"><div class="gantt-fill" style="width:${t.progresso||0}%"></div></div></div></td>
+      <td style="display:none"></td></tr>`; }).join('') || '<tr><td colspan="9" style="color:var(--text-soft)">Nenhuma tarefa sincronizada nesta fase.</td></tr>');
+}
+async function cronTrocarFase(f){ if(!CRON_EMP) return; try{ const rr=await sb.rpc('cronograma_ler',{ p_emp:CRON_EMP.id, p_fase:f }); if(!rr.error&&rr.data){ CRON_PV=rr.data; cronRenderPv(); } }catch(_){} }
 function cronRender(){
   const seedBtn = document.getElementById('cronSeedBtn');
   if(seedBtn) seedBtn.style.display = CRON_TAREFAS.length ? 'none' : 'inline-block';

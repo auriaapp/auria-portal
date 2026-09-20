@@ -78,6 +78,22 @@ table.sched tr:hover td{background:#1A1D27}
 .bar.st-atrasada{background:#C0392B}
 .bar.st-futura{background:#5D6D7E}
 .bar.st-concluida{background:#1E8449}
+/* Prevision (item 77): tarefa do caminho crítico e barra de fonte/fases */
+.bar.crit{outline:2px solid #E8960A;outline-offset:-1px}
+.nrow.crit{color:#F0A72A}
+#pvbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 18px;background:#1B2333;border-bottom:1px solid #2A2D3A;font-size:12px;color:#CBD5E1}
+#pvbar .fchip{font-family:ui-monospace,Consolas,monospace;font-weight:800;font-size:11px;padding:2px 9px;border-radius:9px;border:1px solid #3A4A66;color:#CBD5E1;cursor:pointer;background:transparent}
+#pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
+#pvbar .fchip .star{margin-left:4px}
+#pvbar .pvinfo{margin-left:auto;color:#94A3B8}
+body.light #pvbar{background:#F6F9FC;border-color:#E2E8F0;color:#334155}
+body.light #pvbar .fchip{border-color:#CBD5E1;color:#334155}
+body.light #pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
+.pvcol{display:none}
+body.pv .pvcol{display:table-cell}
+.kb{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:9px;background:#334155;color:#E2E8F0;white-space:nowrap}
+.kb.fin{background:#1E8449;color:#fff}
+body.light .kb{background:#E2E8F0;color:#334155} body.light .kb.fin{background:#1E8449;color:#fff}
 tr.tdone td{opacity:.62}
 .racts{display:inline-flex;gap:2px;margin-left:10px;vertical-align:middle}
 .ra{background:#232735;color:#CBD5E1;border:1px solid #2A2D3A;border-radius:5px;width:23px;height:23px;font-size:12px;line-height:1;cursor:pointer;padding:0}
@@ -164,10 +180,11 @@ body.light .legend{color:#64748B}
     <span><i style="width:2px;height:12px;background:#E8960A;display:inline-block"></i>Medição</span>
   </div>
 </header>
+<div id="pvbar"><span style="font-weight:800;color:#E8960A">Prevision</span><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
 <div id="scroll"><div id="grid"></div></div>
 <div id="tablewrap">
   <table class="sched"><thead><tr>
-    <th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Dias</th><th>Avanço</th><th>Status</th><th>Tipo</th>
+    <th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Dias</th><th>Avanço</th><th class="pvcol" title="Avanço previsto pelo Prevision">Previsto</th><th class="pvcol">Kanban</th><th class="pvcol">Responsável</th><th>Status</th><th>Tipo</th>
   </tr></thead><tbody id="tbody"></tbody></table>
 </div>
 <script>
@@ -187,7 +204,7 @@ function render(data){
   document.getElementById('prov').textContent=prov.join('  ·  ');
   var ts=(data.tarefas||[]).filter(function(t){return t.nome;});
   var withDates=ts.filter(function(t){return t.inicio&&t.fim;});
-  if(!withDates.length){grid.innerHTML='<div class="empty"><h2>Sem datas no cronograma</h2><div>O XML não trouxe tarefas com início/fim.</div></div>';return;}
+  if(!withDates.length){grid.innerHTML='<div class="empty"><h2>Sem datas no cronograma</h2><div>'+(FONTE==='prevision'?'As tarefas do Prevision vieram sem início/fim.':'O XML não trouxe tarefas com início/fim.')+'</div></div>';return;}
   var minD=null,maxD=null;
   withDates.forEach(function(t){var a=pd(t.inicio),b=pd(t.fim);if(!minD||a<minD)minD=a;if(!maxD||b>maxD)maxD=b;});
   // margem de alguns dias
@@ -227,7 +244,7 @@ function render(data){
   vis.forEach(function(o){
     var t=o.t;
     var ind=(t.nivel||0)*14;
-    var cls=t.resumo?'nrow sum':'nrow';
+    var cls=(t.resumo?'nrow sum':'nrow')+(t.critica&&!t.resumo?' crit':'');
     var caret;
     if(t.resumo && hasChildren(o.idx)){
       caret='<span class="caret" onclick="toggleCollapse(event,'+o.idx+')">'+(COLLAPSED[keyOf(t)]?'▶':'▼')+'</span>';
@@ -243,8 +260,8 @@ function render(data){
            +'<div class="tlabel" style="left:'+(bx+12)+'px">'+esc(t.nome.slice(0,40))+'</div>';
       }else{
         var bw=Math.max(3,(days(pd(t.inicio),pd(t.fim))+1)*DAYW);
-        var bcls=t.resumo?'bar sum':('bar st-'+(t._status||'prazo'));
-        bar='<div class="'+bcls+'" style="left:'+bx+'px;width:'+bw+'px" title="'+esc(t.nome)+' ('+t.pct+'%)">'
+        var bcls=(t.resumo?'bar sum':('bar st-'+(t._status||'prazo')))+(t.critica&&!t.resumo?' crit':'');
+        bar='<div class="'+bcls+'" style="left:'+bx+'px;width:'+bw+'px" title="'+esc(t.nome)+' ('+t.pct+'%'+(t.previsto!=null?' · previsto '+t.previsto+'%':'')+(t.critica?' · crítica':'')+')">'
            +(!t.resumo&&t.pct?'<div class="fill" style="width:'+t.pct+'%"></div>':'')+'</div>';
       }
     }
@@ -317,6 +334,7 @@ function fmtDTbr(s){ if(!s)return ''; var d=new Date(s); if(isNaN(d))return s;
   return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' às '+p(d.getHours())+':'+p(d.getMinutes()); }
 function carregarLastEdit(){
   if(!_sb||!EMP_ID)return;
+  if(FONTE==='prevision'){ var el0=document.getElementById('lastedit'); if(el0) el0.textContent='Fonte: Prevision · '+((PV.vinculo&&PV.vinculo.projeto_nome)||'')+(PV.vinculo&&PV.vinculo.sincronizado_em?' · sincronizado em '+fmtDTbr(PV.vinculo.sincronizado_em):''); return; }
   _sb.from('cronograma_log_auria').select('*').eq('empreendimento_id',EMP_ID).order('quando',{ascending:false}).limit(1).then(function(r){
     var el=document.getElementById('lastedit'); if(!el)return;
     var L=(r&&r.data&&r.data[0])||null;
@@ -451,10 +469,13 @@ function buildTable(){
       +'<td>'+cIni+'</td><td>'+cFim+'</td>'
       +'<td>'+(t.marco?'—':durDays(t.inicio,t.fim))+'</td>'
       +'<td>'+cPct+'</td>'
+      +(FONTE==='prevision'?('<td class="pvcol">'+(t.marco||t.resumo?'—':(t.previsto!=null?t.previsto+'%':'—'))+'</td>'
+        +'<td class="pvcol">'+(t.kanban?'<span class="kb'+(t.kanban_status==='finished'?' fin':'')+'">'+esc(t.kanban)+'</span>':'')+(t.critica?' <span class="chip" style="background:#E8960A;color:#231703" title="Caminho crítico">crítica</span>':'')+'</td>'
+        +'<td class="pvcol">'+esc((t.responsaveis||[]).join(', '))+'</td>'):'')
       +'<td><span class="chip c-'+st+'">'+STLABEL[st]+'</span></td>'
       +'<td>'+tipoCell+'</td></tr>';
   });
-  document.getElementById('tbody').innerHTML=h||'<tr><td colspan="8" style="padding:30px;text-align:center;color:#475569">Sem tarefas</td></tr>';
+  document.getElementById('tbody').innerHTML=h||'<tr><td colspan="11" style="padding:30px;text-align:center;color:#475569">Sem tarefas</td></tr>';
 }
 function setField(idx,campo,val){
   var t=(DATA.tarefas||[])[idx]; if(!t) return;
@@ -588,13 +609,39 @@ var EMP_ID=new URLSearchParams(location.search).get('emp')||'';
 // editbar visível: importar XML do MS Project e publicar direto no sistema (como no desktop).
 // A publicação é permitida por RLS só a gerente/super_admin; analista vê "sem permissão".
 function _isoD(s){ return s?String(s).slice(0,10):''; }
-async function carregarCron(){
+// Item 77: fonte única via RPC cronograma_ler — Prevision (fase pedida/padrão) quando há vínculo; senão cronograma_auria.
+var FONTE='auria', PV={ fases:[], vinculo:null, pode_editar:false };
+function pvRenderBar(){
+  var bar=document.getElementById('pvbar'); if(!bar) return;
+  if(FONTE!=='prevision'){ bar.style.display='none'; document.body.classList.remove('pv'); return; }
+  document.body.classList.add('pv'); bar.style.display='flex';
+  var atual=PV.vinculo?PV.vinculo.fase:'';
+  document.getElementById('pvFases').innerHTML=(PV.fases||[]).map(function(f){ return '<button class="fchip'+(f.fase===atual?' on':'')+'" onclick="pvTrocarFase(\''+f.fase+'\')" title="'+escA(f.projeto_nome||'')+(f.n_tarefas?' · '+f.n_tarefas+' tarefas':'')+'">'+esc(f.fase)+(f.padrao?'<span class="star" title="fase padrão">★</span>':'')+'</button>'; }).join('');
+  var pb=document.getElementById('pvPadraoBtn');
+  pb.innerHTML=(PV.pode_editar && PV.vinculo && !PV.vinculo.padrao)?'<button class="tbtn" style="margin-left:4px;padding:3px 10px" onclick="pvUsarPadrao()" title="Esta fase passa a ser a exibida por padrão neste empreendimento">★ Usar como padrão</button>':'';
+  var v=PV.vinculo||{};
+  document.getElementById('pvInfo').textContent=(v.projeto_nome||'')+(v.sincronizado_em?' · sincronizado em '+fmtDTbr(v.sincronizado_em):'')+(v.sync_erro?' · erro: '+v.sync_erro:'');
+  var eb=document.getElementById('editbar'); if(eb) eb.style.display='none';   // Prevision é a fonte: sem importar/editar aqui
+}
+function pvTrocarFase(f){ carregarCron(f); }
+async function pvUsarPadrao(){
+  if(!PV.vinculo) return;
+  var r=await _sb.rpc('prevision_set_padrao',{ p_emp:EMP_ID, p_vinculo:PV.vinculo.id });
+  if(r.error){ alert('Não foi possível definir a fase padrão: '+r.error.message); return; }
+  carregarCron(PV.vinculo.fase);
+}
+async function carregarCron(fase){
   if(!EMP_ID){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Selecione um empreendimento na estação</h2></div>'; return; }
-  var rows=[];
-  try{ var r=await _sb.from('cronograma_auria').select('*').eq('empreendimento_id',EMP_ID).order('ordem'); rows=r.data||[]; }
-  catch(e){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Erro ao carregar</h2><div>'+e+'</div></div>'; return; }
-  if(!rows.length){ document.getElementById('grid').innerHTML='<div class="empty"><h2>🗓 Cronograma ainda não publicado</h2><div>Importe e publique pelo app desktop.</div></div>'; return; }
-  DATA={titulo:'Cronograma', tarefas: rows.map(function(t,i){ return {uid:t.id||('auto'+i), nome:t.nome, wbs:t.wbs||'', nivel:t.nivel||0, inicio:_isoD(t.data_inicio), fim:_isoD(t.data_fim), pct:t.progresso||0, marco:(t.tipo==='marco'), resumo:(t.tipo==='fase')}; }) };
+  var rows=[], viaRpc=false;
+  try{
+    var rr=await _sb.rpc('cronograma_ler',{ p_emp:EMP_ID, p_fase:fase||null });
+    if(!rr.error && rr.data){ viaRpc=true; FONTE=rr.data.fonte||'auria'; PV={ fases:rr.data.fases||[], vinculo:rr.data.vinculo||null, pode_editar:!!rr.data.pode_editar }; rows=rr.data.tarefas||[]; }
+    else { var r=await _sb.from('cronograma_auria').select('*').eq('empreendimento_id',EMP_ID).order('ordem'); rows=r.data||[]; FONTE='auria'; }   // sem supabase_prevision_p2.sql
+  }catch(e){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Erro ao carregar</h2><div>'+e+'</div></div>'; return; }
+  pvRenderBar();
+  if(!rows.length){ document.getElementById('grid').innerHTML='<div class="empty"><h2>🗓 '+(FONTE==='prevision'?'Nenhuma tarefa sincronizada nesta fase':'Cronograma ainda não publicado')+'</h2><div>'+(FONTE==='prevision'?'Use "Sincronizar agora" no vínculo Prevision (gestão › Cronograma › Prevision).':'Importe e publique pelo app desktop.')+'</div></div>'; document.getElementById('tbody').innerHTML=''; return; }
+  DATA={titulo:'Cronograma'+(FONTE==='prevision'&&PV.vinculo?' · '+PV.vinculo.fase:''), tarefas: rows.map(function(t,i){ return {uid:t.id||('auto'+i), nome:t.nome, wbs:t.wbs||'', nivel:t.nivel||0, inicio:_isoD(t.data_inicio), fim:_isoD(t.data_fim), pct:t.progresso||0, marco:(t.tipo==='marco'), resumo:(t.tipo==='fase'),
+    previsto:(t.previsto!=null?t.previsto:null), critica:!!t.critica, kanban:t.kanban||'', kanban_status:t.kanban_status||'', responsaveis:t.responsaveis||[]}; }) };
   try{ HIDE_DONE=(localStorage.getItem('auria_cron_hidedone')==='1'); var ck=document.getElementById('chkHideDone'); if(ck) ck.checked=HIDE_DONE; }catch(e){}
   SDATE=isoOf(today0()); document.getElementById('sdate').value=SDATE;
   recalc(); render(DATA); buildTable(); setView('gantt'); carregarLastEdit();
