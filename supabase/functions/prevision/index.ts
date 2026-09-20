@@ -16,6 +16,8 @@
 //                                                             (sem id: todos os empreendimentos do grupo do usuário)
 //  Verify JWT: ON. Quem pode: gerente ou super_admin.
 //  Secrets: PREVISION_API_KEY (+ opcional PREVISION_API_URL; padrão https://api.prevision.com.br).
+//  Item 77f: header "x-auria-cron: <PREVISION_CRON_SECRET>" (chamada do pg_cron via pg_net, Bearer = anon key)
+//  → sincroniza todos os vínculos ativos, sem usuário. Ver supabase_prevision_p5.sql.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -108,10 +110,29 @@ Deno.serve(async (req) => {
   try {
     const auth = req.headers.get("Authorization") || "";
     if (!auth.startsWith("Bearer ")) return j({ error: "sem sessão" }, 401);
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+
+    // ── Item 77f: modo CRON (pg_cron → pg_net → aqui, com segredo próprio; sem usuário) ──
+    //  Sincroniza TODOS os vínculos ativos, de todos os grupos. Segredo: PREVISION_CRON_SECRET
+    //  (mesmo valor nos Secrets da função e no Vault do banco).
+    const cronSecret = (Deno.env.get("PREVISION_CRON_SECRET") || "").trim();
+    const cronHdr = (req.headers.get("x-auria-cron") || "").trim();
+    if (cronSecret && cronHdr) {
+      if (cronHdr !== cronSecret) return j({ error: "segredo do cron inválido" }, 403);
+      if (!PV_KEY) return j({ ok: false, error: "PREVISION_API_KEY não configurada" }, 500);
+      const { data: vincs, error } = await admin.from("prevision_vinculo_auria").select("*").eq("ativo", true);
+      if (error) return j({ ok: false, error: error.message }, 500);
+      const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
+      const erros = res.filter((r: any) => r.erro).length;
+      try{ const porEmp: Record<string, any[]> = {}; res.forEach((r: any) => { const v = (vincs || []).find((x: any) => x.id === r.vinculo); if (v) (porEmp[v.empreendimento_id] = porEmp[v.empreendimento_id] || []).push(r); });
+        const logs = Object.entries(porEmp).map(([emp, rs]) => ({ empreendimento_id: emp, acao: "sync", detalhe: "Automática: " + rs.map((r: any) => r.fase + ": " + (r.erro ? "erro" : r.tarefas + " tarefas")).join(" · "), por: null, por_nome: "Sincronização automática" }));
+        if (logs.length) await admin.from("prevision_log_auria").insert(logs); }catch(_){}
+      return j({ ok: true, modo: "cron", vinculos: res.length, erros, sync: res });
+    }
+
     const caller = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: auth } } });
     const { data: { user } } = await caller.auth.getUser();
     if (!user) return j({ error: "sessão inválida" }, 401);
-    const admin = createClient(SUPABASE_URL, SERVICE_KEY);
     const { data: perfil } = await admin.from("usuarios_auria").select("role,empresa_id").eq("id", user.id).maybeSingle();
     if (!perfil || !["gerente", "super_admin"].includes(perfil.role)) return j({ error: "só a gestão usa a integração com o Prevision" }, 403);
 
