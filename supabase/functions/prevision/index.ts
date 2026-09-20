@@ -18,7 +18,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const PV_KEY       = (Deno.env.get("PREVISION_API_KEY") || "").trim().replace(/^token\s+/i, "");
-const PV_URL       = "https://api.prevision.com.br/graphql";
+const PV_URL       = (Deno.env.get("PREVISION_API_URL") || "https://api.prevision.com.br/graphql").trim();
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, "Content-Type": "application/json" } });
@@ -39,13 +39,15 @@ async function gql(query: string, variables: Record<string, unknown> = {}) {
     const r = await fetch(PV_URL, { method: "POST", headers: cabecalhos(modo), body: JSON.stringify({ query, variables }) });
     const txt = await r.text();
     let body: any = null; try { body = JSON.parse(txt); } catch (_) { /* não-JSON */ }
-    if (r.status === 401 || r.status === 403) { ultimoErro = "HTTP " + r.status + ": " + (body?.error?.message || txt.slice(0, 160)); continue; }
+    // 401/403 = chave recusada neste formato → tenta o outro. 429 SEM header UserAuthorization é o
+    // "header ausente" do gateway deles (não é limite de uso) — guarda o 1º erro real para a mensagem.
+    if (r.status === 401 || r.status === 403 || (r.status === 429 && modo === "Bearer")) { if (!ultimoErro) ultimoErro = "HTTP " + r.status + ": " + (body?.error?.message || txt.slice(0, 160)); continue; }
     if (!r.ok) throw new Error("Prevision HTTP " + r.status + ": " + (body?.error?.message || body?.errors?.[0]?.message || txt.slice(0, 200)));
     if (body?.errors?.length) throw new Error("Prevision GraphQL: " + body.errors.map((e: any) => e.message).join("; "));
     MODO_AUTH = modo;
     return body?.data;
   }
-  throw new Error("Prevision recusou a chave nos dois formatos de autenticação (" + ultimoErro + "). Confira se a chave é da conta/módulo certo.");
+  throw new Error("Prevision recusou a chave (" + ultimoErro + "). Endpoint testado: " + PV_URL + " — confira se a chave é desta API (conta da obra) ou se o módulo onde ela foi gerada usa outro endereço.");
 }
 
 const Q_PING = `query Ping { me { id name } }`;
