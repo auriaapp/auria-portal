@@ -1399,7 +1399,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
     <button class="modal-close" onclick="closeModal('modalCronograma')">&#215;</button>
     <div class="modal-title" style="font-size:18px">&#128197; Cronograma</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:2px"><div class="modal-sub" id="cronSub" style="margin:0;flex:1">&mdash;</div>
-      <button class="cd-btn" id="cronBtnPv" onclick="pvAbrir(CRON_EMP&&CRON_EMP.id)" title="Vincular/sincronizar os cronogramas do Prevision (INC · PROD · ORC · EXE) a este empreendimento">Prevision</button></div>
+      <div style="position:relative"><button class="cd-btn" id="cronBtnPv" onclick="cronPvMenu(event)" title="Cronogramas do Prevision deste empreendimento: ver outra fase, salvar a fase padrão, vincular/sincronizar">Prevision</button>
+        <div id="cronPvMenu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:50;background:#fff;border:1px solid var(--gray-border);border-radius:10px;box-shadow:0 12px 30px rgba(15,23,42,.18);min-width:300px;padding:8px"></div></div></div>
     <div id="cronLogLine" style="font-size:12px;color:var(--text-soft);margin-bottom:12px"></div>
     <div class="cron-sum" id="cronResumo"></div>
     <div style="overflow-x:auto">
@@ -2122,7 +2123,8 @@ async function pvRecarregar(){
   pvRecarregarCards();
 }
 async function pvRecarregarCards(){
-  try{ const r=await sb.from('prevision_vinculo_auria').select('empreendimento_id,fase,padrao,sincronizado_em,n_tarefas,sync_erro').eq('ativo',true); GD.pv={}; (r.data||[]).forEach(v=>{ (GD.pv[v.empreendimento_id]=GD.pv[v.empreendimento_id]||[]).push(v); }); if(typeof renderCards==='function') renderCards(); }catch(_){}
+  try{ const r=await sb.from('prevision_vinculo_auria').select('empreendimento_id,fase,padrao,sincronizado_em,n_tarefas,sync_erro').eq('ativo',true); GD.pv={}; (r.data||[]).forEach(v=>{ (GD.pv[v.empreendimento_id]=GD.pv[v.empreendimento_id]||[]).push(v); }); if(typeof renderCards==='function') renderCards();
+    const b=document.getElementById('cronBtnPv'); if(b && CRON_EMP){ const pv=GD.pv[CRON_EMP.id]||[]; b.className='cd-btn'+(pv.length?' teal':''); b.textContent=pv.length?'Prevision · '+pv.map(v=>v.fase+(v.padrao?' ★':'')).join(' '):'Prevision'; } }catch(_){}
 }
 async function gdAcessos(empId){
   const emp=gdEmp(empId); if(!emp) return; AC_EMP=emp;
@@ -2825,7 +2827,7 @@ function cronModoEditor(on){
 function cronRenderPv(){
   cronModoEditor(false);
   const d=CRON_PV, v=d.vinculo||{}, ts=d.tarefas||[];
-  const fases=(d.fases||[]).map(f=>`<span class="cd-chip ${f.fase===v.fase?'acc':'navy'}" style="cursor:pointer" onclick="cronTrocarFase('${esc(f.fase)}')" title="${_escAttr(f.projeto_nome||'')}">${esc(f.fase)}${f.padrao?' ★':''}</span>`).join(' ');
+  const fases=(d.fases||[]).map(f=>`<span class="cd-chip ${f.fase===v.fase?'acc':'navy'}" style="cursor:pointer" onclick="cronTrocarFase('${esc(f.fase)}')" title="Ver ${_escAttr(f.projeto_nome||'')}">${esc(f.fase)}${f.padrao?' ★':''}</span>`).join(' ');
   const pad=(d.fases||[]).find(f=>f.padrao); const quem=pad&&pad.padrao_por_nome?` · padrão ${esc(pad.fase)} definido por <b>${esc(pad.padrao_por_nome)}</b>${pad.padrao_em?' em '+cronFmtDT(pad.padrao_em):''}`:'';
   const logs=(d.log||[]).slice(0,3).map(l=>`${cronFmtDT(l.quando)} · ${esc(l.por_nome||'—')} · ${esc(l.detalhe||l.acao)}`).join('<br>');
   setHTML('cronLogLine', `<span style="font-weight:700;color:var(--text)">Fonte: Prevision</span> · ${esc(v.projeto_nome||'')}${v.sincronizado_em?' · sincronizado em '+cronFmtDT(v.sincronizado_em):''}${quem} &nbsp; ${fases} &nbsp; <a class="cd-btn" style="text-decoration:none" href="cronograma.html?emp=${CRON_EMP.id}" target="_blank">Abrir Gantt completo</a>${logs?`<div style="margin-top:4px;font-size:11px;color:var(--text-soft)" title="Últimos registros (quem vinculou, sincronizou ou definiu a fase padrão)">${logs}</div>`:''}`);
@@ -2848,7 +2850,7 @@ function cronRenderPv(){
     const fase=t.tipo==='fase';
     return `<tr style="${fase?'background:var(--panel2,#F6F9FC);font-weight:700':''}">
       <td><span style="padding-left:${(t.nivel||0)*14}px"><span style="font-family:var(--mono);color:var(--text-soft);font-size:11px;margin-right:6px">${esc(t.wbs||'')}</span>${esc(t.nome)}${t.critica&&!fase?' <span class="cd-chip acc" title="Caminho crítico">crítica</span>':''}</span></td>
-      <td>${t.data_inicio?gdDbr(t.data_inicio):'—'}</td><td>${t.data_fim?gdDbr(t.data_fim):'—'}</td>
+      <td>${cronDbrAno(t.data_inicio)}</td><td>${cronDbrAno(t.data_fim)}</td>
       <td style="text-align:center;color:var(--text-soft)">${c.dur||'—'}</td>
       <td>${fase?'':'<b>'+(t.progresso||0)+'%</b>'}${t.previsto!=null&&!fase?` <span style="color:var(--text-soft)">/ ${t.previsto}%</span>`:''}</td>
       <td style="color:var(--text-soft)">${(t.data_inicio&&t.data_fim)?_fmtPct(c.plan):'—'}</td>
@@ -2856,7 +2858,33 @@ function cronRenderPv(){
       <td><div class="gantt-track" style="overflow:hidden"><div class="gantt-bar" style="left:${gleft}%;width:${gwidth}%${t.critica?';outline:2px solid var(--accent)':''}"><div class="gantt-fill" style="width:${t.progresso||0}%"></div></div></div></td>
       <td style="display:none"></td></tr>`; }).join('') || '<tr><td colspan="9" style="color:var(--text-soft)">Nenhuma tarefa sincronizada nesta fase.</td></tr>');
 }
-async function cronTrocarFase(f){ if(!CRON_EMP) return; try{ const rr=await sb.rpc('cronograma_ler',{ p_emp:CRON_EMP.id, p_fase:f }); if(!rr.error&&rr.data){ CRON_PV=rr.data; cronRenderPv(); } }catch(_){} }
+async function cronTrocarFase(f){ if(!CRON_EMP) return; try{ const rr=await sb.rpc('cronograma_ler',{ p_emp:CRON_EMP.id, p_fase:f }); if(!rr.error&&rr.data){ CRON_PV=rr.data; cronRenderPv(); } }catch(_){} cronPvMenuFechar(); }
+function cronDbrAno(s){ if(!s) return '—'; const p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0].slice(2):s; }
+// Menu do botão Prevision: fases vinculadas (ver), ★ salvar padrão, vincular/sincronizar
+function cronPvMenuFechar(){ const m=document.getElementById('cronPvMenu'); if(m) m.style.display='none'; document.removeEventListener('mousedown', cronPvMenuOut, true); }
+function cronPvMenuOut(e){ const m=document.getElementById('cronPvMenu'); if(m && !m.contains(e.target) && e.target.id!=='cronBtnPv') cronPvMenuFechar(); }
+function cronPvMenu(ev){
+  ev&&ev.stopPropagation(); const m=document.getElementById('cronPvMenu'); if(!m||!CRON_EMP) return;
+  if(m.style.display==='block'){ cronPvMenuFechar(); return; }
+  const d=CRON_PV, fases=(d&&d.fases)||[], atual=d&&d.vinculo?d.vinculo.fase:null, podeEditar=!!(d&&d.pode_editar);
+  const item=(h,on)=>`<div style="padding:7px 10px;border-radius:8px;font-size:12.5px;cursor:pointer;display:flex;align-items:center;gap:8px${on?';background:#FEF3E2':''}" onmouseover="this.style.background='#F6F9FC'" onmouseout="this.style.background='${on?'#FEF3E2':''}'">${h}</div>`;
+  let h='<div style="font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);padding:2px 10px 6px">Ver cronograma</div>';
+  h+=fases.length? fases.map(f=>`<div onclick="cronTrocarFase('${esc(f.fase)}')">${item(`<span class="cd-chip ${f.fase===atual?'acc':'navy'}">${esc(f.fase)}</span><span style="flex:1;font-family:var(--mono);font-weight:700;color:var(--navy)">${esc(f.projeto_nome||'')}</span>${f.padrao?'<span title="fase padrão">★</span>':''}`, f.fase===atual)}</div>`).join('')
+    : '<div style="padding:6px 10px;font-size:12px;color:var(--text-soft)">Nenhum cronograma do Prevision vinculado.</div>';
+  const vAtual=fases.find(f=>f.fase===atual);
+  if(vAtual && !vAtual.padrao && podeEditar) h+=`<div style="border-top:1px solid var(--gray-border);margin:6px 0"></div><div onclick="cronPvSalvarPadrao('${vAtual.id}')">${item('<b>★ Salvar '+esc(atual)+' como cronograma padrão</b>')}</div>`;
+  else if(vAtual && vAtual.padrao) h+=`<div style="padding:6px 10px;font-size:11.5px;color:var(--text-soft)">${esc(atual)} é a fase padrão${vAtual.padrao_por_nome?' · definida por '+esc(vAtual.padrao_por_nome)+(vAtual.padrao_em?' em '+cronFmtDT(vAtual.padrao_em):''):''}</div>`;
+  h+=`<div style="border-top:1px solid var(--gray-border);margin:6px 0"></div><div onclick="cronPvMenuFechar();pvAbrir(CRON_EMP.id)">${item('⚙ Vincular / sincronizar projetos do Prevision…')}</div>`;
+  m.innerHTML=h; m.style.display='block';
+  setTimeout(()=>document.addEventListener('mousedown', cronPvMenuOut, true),0);
+}
+async function cronPvSalvarPadrao(vid){
+  cronPvMenuFechar();
+  try{ const r=await sb.rpc('prevision_set_padrao',{ p_emp:CRON_EMP.id, p_vinculo:vid }); if(r.error) throw r.error;
+    showToast('Fase padrão salva','green'); await cronTrocarFase(CRON_PV&&CRON_PV.vinculo?CRON_PV.vinculo.fase:null); pvRecarregarCards();
+    const b=document.getElementById('cronBtnPv'), pv=(GD.pv&&GD.pv[CRON_EMP.id])||[]; if(b) b.textContent='Prevision · '+pv.map(v=>v.fase+(v.padrao?' ★':'')).join(' '); }
+  catch(e){ showToast('Não salvou: '+(e.message||e),'red'); }
+}
 function cronRender(){
   const seedBtn = document.getElementById('cronSeedBtn');
   if(seedBtn) seedBtn.style.display = CRON_TAREFAS.length ? 'none' : 'inline-block';
