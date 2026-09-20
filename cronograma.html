@@ -28,6 +28,8 @@ header .sub{font-size:11px;color:#64748B}
 .mcell{position:absolute;top:0;height:100%;border-left:1px solid #2A2D3A;font-size:11px;color:#94A3B8;padding:6px 0 0 6px;font-weight:600;white-space:nowrap;overflow:hidden}
 .body{display:flex}
 .names{position:sticky;left:0;z-index:20;background:#1A1D27;border-right:1px solid #2A2D3A;flex-shrink:0}
+#colgrip{position:absolute;right:-3px;top:0;bottom:0;z-index:45;width:6px;cursor:col-resize;background:transparent}
+#colgrip:hover,#colgrip:active{background:rgba(232,150,10,.45)}
 .nrow{height:28px;display:flex;align-items:center;border-bottom:1px solid #20242E;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:10px}
 .nrow.sum{font-weight:700;color:#CBD5E1}
 .nrow .wbs{color:#475569;font-size:10px;margin-right:6px;flex-shrink:0}
@@ -180,7 +182,7 @@ body.light .legend{color:#64748B}
     <span><i style="width:2px;height:12px;background:#E8960A;display:inline-block"></i>Medição</span>
   </div>
 </header>
-<div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
+<div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
 <div id="scroll"><div id="grid"></div></div>
 <div id="tablewrap">
   <table class="sched"><thead><tr>
@@ -189,6 +191,17 @@ body.light .legend{color:#64748B}
 </div>
 <script>
 var NAMEW=320, ROWH=28, DAYW=6;
+// Coluna de tarefas redimensionável: arrastar a divisória; duplo clique ajusta ao nome mais longo; largura lembrada.
+try{ var _nw=parseInt(localStorage.getItem('auria_cron_namew')||'',10); if(_nw>=160&&_nw<=1200) NAMEW=_nw; }catch(e){}
+function setNameW(w){ NAMEW=Math.max(160,Math.min(1200,Math.round(w))); try{ localStorage.setItem('auria_cron_namew',String(NAMEW)); }catch(e){} }
+function gripBind(){
+  var g=document.getElementById('colgrip'); if(!g) return;
+  g.onmousedown=function(e){ e.preventDefault(); var x0=e.clientX, w0=NAMEW, names=document.querySelector('.names'), corner=document.querySelector('.corner');
+    var mv=function(m){ var w=Math.max(160,Math.min(1200,w0+(m.clientX-x0))); if(names) names.style.width=w+'px'; if(corner) corner.style.width=w+'px'; };
+    var up=function(m){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); setNameW(w0+(m.clientX-x0)); render(DATA); };
+    document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up); };
+  g.ondblclick=function(){ var max=0; document.querySelectorAll('.names .nrow').forEach(function(r){ var s=r.scrollWidth+16; if(s>max) max=s; }); if(max) { setNameW(max); render(DATA); } };
+}
 var MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 function pd(s){if(!s)return null;var p=s.split('-');return new Date(Date.UTC(+p[0],+p[1]-1,+p[2]));}
 function days(a,b){return Math.round((b-a)/86400000);}
@@ -274,9 +287,10 @@ function render(data){
       +'<div class="months" style="width:'+tlW+'px;height:28px">'+months+'</div>'
     +'</div>'
     +'<div class="body">'
-      +'<div class="names" style="width:'+NAMEW+'px">'+names+'</div>'
+      +'<div class="names" style="width:'+NAMEW+'px">'+names+'<div id="colgrip" title="Arraste para alargar a coluna de tarefas · duplo clique ajusta ao maior nome"></div></div>'
       +'<div class="tl" style="width:'+tlW+'px;height:'+bodyH+'px">'+glines+todayLine+sdateLine+rows+'</div>'
     +'</div>';
+  gripBind();
 }
 var DATA={};
 var EDIT=false, DIRTY=false, SDATE='';
@@ -626,6 +640,19 @@ function pvRenderBar(){
   var eb=document.getElementById('editbar'); if(eb) eb.style.display='none';   // Prevision é a fonte: sem importar/editar aqui
 }
 function pvTrocarFase(f){ carregarCron(f); }
+async function pvSincronizar(){
+  var b=document.getElementById('pvSyncBtn'); if(!b||b.disabled) return; b.disabled=true; b.textContent='…';
+  var info=document.getElementById('pvInfo'); if(info) info.textContent='Sincronizando com o Prevision…';
+  try{
+    var r=await _sb.functions.invoke('prevision',{ body:{ acao:'sync', empreendimento_id:EMP_ID } });
+    if(r.error){ var m=r.error.message; try{ var jb=await r.error.context.json(); if(jb&&jb.error) m=jb.error; }catch(e){} throw new Error(m); }
+    if(r.data&&r.data.ok===false) throw new Error(r.data.error||'falha');
+    var res=(r.data&&r.data.sync)||[]; var err=res.filter(function(x){return x.erro;});
+    await carregarCron(PV.vinculo?PV.vinculo.fase:null);
+    if(info) info.textContent=(err.length?'Erro em '+err.map(function(x){return x.fase;}).join(', ')+' · ':'')+res.filter(function(x){return !x.erro;}).map(function(x){return x.fase+' '+x.tarefas+' tarefas';}).join(' · ')+' · sincronizado agora';
+  }catch(e){ if(info) info.textContent='Não sincronizou: '+(e.message||e); }
+  b.disabled=false; b.innerHTML='&#8635;';
+}
 async function pvUsarPadrao(){
   if(!PV.vinculo) return;
   var r=await _sb.rpc('prevision_set_padrao',{ p_emp:EMP_ID, p_vinculo:PV.vinculo.id });

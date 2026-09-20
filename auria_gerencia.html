@@ -950,6 +950,15 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 </div>
 
 <!-- Acessos do empreendimento (gestão): coordenação + pessoas que veem (setor/obra) -->
+<!-- Item 73b: cronograma de custos (componente compartilhado auria_cronocustos.js) -->
+<div class="modal-bg" id="modalCronoCustos" onclick="if(event.target===this)closeModal('modalCronoCustos')">
+  <div class="modal" style="width:min(1180px,96vw);max-height:92vh;overflow:auto">
+    <button class="modal-close" onclick="closeModal('modalCronoCustos')">&#215;</button>
+    <div class="modal-title">&#128197; Cronograma de custos</div>
+    <div class="modal-sub" style="margin-bottom:10px">Parcelas dos contratos pelo vencimento e NFs sem contrato pela emissão, mês a mês · só leitura (o detalhe fica em Custos &amp; NFs)</div>
+    <div id="ccGestao"></div>
+  </div>
+</div>
 <!-- Prevision (item 77): vínculo por fase + sincronização -->
 <div class="modal-bg" id="modalPv" onclick="if(event.target===this)closeModal('modalPv')">
   <div class="modal" style="width:720px">
@@ -2050,6 +2059,18 @@ function gdLogoGrupo(){
 // ── Acessos do empreendimento (gestão): coordenação (vínculos) + setor/obra (cde_acesso_auria) ──
 var AC_EMP=null, AC_OBRA={};
 var OBRA_NIVEL_ROTULO={ eng_chefe:'Engenheiro chefe', coord_campo:'Coordenação de campo', equipe_campo:'Equipe de campo' };
+// ── Item 73b: cronograma de custos na gestão (mesmo componente do adm-fin) ──
+async function gdCronoCustos(){
+  document.getElementById('modalCronoCustos').classList.add('open');
+  const el=document.getElementById('ccGestao');
+  if(!window.AuriaCronoCustos){ el.innerHTML='<div style="padding:20px;color:var(--red)">Componente não carregou (auria_cronocustos.js).</div>'; return; }
+  await AuriaCronoCustos.montar(el, {
+    contratos: async()=>{ const r=await sb.rpc('fin_contratos',{}); if(r.error) throw r.error; return (r.data||[]).map(c=>({ ...c, parcelas: Array.isArray(c.parcelas)?c.parcelas:JSON.parse(c.parcelas||'[]') })); },
+    nfs: async()=>{ const r=await sb.rpc('nf_listar',{}); if(r.error) throw r.error; return r.data||[]; },
+    abrirContrato: (id)=>{ closeModal('modalCronoCustos'); goPage('financeiro'); },
+    grupo: ()=>(EMPRESA&&EMPRESA.nome)||''
+  });
+}
 // ── Prevision (item 77): vínculo por fase + sincronização ────────────────────
 let PV={ emp:null, sug:[], todos:[], vinc:[], sel:new Set() };
 const PV_FASE_COR={ EXE:'#1E3A5F', PROD:'#7C3AED', ORC:'#B45309', INC:'#0E7490', OUTRA:'#64748B' };
@@ -2452,7 +2473,7 @@ function gdFinRender(vis){
   const barras=Object.keys(porEmp).map(id=>Object.assign({e:gdEmp(id)},porEmp[id])).filter(x=>x.e&&x.ct>0).sort((a,b)=>b.ct-a.ct).slice(0,6)
     .map(x=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span class="ecode">${esc(gdSigla(x.e))}</span><div class="bar"><i style="width:${Math.min(100,Math.round(x.pg/x.ct*100))}%"></i></div><span style="font-family:var(--mono);font-size:11px;color:var(--txt2);width:175px;text-align:right">${gdBrl(x.pg)} de ${gdBrl(x.ct)}</span></div>`).join('');
   const pct=sum(prevMes)>0?Math.round(sum(pagoMes)/sum(prevMes)*100):0;
-  setHTML('gdFin', `<div class="cd-sech" style="margin-bottom:6px"><h2 class="cd-sec">Financeiro</h2><span class="cd-hint">só leitura · o detalhe fica em Custos &amp; NFs</span><button class="cd-btn" style="margin-left:auto;padding:3px 9px;font-size:11.5px" onclick="goPage('financeiro')">Custos &amp; NFs</button></div>
+  setHTML('gdFin', `<div class="cd-sech" style="margin-bottom:6px"><h2 class="cd-sec">Financeiro</h2><span class="cd-hint">só leitura · o detalhe fica em Custos &amp; NFs</span><button class="cd-btn" style="margin-left:auto;padding:3px 9px;font-size:11.5px" onclick="goPage('financeiro')">Custos &amp; NFs</button><button class="cd-btn" style="padding:3px 9px;font-size:11.5px;margin-left:6px" onclick="gdCronoCustos()" title="Parcelas dos contratos e NFs mês a mês (previsto × realizado, vencidas)">Cronograma de custos</button></div>
     <div class="gd-kpis">
       <div class="gd-kpi"><div class="l">Compromissos do mês</div><div class="v">${gdBrl(sum(comp))}</div><div class="s">${comp.length} parcela${comp.length!==1?'s':''} prevista${comp.length!==1?'s':''}</div></div>
       <div class="gd-kpi${venc.length?' acc':''}"><div class="l">Vencido sem pagamento</div><div class="v">${gdBrl(sum(venc))}</div><div class="s">${venc.length} parcela${venc.length!==1?'s':''} · trata o coordenador / adm-fin</div></div>
@@ -4717,6 +4738,7 @@ document.getElementById('btnLogin').addEventListener('click', doLogin);
 init();
 </script>
 <script src="auria_valida.js"></script>
+<script src="auria_cronocustos.js"></script>
 <script src="auria_ajuda.js"></script>
 </body>
 </html>

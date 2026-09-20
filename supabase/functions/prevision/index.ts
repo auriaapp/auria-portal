@@ -135,7 +135,12 @@ Deno.serve(async (req) => {
     const { data: { user } } = await caller.auth.getUser();
     if (!user) return j({ error: "sessão inválida" }, 401);
     const { data: perfil } = await admin.from("usuarios_auria").select("role,empresa_id").eq("id", user.id).maybeSingle();
-    if (!perfil || !["gerente", "super_admin"].includes(perfil.role)) return j({ error: "só a gestão usa a integração com o Prevision" }, 403);
+    const body0 = await req.clone().json().catch(() => ({}));
+    const gestao = !!perfil && ["gerente", "super_admin"].includes(perfil.role);
+    // Coordenador com edição no empreendimento pode SINCRONIZAR (não vincular) — botão ↻ do cronograma
+    let podeSync = gestao;
+    if (!gestao && body0.acao === "sync" && body0.empreendimento_id) { const { data: ed } = await caller.rpc("estacao_edita", { p_emp: String(body0.empreendimento_id) }); podeSync = ed === true; }
+    if (!podeSync) return j({ error: "só a gestão usa a integração com o Prevision" }, 403);
 
     if (!PV_KEY) return j({ ok: false, error: "PREVISION_API_KEY não configurada nos Secrets" }, 500);
     if (/\s/.test(PV_KEY)) return j({ ok: false, error: "PREVISION_API_KEY contém espaço/quebra de linha — cole só o token, numa linha. Tamanho atual: " + PV_KEY.length }, 500);
@@ -201,7 +206,7 @@ Deno.serve(async (req) => {
     }
     if (acao === "sync") {
       let q = admin.from("prevision_vinculo_auria").select("*, empreendimentos_auria!inner(empresa_id)").eq("ativo", true);
-      if (body.empreendimento_id) { await empDoUsuario(String(body.empreendimento_id)); q = q.eq("empreendimento_id", String(body.empreendimento_id)); }
+      if (body.empreendimento_id) { if (gestao) await empDoUsuario(String(body.empreendimento_id)); q = q.eq("empreendimento_id", String(body.empreendimento_id)); }
       else if (perfil.role !== "super_admin") q = q.eq("empreendimentos_auria.empresa_id", perfil.empresa_id);
       const { data: vincs, error } = await q; if (error) throw new Error(error.message);
       const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
