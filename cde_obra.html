@@ -159,17 +159,12 @@
      o tema escuro sobrescrevesse o box-shadow num seletor próprio, ele teria
      especificidade maior que a regra dos ladrilhos e daria sombra a cada um
      dos ~90 ladrilhos. Com variável, a regra dos ladrilhos continua vencendo. */
+  /* Item 78: a FOLHA (branco + sombra) é um div do tamanho da página; o canvas é
+     só o QUADRO rasterizado (área visível + margem), transparente fora da folha. */
+  .cdeWin-paper{position:absolute;top:0;left:0;transform-origin:0 0;background:#fff;
+     box-shadow:var(--sombra-prancha);will-change:transform;pointer-events:none}
   .cdeWin-stage canvas{position:absolute;top:0;left:0;margin:0;transform-origin:0 0;
-     box-shadow:var(--sombra-prancha);background:#fff;image-rendering:auto;will-change:transform}
-  /* Ladrilhos de detalhe: ficam POR CIMA da base, sem sombra e sem capturar
-     mouse. Como a base continua desenhada por baixo, ladrilho faltando nunca
-     deixa buraco — só significa "ainda não refinado". O container recebe a
-     MESMA transformação da base, então arrastar move todos de uma vez, sem
-     custo e sem perder o que já foi rasterizado. */
-  .cdeWin-tiles,.cdeWin-cmpClip .cdeWin-tilesB{position:absolute;top:0;left:0;width:0;height:0;
-     transform-origin:0 0;pointer-events:none;z-index:2}
-  .cdeWin-tiles canvas,.cdeWin-tilesB canvas{position:absolute;box-shadow:none;background:transparent;
-     will-change:auto;image-rendering:auto}
+     box-shadow:none;background:transparent;image-rendering:auto;will-change:transform}
   .cdeWin-pins{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:5}
   .cdeWin-dxf{position:absolute;inset:0;background:#20262f;overflow:hidden;display:none}
   .cdeWin-dxf canvas{display:block}
@@ -2759,23 +2754,15 @@ function _baixarBlob(blob, nome){ const a=document.createElement('a'); a.href=UR
 // ═════════════════════════════════════════════════════════════════════════════
 
 const WIN_STATE = { list: [], act: null, zTop: 100 };
-// Quantas vezes o zoom de "ajustar à tela" o bitmap da página aguenta antes de
-// começar a suavizar. Acima disso o navegador interpola o bitmap (continua
-// legível e, principalmente, NUNCA pisca nem some, porque não há
-// re-rasterização durante o zoom). Subir isto = zoom mais nítido, ao custo de
-// memória e do tempo da ÚNICA rasterização feita ao abrir a prancha.
-const BASE_FOLGA = 7;
-// Supersampling da camada de detalhe. Ela é do tamanho da janela, então 1.5×
-// custa pouco (~2 MP) e dá antisserrilhado nas linhas finas na resolução exata
-// da vista atual — tanto aproximada quanto afastada.
-const DET_SS = 1.5;
-// Lado do ladrilho em pixels rasterizados. 512 é granular o bastante pra que
-// arrastar só peça os poucos ladrilhos que entraram na tela, e pequeno o
-// bastante (1 MB cada) pra caber bastante coisa no cache.
-const TILE_PX = 512;
-// Teto de ladrilhos guardados por janela (~1 MB cada; no comparador cada
-// ladrilho tem duas camadas, então o teto cai pela metade).
-const TILE_MAX = 90, TILE_MAX_CMP = 45;
+// Item 78 — renderização 2D no MODELO DO APP (padrão único: App, CDE e QR).
+// Rasteriza SÓ a área visível + esta fração de margem em cada borda, na resolução
+// exata do zoom; pan/zoom são transform CSS sobre o último quadro até o próximo
+// chegar. Sem bitmap de página inteira, sem ladrilhos: memória previsível por
+// janela (≤ MAXPIX_QUADRO × 4 bytes) e nítido em qualquer zoom.
+const MARGEM_QUADRO = 0.45;
+// Teto do backing store do quadro por janela (16 M px ≈ 64 MB). O App usa 24 M
+// porque é uma janela só; aqui podem ser 15 abertas.
+const MAXPIX_QUADRO = 16e6;
 let DXF_LIB = null;              // biblioteca dxf-viewer é global (só o lib)
 // Fábrica de WORKER do dxf-viewer. Sem worker (workerFactory:null) a versão 1.0.48
 // estoura "Cannot read properties of null (reading 'Destroy')" no fim do Load —
@@ -2858,10 +2845,11 @@ class CdeWin {
     this.state = 'max';                              // 'max' | 'restored' | 'min'
     this.restoredBox = null;                          // {left,top,width,height} lembrado
     this.V = { doc:null, page:null, pageNum:1, zoom:1, panX:0, panY:0 };
-    // B = bitmap da página INTEIRA, rasterizado UMA vez. scale = px de bitmap
-    // por ponto do PDF. Zoom/pan depois disso são só CSS transform sobre ele.
-    this.B = { scale:0, pw:0, ph:0, valido:false };
-    this._rendering=false; this._renderJob=0; this._baseTimer=null; this._pan=null;
+    // B = o último QUADRO rasterizado (item 78, modelo do App): área visível +
+    // margem, na resolução exata do zoom em que foi feito. Zoom/pan são CSS
+    // transform sobre ele até o quadro novo chegar (debounce).
+    this.B = { zoom:1, panX:0, panY:0, cssW:0, cssH:0, valido:false };
+    this._rendering=false; this._renderJob=0; this._renderTimer=null; this._baseTimer=null; this._pan=null;
     this._renderTask=null;   // task do PDF.js em curso (cancelável)
     this._rafId=null;        // pan limitado a 1 atualização por frame
     this.DOC_SEL = null;
@@ -2870,13 +2858,6 @@ class CdeWin {
     this.DXFV = null;
     this._bbox = null;   // {left,top,w,h} do conteúdo da página, em px @ zoom=1 (null = página inteira)
     this._cachePath = null; this._cacheBbox = {};   // chave no cache local + bboxes já conhecidos
-    // Camada de DETALHE em LADRILHOS, desenhada POR CIMA da base. Cada ladrilho
-    // é rasterizado uma vez e FICA GUARDADO: voltar a uma região já visitada
-    // (ou a um nível de zoom já visitado) reaproveita o que existe, em vez de
-    // rasterizar de novo. A base nunca é apagada, então ladrilho faltando nunca
-    // vira buraco — só significa "ainda não refinado".
-    this.T = { nivel:null, escala:0, tam:0, mapa:new Map() };
-    this._detTimer=null;
     this.cmp = null;     // [{page,cor}, {page,cor}] — modo Comparar revisões (null = janela normal)
     this.isCmp = false;  // true = esta janela é uma comparação; não reaproveitar em openDocInWindow
     this.isFed = false;  // true = cena federada (vários modelos, sem documento único)
@@ -2909,9 +2890,8 @@ class CdeWin {
       // Faixa da Camada 3 — fica entre o cabeçalho e o desenho, nunca some com scroll.
       + '<div class="cdeWin-analise"><span>⚠ Em análise — não liberado para execução</span></div>'
       + '<div class="cdeWin-body">'
-      +   '<div class="cdeWin-stage"><canvas></canvas>'
-      +     '<div class="cdeWin-tiles"></div>'
-      +     '<div class="cdeWin-cmpClip"><canvas></canvas><div class="cdeWin-tilesB"></div></div>'
+      +   '<div class="cdeWin-stage"><div class="cdeWin-paper"></div><canvas></canvas>'
+      +     '<div class="cdeWin-cmpClip"><canvas></canvas></div>'
       +     '<div class="cdeWin-pins"></div>'
       +     '<div class="cdeWin-cmpLbl a">ANTIGA</div><div class="cdeWin-cmpLbl b">NOVA</div>'
       +     '<div class="cdeWin-cmpDiv"><div class="hnd">⇔</div></div>'
@@ -2992,10 +2972,9 @@ class CdeWin {
     this.marcaEl  = w.querySelector('.cdeWin-marca');
     this.stage    = w.querySelector('.cdeWin-stage');
     this.canvas   = w.querySelector('.cdeWin-stage > canvas');
-    this.tilesA   = w.querySelector('.cdeWin-tiles');
+    this.paperEl  = w.querySelector('.cdeWin-paper');
     this.cmpClip  = w.querySelector('.cdeWin-cmpClip');
     this.canvasB  = w.querySelector('.cdeWin-cmpClip > canvas');
-    this.tilesB   = w.querySelector('.cdeWin-tilesB');
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.bimWrap  = w.querySelector('.cdeWin-bim');
@@ -3287,15 +3266,14 @@ class CdeWin {
       }
     });
     // Observa o próprio stage — mudança de tamanho (restore, max, resize, browser).
-    // PRESERVA a vista (zoom/pan/página). Como o bitmap é da página inteira,
-    // redimensionar não exige render nenhum: só reavaliamos a resolução.
+    // PRESERVA a vista (zoom/pan/página); o quadro é reposicionado por CSS e, se
+    // a janela cresceu além da margem, um quadro novo chega em seguida.
     if(window.ResizeObserver){
       const ro = new ResizeObserver(()=>{
         if(!this.V.page) return;
         if(this.stage.clientWidth<=0 || this.stage.clientHeight<=0) return;  // minimizada
         if(!this._fitted){ this.fitPage(); return; }
-        clearTimeout(this._baseTimer);
-        this._baseTimer=setTimeout(()=>this._revisarBase(), 250);
+        this.updateCss();
       });
       ro.observe(this.stage);
     }
@@ -3349,18 +3327,15 @@ class CdeWin {
     }
     atualizarTaskbar();
   }
-  // ── Economia de memória "leve" ───────────────────────────────────────────
-  //  Solta SÓ os ladrilhos de detalhe (o refinamento de alta resolução que
-  //  cresce com o zoom² e vai acumulando). O bitmap-BASE continua visível, então
-  //  trocar de prancha é INSTANTÂNEO (nada reabre nem pisca). O detalhe volta
-  //  sozinho quando o usuário dá zoom/pan/navega. Só p/ PDF simples (não cmp/3D).
+  // ── Economia de memória ──────────────────────────────────────────────────
+  //  Janelas fora das 5 mais recentes soltam o QUADRO (≤ 64 MB cada). Ao focar
+  //  ou mexer, o quadro volta em ~0,3 s. Só p/ PDF simples (não cmp/3D).
   _soltarDetalhe(){
     if(this.cmp || this.B3) return;
-    this._renderJob++; try{ this._cancelarRender(); }catch(_){}
-    try{ this._tilesLimpar(); }catch(_){}
+    this._soltarQuadro();
   }
   fechar(){
-    clearTimeout(this._baseTimer); clearTimeout(this._detTimer);
+    clearTimeout(this._baseTimer); clearTimeout(this._renderTimer);
     if(this._rafId){ cancelAnimationFrame(this._rafId); this._rafId=null; }
     this._renderJob++; this._cancelarRender();
     if(this.DXFV){ try{ this.DXFV.Destroy(); }catch(_){} this.DXFV=null; }
@@ -3378,8 +3353,8 @@ class CdeWin {
     atualizarVempty();
     salvarUltimoCDE();   // fechou uma prancha → atualiza o que reabre (ou zera)
   }
-  msg(t){ this.canvas.style.display='none'; this.loadEl.textContent=t; this.loadEl.classList.add('on'); }
-  hideMsg(){ this.canvas.style.display='block'; this.loadEl.classList.remove('on'); }
+  msg(t){ this.canvas.style.display='none'; if(this.paperEl) this.paperEl.style.visibility='hidden'; this.loadEl.textContent=t; this.loadEl.classList.add('on'); }
+  hideMsg(){ this.canvas.style.display='block'; if(this.paperEl) this.paperEl.style.visibility=''; this.loadEl.classList.remove('on'); }
   async setDoc(doc, preferFmt){
     this.DOC_SEL = doc;
     const s = doc.atual ? STMAP[doc.atual.status] : null;
@@ -5045,30 +5020,124 @@ class CdeWin {
   }
   _arqObj(arqId){ for(const d of DOCS){ for(const r of (d.revs||[])){ const a=(r.arqs||[]).find(x=>x.id===arqId); if(a) return a; } } return null; }
   pageSizePx(){ const d=this._dims(); return { w:d.pw*this.V.zoom, h:d.ph*this.V.zoom }; }
-  // Zoom e pan são APENAS transformação CSS sobre o bitmap da página inteira
-  // (composição na GPU, sem repaint). Nenhum page.render() acontece aqui — é
-  // isso que elimina piscada, sumiço, troca de resolução e buraco no desenho.
+  // ── Item 78: quadro visível (modelo do App) ──────────────────────────────
+  // Reposiciona o ÚLTIMO quadro e a folha conforme a vista atual (CSS puro,
+  // instantâneo) e agenda o raster nítido. Nenhum page.render() acontece aqui.
   updateCss(){
-    if(!this.B.valido) return;
-    const k=this.V.zoom/this.B.scale;
-    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+')';
-    this.canvas.style.transformOrigin='0 0';
-    this.canvas.style.transform=tr;
-    // A camada da revisão nova acompanha EXATAMENTE a mesma transformação —
-    // o que a separa é o recorte do container, que é preso à tela.
-    this.canvasB.style.transformOrigin='0 0';
-    this.canvasB.style.transform=tr;
+    if(!this.V.page){ if(this.paperEl) this.paperEl.style.display='none'; return; }
+    const { pw, ph } = this._dims();
+    if(this.paperEl){ this.paperEl.style.display=''; this.paperEl.style.width=pw+'px'; this.paperEl.style.height=ph+'px';
+      this.paperEl.style.transform='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+this.V.zoom+')'; }
+    this._posicionarQuadro();
     if(cdeAtiva()===this) atualizarPageLbl(this);
     this.renderPinsCDE();
     this._cmpUpdateDom();
-    this._tilesPosicionar();  // barato: uma propriedade CSS move todos os ladrilhos
-    this._detAgendar();       // caro: só dispara quando o movimento para
+    this.scheduleRender();
   }
-  // ── Comparador de revisões · modo slider ────────────────────────────────
-  //  A régua é só um recorte CSS sobre a camada de cima: arrastar não mexe em
-  //  canvas nenhum (instantâneo), e como o recorte vive em coordenadas da TELA
-  //  (não do desenho), arrastar/dar zoom na prancha faz o desenho passar por
-  //  baixo da emenda — que é o comportamento esperado de um comparador.
+  _posicionarQuadro(){
+    if(!this.B.valido) return;
+    const k=this.V.zoom/this.B.zoom;
+    const tr='translate('+(this.B.panX*k-this.V.panX)+'px,'+(this.B.panY*k-this.V.panY)+'px) scale('+k+')';
+    this.canvas.style.transformOrigin='0 0'; this.canvas.style.transform=tr;
+    // A camada da revisão nova acompanha EXATAMENTE a mesma transformação —
+    // o que a separa é o recorte do container (régua), preso à tela.
+    this.canvasB.style.transformOrigin='0 0'; this.canvasB.style.transform=tr;
+  }
+  // O quadro atual ainda cobre a janela? (pan dentro da margem e zoom igual)
+  _frameCobre(){
+    if(!this.B.valido || this.B.zoom!==this.V.zoom) return false;
+    return this.V.panX>=this.B.panX && this.V.panY>=this.B.panY
+        && this.V.panX+this.stage.clientWidth  <= this.B.panX+this.B.cssW
+        && this.V.panY+this.stage.clientHeight <= this.B.panY+this.B.cssH;
+  }
+  scheduleRender(delay){ clearTimeout(this._renderTimer); this._renderTimer=setTimeout(()=>this.render(), delay==null?120:delay); }
+  async render(){
+    if(!this.V.page) return;
+    if(this._rendering){ this._cancelarRender(); this.scheduleRender(80); return; }   // vista mudou no meio: descarta o raster velho
+    if(this._frameCobre()) return;
+    await this._renderQuadro();
+  }
+  // Compatibilidade com os chamadores antigos (abrir, girar, trocar página/modo):
+  // força um quadro novo e só resolve quando ele está na tela.
+  async _renderBase(){
+    this.B.valido=false; this._cancelarRender();
+    for(let i=0;i<40 && this._rendering;i++) await new Promise(r=>setTimeout(r,25));
+    await this._renderQuadro();
+  }
+  _revisarBase(){ this.scheduleRender(0); }
+  _cancelarRender(){
+    if(this._renderTask){ try{ this._renderTask.cancel(); }catch(_){} this._renderTask=null; }
+  }
+  // Rasteriza a área visível (+ margem) num canvas invisível (double-buffer) e
+  // troca de uma vez. Comparação: modo cor = camadas tingidas em 'multiply';
+  // modo régua = dois quadros (A = revisão antiga, B = nova, dentro do recorte).
+  async _renderQuadro(){
+    const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
+    if(cw<=0||ch<=0) return;                       // minimizada: nada a rasterizar
+    this._rendering=true;
+    const job=++this._renderJob;
+    const fim=()=>{ this._rendering=false; if(job===this._renderJob && !this._frameCobre()) this.scheduleRender(60); };
+    try{
+      const dpr=Math.min(window.devicePixelRatio||1, 3);
+      const mx=Math.round(cw*MARGEM_QUADRO), my=Math.round(ch*MARGEM_QUADRO);
+      const zoom=this.V.zoom, panX=this.V.panX-mx, panY=this.V.panY-my, cssW=cw+2*mx, cssH=ch+2*my;
+      // SUPERSAMPLING: de longe as linhas finas viram <1px e ficam serrilhadas;
+      // renderiza acima da tela e o navegador reduz (antialiasing), com teto de área.
+      let ss = zoom<0.5 ? 2.5 : zoom<1 ? 2 : zoom<2 ? 1.5 : 1;
+      let rScale = dpr*ss;
+      const maxpix = this.cmp ? MAXPIX_QUADRO*0.6 : MAXPIX_QUADRO;   // régua = 2 quadros vivos
+      while(cssW*rScale*cssH*rScale > maxpix && rScale>dpr) rScale=Math.max(dpr, rScale-0.25);
+      while(cssW*rScale*cssH*rScale > maxpix && rScale>1)   rScale=Math.max(1, rScale-0.25);
+      const W=Math.max(1,Math.round(cssW*rScale)), H=Math.max(1,Math.round(cssH*rScale)), s=zoom*rScale;
+      const { pw, ph } = this._dims();
+      const novo=()=>{ const c=document.createElement('canvas'); c.width=W; c.height=H; return c; };
+      // só a FOLHA fica branca: fora dela o quadro é transparente (aparece o fundo do stage)
+      const prep=(cv)=>{ const x=cv.getContext('2d'); x.setTransform(1,0,0,1,0,0); x.clearRect(0,0,W,H);
+        x.fillStyle='#FFFFFF'; x.fillRect(-panX*rScale, -panY*rScale, pw*s, ph*s); return x; };
+      // Um render por vez, sempre cancelável (dois page.render() concorrentes travam o PDF.js).
+      const pintar=async(page,ctx,bg)=>{
+        ctx.save(); ctx.translate(-panX*rScale, -panY*rScale);
+        const task=page.render({ canvasContext:ctx, viewport:this._vp(s, page), background:bg });
+        this._renderTask=task; let ok=true;
+        try{ await task.promise; }catch(e){ ok=false; if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
+        this._renderTask=null; ctx.restore();
+        return ok && job===this._renderJob;
+      };
+      const offA=novo(), actx=prep(offA); let offB=null;
+      if(this.cmp && this.cmpMode==='color'){
+        const lay=novo(), lctx=lay.getContext('2d');
+        for(const camada of this.cmp){
+          lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
+          if(!await pintar(camada.page, lctx, 'rgba(0,0,0,0)')){ fim(); return; }
+          lctx.setTransform(1,0,0,1,0,0);
+          lctx.globalCompositeOperation='source-in'; lctx.fillStyle=camada.cor; lctx.fillRect(0,0,W,H);
+          lctx.globalCompositeOperation='source-over';
+          actx.globalCompositeOperation='multiply'; actx.drawImage(lay,0,0); actx.globalCompositeOperation='source-over';
+        }
+      }else if(this.cmp && this.cmpMode==='slider'){
+        if(!await pintar(this.cmp[0].page, actx, 'rgba(0,0,0,0)')){ fim(); return; }
+        offB=novo(); const bctx=prep(offB);
+        if(!await pintar(this.cmp[1].page, bctx, 'rgba(0,0,0,0)')){ fim(); return; }
+      }else{
+        if(!await pintar(this.V.page, actx, 'rgba(0,0,0,0)')){ fim(); return; }
+      }
+      // troca SÍNCRONA: redimensiona + copia no mesmo frame de pintura (sem branco)
+      const aplicar=(cv,off)=>{ cv.width=W; cv.height=H; cv.getContext('2d').drawImage(off,0,0); cv.style.width=cssW+'px'; cv.style.height=cssH+'px'; };
+      aplicar(this.canvas, offA);
+      if(offB) aplicar(this.canvasB, offB); else { this.canvasB.width=1; this.canvasB.height=1; }
+      Object.assign(this.B, { zoom, panX, panY, cssW, cssH, valido:true });
+      this._posicionarQuadro();
+    }catch(e){ if(!/cancel/i.test(String(e))) console.error('render:',e); }
+    fim();
+  }
+  // Solta o quadro (memória) — usado nas janelas fora das 5 mais recentes e ao
+  // fechar. Voltar a focar/mexer rasteriza de novo (~0,3 s). Nada fecha.
+  _soltarQuadro(){
+    this._renderJob++; this._cancelarRender(); clearTimeout(this._renderTimer);
+    this.B.valido=false;
+    try{ this.canvas.width=1; this.canvas.height=1; this.canvasB.width=1; this.canvasB.height=1; }catch(_){}
+  }
+
   _cmpUpdateDom(){
     if(!this.cmpDivEl) return;
     const on = !!(this.cmp && this.cmpMode==='slider');
@@ -5081,222 +5150,6 @@ class CdeWin {
       this.cmpDivEl.style.left=pct+'%';
       this.cmpClip.style.clipPath='inset(0 0 0 '+pct+'%)';
     }
-  }
-  // Escala do bitmap da página: nítido com folga em todo o zoom de trabalho
-  // (BASE_FOLGA× o "ajustar à tela"), limitado pela memória e pelo lado máximo
-  // de canvas do navegador. Adaptativo porque uma A1 e uma A4 não podem usar a
-  // mesma escala fixa sem estourar memória ou sair borrada.
-  _baseScaleAlvo(){
-    const { pw, ph } = this._dims();
-    const cw=this.stage.clientWidth||1200, ch=this.stage.clientHeight||800;
-    const dpr=window.devicePixelRatio||1;
-    const b=this._bbox;
-    const fitZoom=Math.min(cw/(b?b.w:pw), ch/(b?b.h:ph))*0.96;
-    // Tetos de segurança: memória (4 bytes/px) e lado máximo de textura de GPU.
-    // No modo slider são DOIS bitmaps de página inteira vivos ao mesmo tempo,
-    // e no modo cor há ainda um canvas de tingimento — por isso o teto cai.
-    const MAXPIX=this.cmp ? 21e6 : 42e6;
-    const teto=Math.min(Math.sqrt(MAXPIX/(pw*ph)), 16000/pw, 16000/ph);
-    let s=Math.min(fitZoom*dpr*BASE_FOLGA, teto);
-    s=Math.max(s, Math.min(fitZoom*dpr, teto));   // nunca pior que a tela
-    return { s, pw, ph };
-  }
-  // Rasteriza um RECORTE da página (rx,ry,rw em pontos) na escala pedida.
-  // Serve tanto à base (página inteira) quanto à camada de detalhe (só o que
-  // está na tela, em alta) — as duas precisam do mesmo tratamento de
-  // comparação por cor / slider, então a lógica vive num lugar só.
-  async _rasterizar(job, s, rx, ry, W, H, cvA, cvB){
-    const prep=(cv)=>{ cv.width=W; cv.height=H;
-      const x=cv.getContext('2d'); x.setTransform(1,0,0,1,0,0);
-      x.fillStyle='#FFFFFF'; x.fillRect(0,0,W,H); return x; };
-    // Um render por vez, sempre cancelável: dois page.render() concorrentes
-    // no mesmo canvas é uma das causas clássicas de travada no PDF.js.
-    const pintar=async(page,ctx,bg)=>{
-      ctx.save(); ctx.translate(-rx*s, -ry*s);
-      const task=page.render({ canvasContext:ctx, viewport:this._vp(s, page), background:bg });
-      this._renderTask=task;
-      try{ await task.promise; }
-      catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.warn('render:',e); }
-      this._renderTask=null;
-      ctx.restore();
-    };
-    const actx=prep(cvA);
-    if(this.cmp && this.cmpMode==='color'){
-      const lay=document.createElement('canvas'); lay.width=W; lay.height=H;
-      const lctx=lay.getContext('2d');
-      for(const camada of this.cmp){
-        lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
-        await pintar(camada.page, lctx, 'rgba(0,0,0,0)');
-        if(job!==this._renderJob) return false;
-        lctx.setTransform(1,0,0,1,0,0);
-        lctx.globalCompositeOperation='source-in';
-        lctx.fillStyle=camada.cor; lctx.fillRect(0,0,W,H);
-        lctx.globalCompositeOperation='source-over';
-        actx.globalCompositeOperation='multiply';
-        actx.drawImage(lay,0,0);
-        actx.globalCompositeOperation='source-over';
-      }
-    }else if(this.cmp && this.cmpMode==='slider'){
-      await pintar(this.cmp[0].page, actx, '#FFFFFF');
-      if(job!==this._renderJob) return false;
-      await pintar(this.cmp[1].page, prep(cvB), '#FFFFFF');
-      if(job!==this._renderJob) return false;
-    }else{
-      await pintar(this.V.page, actx, '#FFFFFF');
-      if(job!==this._renderJob) return false;
-    }
-    return true;
-  }
-  // Rasteriza a página INTEIRA uma única vez. Só é chamada quando muda o que
-  // realmente exige nova rasterização: abrir, trocar de página, trocar o modo
-  // de comparação, ou a janela crescer muito. NUNCA durante zoom/pan.
-  async _renderBase(){
-    if(!this.V.page) return;
-    const job=++this._renderJob;
-    this._cancelarRender();
-    try{
-      const { s, pw, ph } = this._baseScaleAlvo();
-      const W=Math.max(1,Math.round(pw*s)), H=Math.max(1,Math.round(ph*s));
-      // Abrindo do zero o canvas está escondido atrás do "Abrindo prancha…",
-      // então dá pra rasterizar DIRETO nele: evita manter dois bitmaps de
-      // página inteira na memória ao mesmo tempo (o pico é o que quebra em
-      // máquina modesta). Ao SUBSTITUIR um bitmap já visível, aí sim vai pra
-      // um canvas à parte, pra troca ser instantânea e sem estado intermediário.
-      const direto = !this.cmp && !this.B.valido;
-      const cvA = direto ? this.canvas : document.createElement('canvas');
-      const cvB = (this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
-      const ok = await this._rasterizar(job, s, 0, 0, W, H, cvA, cvB);
-      if(!ok || job!==this._renderJob) return;
-      const aplicar=(cv,off)=>{ cv.width=W; cv.height=H; cv.getContext('2d').drawImage(off,0,0); };
-      if(!direto) aplicar(this.canvas, cvA);
-      this.canvas.style.width=W+'px'; this.canvas.style.height=H+'px';
-      if(cvB){ aplicar(this.canvasB, cvB);
-               this.canvasB.style.width=W+'px'; this.canvasB.style.height=H+'px'; }
-      else { this.canvasB.width=1; this.canvasB.height=1; }
-      this.B.scale=s; this.B.pw=pw; this.B.ph=ph; this.B.valido=true;
-      this._tilesLimpar();          // ladrilhos antigos são de outra escala/página
-      this.updateCss();
-    }catch(e){ if(!/cancel/i.test(String(e&&e.name||e))) console.error('base:',e); }
-  }
-  // ── Detalhe em LADRILHOS (o refinamento fica guardado) ────────────────────
-  //  Cada ladrilho é um pedaço fixo da página, rasterizado uma vez e mantido
-  //  no DOM. Arrastar não rasteriza nada: o container inteiro recebe a mesma
-  //  transformação da base, então tudo que já foi refinado continua refinado.
-  //  Voltar a uma região — ou a um nível de zoom — já visitada é instantâneo.
-  //
-  //  A escala é quantizada em degraus de raiz de 2. Sem isso cada mexidinha na
-  //  roda geraria uma escala nova e invalidaria o cache inteiro; com degraus, o
-  //  zoom passeia dentro do mesmo nível e reaproveita tudo.
-  _detEscalaAlvo(){ return this.V.zoom*(window.devicePixelRatio||1)*DET_SS; }
-  _detNivel(){
-    const alvo=this._detEscalaAlvo();
-    if(!(alvo>0)) return null;
-    // ceil: o ladrilho nunca fica MENOS nítido que o necessário (no máximo
-    // um degrau mais nítido, o que só custa memória).
-    return Math.ceil(Math.log2(alvo)*2)/2;
-  }
-  _detPrecisa(){
-    if(!this.B.valido || !this.V.page) return false;
-    const r=this._detEscalaAlvo()/this.B.scale;
-    return r>1.05 || r<0.65;   // base baixa demais (perto) ou alta demais (longe)
-  }
-  _tilesLimpar(){
-    this.T.mapa.forEach(t=>{ if(t.el&&t.el.parentNode) t.el.remove();
-                             if(t.elB&&t.elB.parentNode) t.elB.remove(); });
-    this.T.mapa.clear(); this.T.nivel=null;
-  }
-  // Move TODOS os ladrilhos de uma vez, junto com a base. É só uma propriedade
-  // CSS no container — arrastar não custa nada e nada é redesenhado.
-  _tilesPosicionar(){
-    if(!this.B.valido) return;
-    const k=this.V.zoom/this.B.scale;
-    const tr='translate('+(-this.V.panX)+'px,'+(-this.V.panY)+'px) scale('+k+')';
-    this.tilesA.style.transform=tr;
-    this.tilesB.style.transform=tr;
-  }
-  // Ladrilhos de outros níveis continuam GUARDADOS (só escondidos): se o
-  // usuário voltar àquele zoom, reaparecem prontos.
-  _tilesVisibilidade(nivel){
-    this.T.mapa.forEach(t=>{
-      const on = (t.nivel===nivel);
-      t.el.style.display = on?'block':'none';
-      if(t.elB) t.elB.style.display = on?'block':'none';
-    });
-  }
-  _detAgendar(){
-    clearTimeout(this._detTimer);
-    if(!this._detPrecisa()){ this._tilesVisibilidade(null); return; }
-    const nivel=this._detNivel();
-    if(nivel!==this.T.nivel) this._tilesVisibilidade(nivel);
-    this._detTimer=setTimeout(()=>this._tilesGarantir(), 200);
-  }
-  async _tilesGarantir(){
-    if(!this._detPrecisa() || !this.B.valido) return;
-    const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
-    if(cw<=0||ch<=0) return;
-    const nivel=this._detNivel(); if(nivel==null) return;
-    const s=Math.pow(2,nivel);
-    const tam=TILE_PX/s;                     // lado do ladrilho, em pontos
-    this.T.nivel=nivel; this.T.escala=s; this.T.tam=tam;
-    this._tilesVisibilidade(nivel);
-    // Ladrilhos que cobrem a vista, com uma folga de meio ladrilho em volta
-    // (assim um arrastinho não expõe área ainda não refinada).
-    const z=this.V.zoom;
-    const x0=(this.V.panX)/z - tam/2, y0=(this.V.panY)/z - tam/2;
-    const x1=(this.V.panX+cw)/z + tam/2, y1=(this.V.panY+ch)/z + tam/2;
-    const i0=Math.max(0,Math.floor(x0/tam)), i1=Math.floor(Math.min(this.B.pw,x1)/tam);
-    const j0=Math.max(0,Math.floor(y0/tam)), j1=Math.floor(Math.min(this.B.ph,y1)/tam);
-    const job=++this._renderJob;
-    this._cancelarRender();
-    for(let j=j0;j<=j1;j++){
-      for(let i=i0;i<=i1;i++){
-        if(job!==this._renderJob) return;          // nova vista pediu outra coisa
-        const chave=this.V.pageNum+'|'+nivel+'|'+i+'|'+j;
-        const achado=this.T.mapa.get(chave);
-        if(achado){                                 // já rasterizado: só reusar
-          this.T.mapa.delete(chave); this.T.mapa.set(chave,achado);   // LRU: renova
-          continue;
-        }
-        const px=i*tam, py=j*tam;
-        const w=Math.min(tam, this.B.pw-px), h=Math.min(tam, this.B.ph-py);
-        if(w<=0||h<=0) continue;
-        const W=Math.max(1,Math.round(w*s)), H=Math.max(1,Math.round(h*s));
-        const cvA=document.createElement('canvas');
-        const cvB=(this.cmp && this.cmpMode==='slider') ? document.createElement('canvas') : null;
-        const ok=await this._rasterizar(job, s, px, py, W, H, cvA, cvB);
-        if(!ok || job!==this._renderJob) return;
-        const montar=(cv,cont)=>{
-          cv.style.left=(px*this.B.scale)+'px'; cv.style.top=(py*this.B.scale)+'px';
-          cv.style.width=(w*this.B.scale)+'px'; cv.style.height=(h*this.B.scale)+'px';
-          cont.appendChild(cv); return cv;
-        };
-        const t={ nivel, el:montar(cvA,this.tilesA), elB:cvB?montar(cvB,this.tilesB):null };
-        this.T.mapa.set(chave,t);
-        this._tilesPodar();
-      }
-    }
-  }
-  // Teto de memória: descarta o ladrilho menos usado (o Map do JS preserva a
-  // ordem de inserção, e reusar reinsere no fim — então o primeiro é o mais frio).
-  _tilesPodar(){
-    const max=this.cmp?TILE_MAX_CMP:TILE_MAX;
-    while(this.T.mapa.size>max){
-      const chave=this.T.mapa.keys().next().value;
-      const t=this.T.mapa.get(chave);
-      if(t){ if(t.el) t.el.remove(); if(t.elB) t.elB.remove(); }
-      this.T.mapa.delete(chave);
-    }
-  }
-  _cancelarRender(){
-    if(this._renderTask){ try{ this._renderTask.cancel(); }catch(_){} this._renderTask=null; }
-  }
-  // Re-rasteriza a base só se a janela cresceu a ponto de a resolução atual
-  // ficar abaixo do necessário — redimensionar não pode custar render à toa.
-  _revisarBase(){
-    if(!this.V.page || !this.B.valido) return;
-    if(this.stage.clientWidth<=0 || this.stage.clientHeight<=0) return;
-    const { s } = this._baseScaleAlvo();
-    if(s > this.B.scale*1.25) this._renderBase();
   }
   fitPage(){
     if(!this.V.page) return;
@@ -5412,17 +5265,17 @@ class CdeWin {
     abrirFormApontarCDE(this, { nx, ny, pg:this.V.pageNum });
   }
   // Print automático: recorta a região do bitmap base ao redor do ponto e
-  // marca o local. Reusa o bitmap já renderizado (this.canvas @ B.scale) —
-  // sem novo render do PDF.js. Devolve dataURL JPEG (ou null).
+  // marca o local. Reusa o QUADRO já renderizado (this.canvas, item 78) — o
+  // ponto clicado está na tela, logo dentro do quadro. Devolve dataURL JPEG (ou null).
   capturarVistaCDE(nx, ny){
     try{
-      const cv=this.canvas; if(!cv||!cv.width||!this.B.valido) return null;
-      { const q=this._rotOut(nx, ny); nx=q.nx; ny=q.ny; }   // item 60: o bitmap está girado
-      const { pw, ph } = this._dims(), bs=this.B.scale, z=this.V.zoom;
-      const cx=nx*pw*bs, cy=ny*ph*bs;                          // ponto no bitmap base
+      const cv=this.canvas; if(!cv||cv.width<2||!this.B.valido) return null;
+      { const q=this._rotOut(nx, ny); nx=q.nx; ny=q.ny; }   // item 60: o quadro está girado
+      const { pw, ph } = this._dims(), rs=cv.width/this.B.cssW, bs=this.B.zoom*rs;
+      const cx=(nx*pw*this.B.zoom - this.B.panX)*rs, cy=(ny*ph*this.B.zoom - this.B.panY)*rs;   // ponto no quadro
       const cw=this.stage.clientWidth, ch=this.stage.clientHeight;
-      const w=Math.min(cv.width,  Math.max(60, Math.round((cw*0.6/z)*bs)));
-      const h=Math.min(cv.height, Math.max(60, Math.round((ch*0.6/z)*bs)));
+      const w=Math.min(cv.width,  Math.max(60, Math.round(cw*0.6*rs)));
+      const h=Math.min(cv.height, Math.max(60, Math.round(ch*0.6*rs)));
       const sx=Math.max(0,Math.min(cv.width-w,  Math.round(cx-w/2)));
       const sy=Math.max(0,Math.min(cv.height-h, Math.round(cy-h/2)));
       const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
@@ -5465,6 +5318,7 @@ function focar(w){
     }
   }catch(_){}
   w.el.style.zIndex = ++WIN_STATE.zTop;
+  if(w.V.page && !w.B.valido && w.scheduleRender) w.scheduleRender(0);   // item 78: quadro solto volta ao focar
   // Teto de segurança: numa sessão longa com muita troca de foco, este
   // contador só cresce e eventualmente alcançaria a faixa reservada pros
   // modais/menus (z-index 9000+) — foi exatamente isso que aconteceu aqui
