@@ -117,8 +117,9 @@ Deno.serve(async (req) => {
     //  (mesmo valor nos Secrets da função e no Vault do banco).
     const cronSecret = (Deno.env.get("PREVISION_CRON_SECRET") || "").trim();
     const cronHdr = (req.headers.get("x-auria-cron") || "").trim();
-    if (cronSecret && cronHdr) {
-      if (cronHdr !== cronSecret) return j({ error: "segredo do cron inválido" }, 403);
+    if (cronHdr) {
+      if (!cronSecret) return j({ error: "PREVISION_CRON_SECRET não configurada nos Secrets da função" }, 500);
+      if (cronHdr !== cronSecret) return j({ error: "segredo do cron inválido (Vault ≠ Secret da função)" }, 403);
       if (!PV_KEY) return j({ ok: false, error: "PREVISION_API_KEY não configurada" }, 500);
       const { data: vincs, error } = await admin.from("prevision_vinculo_auria").select("*").eq("ativo", true);
       if (error) return j({ ok: false, error: error.message }, 500);
