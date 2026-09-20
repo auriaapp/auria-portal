@@ -74,7 +74,7 @@ begin
              where e.id = new.empreendimento_id and u.role = 'financeiro' and u.email is not null
       union select r.projetista_email where r.projetista_email is not null) x where em is not null;
     if v_dest is null or array_length(v_dest,1) is null then continue; end if;
-    v_corpo := '<p>O marco de medição <b>'||public.auria_esc(coalesce(new.wbs,'')||' '||coalesce(new.nome,''))||'</b> foi concluído no cronograma do Prevision.</p>'
+    v_corpo := '<p>O marco de medição <b>'||public.auria_esc(coalesce(new.wbs,'')||' '||coalesce(new.nome,''))||'</b> foi concluído no cronograma.</p>'
             || '<p>Com isso a parcela <b>'||r.numero||'</b>'||case when r.descricao is not null then ' — '||public.auria_esc(r.descricao) else '' end
             || ' ('||public.auria_esc(coalesce(r.disciplina,''))||' · '||public.auria_esc(r.projetista)||') no valor de <b>R$ '||to_char(coalesce(r.valor,0),'FM999G999G990D00')||'</b> está <b>liberável para faturamento</b>.</p>'
             || '<p>Projetista: solicite o faturamento pelo seu painel. Coordenação: autorize quando a solicitação chegar.</p>';
