@@ -173,6 +173,8 @@ Deno.serve(async (req) => {
       // sincroniza na hora
       const { data: vincs } = await admin.from("prevision_vinculo_auria").select("*").eq("empreendimento_id", e.id).eq("ativo", true);
       const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
+      try{ const { data: quem } = await admin.from("usuarios_auria").select("nome,email").eq("id", user.id).maybeSingle();
+        await admin.from("prevision_log_auria").insert({ empreendimento_id: e.id, acao: "vinculo", detalhe: "Vínculos: " + ((vincs || []).map((v: any) => v.fase + " " + (v.projeto_nome || "")).join(", ") || "nenhum"), por: user.id, por_nome: (quem && (quem.nome || quem.email)) || null }); }catch(_){ /* log é opcional (tabela do p3) */ }
       return j({ ok: true, vinculos: vincs || [], sync: res });
     }
     if (acao === "sync") {
@@ -181,6 +183,8 @@ Deno.serve(async (req) => {
       else if (perfil.role !== "super_admin") q = q.eq("empreendimentos_auria.empresa_id", perfil.empresa_id);
       const { data: vincs, error } = await q; if (error) throw new Error(error.message);
       const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
+      if (body.empreendimento_id) { try{ const { data: quem } = await admin.from("usuarios_auria").select("nome,email").eq("id", user.id).maybeSingle();
+        await admin.from("prevision_log_auria").insert({ empreendimento_id: String(body.empreendimento_id), acao: "sync", detalhe: res.map((r: any) => r.fase + ": " + (r.erro ? "erro" : r.tarefas + " tarefas")).join(" · "), por: user.id, por_nome: (quem && (quem.nome || quem.email)) || null }); }catch(_){} }
       return j({ ok: true, n: res.length, sync: res });
     }
     if (acao === "get") {
