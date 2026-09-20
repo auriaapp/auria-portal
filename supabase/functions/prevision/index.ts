@@ -9,6 +9,11 @@
 //        { acao:'projetos' }            → idem (lista para o vínculo)
 //        { acao:'projeto', id }         → { ok, projeto:{ id, nome, n_tasks, tasks:[{wbs,nome,ini,fim,prev,real,kanban,colunas…}] } }
 //        { acao:'get', path, query? }   → repasse controlado de um GET da API (explorar durante a integração)
+//        { acao:'sugerir', empreendimento_id }             → projetos do Prevision cuja sigla bate com o empreendimento
+//        { acao:'vincular', empreendimento_id, projetos:[{id,nome}] } → grava/ativa vínculos (fase = prefixo do nome); os
+//                                                             não listados ficam ativo=false; padrão = EXE (ou o 1º) se nenhum
+//        { acao:'sync', empreendimento_id? }               → baixa as tarefas de cada vínculo ativo p/ prevision_tarefa_auria
+//                                                             (sem id: todos os empreendimentos do grupo do usuário)
 //  Verify JWT: ON. Quem pode: gerente ou super_admin.
 //  Secrets: PREVISION_API_KEY (+ opcional PREVISION_API_URL; padrão https://api.prevision.com.br).
 // ============================================================================
@@ -38,6 +43,65 @@ async function pvGet(path: string, query?: Record<string, string>) {
   return body;
 }
 const lista = (o: any) => ((o && o.projects) || []).map((p: any) => ({ id: String(p.id), nome: p.name }));
+// Fase = prefixo do nome do projeto no Prevision (convenção da empresa: EXE-I007-CBML, PROD-V038-MUND-R00…)
+const FASES = ["EXE", "PROD", "ORC", "INC"];
+function faseDe(nome: string) { const p = String(nome || "").trim().toUpperCase().split(/[-_ ]/)[0]; return FASES.includes(p) ? p : "OUTRA"; }
+// Segmentos do nome (EXE, I007, CBML…) para casar com a sigla do empreendimento do Auria
+function segmentos(nome: string) { return String(nome || "").toUpperCase().split(/[-_ ]+/).filter(Boolean); }
+// Projeto de Incorporação com as tarefas normalizadas (aceita camelCase real e snake_case do schema)
+async function projetoTarefas(id: string) {
+  const raw = await pvGet("/incorporation/api/v1/projects/" + encodeURIComponent(id));
+  const p = (raw && raw.project) || raw || {};
+  let tasks: any[] = Array.isArray(p.tasks) && p.tasks.length ? p.tasks : [];
+  if (!tasks.length && Array.isArray(p.phases)) p.phases.forEach((f: any) => { (f.tasks || []).forEach((t: any) => tasks.push(t)); });
+  const g = (t: any, camel: string, snake: string) => t[camel] !== undefined ? t[camel] : t[snake];
+  const num = (v: any) => (v === null || v === undefined || v === "" || isNaN(Number(v))) ? null : Number(v);
+  const dt = (v: any) => v ? String(v).slice(0, 10) : null;
+  const norm = tasks.map((t: any) => {
+    const wbs = g(t, "wbsCode", "wbs_code");
+    return {
+      id: String(t.id), wbs, nivel: wbs ? String(wbs).split(".").length : null, nome: t.name,
+      ini: dt(g(t, "startDate", "start_date")), fim: dt(g(t, "endDate", "end_date")), duracao: num(t.duration), custo: num(t.cost),
+      prev: num(g(t, "expectedProgress", "expected_progress")), real: num(g(t, "realizedProgress", "realized_progress")),
+      base_prev: num(g(t, "baselineProgress", "baseline_progress")), base_ini: dt(g(t, "baselineStartDate", "baseline_start_date")), base_fim: dt(g(t, "baselineEndDate", "baseline_end_date")),
+      atraso_base: num(g(t, "currentBaselineDelay", "current_baseline_delay")), atraso_data: num(g(t, "currentDateDelay", "current_date_delay")),
+      critica: !!g(t, "isCritical", "is_critical"),
+      kanban: (g(t, "kanbanSteps", "kanban_steps") || {}).name || null, kanban_status: (g(t, "kanbanSteps", "kanban_steps") || {}).status || null,
+      responsaveis: (t.responsibles || []).map((x: any) => x.name).filter(Boolean), etiquetas: (t.labels || []).map((x: any) => x.title).filter(Boolean),
+      colunas: Object.fromEntries(((g(t, "ganttColumns", "gantt_columns")) || []).filter((c: any) => c && c.name).map((c: any) => [c.name, c.value])),
+    };
+  });
+  return { id: String(p.id || p.project_id || id), nome: p.name, reference_date: dt(g(p, "referenceDate", "reference_date")), n_tasks: norm.length, tasks: norm };
+}
+// Sincroniza UM vínculo: upsert das tarefas (chave projeto_id+tarefa_id), marca as que sumiram, atualiza o vínculo.
+async function syncVinculo(admin: any, v: any) {
+  try {
+    const pr = await projetoTarefas(v.projeto_id);
+    const agora = new Date().toISOString();
+    const rows = pr.tasks.map((t: any) => ({
+      empreendimento_id: v.empreendimento_id, vinculo_id: v.id, fase: v.fase, projeto_id: v.projeto_id, tarefa_id: t.id,
+      wbs: t.wbs, nivel: t.nivel, nome: t.nome, ini: t.ini, fim: t.fim, duracao: t.duracao, custo: t.custo, prev: t.prev, real: t.real,
+      base_prev: t.base_prev, base_ini: t.base_ini, base_fim: t.base_fim, atraso_base: t.atraso_base, atraso_data: t.atraso_data,
+      critica: t.critica, kanban: t.kanban, kanban_status: t.kanban_status, responsaveis: t.responsaveis, etiquetas: t.etiquetas, colunas: t.colunas,
+      removida_em: null, atualizado_em: agora,
+    }));
+    for (let i = 0; i < rows.length; i += 200) {
+      const { error } = await admin.from("prevision_tarefa_auria").upsert(rows.slice(i, i + 200), { onConflict: "projeto_id,tarefa_id" });
+      if (error) throw new Error("gravar tarefas: " + error.message);
+    }
+    // sumiram no Prevision → removida_em (nunca apaga)
+    const ids = new Set(rows.map((r: any) => r.tarefa_id));
+    const { data: exist } = await admin.from("prevision_tarefa_auria").select("id,tarefa_id").eq("projeto_id", v.projeto_id).is("removida_em", null);
+    const sumiram = (exist || []).filter((e: any) => !ids.has(e.tarefa_id)).map((e: any) => e.id);
+    if (sumiram.length) await admin.from("prevision_tarefa_auria").update({ removida_em: agora }).in("id", sumiram);
+    await admin.from("prevision_vinculo_auria").update({ sincronizado_em: agora, sync_erro: null, n_tarefas: rows.length, projeto_nome: pr.nome || v.projeto_nome }).eq("id", v.id);
+    return { vinculo: v.id, fase: v.fase, projeto: pr.nome || v.projeto_nome, tarefas: rows.length, removidas: sumiram.length };
+  } catch (e) {
+    const msg = String((e as Error)?.message || e);
+    await admin.from("prevision_vinculo_auria").update({ sync_erro: msg.slice(0, 500) }).eq("id", v.id);
+    return { vinculo: v.id, fase: v.fase, projeto: v.projeto_nome, erro: msg };
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -70,23 +134,54 @@ Deno.serve(async (req) => {
       // Forma REAL da resposta (2026-09): { project:{ id, name, tasks?:[…], phases:[{…deprecated, tasks:[…]}] } },
       // campos em camelCase (expectedProgress, kanbanSteps, ganttColumns…). O schema publicado diz snake_case
       // e "tasks fora de phases" — aceita os dois.
-      const raw = await pvGet("/incorporation/api/v1/projects/" + encodeURIComponent(id));
-      const p = (raw && raw.project) || raw || {};
-      let tasks: any[] = Array.isArray(p.tasks) && p.tasks.length ? p.tasks : [];
-      if (!tasks.length && Array.isArray(p.phases)) p.phases.forEach((f: any) => { (f.tasks || []).forEach((t: any) => tasks.push(t)); });
-      const g = (t: any, camel: string, snake: string) => t[camel] !== undefined ? t[camel] : t[snake];
-      const norm = tasks.map((t: any) => ({
-        id: t.id, wbs: g(t, "wbsCode", "wbs_code"), nome: t.name,
-        ini: g(t, "startDate", "start_date"), fim: g(t, "endDate", "end_date"), duracao: t.duration, custo: t.cost,
-        prev: g(t, "expectedProgress", "expected_progress"), real: g(t, "realizedProgress", "realized_progress"),
-        base_prev: g(t, "baselineProgress", "baseline_progress"), base_ini: g(t, "baselineStartDate", "baseline_start_date"), base_fim: g(t, "baselineEndDate", "baseline_end_date"),
-        atraso_base: g(t, "currentBaselineDelay", "current_baseline_delay"), atraso_data: g(t, "currentDateDelay", "current_date_delay"),
-        critica: g(t, "isCritical", "is_critical"),
-        kanban: (g(t, "kanbanSteps", "kanban_steps") || {}).name, kanban_status: (g(t, "kanbanSteps", "kanban_steps") || {}).status,
-        responsaveis: (t.responsibles || []).map((x: any) => x.name), etiquetas: (t.labels || []).map((x: any) => x.title),
-        colunas: Object.fromEntries(((g(t, "ganttColumns", "gantt_columns")) || []).map((c: any) => [c.name, c.value])),
-      }));
-      return j({ ok: true, projeto: { id: p.id || p.project_id, nome: p.name, reference_date: g(p, "referenceDate", "reference_date"), n_tasks: norm.length, tasks: norm } });
+      const pr = await projetoTarefas(id);
+      return j({ ok: true, projeto: pr });
+    }
+    // ── Etapa 2 · passo 1: vínculo + sincronização ─────────────────────────
+    const empDoUsuario = async (empId: string) => {
+      const { data: e } = await admin.from("empreendimentos_auria").select("id,nome,codigo,empresa_id").eq("id", empId).maybeSingle();
+      if (!e) throw new Error("empreendimento não encontrado");
+      if (perfil.role !== "super_admin" && e.empresa_id !== perfil.empresa_id) throw new Error("empreendimento fora do seu grupo");
+      return e;
+    };
+    if (acao === "sugerir") {
+      const e = await empDoUsuario(String(body.empreendimento_id || ""));
+      const sigla = String(e.codigo || "").trim().toUpperCase();
+      const todos = lista(await pvGet("/incorporation/api/v1/projects"));
+      const { data: vincs } = await admin.from("prevision_vinculo_auria").select("id,projeto_id,projeto_nome,fase,padrao,ativo,sincronizado_em,n_tarefas,sync_erro").eq("empreendimento_id", e.id);
+      const vinculados = new Set((vincs || []).filter((v: any) => v.ativo).map((v: any) => v.projeto_id));
+      const sugest = todos.map((p: any) => ({ ...p, fase: faseDe(p.nome), bate: sigla ? segmentos(p.nome).includes(sigla) : false, vinculado: vinculados.has(p.id) }));
+      return j({ ok: true, sigla, sugeridos: sugest.filter((p: any) => p.bate || p.vinculado), todos: sugest, vinculos: vincs || [] });
+    }
+    if (acao === "vincular") {
+      const e = await empDoUsuario(String(body.empreendimento_id || ""));
+      const escolhidos: any[] = Array.isArray(body.projetos) ? body.projetos : [];
+      const ids = escolhidos.map((p) => String(p.id));
+      // desativa os que saíram (não apaga: tarefas espelho ficam com o vínculo inativo)
+      const { data: atuais } = await admin.from("prevision_vinculo_auria").select("id,projeto_id,padrao,ativo").eq("empreendimento_id", e.id);
+      for (const v of (atuais || [])) if (v.ativo && !ids.includes(v.projeto_id)) await admin.from("prevision_vinculo_auria").update({ ativo: false, padrao: false }).eq("id", v.id);
+      for (const p of escolhidos) {
+        const { error } = await admin.from("prevision_vinculo_auria").upsert({ empreendimento_id: e.id, projeto_id: String(p.id), projeto_nome: String(p.nome || ""), fase: faseDe(p.nome), plataforma: "incorporacao", ativo: true, criado_por: user.id }, { onConflict: "empreendimento_id,projeto_id" });
+        if (error) throw new Error("gravar vínculo: " + error.message);
+      }
+      // padrão: mantém o existente; senão EXE; senão o primeiro
+      const { data: ativos } = await admin.from("prevision_vinculo_auria").select("id,fase,padrao").eq("empreendimento_id", e.id).eq("ativo", true);
+      if (ativos && ativos.length && !ativos.some((v: any) => v.padrao)) {
+        const pad = ativos.find((v: any) => v.fase === "EXE") || ativos[0];
+        await admin.from("prevision_vinculo_auria").update({ padrao: true }).eq("id", pad.id);
+      }
+      // sincroniza na hora
+      const { data: vincs } = await admin.from("prevision_vinculo_auria").select("*").eq("empreendimento_id", e.id).eq("ativo", true);
+      const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
+      return j({ ok: true, vinculos: vincs || [], sync: res });
+    }
+    if (acao === "sync") {
+      let q = admin.from("prevision_vinculo_auria").select("*, empreendimentos_auria!inner(empresa_id)").eq("ativo", true);
+      if (body.empreendimento_id) { await empDoUsuario(String(body.empreendimento_id)); q = q.eq("empreendimento_id", String(body.empreendimento_id)); }
+      else if (perfil.role !== "super_admin") q = q.eq("empreendimentos_auria.empresa_id", perfil.empresa_id);
+      const { data: vincs, error } = await q; if (error) throw new Error(error.message);
+      const res = []; for (const v of (vincs || [])) res.push(await syncVinculo(admin, v));
+      return j({ ok: true, n: res.length, sync: res });
     }
     if (acao === "get") {
       // repasse controlado (só GET, só caminhos da API) para explorar o schema durante a integração
