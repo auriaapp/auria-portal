@@ -7,7 +7,7 @@
 //
 //  body: { acao:'ping' }                → { ok, incorporacao:[{id,nome}], obra:[{id,nome}] }
 //        { acao:'projetos' }            → idem (lista para o vínculo)
-//        { acao:'projeto', id }         → { ok, projeto:{ project_id, reference_date, tasks:[…] } }  (Incorporação)
+//        { acao:'projeto', id }         → { ok, projeto:{ id, nome, n_tasks, tasks:[{wbs,nome,ini,fim,prev,real,kanban,colunas…}] } }
 //        { acao:'get', path, query? }   → repasse controlado de um GET da API (explorar durante a integração)
 //  Verify JWT: ON. Quem pode: gerente ou super_admin.
 //  Secrets: PREVISION_API_KEY (+ opcional PREVISION_API_URL; padrão https://api.prevision.com.br).
@@ -67,9 +67,26 @@ Deno.serve(async (req) => {
     }
     if (acao === "projeto") {
       const id = String(body.id || "").replace(/[^A-Za-z0-9_-]/g, ""); if (!id) return j({ error: "id obrigatório" }, 400);
-      const p = await pvGet("/incorporation/api/v1/projects/" + encodeURIComponent(id));
-      const tasks = (p && p.tasks) || [];
-      return j({ ok: true, projeto: { project_id: p?.project_id, reference_date: p?.reference_date, n_tasks: tasks.length, tasks } });
+      // Forma REAL da resposta (2026-09): { project:{ id, name, tasks?:[…], phases:[{…deprecated, tasks:[…]}] } },
+      // campos em camelCase (expectedProgress, kanbanSteps, ganttColumns…). O schema publicado diz snake_case
+      // e "tasks fora de phases" — aceita os dois.
+      const raw = await pvGet("/incorporation/api/v1/projects/" + encodeURIComponent(id));
+      const p = (raw && raw.project) || raw || {};
+      let tasks: any[] = Array.isArray(p.tasks) && p.tasks.length ? p.tasks : [];
+      if (!tasks.length && Array.isArray(p.phases)) p.phases.forEach((f: any) => { (f.tasks || []).forEach((t: any) => tasks.push(t)); });
+      const g = (t: any, camel: string, snake: string) => t[camel] !== undefined ? t[camel] : t[snake];
+      const norm = tasks.map((t: any) => ({
+        id: t.id, wbs: g(t, "wbsCode", "wbs_code"), nome: t.name,
+        ini: g(t, "startDate", "start_date"), fim: g(t, "endDate", "end_date"), duracao: t.duration, custo: t.cost,
+        prev: g(t, "expectedProgress", "expected_progress"), real: g(t, "realizedProgress", "realized_progress"),
+        base_prev: g(t, "baselineProgress", "baseline_progress"), base_ini: g(t, "baselineStartDate", "baseline_start_date"), base_fim: g(t, "baselineEndDate", "baseline_end_date"),
+        atraso_base: g(t, "currentBaselineDelay", "current_baseline_delay"), atraso_data: g(t, "currentDateDelay", "current_date_delay"),
+        critica: g(t, "isCritical", "is_critical"),
+        kanban: (g(t, "kanbanSteps", "kanban_steps") || {}).name, kanban_status: (g(t, "kanbanSteps", "kanban_steps") || {}).status,
+        responsaveis: (t.responsibles || []).map((x: any) => x.name), etiquetas: (t.labels || []).map((x: any) => x.title),
+        colunas: Object.fromEntries(((g(t, "ganttColumns", "gantt_columns")) || []).map((c: any) => [c.name, c.value])),
+      }));
+      return j({ ok: true, projeto: { id: p.id || p.project_id, nome: p.name, reference_date: g(p, "referenceDate", "reference_date"), n_tasks: norm.length, tasks: norm } });
     }
     if (acao === "get") {
       // repasse controlado (só GET, só caminhos da API) para explorar o schema durante a integração
