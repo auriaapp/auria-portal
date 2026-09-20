@@ -1,59 +1,43 @@
 // ============================================================================
 //  prevision — ponte Auria ↔ Prevision (item 77). Etapa 1: DIAGNÓSTICO.
-//  A chave da API do Prevision fica SÓ aqui (secret PREVISION_API_KEY); o front
-//  nunca a vê. GraphQL, só leitura: POST https://api.prevision.com.br/graphql
-//  com header "UserAuthorization: token <chave>".
+//  Usa a API REST nova do Prevision (OpenAPI em https://api.prevision.com.br):
+//  header "Authorization: Bearer <token>" — token gerado em Configurações › API Token
+//  (Prevision Incorporação e/ou Obra; o token vale para as plataformas marcadas).
+//  A chave fica SÓ no secret PREVISION_API_KEY; o front nunca a vê. Só leitura.
 //
-//  body: { acao:'ping' }      → { ok, empresa:{id,nome} }              (a chave funciona?)
-//        { acao:'projetos' }  → { ok, projetos:[{id,nome,area,fase}] } (IDs para vincular)
-//        { acao:'query', query, variables }  → repasse controlado (só gerente/super_admin)
+//  body: { acao:'ping' }                → { ok, incorporacao:[{id,nome}], obra:[{id,nome}] }
+//        { acao:'projetos' }            → idem (lista para o vínculo)
+//        { acao:'projeto', id }         → { ok, projeto:{ project_id, reference_date, tasks:[…] } }  (Incorporação)
+//        { acao:'get', path, query? }   → repasse controlado de um GET da API (explorar durante a integração)
 //  Verify JWT: ON. Quem pode: gerente ou super_admin.
-//  Secrets: PREVISION_API_KEY (+ SUPABASE_URL/ANON/SERVICE_ROLE, já existentes).
-//  A chave pode ser a da conta (24 chars) OU a de uma API criada por módulo (ex.:
-//  Incorporação) — a função tenta "UserAuthorization: token X" e "Authorization: Bearer X".
+//  Secrets: PREVISION_API_KEY (+ opcional PREVISION_API_URL; padrão https://api.prevision.com.br).
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY     = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const PV_KEY       = (Deno.env.get("PREVISION_API_KEY") || "").trim().replace(/^token\s+/i, "");
-const PV_URL       = (Deno.env.get("PREVISION_API_URL") || "https://api.prevision.com.br/graphql").trim();
+const PV_KEY       = (Deno.env.get("PREVISION_API_KEY") || "").trim().replace(/^(token|bearer)\s+/i, "").replace(/^["']|["']$/g, "");
+const PV_URL       = (Deno.env.get("PREVISION_API_URL") || "https://api.prevision.com.br").trim().replace(/\/+$/, "");
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, "Content-Type": "application/json" } });
 
-// A chave pode vir em dois formatos: a da conta (24 chars, header "UserAuthorization: token X")
-// ou a gerada por módulo/API específica (token longo). Tenta o header documentado e, se der
-// 401/403, tenta "Authorization: Bearer X"; lembra qual funcionou nesta execução.
-let MODO_AUTH: "UserAuthorization" | "Bearer" | null = null;
-function cabecalhos(modo: "UserAuthorization" | "Bearer") {
-  const h: Record<string, string> = { "Accept": "application/json", "Content-Type": "application/json" };
-  if (modo === "UserAuthorization") h["UserAuthorization"] = "token " + PV_KEY; else h["Authorization"] = "Bearer " + PV_KEY;
-  return h;
-}
-async function gql(query: string, variables: Record<string, unknown> = {}) {
-  const modos: Array<"UserAuthorization" | "Bearer"> = MODO_AUTH ? [MODO_AUTH] : ["UserAuthorization", "Bearer"];
-  let ultimoErro = "";
-  for (const modo of modos) {
-    const r = await fetch(PV_URL, { method: "POST", headers: cabecalhos(modo), body: JSON.stringify({ query, variables }) });
-    const txt = await r.text();
-    let body: any = null; try { body = JSON.parse(txt); } catch (_) { /* não-JSON */ }
-    // 401/403 = chave recusada neste formato → tenta o outro. 429 SEM header UserAuthorization é o
-    // "header ausente" do gateway deles (não é limite de uso) — guarda o 1º erro real para a mensagem.
-    if (r.status === 401 || r.status === 403 || (r.status === 429 && modo === "Bearer")) { if (!ultimoErro) ultimoErro = "HTTP " + r.status + ": " + (body?.error?.message || txt.slice(0, 160)); continue; }
-    if (!r.ok) throw new Error("Prevision HTTP " + r.status + ": " + (body?.error?.message || body?.errors?.[0]?.message || txt.slice(0, 200)));
-    if (body?.errors?.length) throw new Error("Prevision GraphQL: " + body.errors.map((e: any) => e.message).join("; "));
-    MODO_AUTH = modo;
-    return body?.data;
+// GET na API REST. Devolve o JSON ou lança erro com o status e a mensagem do Prevision.
+async function pvGet(path: string, query?: Record<string, string>) {
+  const url = new URL(PV_URL + path);
+  Object.entries(query || {}).forEach(([k, v]) => { if (v != null && v !== "") url.searchParams.set(k, String(v)); });
+  const r = await fetch(url.toString(), { headers: { "Accept": "application/json", "Authorization": "Bearer " + PV_KEY } });
+  const txt = await r.text();
+  let body: any = null; try { body = JSON.parse(txt); } catch (_) { /* não-JSON */ }
+  if (!r.ok) {
+    const msg = body?.error?.message || body?.message || body?.detail || txt.slice(0, 200);
+    if (r.status === 401 || r.status === 403) throw new Error("Prevision recusou o token (HTTP " + r.status + (msg ? ": " + msg : "") + "). Confira se o token foi criado para esta plataforma (Incorporação/Obra) e se não expirou.");
+    throw new Error("Prevision HTTP " + r.status + (msg ? ": " + msg : "") + " em " + path);
   }
-  throw new Error("Prevision recusou a chave (" + ultimoErro + "). Endpoint testado: " + PV_URL + " — confira se a chave é desta API (conta da obra) ou se o módulo onde ela foi gerada usa outro endereço.");
+  return body;
 }
-
-const Q_PING = `query Ping { me { id name } }`;
-const Q_PROJETOS = `query Projects($first: Int, $after: String) {
-  me { id name projectsPage(first: $first, after: $after) {
-    totalCount pageInfo { hasNextPage endCursor } nodes { id name area phase } } } }`;
+const lista = (o: any) => ((o && o.projects) || []).map((p: any) => ({ id: String(p.id), nome: p.name }));
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -68,31 +52,29 @@ Deno.serve(async (req) => {
     if (!perfil || !["gerente", "super_admin"].includes(perfil.role)) return j({ error: "só a gestão usa a integração com o Prevision" }, 403);
 
     if (!PV_KEY) return j({ ok: false, error: "PREVISION_API_KEY não configurada nos Secrets" }, 500);
-    if (/\s/.test(PV_KEY) || /^["']|["']$/.test(PV_KEY)) return j({ ok: false, error: "PREVISION_API_KEY contém espaço/quebra de linha ou aspas — cole só o código, numa linha. Tamanho atual: " + PV_KEY.length }, 500);
+    if (/\s/.test(PV_KEY)) return j({ ok: false, error: "PREVISION_API_KEY contém espaço/quebra de linha — cole só o token, numa linha. Tamanho atual: " + PV_KEY.length }, 500);
 
     const body = await req.json().catch(() => ({}));
     const acao = String(body.acao || "ping");
 
-    if (acao === "ping") {
-      const d = await gql(Q_PING);
-      return j({ ok: true, empresa: { id: d?.me?.id, nome: d?.me?.name }, auth: MODO_AUTH, chave_len: PV_KEY.length });
+    if (acao === "ping" || acao === "projetos") {
+      // As duas plataformas: o token pode valer para uma só — a outra devolve 401/403 e vira aviso, não erro.
+      const out: any = { ok: true, chave_len: PV_KEY.length, incorporacao: [], obra: [], avisos: [] };
+      try { out.incorporacao = lista(await pvGet("/incorporation/api/v1/projects")); } catch (e) { out.avisos.push("Incorporação: " + (e as Error).message); }
+      try { out.obra = lista(await pvGet("/construction/api/v1/projects")); } catch (e) { out.avisos.push("Obra: " + (e as Error).message); }
+      if (!out.incorporacao.length && !out.obra.length) { out.ok = false; out.error = out.avisos.join(" | ") || "Nenhum projeto acessível com este token."; }
+      return j(out);
     }
-    if (acao === "projetos") {
-      const out: any[] = []; let after = ""; let total = 0;
-      for (let pag = 0; pag < 20; pag++) {
-        const d = await gql(Q_PROJETOS, { first: 50, after });
-        const p = d?.me?.projectsPage; if (!p) break;
-        total = p.totalCount || 0;
-        (p.nodes || []).forEach((n: any) => out.push({ id: n.id, nome: n.name, area: n.area, fase: n.phase }));
-        if (!p.pageInfo?.hasNextPage) break; after = p.pageInfo.endCursor;
-      }
-      return j({ ok: true, empresa: { nome: (await gql(Q_PING))?.me?.name }, auth: MODO_AUTH, total, projetos: out });
+    if (acao === "projeto") {
+      const id = String(body.id || "").replace(/[^A-Za-z0-9_-]/g, ""); if (!id) return j({ error: "id obrigatório" }, 400);
+      const p = await pvGet("/incorporation/api/v1/projects/" + encodeURIComponent(id));
+      const tasks = (p && p.tasks) || [];
+      return j({ ok: true, projeto: { project_id: p?.project_id, reference_date: p?.reference_date, n_tasks: tasks.length, tasks } });
     }
-    if (acao === "query") {
-      // repasse controlado para explorar o schema durante a integração (só leitura; a API do Prevision já é só leitura)
-      const q = String(body.query || ""); if (!q || q.length > 20000 || /\bmutation\b/i.test(q)) return j({ error: "query inválida" }, 400);
-      const d = await gql(q, body.variables || {});
-      return j({ ok: true, data: d });
+    if (acao === "get") {
+      // repasse controlado (só GET, só caminhos da API) para explorar o schema durante a integração
+      const path = String(body.path || ""); if (!/^\/(incorporation|construction|construction-schedule|cost-management)\/api\/v1\/[A-Za-z0-9_\-\/{}]+$/.test(path)) return j({ error: "path inválido" }, 400);
+      return j({ ok: true, data: await pvGet(path, body.query || {}) });
     }
     return j({ error: "acao desconhecida" }, 400);
   } catch (e) {
