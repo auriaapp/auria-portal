@@ -271,6 +271,22 @@
   </div>
 </div>
 
+<!-- MODAL: vincular NF externa a parcela (item 40 fase 2) -->
+<div class="modalbg" id="modalVinc" onclick="if(event.target===this)vincFechar()">
+  <div class="modalcard" style="max-width:760px">
+    <button class="x" onclick="vincFechar()">&times;</button>
+    <h3 style="margin-bottom:2px;color:var(--navy)">Vincular NF a uma parcela</h3>
+    <div class="cd-hint" id="vincSub" style="margin-bottom:12px"></div>
+    <div id="vincLista" style="max-height:52vh;overflow:auto;border:1px solid var(--line,#E5E9F0);border-radius:10px"></div>
+    <div class="cd-hint" style="margin-top:8px">A parcela escolhida passa a <b>faturada</b> (ou <b>paga</b>, se a NF já estiver paga). Dá para desfazer depois com “Desvincular”.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="mini" onclick="vincFechar()">Cancelar</button>
+      <button class="mini go" id="vincSalvar" onclick="vincSalvar()" disabled>Vincular</button>
+    </div>
+    <div class="msg-err" id="vincErr" style="display:none;margin-top:10px;color:var(--err);font-size:12.5px"></div>
+  </div>
+</div>
+
 <!-- MODAL: resumo do contrato (todas as parcelas) -->
 <div class="modalbg" id="modalCtr" onclick="if(event.target===this)fecharResumo()">
   <div class="modalcard">
@@ -446,8 +462,11 @@ function render(){
       acoes.push(`<button class="mini" title="Desfazer (voltar para Encaminhada)" onclick="mudar('${n.id}','encaminhada')">↩ Voltar</button>`);
     }
     if(n.contrato_id) acoes.push(`<button class="mini" title="Resumo do contrato (todas as parcelas)" onclick="abrirResumoContrato('${n.contrato_id}')">📋</button>`);
+    // Item 40 fase 2: NF que chegou pelo link público → vincular a uma parcela do contrato (ou desfazer)
+    if(!n.parcela_id&&!n.contrato_id&&n.status!=='cancelada') acoes.push(`<button class="mini" title="Vincular esta NF a uma parcela de contrato" onclick="vincAbrir('${n.id}')">🔗 Vincular</button>`);
+    else if(n.origem==='externa'&&n.parcela_id) acoes.push(`<button class="mini" title="Desfazer o vínculo com a parcela" onclick="vincDesfazer('${n.id}')">⛓ Desvincular</button>`);
     return `<tr class="${n.status==='enviada'?'act':''}">
-      <td class="emp" title="${esc(n.construtora||'')}">${esc(n.empreendimento)}${n.origem==='externa'?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06" title="Enviada pelo link público, sem contrato/parcela vinculada">sem contrato</span>':''}</td><td class="mono">${esc(n.disciplina||'—')}</td><td title="${esc(n.fornecedor_cnpj?('CNPJ '+n.fornecedor_cnpj):'')}">${esc(n.projetista||'—')}</td>
+      <td class="emp" title="${esc(n.construtora||'')}">${esc(n.empreendimento)}${n.origem==='externa'&&!n.parcela_id?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06" title="Enviada pelo link público, sem contrato/parcela vinculada">sem contrato</span>':(n.origem==='externa'?' <span class="st" style="background:rgba(59,130,246,.14);color:#1E40AF" title="Enviada pelo link público e vinculada a uma parcela pelo financeiro">vinculada</span>':'')}</td><td class="mono">${esc(n.disciplina||'—')}</td><td title="${esc(n.fornecedor_cnpj?('CNPJ '+n.fornecedor_cnpj):'')}">${esc(n.projetista||'—')}</td>
       <td class="mono" title="${esc(n.parcela_txt||'')}">${n.parcela_numero||(n.parcela_txt?esc(n.parcela_txt).slice(0,18)+'…':'—')}</td><td class="num" title="${esc(n.conteudo||'')}">${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</td>
       <td class="num">${brl(n.valor)}</td><td class="mono">${dbr(n.emitida_em)}</td>
       <td><span class="st st-${n.status}">${stLbl(n.status)}</span></td>
@@ -764,15 +783,56 @@ async function janCarregar(){
   } else {
     $('janHint').textContent='fechado · ninguém consegue enviar NF';
     st.innerHTML=`<span class="st st-cancelada">FECHADO</span> ${proxima?('próxima abertura <b class="mono">'+janFmt(proxima.abre_em)+'</b> a <b class="mono">'+janFmt(proxima.fecha_em)+'</b>'):(ultima?('última janela encerrou em <b class="mono">'+janFmt(ultima.fecha_em)+'</b>'):'nenhuma janela criada ainda')}`;
-    bt.innerHTML=`<button class="mini go" onclick="janAbrir()">Abrir recebimento</button>`+(proxima?`<button class="mini" onclick="janFecharAgora('${proxima.id}','cancelar')">Cancelar próxima</button>`:'');
+    bt.innerHTML=`<button class="mini go" onclick="janAbrir()">Abrir recebimento</button>`+(ultima&&!proxima?`<button class="mini" title="Abre o formulário já preenchido com a última janela deslocada um mês (mesma mensagem e e-mails)" onclick="janAbrir('${ultima.id}')">↻ Repetir última (mês seguinte)</button>`:'')+(proxima?`<button class="mini" onclick="janFecharAgora('${proxima.id}','cancelar')">Cancelar próxima</button>`:'');
   }
 }
+// ═══ Item 40 fase 2: vincular NF externa a parcela ═══
+let VINC_NF=null, VINC_SEL=null;
+async function vincAbrir(nfId){
+  const n=NFS.find(x=>x.id===nfId); if(!n) return; VINC_NF=nfId; VINC_SEL=null;
+  $('vincErr').style.display='none'; $('vincSalvar').disabled=true;
+  $('vincSub').innerHTML=`NF <b>${esc(n.nf_numero||'—')}</b> · ${brl(n.valor)} · ${esc(n.projetista||'—')}${n.construtora?' · '+esc(n.construtora):''}${n.empreendimento&&n.empreendimento_id?' · '+esc(n.empreendimento):''}${n.parcela_txt?' · parcela informada: “'+esc(n.parcela_txt)+'”':''}`;
+  $('vincLista').innerHTML='<div class="empty">Carregando parcelas…</div>';
+  $('modalVinc').classList.add('on');
+  try{
+    const r=await sb.rpc('fin_parcelas_vinculaveis',{p_nf:nfId}); if(r.error) throw r.error;
+    const L=r.data||[];
+    if(!L.length){ $('vincLista').innerHTML='<div class="empty">Nenhuma parcela em aberto (a faturar / solicitada / autorizada) nos contratos ativos desta empresa.</div>'; return; }
+    $('vincLista').innerHTML=L.map(p=>`<label style="display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid #EEF2F7;cursor:pointer;font-size:12.5px${p.sugerida?';background:rgba(232,150,10,.07)':''}">
+      <input type="radio" name="vincP" value="${p.parcela_id}" onchange="VINC_SEL=this.value;$('vincSalvar').disabled=false">
+      <span><b class="mono" style="color:var(--navy)">${esc(p.empreendimento)}</b> · ${esc(p.disciplina||'')} · ${esc(p.projetista||'')}${p.sugerida?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06">sugerida</span>':''}<br><span style="color:var(--mut)">${esc(p.contrato||'')} · parcela ${p.numero}${p.descricao?' · '+esc(p.descricao):''}${p.vencimento?' · venc. '+dbr(p.vencimento):''}</span></span>
+      <span style="text-align:right"><b class="mono">${brl(p.valor)}</b><br><span class="st" style="background:${pstCor(p.status)}22;color:${pstCor(p.status)}">${pstLbl(p.status)}</span></span></label>`).join('');
+  }catch(e){ $('vincLista').innerHTML='<div class="empty">Erro: '+esc(e.message||e)+' (rode supabase_nf_janela_p2.sql)</div>'; }
+}
+function vincFechar(){ $('modalVinc').classList.remove('on'); }
+async function vincSalvar(){
+  if(!VINC_NF||!VINC_SEL) return; const b=$('vincSalvar'); b.disabled=true; b.textContent='Vinculando…'; $('vincErr').style.display='none';
+  try{ const r=await sb.rpc('nf_vincular_parcela',{p_nf:VINC_NF,p_parcela:VINC_SEL}); if(r.error) throw r.error; vincFechar(); FIN_CTRS=null; await carregar(); }
+  catch(e){ $('vincErr').textContent=e.message||String(e); $('vincErr').style.display=''; }
+  b.disabled=false; b.textContent='Vincular';
+}
+async function vincDesfazer(nfId){
+  if(!confirm('Desfazer o vínculo desta NF com a parcela? A parcela volta ao status anterior.')) return;
+  try{ const r=await sb.rpc('nf_desvincular_parcela',{p_nf:nfId}); if(r.error) throw r.error; FIN_CTRS=null; await carregar(); }
+  catch(e){ alert('Não foi possível: '+(e.message||e)); }
+}
 function janCopiar(u){ navigator.clipboard.writeText(u).then(()=>alert('Link copiado.')).catch(()=>prompt('Copie o link:',u)); }
-function janAbrir(){
+function janAbrir(repetirId){
   const h=new Date(); const p=x=>String(x).padStart(2,'0'); const loc=d=>d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
-  const fim=new Date(h.getTime()+5*864e5); fim.setHours(18,0,0,0);
-  $('janComp').value=h.getFullYear()+'-'+p(h.getMonth()+1); $('janAbre').value=loc(h); $('janFecha').value=loc(fim);
-  $('janMsg').value=''; $('janEmails').value=''; $('janExige').checked=false; $('janErr').style.display='none';
+  const base=repetirId?JANELAS.find(j=>j.id===repetirId):null;
+  if(base){
+    // Item 40 fase 2: recorrência sugerida — mesma janela, um mês depois (o financeiro confere e confirma)
+    const mais1=d=>{ const x=new Date(d); x.setMonth(x.getMonth()+1); return x; };
+    const a=mais1(base.abre_em), f=mais1(base.fecha_em);
+    $('janComp').value=base.competencia?(()=>{ const m=/^(\d{4})-(\d{2})$/.exec(base.competencia); if(!m) return base.competencia; const d=new Date(+m[1],+m[2],1); return d.getFullYear()+'-'+p(d.getMonth()+1); })():(a.getFullYear()+'-'+p(a.getMonth()+1));
+    $('janAbre').value=loc(a<h?h:a); $('janFecha').value=loc(f);
+    $('janMsg').value=base.mensagem||''; $('janEmails').value=(base.emails_extra||[]).join('\n'); $('janExige').checked=!!base.exige_contrato;
+  } else {
+    const fim=new Date(h.getTime()+5*864e5); fim.setHours(18,0,0,0);
+    $('janComp').value=h.getFullYear()+'-'+p(h.getMonth()+1); $('janAbre').value=loc(h); $('janFecha').value=loc(fim);
+    $('janMsg').value=''; $('janEmails').value=''; $('janExige').checked=false;
+  }
+  $('janErr').style.display='none';
   $('modalJan').classList.add('on');
 }
 function janFechar(){ $('modalJan').classList.remove('on'); }
