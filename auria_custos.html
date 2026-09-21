@@ -341,6 +341,7 @@ async function boot(){
 }
 
 async function carregar(){
+  janCarregar();   // bloco da janela é independente da lista (se nf_listar falhar, o link de envio continua visível)
   try{
     const { data, error } = await sb.rpc('nf_listar', {});
     if(error) throw error;
@@ -354,7 +355,6 @@ async function carregar(){
     try{ const cs=await sb.from('construtoras_auria').select('nome,sigla'); (cs.data||[]).forEach(c=>{ if(c.sigla) SIGLAS[c.nome]=String(c.sigla).toUpperCase(); }); }catch(e){}
     renderRail();
     render();
-    janCarregar();
     if($('viewPastas').style.display!=='none') renderPastas();
   }catch(e){
     $('tbody').innerHTML='<tr><td colspan="10" class="empty">Erro: '+esc(e.message||e)+'</td></tr>';
@@ -778,11 +778,13 @@ async function janCarregar(){
   if(aberta){
     $('janHint').textContent='janela aberta · projetistas e link público aceitam NF';
     st.innerHTML=`<span class="st st-enviada">ABERTA</span> até <b class="mono">${janFmt(aberta.fecha_em)}</b>${aberta.competencia?' · competência <b class="mono">'+esc(aberta.competencia)+'</b>':''}${aberta.mensagem?'<div class="cd-hint" style="margin-top:3px">'+esc(aberta.mensagem)+'</div>':''}
-      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap"><input class="cd-sel mono" readonly value="${esc(janLink(aberta))}" style="flex:1;min-width:260px;font-size:11.5px" onclick="this.select()"><button class="mini" onclick="janCopiar('${esc(janLink(aberta))}')">Copiar link</button></div>`;
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap"><span class="cd-hint" style="white-space:nowrap">Link de envio para projetistas:</span><input class="cd-sel mono" readonly value="${esc(janLink(aberta))}" style="flex:1;min-width:260px;font-size:11.5px" onclick="this.select()"><button class="mini go" onclick="janCopiar('${esc(janLink(aberta))}')">Copiar link</button><a class="mini" href="${esc(janLink(aberta))}" target="_blank" rel="noopener">Abrir</a></div>`;
     bt.innerHTML=`<button class="mini" onclick="janFecharAgora('${aberta.id}')">Fechar agora</button>`;
   } else {
     $('janHint').textContent='fechado · ninguém consegue enviar NF';
-    st.innerHTML=`<span class="st st-cancelada">FECHADO</span> ${proxima?('próxima abertura <b class="mono">'+janFmt(proxima.abre_em)+'</b> a <b class="mono">'+janFmt(proxima.fecha_em)+'</b>'):(ultima?('última janela encerrou em <b class="mono">'+janFmt(ultima.fecha_em)+'</b>'):'nenhuma janela criada ainda')}`;
+    st.innerHTML=`<span class="st st-cancelada">FECHADO</span> ${proxima?('próxima abertura <b class="mono">'+janFmt(proxima.abre_em)+'</b> a <b class="mono">'+janFmt(proxima.fecha_em)+'</b>'):(ultima?('última janela encerrou em <b class="mono">'+janFmt(ultima.fecha_em)+'</b>'):'nenhuma janela criada ainda')}`
+      +(proxima?`<div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap"><span class="cd-hint" style="white-space:nowrap">Link de envio (aceita a partir de ${janFmt(proxima.abre_em)}):</span><input class="cd-sel mono" readonly value="${esc(janLink(proxima))}" style="flex:1;min-width:260px;font-size:11.5px" onclick="this.select()"><button class="mini" onclick="janCopiar('${esc(janLink(proxima))}')">Copiar link</button></div>`
+                :`<div class="cd-hint" style="margin-top:6px">O link de envio para projetistas é gerado ao abrir o recebimento — projetistas cadastrados enviam pelo Painel do Projetista; os demais, pelo link.</div>`);
     bt.innerHTML=`<button class="mini go" onclick="janAbrir()">Abrir recebimento</button>`+(ultima&&!proxima?`<button class="mini" title="Abre o formulário já preenchido com a última janela deslocada um mês (mesma mensagem e e-mails)" onclick="janAbrir('${ultima.id}')">↻ Repetir última (mês seguinte)</button>`:'')+(proxima?`<button class="mini" onclick="janFecharAgora('${proxima.id}','cancelar')">Cancelar próxima</button>`:'');
   }
 }
