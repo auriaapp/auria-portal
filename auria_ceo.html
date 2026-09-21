@@ -337,6 +337,7 @@ tr:hover td{background:var(--gray-light)}
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <select id="usoGrupo" onchange="usoRender()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit"><option value="">Todos os grupos</option></select>
               <label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="usoArq" onchange="usoRender()"> incluir arquivados</label>
+              <button class="btn-secondary" id="usoMedirFrag" style="display:none" onclick="usoMedirFrag()" title="Mede no R2 os modelos 3D convertidos (.frag) que ainda não têm tamanho gravado (74b)">&#128207; Medir .frag</button>
               <button class="btn-secondary" onclick="usoCotasAbrir()">&#9881; Cotas e preços</button>
               <button class="btn-primary" onclick="usoCarregar()">&#8635; Atualizar</button>
             </div>
@@ -976,9 +977,20 @@ function usoRender(){
     });
   });
   setHTML('usoTabela', emps.length ? '<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+th+rows+'</table>' : '<div style="padding:12px;color:var(--text-soft)">Nenhum empreendimento.</div>');
-  setText('usoNota', 'Storage por bucket: '+Object.entries(bk).map(([b,v])=>b+' '+fmtB(v.bytes)).join(' · ')+' · modelos 3D convertidos (.frag) ainda não contados · '+new Date(USO.gerado_em).toLocaleString('pt-BR'));
+  const fragTxt=(T.frag_bytes!=null)?(' · modelos 3D convertidos (.frag): '+fmtB(T.frag_bytes||0)+(T.frag_sem_tamanho?' (<b>'+T.frag_sem_tamanho+'</b> ainda sem tamanho — use "Medir .frag")':'')):' · modelos 3D convertidos (.frag) ainda não contados (rode supabase_ceo_uso_frag.sql + supabase_ceo_uso.sql)';
+  setHTML('usoNota', 'Storage por bucket: '+Object.entries(bk).map(([b,v])=>esc(b)+' '+fmtB(v.bytes)).join(' · ')+fragTxt+' · '+new Date(USO.gerado_em).toLocaleString('pt-BR'));
+  const bm=document.getElementById('usoMedirFrag'); if(bm) bm.style.display=(T.frag_sem_tamanho>0)?'':'none';
   const tabs=((USO.db||{}).tabelas||[]).slice(0,12);
   setHTML('usoDb', tabs.length ? '<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+tabs.map(t=>'<tr style="border-top:1px solid #F1F5F9"><td style="padding:5px 4px;font-family:ui-monospace,Consolas,monospace">'+esc(t.nome)+'</td><td style="text-align:right">'+fmtB(t.bytes)+'</td><td style="width:40%;padding-left:12px"><div style="height:6px;background:#EEF2F7;border-radius:3px"><div style="height:100%;width:'+Math.min(100,Number(t.bytes)/Number(tabs[0].bytes||1)*100).toFixed(1)+'%;background:var(--navy);border-radius:3px"></div></div></td></tr>').join('')+'</table>' : '—');
+}
+async function usoMedirFrag(){
+  const b=document.getElementById('usoMedirFrag'); b.disabled=true; b.textContent='Medindo…';
+  try{ let tot=0, med=0, rodadas=0; while(rodadas++<10){ const r=await sb.functions.invoke('cde-r2',{ body:{ action:'frag-sizes' } });
+      if(r.error){ let m=r.error.message; try{ const jb=await r.error.context.json(); if(jb&&jb.error) m=jb.error; }catch(_){} throw new Error(m); }
+      const d=r.data||{}; if(d.error) throw new Error(d.error); med+=d.medidos||0; tot+=d.bytes||0; if(!d.restantes) break; }
+    showToast(med+' modelo(s) medido(s) · '+fmtB(tot),'green'); await usoCarregar(); }
+  catch(e){ showToast('Não mediu: '+(e.message||e),'red'); }
+  b.disabled=false; b.innerHTML='&#128207; Medir .frag';
 }
 function usoCotasAbrir(){ const P=(USO&&USO.cotas)||{}; document.getElementById('ct_sb').value=P.storage_supabase_gb||''; document.getElementById('ct_psb').value=P.preco_gb_supabase||''; document.getElementById('ct_r2').value=P.r2_gb||''; document.getElementById('ct_pr2').value=P.preco_gb_r2||''; document.getElementById('ct_db').value=P.db_gb||''; document.getElementById('ct_fx').value=P.cambio||''; document.getElementById('modalCotas').classList.add('open'); }
 async function usoCotasSalvar(){
