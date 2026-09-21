@@ -90,6 +90,8 @@ body.embed.light .header{background:#fff;border-bottom:1px solid #E2E8F0}
   <h1>📋 Kanban de Tarefas</h1>
   <button class="btn-primary" onclick="abrirModal()">+ Nova Tarefa</button>
   <button class="btn-sec" onclick="carregar()">↺ Atualizar</button>
+  <label class="btn-sec" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Traz para o quadro as tarefas do cronograma em que você é o responsável (fase padrão do Prevision). Elas ganham a etiqueta 'cronograma', prazo = fim da tarefa, e fecham sozinhas quando o Prevision as finaliza."><input type="checkbox" id="kc-on" onchange="kcToggle(this.checked)" style="cursor:pointer"> Tarefas do cronograma</label>
+  <span id="kc-info" style="font-size:11px;color:#7FB3D3"></span>
   <button class="btn-sec" id="thBtn" onclick="toggleTheme()" style="margin-left:auto" title="Alternar tema">☾ Escuro</button>
 </div>
 <div class="filterbar">
@@ -186,7 +188,7 @@ function card(t){
   return `<div class="card" draggable="true" id="c${t.id}" style="border-left-color:${cor}"
     ondragstart="ds(event,'${t.id}')" ondragend="de(event)">
     <div class="card-title">${t.titulo||'Sem título'}</div>
-    <div class="card-meta"><span class="badge b-${p.toLowerCase().replace('é','e')}">${p}</span>${prazoHtml}</div>
+    <div class="card-meta"><span class="badge b-${p.toLowerCase().replace('é','e')}">${p}</span>${prazoHtml}${t.origem==='cronograma'?`<span class="badge" style="background:#1E3A5F;color:#fff" title="Tarefa do cronograma (Prevision) em que você é o responsável">cronograma</span>${t.empreendimento_id?`<a class="btn-ic" style="width:auto;padding:0 6px;text-decoration:none" href="cronograma.html?emp=${t.empreendimento_id}" target="_blank" title="Abrir no Gantt">🗓</a>`:''}`:''}</div>
     ${t.descricao?`<div style="font-size:11px;color:#7FB3D3;margin-top:5px;overflow:hidden;max-height:38px;line-height:1.4">${t.descricao}</div>`:''}
     <div class="card-footer"><button class="btn-ic" onclick="editar('${t.id}')">✏</button></div>
   </div>`;
@@ -202,9 +204,10 @@ function tdrop(e){
   if(!id)return;
   var t=tarefas.find(x=>String(x.id)===String(id));
   var nome=t?(t.titulo||'esta tarefa'):'esta tarefa';
-  if(confirm('Excluir "'+nome+'"?')){
+  if(confirm(t&&t.origem==='cronograma'?'Descartar "'+nome+'" do quadro? (ela não volta na próxima sincronização)':'Excluir "'+nome+'"?')){
     tarefas=tarefas.filter(x=>String(x.id)!==String(id));renderBoard();
-    _sb.from('tarefas').delete().eq('id',id).then(function(){});
+    if(t&&t.origem==='cronograma') _sb.from('tarefas').update({ignorada:true}).eq('id',id).then(function(){});
+    else _sb.from('tarefas').delete().eq('id',id).then(function(){});
   }
   dragId=null;
 }
@@ -249,7 +252,8 @@ async function salvar(){
 }
 async function deletar(){
   if(!editId||!confirm('Excluir tarefa?'))return;
-  try{ await _sb.from('tarefas').delete().eq('id',editId); }catch(e){}
+  var tt=tarefas.find(x=>String(x.id)===String(editId));
+  try{ if(tt&&tt.origem==='cronograma') await _sb.from('tarefas').update({ignorada:true}).eq('id',editId); else await _sb.from('tarefas').delete().eq('id',editId); }catch(e){}
   tarefas=tarefas.filter(x=>String(x.id)!==String(editId));renderBoard();fechar();
 }
 var _sb=window.supabase.createClient('https://sabzccokueowpromwxdg.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
@@ -258,8 +262,29 @@ async function carregar(){
   const {data}=await _sb.auth.getSession();
   if(!data||!data.session){ tarefas=[]; renderBoard(); return; }
   KUSER=data.session.user;
+  await kcCarregarPref();
   const r=await _sb.from('tarefas').select('*').eq('analista_id',KUSER.id).order('criado_em',{ascending:false});
-  tarefas=r.data||[]; renderBoard();
+  tarefas=(r.data||[]).filter(t=>!t.ignorada); renderBoard();
+}
+// ── Item 81: tarefas do cronograma (Prevision) no quadro — opção do analista ──
+var KC_ON=false;
+async function kcCarregarPref(){
+  try{ const r=await _sb.from('kanban_pref_auria').select('cronograma').eq('usuario_id',KUSER.id).maybeSingle(); KC_ON=!!(r.data&&r.data.cronograma); }catch(e){ KC_ON=false; }
+  const cb=document.getElementById('kc-on'); if(cb) cb.checked=KC_ON;
+  if(KC_ON) await kcSync();
+}
+async function kcSync(){
+  const info=document.getElementById('kc-info'); if(info) info.textContent='sincronizando cronograma…';
+  try{ const r=await _sb.rpc('kanban_sync_cronograma'); if(r.error) throw r.error; const d=r.data||{};
+    if(info) info.textContent=d.ok===false?(d.erro||'não sincronizou'):(d.ativo?('cronograma: '+(d.novos||0)+' novas · '+(d.atualizados||0)+' atualizadas · '+(d.concluidos||0)+' concluídas'):''); }
+  catch(e){ if(info) info.textContent='cronograma: '+(e.message||e)+(String(e.message||'').match(/does not exist|schema cache/)?' — rode supabase_kanban_cronograma.sql':''); }
+}
+async function kcToggle(on){
+  KC_ON=!!on;
+  try{ const r=await _sb.from('kanban_pref_auria').upsert({ usuario_id:KUSER.id, cronograma:KC_ON, atualizado_em:new Date().toISOString() }); if(r.error) throw r.error; }
+  catch(e){ alert('Não salvou a opção: '+(e.message||e)); return; }
+  if(KC_ON){ await kcSync(); const r=await _sb.from('tarefas').select('*').eq('analista_id',KUSER.id).order('criado_em',{ascending:false}); tarefas=(r.data||[]).filter(t=>!t.ignorada); renderBoard(); }
+  else { const info=document.getElementById('kc-info'); if(info) info.textContent='os cartões do cronograma ficam no quadro; desmarque para não trazer novos'; }
 }
 
 document.addEventListener('DOMContentLoaded',carregar);
