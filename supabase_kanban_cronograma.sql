@@ -149,3 +149,92 @@ end $$;
 grant execute on function public.kanban_sync_cronograma() to authenticated;
 
 select 'kanban_add_cronograma' as item, exists(select 1 from pg_proc where proname='kanban_add_cronograma') as ok;
+
+-- ── 81c: coluna do Kanban segue a SITUAÇÃO do Prevision ─────────────────────────────────────────
+--  Finalizado/finished → Concluído · Fazendo/doing → Em andamento · revisão → Em revisão · pendente/bloqueado →
+--  Pendente · demais → A fazer. origem_status guarda a última coluna vinda do Prevision: o cartão só é movido
+--  quando a situação LÁ muda; se o analista moveu à mão, fica onde ele pôs até a próxima mudança lá.
+alter table public.tarefas add column if not exists origem_status text;
+
+create or replace function public.kanban_col_prevision(p_nome text, p_status text) returns text language sql immutable as $$
+  select case
+    when lower(coalesce(p_status,'')) in ('finished','done','concluded') or lower(coalesce(p_nome,'')) ~ '(finaliz|conclu)' then 'Concluído'
+    when lower(coalesce(p_nome,'')) ~ '(revis|aprova|valida)' then 'Em revisão'
+    when lower(coalesce(p_nome,'')) ~ '(pend|bloque|aguard|impedid)' then 'Pendente'
+    when lower(coalesce(p_status,'')) in ('doing','in_progress','running','started') or lower(coalesce(p_nome,'')) ~ '(fazendo|andamento|execu|em curso)' then 'Em andamento'
+    else 'A fazer' end;
+$$;
+
+create or replace function public.kanban_add_cronograma(p_tarefas uuid[])
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); r record; v_novos int := 0; v_ja int := 0; v_id uuid; v_col text;
+begin
+  if v_uid is null then raise exception 'Não autenticado.'; end if;
+  for r in select t.id, t.empreendimento_id, t.fase, t.wbs, t.nome, t.fim, t.critica, t.kanban, t.kanban_status, t.real, e.nome as emp, e.codigo as sigla
+             from public.prevision_tarefa_auria t join public.empreendimentos_auria e on e.id = t.empreendimento_id
+            where t.id = any(p_tarefas) and t.removida_em is null and public.cde_pav_pode_ver(t.empreendimento_id)
+              and not exists (select 1 from public.prevision_tarefa_auria c where c.projeto_id = t.projeto_id and c.removida_em is null and c.wbs like t.wbs||'.%')
+  loop
+    v_col := case when coalesce(r.real,0) >= 1 then 'Concluído' else public.kanban_col_prevision(r.kanban, r.kanban_status) end;
+    select id into v_id from public.tarefas where analista_id = v_uid and origem_id = r.id;
+    if v_id is not null then update public.tarefas set ignorada = false where id = v_id; v_ja := v_ja + 1; continue; end if;
+    insert into public.tarefas (analista_id, titulo, descricao, prioridade, status, prazo, origem, origem_id, origem_status, empreendimento_id)
+    values (v_uid, coalesce(r.wbs,'')||' · '||coalesce(r.nome,''),
+            coalesce(r.sigla, r.emp)||' · cronograma '||coalesce(r.fase,'')||case when r.kanban is not null then ' · '||r.kanban else '' end||case when r.critica then ' · crítica' else '' end,
+            case when r.critica then 'Alta' else 'Média' end, v_col, r.fim, 'cronograma', r.id, v_col, r.empreendimento_id);
+    v_novos := v_novos + 1;
+  end loop;
+  return jsonb_build_object('ok', true, 'novos', v_novos, 'ja_existiam', v_ja);
+end $$;
+grant execute on function public.kanban_add_cronograma(uuid[]) to authenticated;
+
+create or replace function public.kanban_sync_cronograma()
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid(); v_nome text; v_auto boolean := false; v_novos int := 0; v_atual int := 0; v_movidos int := 0; r record; v_id uuid; v_st text; v_ost text; v_col text;
+begin
+  if v_uid is null then raise exception 'Não autenticado.'; end if;
+  select coalesce(nome,'') into v_nome from public.usuarios_auria where id = v_uid;
+  select cronograma into v_auto from public.kanban_pref_auria where usuario_id = v_uid; v_auto := coalesce(v_auto,false);
+  for r in
+    select t.id, t.empreendimento_id, t.fase, t.wbs, t.nome, t.fim, t.critica, t.kanban, t.real, t.kanban_status, t.removida_em, e.nome as emp, e.codigo as sigla
+      from public.prevision_tarefa_auria t
+      join public.empreendimentos_auria e on e.id = t.empreendimento_id
+      left join public.tarefas k on k.analista_id = v_uid and k.origem_id = t.id
+     where (k.id is not null
+            or (v_auto and trim(v_nome) <> '' and public.estacao_pode(t.empreendimento_id) and public.kanban_resp_e_eu(t.responsaveis, v_nome)
+                and exists (select 1 from public.prevision_vinculo_auria v where v.id = t.vinculo_id and v.ativo and v.padrao)))
+       and not exists (select 1 from public.prevision_tarefa_auria c where c.projeto_id = t.projeto_id and c.removida_em is null and c.wbs like t.wbs||'.%')
+  loop
+    v_col := case when r.removida_em is not null or coalesce(r.real,0) >= 1 then 'Concluído' else public.kanban_col_prevision(r.kanban, r.kanban_status) end;
+    select id, status, origem_status into v_id, v_st, v_ost from public.tarefas where analista_id = v_uid and origem_id = r.id;
+    if v_id is null then
+      if v_col = 'Concluído' then continue; end if;   -- já concluída: não cria
+      insert into public.tarefas (analista_id, titulo, descricao, prioridade, status, prazo, origem, origem_id, origem_status, empreendimento_id)
+      values (v_uid, coalesce(r.wbs,'')||' · '||coalesce(r.nome,''),
+              coalesce(r.sigla, r.emp)||' · cronograma '||coalesce(r.fase,'')||case when r.kanban is not null then ' · '||r.kanban else '' end||case when r.critica then ' · crítica' else '' end,
+              case when r.critica then 'Alta' else 'Média' end, v_col, r.fim, 'cronograma', r.id, v_col, r.empreendimento_id);
+      v_novos := v_novos + 1;
+    else
+      update public.tarefas set titulo = coalesce(r.wbs,'')||' · '||coalesce(r.nome,''),
+             descricao = coalesce(r.sigla, r.emp)||' · cronograma '||coalesce(r.fase,'')||case when r.kanban is not null then ' · '||r.kanban else '' end||case when r.critica then ' · crítica' else '' end,
+             prazo = r.fim, prioridade = case when r.critica then 'Alta' else prioridade end
+       where id = v_id and not ignorada;
+      v_atual := v_atual + 1;
+      -- a situação no Prevision mudou desde a última sincronização → o cartão acompanha
+      if v_ost is distinct from v_col then
+        update public.tarefas set status = v_col, origem_status = v_col where id = v_id and not ignorada;
+        if v_st is distinct from v_col then v_movidos := v_movidos + 1; end if;
+      end if;
+    end if;
+  end loop;
+  return jsonb_build_object('ok', true, 'ativo', v_auto, 'novos', v_novos, 'atualizados', v_atual, 'movidos', v_movidos, 'nome', v_nome);
+end $$;
+grant execute on function public.kanban_sync_cronograma() to authenticated;
+
+-- cartões já existentes ganham a coluna do Prevision uma vez (origem_status ainda vazio)
+update public.tarefas k set origem_status = case when coalesce(t.real,0) >= 1 then 'Concluído' else public.kanban_col_prevision(t.kanban, t.kanban_status) end,
+       status = case when coalesce(t.real,0) >= 1 then 'Concluído' else public.kanban_col_prevision(t.kanban, t.kanban_status) end
+  from public.prevision_tarefa_auria t where t.id = k.origem_id and k.origem = 'cronograma' and k.origem_status is null;
+
+select 'kanban_col_prevision' as item, exists(select 1 from pg_proc where proname='kanban_col_prevision') as ok
+union all select 'tarefas.origem_status', exists(select 1 from information_schema.columns where table_name='tarefas' and column_name='origem_status');
