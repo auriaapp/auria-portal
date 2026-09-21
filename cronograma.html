@@ -185,6 +185,7 @@ body.light .legend{color:#64748B}
     </label>
     <button id="btnSim" class="tbtn" onclick="simToggle()" title="Simular: altere datas, duração e % — o sistema recalcula fases e tarefas seguintes; salve o cenário ou exporte">&#129514; Simular</button>
     <button id="btnXlsx" class="tbtn" onclick="exportarXlsx()" title="Baixar em Excel no modelo de importação do Prevision (EAP · Tarefa · Início · Fim · Duração)">&#128202; Excel</button>
+    <button id="btnKanban" class="tbtn" style="display:none" onclick="kbToggle()" title="Escolher tarefas e enviá-las ao seu Kanban (viram cartões com prazo; fecham sozinhas quando o Prevision finaliza)">&#128203; Enviar ao Kanban</button>
     <button id="btnExportProj" class="tbtn" style="display:none" onclick="selToggle()" title="Escolher tarefas e enviar o cronograma ao projetista de uma disciplina (ele vê no painel e recebe por e-mail)">&#128228; Exportar p/ projetista</button>
     <div id="editbar" style="display:flex;align-items:center;gap:6px">
       <button id="btnImport" class="tbtn primary" onclick="importarXML()" title="Subir um XML do MS Project e publicar no sistema">&#11014; Importar XML</button>
@@ -218,6 +219,12 @@ body.light .legend{color:#64748B}
   <button class="tbtn primary" onclick="simSalvar()">&#128190; Salvar</button>
   <button class="tbtn" onclick="exportarXlsx()">&#128202; Excel</button>
   <button class="tbtn" onclick="simDescartar()" title="Volta ao cronograma original (a simulação salva continua guardada)">&#10005; Sair</button>
+</div>
+<div id="kbbar" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;background:#1B2333;border-bottom:1px solid #3A4A66;font-size:12px;color:#E2E8F0"><b>&#128203; Enviar ao Kanban</b>
+  <span>marque as tarefas (marcar uma fase marca tudo dentro) · só tarefas, fases não viram cartão</span>
+  <button class="tbtn" onclick="selTodas(true)">Marcar visíveis</button><button class="tbtn" onclick="selTodas(false)">Limpar</button>
+  <span id="kbCount" style="font-weight:700">0 tarefas</span>
+  <button class="tbtn primary" id="kbEnviar" onclick="kbEnviar()" style="background:#1E3A5F;border-color:#1E3A5F;color:#fff">&#128203; Enviar ao meu Kanban</button><button class="tbtn" onclick="kbToggle()">Cancelar</button>
 </div>
 <div id="selbar"><b>Exportar para projetista</b>
   <label>Disciplina <select id="selDisc" onchange="selDiscMudou()"><option value="">—</option></select></label>
@@ -338,7 +345,7 @@ function render(data){
       +'<div class="names" style="width:'+NAMEW+'px">'+names+'<div id="colgrip" title="Arraste para alargar a coluna de tarefas · duplo clique ajusta ao maior nome"></div></div>'
       +'<div class="tl" style="width:'+tlW+'px;height:'+bodyH+'px">'+glines+todayLine+sdateLine+rows+'</div>'
     +'</div>';
-  gripBind(); selAtualizarContagem(); simResumoAtualizar();
+  gripBind(); selAtualizarContagem(); simResumoAtualizar(); kbContagem();
 }
 var DATA={};
 var EDIT=false, DIRTY=false, SDATE='';
@@ -691,7 +698,27 @@ function pvRenderBar(){
     +(pad&&pad.padrao_por_nome?' · padrão '+pad.fase+' definido por '+pad.padrao_por_nome+(pad.padrao_em?' em '+fmtDTbr(pad.padrao_em):''):'');
   var eb=document.getElementById('editbar'); if(eb) eb.style.display='none';   // Prevision é a fonte: sem importar/editar aqui
 }
-function exportBtnAtualizar(){ var b=document.getElementById('btnExportProj'); if(b) b.style.display=(PV.pode_editar && !RECORTE)?'':'none'; }
+function exportBtnAtualizar(){ var b=document.getElementById('btnExportProj'); if(b) b.style.display=(PV.pode_editar && !RECORTE)?'':'none';
+  var k=document.getElementById('btnKanban'); if(k) k.style.display=(FONTE==='prevision' && !RECORTE)?'':'none'; }
+// ── Item 81b: enviar tarefas selecionadas ao Kanban do usuário ─────────────
+var KB_MODE=false;
+function kbToggle(){
+  KB_MODE=!KB_MODE; if(KB_MODE && SEL_MODE) selToggle();
+  document.getElementById('kbbar').style.display=KB_MODE?'flex':'none';
+  var b=document.getElementById('btnKanban'); if(b) b.classList.toggle('primary', KB_MODE);
+  SEL_MODE=KB_MODE; SEL=new Set(); rerender();
+}
+function kbContagem(){ var el=document.getElementById('kbCount'); if(!el) return; var n=0; (DATA.tarefas||[]).forEach(function(t){ if(SEL.has(t.uid)&&!t.resumo) n++; }); el.textContent=n+' tarefa'+(n!==1?'s':''); }
+async function kbEnviar(){
+  var ids=[]; (DATA.tarefas||[]).forEach(function(t){ if(SEL.has(t.uid)&&!t.resumo) ids.push(t.uid); });
+  if(!ids.length){ alert('Marque ao menos uma tarefa (fases não viram cartão).'); return; }
+  var b=document.getElementById('kbEnviar'); b.disabled=true;
+  try{ var r=await _sb.rpc('kanban_add_cronograma',{ p_tarefas:ids }); if(r.error) throw r.error; var d=r.data||{};
+    alert('Kanban: '+(d.novos||0)+' cartão(ões) novo(s)'+((d.ja_existiam||0)?' · '+d.ja_existiam+' já estava(m) no quadro':'')+'. Eles fecham sozinhos quando o Prevision finalizar a tarefa.');
+    kbToggle(); }
+  catch(e){ alert('Não enviou: '+(e.message||e)+(String(e.message||'').match(/does not exist|schema cache/)?' — rode supabase_kanban_cronograma.sql (81b).':'')); }
+  b.disabled=false;
+}
 function pvTrocarFase(f){ carregarCron(f); }
 // ── Item 80: SIMULAÇÃO (o que-se) ─────────────────────────────────────────
 //  SIM = { id, nome, base:{uid:{inicio,fim,pct}}, empurrar } — a base é o cronograma como veio
@@ -796,6 +823,7 @@ async function exportarXlsx(){
 // ── Item 79: exportar para projetista ──────────────────────────────────────
 var SEL_MODE=false, SEL=new Set(), SEL_DISCS=[], SEL_RECORTES={}, SEL_ROT={};
 function selToggle(){
+  if(KB_MODE){ KB_MODE=false; document.getElementById('kbbar').style.display='none'; var kb=document.getElementById('btnKanban'); if(kb) kb.classList.remove('primary'); SEL_MODE=false; }
   SEL_MODE=!SEL_MODE; var bar=document.getElementById('selbar'); if(bar) bar.style.display=SEL_MODE?'flex':'none';
   var b=document.getElementById('btnExportProj'); if(b) b.classList.toggle('primary', SEL_MODE);
   if(SEL_MODE){ SEL=new Set(); selCarregarDiscs(); } rerender();
