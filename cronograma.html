@@ -29,6 +29,18 @@ header .sub{font-size:11px;color:#64748B}
 .body{display:flex}
 .names{position:sticky;left:0;z-index:20;background:#1A1D27;border-right:1px solid #2A2D3A;flex-shrink:0}
 #colgrip{position:absolute;right:-3px;top:0;bottom:0;z-index:45;width:6px;cursor:col-resize;background:transparent}
+/* Item 79: exportar p/ projetista (seleção) + modo recorte (projetista) */
+.selck{width:14px;height:14px;margin:0 6px 0 0;cursor:pointer;accent-color:#E8960A;flex-shrink:0}
+#selbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;background:#2A1F0E;border-bottom:1px solid #6B4A12;font-size:12px;color:#F1E3C8}
+#selbar select,#selbar input{background:#1B2333;color:#E2E8F0;border:1px solid #3A4A66;border-radius:6px;padding:4px 8px;font-size:12px;font-family:inherit}
+#selbar .tbtn{margin-left:0}
+#selbar .tbtn.primary{background:#E8960A;color:#231703;border-color:#E8960A;font-weight:700}
+body.light #selbar{background:#FEF3E2;border-color:#F0B25B;color:#7C3E06}
+body.light #selbar select,body.light #selbar input{background:#fff;color:#0F172A;border-color:#CBD5E1}
+.nrow.selon{background:rgba(232,150,10,.12)}
+#recbar{display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 18px;background:#1B2333;border-bottom:1px solid #2A2D3A;font-size:12px;color:#CBD5E1}
+body.light #recbar{background:#F6F9FC;border-color:#E2E8F0;color:#334155}
+#recbar .msg{background:rgba(232,150,10,.14);border-left:3px solid #E8960A;padding:4px 10px;border-radius:6px}
 #colgrip:hover,#colgrip:active{background:rgba(232,150,10,.45)}
 .nrow{height:28px;display:flex;align-items:center;border-bottom:1px solid #20242E;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:10px}
 .nrow.sum{font-weight:700;color:#CBD5E1}
@@ -159,6 +171,7 @@ body.light .legend{color:#64748B}
     <label class="tbtn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Mostrar só o que ainda não chegou a 100% — tarefas e fases concluídas ficam ocultas">
       <input type="checkbox" id="chkHideDone" onchange="toggleHideDone()" style="cursor:pointer"> Ocultar concluídas
     </label>
+    <button id="btnExportProj" class="tbtn" style="display:none" onclick="selToggle()" title="Escolher tarefas e enviar o cronograma ao projetista de uma disciplina (ele vê no painel e recebe por e-mail)">&#128228; Exportar p/ projetista</button>
     <div id="editbar" style="display:flex;align-items:center;gap:6px">
       <button id="btnImport" class="tbtn primary" onclick="importarXML()" title="Subir um XML do MS Project e publicar no sistema">&#11014; Importar XML</button>
       <input type="file" id="xmlFile" accept=".xml,application/xml,text/xml" style="display:none">
@@ -182,6 +195,15 @@ body.light .legend{color:#64748B}
     <span><i style="width:2px;height:12px;background:#E8960A;display:inline-block"></i>Medição</span>
   </div>
 </header>
+<div id="recbar"><span style="font-weight:800;color:#E8960A">Cronograma enviado pela coordenação</span><span id="recInfo"></span><span class="msg" id="recMsg" style="display:none"></span></div>
+<div id="selbar"><b>Exportar para projetista</b>
+  <label>Disciplina <select id="selDisc" onchange="selDiscMudou()"><option value="">—</option></select></label>
+  <button class="tbtn" onclick="selSugerir()" title="Marca as tarefas cujo nome, responsável ou coluna cita a disciplina / o fornecedor, e os marcos de medição">&#10024; Sugerir</button>
+  <button class="tbtn" onclick="selTodas(true)">Marcar visíveis</button><button class="tbtn" onclick="selTodas(false)">Limpar</button>
+  <span id="selCount" style="font-weight:700">0 tarefas</span>
+  <input id="selMsg" placeholder="Mensagem ao projetista (opcional)" style="flex:1;min-width:220px">
+  <button class="tbtn primary" id="selEnviar" onclick="selEnviar()">&#9993; Enviar</button><button class="tbtn" onclick="selToggle()">Cancelar</button>
+</div>
 <div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
 <div id="scroll"><div id="grid"></div></div>
 <div id="tablewrap">
@@ -264,7 +286,8 @@ function render(data){
     }else{
       caret='<span class="caret" style="visibility:hidden">▸</span>';
     }
-    names+='<div class="'+cls+'" style="padding-left:'+(10+ind)+'px" title="'+esc(t.nome)+'">'+caret+(t.wbs?'<span class="wbs">'+esc(t.wbs)+'</span>':'')+esc(t.nome)+'</div>';
+    var ck=SEL_MODE?'<input type="checkbox" class="selck" data-uid="'+escA(t.uid)+'" '+(SEL.has(t.uid)?'checked':'')+' onclick="event.stopPropagation();selToggleUid(\''+escA(t.uid)+'\',this.checked)">':'';
+    names+='<div class="'+cls+(SEL_MODE&&SEL.has(t.uid)?' selon':'')+'" style="padding-left:'+(10+ind)+'px" title="'+esc(t.nome)+'">'+ck+caret+(t.wbs?'<span class="wbs">'+esc(t.wbs)+'</span>':'')+esc(t.nome)+'</div>';
     var bar='';
     if(t.inicio&&t.fim){
       var bx=x(t.inicio);
@@ -290,7 +313,7 @@ function render(data){
       +'<div class="names" style="width:'+NAMEW+'px">'+names+'<div id="colgrip" title="Arraste para alargar a coluna de tarefas · duplo clique ajusta ao maior nome"></div></div>'
       +'<div class="tl" style="width:'+tlW+'px;height:'+bodyH+'px">'+glines+todayLine+sdateLine+rows+'</div>'
     +'</div>';
-  gripBind();
+  gripBind(); selAtualizarContagem();
 }
 var DATA={};
 var EDIT=false, DIRTY=false, SDATE='';
@@ -348,6 +371,7 @@ function fmtDTbr(s){ if(!s)return ''; var d=new Date(s); if(isNaN(d))return s;
   return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' às '+p(d.getHours())+':'+p(d.getMinutes()); }
 function carregarLastEdit(){
   if(!_sb||!EMP_ID)return;
+  if(RECORTE){ var elr=document.getElementById('lastedit'); if(elr) elr.textContent=''; return; }
   if(FONTE==='prevision'){ var el0=document.getElementById('lastedit'); if(el0) el0.textContent='Fonte: Prevision · '+((PV.vinculo&&PV.vinculo.projeto_nome)||'')+(PV.vinculo&&PV.vinculo.sincronizado_em?' · sincronizado em '+fmtDTbr(PV.vinculo.sincronizado_em):''); return; }
   _sb.from('cronograma_log_auria').select('*').eq('empreendimento_id',EMP_ID).order('quando',{ascending:false}).limit(1).then(function(r){
     var el=document.getElementById('lastedit'); if(!el)return;
@@ -479,7 +503,7 @@ function buildTable(){
       :tipo;
     h+='<tr class="'+cls+'">'
       +'<td>'+esc(t.wbs||'')+'</td>'
-      +'<td><span style="padding-left:'+ind+'px">'+tcaret+nomeInner+'</span>'+racts+'</td>'
+      +'<td><span style="padding-left:'+ind+'px">'+(SEL_MODE?'<input type="checkbox" class="selck" data-uid="'+escA(t.uid)+'" '+(SEL.has(t.uid)?'checked':'')+' onclick="selToggleUid(\''+escA(t.uid)+'\',this.checked)">':'')+tcaret+nomeInner+'</span>'+racts+'</td>'
       +'<td>'+cIni+'</td><td>'+cFim+'</td>'
       +'<td>'+(t.marco?'—':durDays(t.inicio,t.fim))+'</td>'
       +'<td>'+cPct+'</td>'
@@ -639,7 +663,70 @@ function pvRenderBar(){
     +(pad&&pad.padrao_por_nome?' · padrão '+pad.fase+' definido por '+pad.padrao_por_nome+(pad.padrao_em?' em '+fmtDTbr(pad.padrao_em):''):'');
   var eb=document.getElementById('editbar'); if(eb) eb.style.display='none';   // Prevision é a fonte: sem importar/editar aqui
 }
+function exportBtnAtualizar(){ var b=document.getElementById('btnExportProj'); if(b) b.style.display=(PV.pode_editar && !RECORTE)?'':'none'; }
 function pvTrocarFase(f){ carregarCron(f); }
+// ── Item 79: exportar para projetista ──────────────────────────────────────
+var SEL_MODE=false, SEL=new Set(), SEL_DISCS=[], SEL_RECORTES={}, SEL_ROT={};
+function selToggle(){
+  SEL_MODE=!SEL_MODE; var bar=document.getElementById('selbar'); if(bar) bar.style.display=SEL_MODE?'flex':'none';
+  var b=document.getElementById('btnExportProj'); if(b) b.classList.toggle('primary', SEL_MODE);
+  if(SEL_MODE){ SEL=new Set(); selCarregarDiscs(); } rerender();
+}
+async function selCarregarDiscs(){
+  var sel=document.getElementById('selDisc'); if(!sel) return;
+  try{
+    var r=await _sb.from('disciplina_fornecedor_auria').select('disciplina,fornecedor_id,fornecedores_auria(nome,email_contato)').eq('empreendimento_id',EMP_ID);
+    SEL_DISCS=(r.data||[]).map(function(x){ return { disciplina:x.disciplina, fornecedor:(x.fornecedores_auria&&x.fornecedores_auria.nome)||'' }; }).sort(function(a,b){ return a.disciplina.localeCompare(b.disciplina); });
+  }catch(e){ SEL_DISCS=[]; }
+  try{ var c=await _sb.rpc('cde_convencao',{ p_emp:EMP_ID }); var campos=(c.data&&c.data[0]&&c.data[0].campos)||[]; SEL_ROT={};
+    (campos||[]).forEach(function(f){ if(f.mapeia==='disciplina') (f.dominio||[]).forEach(function(d){ if(d&&typeof d==='object'&&d.v) SEL_ROT[String(d.v).toUpperCase()]=d.rotulo||''; }); }); }catch(e){}
+  try{ var rr=await _sb.rpc('cronograma_recortes',{ p_emp:EMP_ID }); SEL_RECORTES={}; (rr.data||[]).forEach(function(x){ SEL_RECORTES[x.disciplina]=x; }); }catch(e){}
+  sel.innerHTML='<option value="">— escolha —</option>'+SEL_DISCS.map(function(d){ var rec=SEL_RECORTES[d.disciplina]; return '<option value="'+escA(d.disciplina)+'">'+esc(d.disciplina)+(SEL_ROT[d.disciplina.toUpperCase()]?' · '+esc(SEL_ROT[d.disciplina.toUpperCase()]):'')+(d.fornecedor?' — '+esc(d.fornecedor):'')+(rec?' (enviado '+fmtDTbr(rec.enviado_em)+')':'')+'</option>'; }).join('');
+  if(!SEL_DISCS.length) sel.innerHTML='<option value="">nenhuma disciplina com fornecedor neste empreendimento</option>';
+}
+function selDiscMudou(){
+  var d=document.getElementById('selDisc').value; var rec=SEL_RECORTES[d];
+  SEL=new Set(); if(rec&&rec.tarefa_ids) rec.tarefa_ids.forEach(function(id){ SEL.add(id); });   // recorte já enviado: parte dele
+  rerender();
+}
+function selToggleUid(uid, on){
+  var ts=DATA.tarefas||[]; var i=ts.findIndex(function(t){ return t.uid===uid; }); if(i<0) return;
+  var t=ts[i]; if(on) SEL.add(uid); else SEL.delete(uid);
+  if(t.resumo){ var L=t.nivel||0; for(var j=i+1;j<ts.length;j++){ if((ts[j].nivel||0)<=L) break; if(on) SEL.add(ts[j].uid); else SEL.delete(ts[j].uid); } }   // fase inteira
+  rerender();
+}
+function selTodas(on){ SEL=new Set(); if(on) visibleTasks().forEach(function(o){ SEL.add(o.t.uid); }); rerender(); }
+function selSugerir(){
+  var d=document.getElementById('selDisc').value; if(!d){ alert('Escolha a disciplina primeiro.'); return; }
+  var disc=SEL_DISCS.find(function(x){ return x.disciplina===d; })||{}; var termos=[d, SEL_ROT[d.toUpperCase()]||'', disc.fornecedor||''].filter(function(x){ return x&&x.length>=3; }).map(function(x){ return x.toUpperCase(); });
+  var ts=DATA.tarefas||[]; SEL=new Set();
+  var bate=function(t){ var alvo=[t.nome||'', (t.responsaveis||[]).join(' '), JSON.stringify(t.colunas||{})].join(' ').toUpperCase(); return t.marco_medicao || termos.some(function(k){ return alvo.indexOf(k)>=0; }); };
+  for(var i=0;i<ts.length;i++){ var t=ts[i]; if(!bate(t)) continue;
+    SEL.add(t.uid);
+    if(t.resumo){ var L=t.nivel||0; for(var j=i+1;j<ts.length;j++){ if((ts[j].nivel||0)<=L) break; SEL.add(ts[j].uid); } }   // fase que cita a disciplina: entra inteira
+  }
+  selCompletarPais(); rerender();
+  if(!SEL.size) alert('Nenhuma tarefa cita "'+d+'"'+(termos.length>1?' / '+termos.slice(1).join(' / '):'')+'. Marque manualmente.');
+}
+function selCompletarPais(){   // fases (pais) das tarefas marcadas entram junto, para manter a hierarquia
+  var ts=DATA.tarefas||[]; var pilha=[];
+  ts.forEach(function(t){ var L=t.nivel||0; pilha=pilha.filter(function(p){ return p.nivel<L; }); if(SEL.has(t.uid)) pilha.forEach(function(p){ SEL.add(p.uid); }); if(t.resumo) pilha.push({uid:t.uid, nivel:L}); });
+}
+function selAtualizarContagem(){ var el=document.getElementById('selCount'); if(!el) return; var n=0; (DATA.tarefas||[]).forEach(function(t){ if(SEL.has(t.uid)&&!t.resumo) n++; }); el.textContent=n+' tarefa'+(n!==1?'s':''); }
+async function selEnviar(){
+  var d=document.getElementById('selDisc').value; if(!d){ alert('Escolha a disciplina.'); return; }
+  selCompletarPais(); var ids=[]; (DATA.tarefas||[]).forEach(function(t){ if(SEL.has(t.uid)) ids.push(t.uid); });
+  if(!ids.length){ alert('Marque ao menos uma tarefa.'); return; }
+  var rec=SEL_RECORTES[d]; if(rec && !confirm('Já existe um cronograma enviado para '+d+' em '+fmtDTbr(rec.enviado_em)+'. Substituir e enviar de novo?')) return;
+  var b=document.getElementById('selEnviar'); b.disabled=true; b.textContent='Enviando…';
+  try{
+    var r=await _sb.rpc('cronograma_recorte_enviar',{ p_emp:EMP_ID, p_disciplina:d, p_tarefas:ids, p_mensagem:(document.getElementById('selMsg').value||'').trim()||null });
+    if(r.error) throw r.error; var res=r.data||{};
+    alert('Cronograma enviado: '+res.tarefas+' tarefa(s)'+(res.enviado?' · e-mail para '+(res.destinatarios||[]).join(', '):' · sem e-mail (a disciplina não tem projetista com e-mail cadastrado)')+'.');
+    selToggle();
+  }catch(e){ alert('Não enviou: '+(e.message||e)); }
+  b.disabled=false; b.innerHTML='&#9993; Enviar';
+}
 async function pvSincronizar(){
   var b=document.getElementById('pvSyncBtn'); if(!b||b.disabled) return; b.disabled=true; b.textContent='…';
   var info=document.getElementById('pvInfo'); if(info) info.textContent='Sincronizando com o Prevision…';
@@ -659,18 +746,25 @@ async function pvUsarPadrao(){
   if(r.error){ alert('Não foi possível definir a fase padrão: '+r.error.message); return; }
   carregarCron(PV.vinculo.fase);
 }
+var RECORTE=(new URLSearchParams(location.search).get('recorte')||'').trim()||null;
 async function carregarCron(fase){
-  if(!EMP_ID){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Selecione um empreendimento na estação</h2></div>'; return; }
+  if(!EMP_ID && !RECORTE){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Selecione um empreendimento na estação</h2></div>'; return; }
   var rows=[], viaRpc=false;
   try{
-    var rr=await _sb.rpc('cronograma_ler',{ p_emp:EMP_ID, p_fase:fase||null });
+    var rr= RECORTE ? await _sb.rpc('cronograma_ler_recorte',{ p_recorte:RECORTE }) : await _sb.rpc('cronograma_ler',{ p_emp:EMP_ID, p_fase:fase||null });
+    if(RECORTE && rr.error){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Cronograma indisponível</h2><div>'+esc(rr.error.message||'')+'</div></div>'; return; }
+    if(RECORTE && !rr.error && rr.data){ var rc=rr.data.recorte||{}; var rb=document.getElementById('recbar'); if(rb){ rb.style.display='flex';
+      document.getElementById('recInfo').textContent=(rc.disciplina?'Disciplina '+rc.disciplina+' · ':'')+'enviado por '+(rc.enviado_por_nome||'—')+(rc.enviado_em?' em '+fmtDTbr(rc.enviado_em):'')+(rr.data.fonte==='prevision'?' · Fonte: Prevision':'');
+      var rm=document.getElementById('recMsg'); if(rm){ rm.style.display=rc.mensagem?'':'none'; rm.textContent=rc.mensagem||''; } }
+      var eb0=document.getElementById('editbar'); if(eb0) eb0.style.display='none'; }
     if(!rr.error && rr.data){ viaRpc=true; FONTE=rr.data.fonte||'auria'; PV={ fases:rr.data.fases||[], vinculo:rr.data.vinculo||null, pode_editar:!!rr.data.pode_editar }; rows=rr.data.tarefas||[]; }
     else { var r=await _sb.from('cronograma_auria').select('*').eq('empreendimento_id',EMP_ID).order('ordem'); rows=r.data||[]; FONTE='auria'; }   // sem supabase_prevision_p2.sql
   }catch(e){ document.getElementById('grid').innerHTML='<div class="empty"><h2>Erro ao carregar</h2><div>'+e+'</div></div>'; return; }
-  pvRenderBar();
+  pvRenderBar(); exportBtnAtualizar();
+  if(RECORTE){ var pb0=document.getElementById('pvbar'); if(pb0) pb0.style.display='none'; }
   if(!rows.length){ document.getElementById('grid').innerHTML='<div class="empty"><h2>🗓 '+(FONTE==='prevision'?'Nenhuma tarefa sincronizada nesta fase':'Cronograma ainda não publicado')+'</h2><div>'+(FONTE==='prevision'?'Use "Sincronizar agora" no vínculo (gestão › Cronograma › Fases › Vincular/sincronizar).':'Importe e publique pelo app desktop.')+'</div></div>'; document.getElementById('tbody').innerHTML=''; return; }
   DATA={titulo:'Cronograma'+(FONTE==='prevision'&&PV.vinculo?' · '+PV.vinculo.fase:''), tarefas: rows.map(function(t,i){ return {uid:t.id||('auto'+i), nome:t.nome, wbs:t.wbs||'', nivel:t.nivel||0, inicio:_isoD(t.data_inicio), fim:_isoD(t.data_fim), pct:t.progresso||0, marco:(t.tipo==='marco'), resumo:(t.tipo==='fase'),
-    previsto:(t.previsto!=null?t.previsto:null), critica:!!t.critica, kanban:t.kanban||'', kanban_status:t.kanban_status||'', responsaveis:t.responsaveis||[]}; }) };
+    previsto:(t.previsto!=null?t.previsto:null), critica:!!t.critica, kanban:t.kanban||'', kanban_status:t.kanban_status||'', responsaveis:t.responsaveis||[], colunas:t.colunas||{}, marco_medicao:!!t.marco_medicao}; }) };
   try{ HIDE_DONE=(localStorage.getItem('auria_cron_hidedone')==='1'); var ck=document.getElementById('chkHideDone'); if(ck) ck.checked=HIDE_DONE; }catch(e){}
   SDATE=isoOf(today0()); document.getElementById('sdate').value=SDATE;
   recalc(); render(DATA); buildTable(); setView('gantt'); carregarLastEdit();

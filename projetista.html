@@ -513,6 +513,7 @@
       <button class="tb on" data-aba="apt" onclick="setAba('apt')">Apontamentos</button>
       <button class="tb" data-aba="ctr" id="btn-ctr" onclick="showContratos()">Custos<span class="msg-badge" id="ctr-badge" style="display:none">0</span></button>
       <button class="tb" data-aba="cde" id="btn-cde" onclick="showCde()" style="display:none">Entregas</button>
+      <button class="tb" data-aba="cron" id="btn-cron" onclick="showCronograma()" style="display:none">Cronograma<span class="msg-badge" id="cron-badge" style="display:none">0</span></button>
       <button class="tb" data-aba="msg" onclick="showMensagens()">Mensagens</button>
       <span class="pj-tabsep"></span><span class="pj-hint" id="pj-tabctx"></span>
     </div>
@@ -615,6 +616,18 @@
         <h2>Contratos & Faturas</h2>
       </div>
       <div id="ctr-projetista-list"><div class="loading">Carregando…</div></div>
+    </div>
+
+    <!-- ══ CRONOGRAMA enviado pela coordenação (item 79) ══ -->
+    <div id="view-cron" style="display:none">
+      <div class="emp-head">
+        <button class="btn-voltar" onclick="showHome()">← Voltar</button>
+        <h2>Cronograma</h2>
+      </div>
+      <div id="cron-lista"><div class="loading">Carregando…</div></div>
+      <div id="cron-frame-wrap" style="display:none;margin-top:12px;border:1px solid var(--cde-line);border-radius:12px;overflow:hidden;background:#fff">
+        <iframe id="cron-frame" style="width:100%;height:72vh;border:0;display:block"></iframe>
+      </div>
     </div>
 
     <!-- ══ ENTREGAS DE PROJETO — CDE (projetista) ══ -->
@@ -853,6 +866,7 @@ async function carregarApontamentos(){
       }
       atualizarBadgeContratos();
     }catch(e){ console.error('load contratos',e); }
+    carregarRecortes();   // item 79: cronogramas enviados pela coordenação (aba aparece se houver)
     renderHome();
   } catch(e){
     document.getElementById('home-cards').innerHTML='<div class="empty">Erro ao carregar dados.</div>';
@@ -2449,7 +2463,29 @@ async function cdeSignedUrl(path, provider, opts){
 //  NUNCA esconde os cards. Empreendimento é identificado por ID (CDE_EMPS /
 //  apontamentos.empreendimento_id); o nome é só rótulo — muda entre fases.
 var PJ_ABA='apt', PJ_EMP_ID='', PJ_DISC='', PJ_FIN=null;
-var PJ_ABAS={ apt:'view-emp', ctr:'view-ctr', cde:'view-cde', msg:'view-msg' };
+var PJ_ABAS={ apt:'view-emp', ctr:'view-ctr', cde:'view-cde', msg:'view-msg', cron:'view-cron' };
+// ── Item 79: cronogramas enviados pela coordenação (recortes por disciplina) ──
+var P_RECORTES=[];
+async function carregarRecortes(){
+  try{ var r=await sb.rpc('cronograma_recortes',{}); P_RECORTES=r.error?[]:(r.data||[]); }catch(e){ P_RECORTES=[]; }
+  var b=document.getElementById('btn-cron'); if(b) b.style.display=P_RECORTES.length?'':'none';
+  var bd=document.getElementById('cron-badge'); if(bd){ bd.style.display=P_RECORTES.length?'':'none'; bd.textContent=P_RECORTES.length; }
+}
+function showCronograma(){
+  setAba('cron');
+  var el=document.getElementById('cron-lista'); var e=pjEmpAtual();
+  var lst=P_RECORTES.filter(function(r){ return !e || r.empreendimento_id===e.id; });
+  if(!lst.length){ el.innerHTML='<div class="empty" style="background:#fff;padding:26px;border-radius:12px;color:#64748B">Nenhum cronograma enviado pela coordenação'+(e?' para este empreendimento':'')+'.</div>'; document.getElementById('cron-frame-wrap').style.display='none'; return; }
+  el.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+lst.map(function(r){ return '<button class="tb" data-rec="'+escH(r.id)+'" onclick="abrirRecorte(\''+escH(r.id)+'\')" title="'+escH(r.enviado_por_nome||'')+(r.enviado_em?' · '+pFmtDt(String(r.enviado_em).slice(0,10)):'')+'">'+escH(r.sigla||r.empreendimento||'')+' · '+escH(r.disciplina)+' <span style="opacity:.7;font-weight:400">'+r.n_tarefas+' tarefas</span></button>'; }).join('')+'</div>';
+  abrirRecorte(lst[0].id);
+}
+function abrirRecorte(id){
+  var r=P_RECORTES.find(function(x){ return x.id===id; }); if(!r) return;
+  document.querySelectorAll('#cron-lista .tb').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-rec')===id); });
+  var wrap=document.getElementById('cron-frame-wrap'); wrap.style.display='';
+  var fr=document.getElementById('cron-frame'); var src='cronograma.html?emp='+encodeURIComponent(r.empreendimento_id)+'&recorte='+encodeURIComponent(id)+'&embed=1&tema=light';
+  if(fr.getAttribute('src')!==src) fr.setAttribute('src',src);
+}
 function setAba(k){
   PJ_ABA=k;
   Object.keys(PJ_ABAS).forEach(function(a){ var el=document.getElementById(PJ_ABAS[a]); if(el) el.style.display=(a===k?'block':'none'); });
