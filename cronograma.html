@@ -29,6 +29,18 @@ header .sub{font-size:11px;color:#64748B}
 .body{display:flex}
 .names{position:sticky;left:0;z-index:20;background:#1A1D27;border-right:1px solid #2A2D3A;flex-shrink:0}
 #colgrip{position:absolute;right:-3px;top:0;bottom:0;z-index:45;width:6px;cursor:col-resize;background:transparent}
+/* Item 80: simulação (o que-se) + Excel modelo Prevision */
+#simbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;background:#0E2A24;border-bottom:1px solid #1A6B4A;font-size:12px;color:#D1FAE5}
+#simbar input[type=text],#simbar select{background:#1B2333;color:#E2E8F0;border:1px solid #3A4A66;border-radius:6px;padding:4px 8px;font-size:12px;font-family:inherit}
+#simbar .tbtn{margin-left:0} #simbar .tbtn.primary{background:#1A6B4A;color:#fff;border-color:#1A6B4A;font-weight:700}
+body.light #simbar{background:#ECFDF5;border-color:#6EE7B7;color:#065F46}
+body.light #simbar input[type=text],body.light #simbar select{background:#fff;color:#0F172A;border-color:#CBD5E1}
+.cedit.chg{border-color:#E8960A;box-shadow:0 0 0 1px #E8960A inset}
+.cedit.durn{width:56px;text-align:center}
+.bar.ghost{background:transparent!important;border:1.5px dashed #94A3B8;box-shadow:none;z-index:1;opacity:.8}
+.nrow.chg{color:#F0A72A}
+.sched td.chg{color:#F0A72A;font-weight:700}
+body.light .nrow.chg,body.light .sched td.chg{color:#B45309}
 /* Item 79: exportar p/ projetista (seleção) + modo recorte (projetista) */
 .selck{width:14px;height:14px;margin:0 6px 0 0;cursor:pointer;accent-color:#E8960A;flex-shrink:0}
 #selbar{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 18px;background:#2A1F0E;border-bottom:1px solid #6B4A12;font-size:12px;color:#F1E3C8}
@@ -171,6 +183,8 @@ body.light .legend{color:#64748B}
     <label class="tbtn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Mostrar só o que ainda não chegou a 100% — tarefas e fases concluídas ficam ocultas">
       <input type="checkbox" id="chkHideDone" onchange="toggleHideDone()" style="cursor:pointer"> Ocultar concluídas
     </label>
+    <button id="btnSim" class="tbtn" onclick="simToggle()" title="Simular: altere datas, duração e % — o sistema recalcula fases e tarefas seguintes; salve o cenário ou exporte">&#129514; Simular</button>
+    <button id="btnXlsx" class="tbtn" onclick="exportarXlsx()" title="Baixar em Excel no modelo de importação do Prevision (EAP · Tarefa · Início · Fim · Duração)">&#128202; Excel</button>
     <button id="btnExportProj" class="tbtn" style="display:none" onclick="selToggle()" title="Escolher tarefas e enviar o cronograma ao projetista de uma disciplina (ele vê no painel e recebe por e-mail)">&#128228; Exportar p/ projetista</button>
     <div id="editbar" style="display:flex;align-items:center;gap:6px">
       <button id="btnImport" class="tbtn primary" onclick="importarXML()" title="Subir um XML do MS Project e publicar no sistema">&#11014; Importar XML</button>
@@ -196,6 +210,15 @@ body.light .legend{color:#64748B}
   </div>
 </header>
 <div id="recbar"><span style="font-weight:800;color:#E8960A">Cronograma enviado pela coordenação</span><span id="recInfo"></span><span class="msg" id="recMsg" style="display:none"></span></div>
+<div id="simbar"><b>&#129514; Simulação</b>
+  <input type="text" id="simNome" placeholder="nome do cenário (ex.: atraso fundação 15 d)" style="min-width:230px">
+  <label title="Ao adiar o fim de uma tarefa, as tarefas seguintes (que começam depois dela) são empurradas junto"><input type="checkbox" id="simEmpurrar" checked onchange="if(SIM)SIM.empurrar=this.checked"> Empurrar tarefas seguintes</label>
+  <span id="simResumo" style="font-weight:700"></span>
+  <select id="simSalvas" onchange="simCarregar(this.value)" title="Simulações salvas deste cronograma"><option value="">simulações salvas…</option></select>
+  <button class="tbtn primary" onclick="simSalvar()">&#128190; Salvar</button>
+  <button class="tbtn" onclick="exportarXlsx()">&#128202; Excel</button>
+  <button class="tbtn" onclick="simDescartar()" title="Volta ao cronograma original (a simulação salva continua guardada)">&#10005; Sair</button>
+</div>
 <div id="selbar"><b>Exportar para projetista</b>
   <label>Disciplina <select id="selDisc" onchange="selDiscMudou()"><option value="">—</option></select></label>
   <button class="tbtn" onclick="selSugerir()" title="Marca as tarefas cujo nome, responsável ou coluna cita a disciplina / o fornecedor, e os marcos de medição">&#10024; Sugerir</button>
@@ -279,7 +302,7 @@ function render(data){
   vis.forEach(function(o){
     var t=o.t;
     var ind=(t.nivel||0)*14;
-    var cls=(t.resumo?'nrow sum':'nrow')+(t.critica&&!t.resumo?' crit':'');
+    var cls=(t.resumo?'nrow sum':'nrow')+(t.critica&&!t.resumo?' crit':'')+(SIM&&simMudou(t)?' chg':'');
     var caret;
     if(t.resumo && hasChildren(o.idx)){
       caret='<span class="caret" onclick="toggleCollapse(event,'+o.idx+')">'+(COLLAPSED[keyOf(t)]?'▶':'▼')+'</span>';
@@ -301,6 +324,8 @@ function render(data){
            +(!t.resumo&&t.pct?'<div class="fill" style="width:'+t.pct+'%"></div>':'')+'</div>';
       }
     }
+    if(SIM&&!t.resumo){ var g=simMudou(t); if(g&&(g.inicio||g.fim)){ var gi=g.inicio||t.inicio, gf=g.fim||t.fim; if(gi&&gf){ var gx=x(gi), gw=Math.max(3,(days(pd(gi),pd(gf))+1)*DAYW);
+      bar='<div class="bar ghost" style="left:'+gx+'px;width:'+gw+'px" title="original: '+fmtBR(gi)+' → '+fmtBR(gf)+'"></div>'+bar; } } }
     rows+='<div class="trow" style="width:'+tlW+'px">'+bar+'</div>';
   });
   grid.style.width=(NAMEW+tlW)+'px';
@@ -313,7 +338,7 @@ function render(data){
       +'<div class="names" style="width:'+NAMEW+'px">'+names+'<div id="colgrip" title="Arraste para alargar a coluna de tarefas · duplo clique ajusta ao maior nome"></div></div>'
       +'<div class="tl" style="width:'+tlW+'px;height:'+bodyH+'px">'+glines+todayLine+sdateLine+rows+'</div>'
     +'</div>';
-  gripBind(); selAtualizarContagem();
+  gripBind(); selAtualizarContagem(); simResumoAtualizar();
 }
 var DATA={};
 var EDIT=false, DIRTY=false, SDATE='';
@@ -477,6 +502,7 @@ function buildTable(){
     var nomeInner=EDIT
       ?'<input class="cedit cname" data-idx="'+idx+'" data-campo="nome" value="'+escA(t.nome)+'">'
       :esc(t.nome);
+    var chg=SIM?simMudou(t):null;
     var racts=EDIT?('<span class="racts">'
       +'<button class="ra" title="Subir" onclick="moveTask('+idx+',-1)">&#8593;</button>'
       +'<button class="ra" title="Descer" onclick="moveTask('+idx+',1)">&#8595;</button>'
@@ -486,16 +512,17 @@ function buildTable(){
       +'<button class="ra del" title="Excluir" onclick="delTask('+idx+')">&#128465;</button>'
       +'</span>'):'';
     var tipo=t.marco?'Marco':(t.resumo?'Fase':'Tarefa');
-    var editable=EDIT&&!t.resumo;
+    var editable=(EDIT||SIM)&&!t.resumo;
     var cIni=editable
-      ?'<input class="cedit" type="date" data-idx="'+idx+'" data-campo="inicio" value="'+(t.inicio||'')+'" onclick="if(this.showPicker)this.showPicker()">'
+      ?'<input class="cedit'+(chg&&chg.inicio?' chg':'')+'" type="date" data-idx="'+idx+'" data-campo="inicio" value="'+(t.inicio||'')+'" onclick="if(this.showPicker)this.showPicker()"'+(chg&&chg.inicio?' title="era '+fmtBR(chg.inicio)+'"':'')+'>'
       :fmtBR(t.inicio);
     var cFim=editable
-      ?'<input class="cedit" type="date" data-idx="'+idx+'" data-campo="fim" value="'+(t.fim||'')+'" onclick="if(this.showPicker)this.showPicker()">'
+      ?'<input class="cedit'+(chg&&chg.fim?' chg':'')+'" type="date" data-idx="'+idx+'" data-campo="fim" value="'+(t.fim||'')+'" onclick="if(this.showPicker)this.showPicker()"'+(chg&&chg.fim?' title="era '+fmtBR(chg.fim)+'"':'')+'>'
       :fmtBR(t.fim);
+    var cDur=(SIM&&editable&&!t.marco)?'<input class="cedit durn'+(chg&&(chg.inicio||chg.fim)?' chg':'')+'" type="number" min="1" data-idx="'+idx+'" data-campo="dur" value="'+(durDays(t.inicio,t.fim)||1)+'">':null;
     var cPct;
     if(t.marco){ cPct='—'; }
-    else if(editable){ cPct='<input class="cedit pctn" type="number" min="0" max="100" data-idx="'+idx+'" data-campo="pct" value="'+(t.pct||0)+'">'; }
+    else if(editable){ cPct='<input class="cedit pctn'+(chg&&chg.pct!=null?' chg':'')+'" type="number" min="0" max="100" data-idx="'+idx+'" data-campo="pct" value="'+(t.pct||0)+'"'+(chg&&chg.pct!=null?' title="era '+chg.pct+'%"':'')+'>'; }
     else { cPct='<span class="pct">'+(t.pct||0)+'%</span><span class="pctbar"><i style="width:'+(t.pct||0)+'%"></i></span>'; }
     var st=t._status||statusOf(t);
     var tipoCell=editable
@@ -503,9 +530,9 @@ function buildTable(){
       :tipo;
     h+='<tr class="'+cls+'">'
       +'<td>'+esc(t.wbs||'')+'</td>'
-      +'<td><span style="padding-left:'+ind+'px">'+(SEL_MODE?'<input type="checkbox" class="selck" data-uid="'+escA(t.uid)+'" '+(SEL.has(t.uid)?'checked':'')+' onclick="selToggleUid(\''+escA(t.uid)+'\',this.checked)">':'')+tcaret+nomeInner+'</span>'+racts+'</td>'
+      +'<td'+(chg?' class="chg"':'')+'><span style="padding-left:'+ind+'px">'+(SEL_MODE?'<input type="checkbox" class="selck" data-uid="'+escA(t.uid)+'" '+(SEL.has(t.uid)?'checked':'')+' onclick="selToggleUid(\''+escA(t.uid)+'\',this.checked)">':'')+tcaret+nomeInner+'</span>'+racts+'</td>'
       +'<td>'+cIni+'</td><td>'+cFim+'</td>'
-      +'<td>'+(t.marco?'—':durDays(t.inicio,t.fim))+'</td>'
+      +'<td'+(chg&&(chg.inicio||chg.fim)&&!cDur?' class="chg"':'')+'>'+(cDur!=null?cDur:(t.marco?'—':durDays(t.inicio,t.fim)))+'</td>'
       +'<td>'+cPct+'</td>'
       +(FONTE==='prevision'?('<td class="pvcol">'+(t.marco||t.resumo?'—':(t.previsto!=null?t.previsto+'%':'—'))+'</td>'
         +'<td class="pvcol">'+(t.kanban?'<span class="kb'+(t.kanban_status==='finished'?' fin':'')+'">'+esc(t.kanban)+'</span>':'')+(t.critica?' <span class="chip" style="background:#E8960A;color:#231703" title="Caminho crítico">crítica</span>':'')+'</td>'
@@ -516,6 +543,7 @@ function buildTable(){
   document.getElementById('tbody').innerHTML=h||'<tr><td colspan="11" style="padding:30px;text-align:center;color:#475569">Sem tarefas</td></tr>';
 }
 function setField(idx,campo,val){
+  if(SIM){ simSet(idx,campo,val); return; }
   var t=(DATA.tarefas||[])[idx]; if(!t) return;
   if(campo==='pct') val=Math.max(0,Math.min(100,parseInt(val)||0));
   if(campo==='marco'){ t.marco=(val==='marco'); }
@@ -665,6 +693,106 @@ function pvRenderBar(){
 }
 function exportBtnAtualizar(){ var b=document.getElementById('btnExportProj'); if(b) b.style.display=(PV.pode_editar && !RECORTE)?'':'none'; }
 function pvTrocarFase(f){ carregarCron(f); }
+// ── Item 80: SIMULAÇÃO (o que-se) ─────────────────────────────────────────
+//  SIM = { id, nome, base:{uid:{inicio,fim,pct}}, empurrar } — a base é o cronograma como veio
+//  (sincronizado). Alterar início mantém a duração; alterar fim/duração empurra as tarefas
+//  seguintes (mesmo nível, que começam depois do fim antigo); fases recalculam sozinhas (recalc()).
+var SIM=null;
+function simToggle(){ if(SIM){ simDescartar(); return; } simIniciar(null); }
+function simIniciar(salva){
+  var base={}; (DATA.tarefas||[]).forEach(function(t){ base[t.uid]={inicio:t.inicio, fim:t.fim, pct:t.pct||0}; });
+  SIM={ id:salva?salva.id:null, nome:salva?salva.nome:'', base:base, empurrar:true };
+  if(salva){ var ts=DATA.tarefas||[]; (salva.alteracoes||[]).forEach(function(a){ var t=ts.find(function(x){ return x.uid===a.id; }); if(!t) return; if(a.inicio) t.inicio=a.inicio; if(a.fim) t.fim=a.fim; if(a.pct!=null) t.pct=a.pct; }); }
+  document.getElementById('simbar').style.display='flex'; document.getElementById('simNome').value=SIM.nome; document.getElementById('simEmpurrar').checked=true;
+  var b=document.getElementById('btnSim'); if(b){ b.classList.add('primary'); b.innerHTML='&#129514; Simulando…'; }
+  if(SEL_MODE) selToggle();
+  setView('table'); rerender(); simCarregarLista();
+}
+function simDescartar(){
+  if(!SIM) return;
+  if(simDiff().length && !confirm('Sair da simulação e voltar ao cronograma original? (o que não foi salvo se perde)')) return;
+  var ts=DATA.tarefas||[]; ts.forEach(function(t){ var b=SIM.base[t.uid]; if(b){ t.inicio=b.inicio; t.fim=b.fim; t.pct=b.pct; } });
+  SIM=null; document.getElementById('simbar').style.display='none';
+  var b=document.getElementById('btnSim'); if(b){ b.classList.remove('primary'); b.innerHTML='&#129514; Simular'; }
+  rerender();
+}
+function simMudou(t){ if(!SIM) return null; var b=SIM.base[t.uid]; if(!b) return null; var d={};
+  if((b.inicio||'')!==(t.inicio||'')) d.inicio=b.inicio; if((b.fim||'')!==(t.fim||'')) d.fim=b.fim; if((b.pct||0)!==(t.pct||0)) d.pct=b.pct||0;
+  return (d.inicio||d.fim||d.pct!=null)?d:null; }
+function simDiff(){ var out=[]; (DATA.tarefas||[]).forEach(function(t){ if(t.resumo) return; if(simMudou(t)) out.push({id:t.uid, nome:t.nome, wbs:t.wbs, inicio:t.inicio, fim:t.fim, pct:t.pct||0, base:SIM.base[t.uid]}); }); return out; }
+function _addD(iso,n){ var d=pd(iso); if(!d) return iso; return isoOf(new Date(d.getTime()+n*86400000)); }
+function simSet(idx,campo,val){
+  var ts=DATA.tarefas||[]; var t=ts[idx]; if(!t||t.resumo) return;
+  var oldIni=t.inicio, oldFim=t.fim; var dur=(t.inicio&&t.fim)?days(pd(t.inicio),pd(t.fim)):0;
+  if(campo==='pct'){ t.pct=Math.max(0,Math.min(100,parseInt(val)||0)); }
+  else if(campo==='inicio'){ if(!val) return; t.inicio=val; if(oldFim) t.fim=_addD(val,dur); }   // move mantendo a duração
+  else if(campo==='fim'){ if(!val) return; if(t.inicio&&pd(val)<pd(t.inicio)) t.inicio=val; t.fim=val; }
+  else if(campo==='dur'){ var n=Math.max(1,parseInt(val)||1); if(t.inicio) t.fim=_addD(t.inicio,n-1); }
+  // empurra as seguintes: tarefas (não fase) depois desta, no MESMO pai, que começavam no/depois do fim antigo
+  if(SIM.empurrar && oldFim && t.fim && campo!=='pct'){
+    var delta=days(pd(oldFim),pd(t.fim)); if(delta>0 || (delta<0 && campo!=='inicio')){
+      var L=t.nivel||0;
+      for(var j=idx+1;j<ts.length;j++){ var u=ts[j]; var lv=u.nivel||0; if(lv<L) break; if(lv!==L||u.resumo) continue;
+        if(u.inicio && pd(u.inicio)>=pd(oldFim)){ u.inicio=_addD(u.inicio,delta); if(u.fim) u.fim=_addD(u.fim,delta); } }
+    }
+  }
+  rerender();
+}
+function simResumoAtualizar(){
+  var el=document.getElementById('simResumo'); if(!el||!SIM) return;
+  var d=simDiff(); var ts=DATA.tarefas||[]; var fimBase=null, fimNovo=null;
+  ts.forEach(function(t){ if(t.resumo) return; var b=SIM.base[t.uid]||{}; if(b.fim&&(!fimBase||b.fim>fimBase)) fimBase=b.fim; if(t.fim&&(!fimNovo||t.fim>fimNovo)) fimNovo=t.fim; });
+  var dd=(fimBase&&fimNovo)?days(pd(fimBase),pd(fimNovo)):0;
+  el.textContent=d.length+(d.length===1?' alteração':' alterações')+(fimBase?' · fim do cronograma '+fmtBR(fimBase)+(dd?' → '+fmtBR(fimNovo)+' ('+(dd>0?'+':'')+dd+' d)':' (mantido)'):'');
+}
+async function simCarregarLista(){
+  var sel=document.getElementById('simSalvas'); if(!sel) return;
+  try{ var q=_sb.from('cronograma_simulacao_auria').select('id,nome,autor_nome,atualizado_em,fase,recorte_id').eq('empreendimento_id',EMP_ID).eq('arquivada',false).order('atualizado_em',{ascending:false}); var r=await q;
+    var lst=(r.data||[]).filter(function(x){ return RECORTE ? x.recorte_id===RECORTE : (!x.recorte_id && (!PV.vinculo || !x.fase || x.fase===PV.vinculo.fase)); });
+    sel.innerHTML='<option value="">simulações salvas…</option>'+lst.map(function(x){ return '<option value="'+escA(x.id)+'"'+(SIM&&SIM.id===x.id?' selected':'')+'>'+esc(x.nome)+' — '+esc(x.autor_nome||'')+' · '+fmtDTbr(x.atualizado_em)+'</option>'; }).join('');
+  }catch(e){}
+}
+async function simCarregar(id){
+  if(!id) return; try{ var r=await _sb.from('cronograma_simulacao_auria').select('*').eq('id',id).maybeSingle(); if(r.error||!r.data) throw (r.error||new Error('não encontrada'));
+    if(SIM){ var ts=DATA.tarefas||[]; ts.forEach(function(t){ var b=SIM.base[t.uid]; if(b){ t.inicio=b.inicio; t.fim=b.fim; t.pct=b.pct; } }); SIM=null; }
+    simIniciar(r.data); }
+  catch(e){ alert('Não foi possível carregar: '+(e.message||e)); }
+}
+async function simSalvar(){
+  if(!SIM) return; var nome=(document.getElementById('simNome').value||'').trim(); if(!nome){ alert('Dê um nome ao cenário.'); document.getElementById('simNome').focus(); return; }
+  var alts=simDiff().map(function(d){ return { id:d.id, wbs:d.wbs, nome:d.nome, inicio:d.inicio, fim:d.fim, pct:d.pct }; });
+  var row={ empreendimento_id:EMP_ID, fase:(PV.vinculo&&PV.vinculo.fase)||null, fonte:FONTE, recorte_id:RECORTE||null, nome:nome, alteracoes:alts, base_em:(PV.vinculo&&PV.vinculo.sincronizado_em)||null };
+  try{
+    var r; if(SIM.id){ r=await _sb.from('cronograma_simulacao_auria').update(row).eq('id',SIM.id).select('id').maybeSingle(); if(!r.error&&!r.data){ r=await _sb.from('cronograma_simulacao_auria').insert(row).select('id').maybeSingle(); } }
+    else { r=await _sb.from('cronograma_simulacao_auria').insert(row).select('id').maybeSingle(); }
+    if(r.error) throw r.error; if(r.data) SIM.id=r.data.id; SIM.nome=nome;
+    alert('Simulação "'+nome+'" salva ('+alts.length+(alts.length===1?' alteração':' alterações')+').'); simCarregarLista();
+  }catch(e){ alert('Não salvou: '+(e.message||e)+(String(e.message||'').match(/relation|does not exist/)?' — rode supabase_cronograma_simulacao.sql.':'')); }
+}
+// ── Excel no modelo de importação do Prevision (EAP · Tarefa · Início · Fim · Duração · Predecessoras) ──
+function _loadScript(src){ return new Promise(function(res,rej){ if([].slice.call(document.scripts).some(function(s){ return s.src===src; })) return res(); var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error('falha ao carregar '+src)); }; document.head.appendChild(s); }); }
+async function exportarXlsx(){
+  var ts=(DATA.tarefas||[]).filter(function(t){ return t.nome; }); if(!ts.length){ alert('Nada para exportar.'); return; }
+  var b=document.getElementById('btnXlsx'); if(b){ b.disabled=true; }
+  try{
+    await _loadScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'); var ExcelJS=window.ExcelJS;
+    var wb=new ExcelJS.Workbook(); wb.creator='Auria';
+    var ws=wb.addWorksheet('Cronograma', { views:[{state:'frozen', ySplit:1}] });
+    ws.columns=[{header:'EAP',key:'eap',width:12},{header:'Tarefa',key:'nome',width:60},{header:'Início',key:'ini',width:13},{header:'Fim',key:'fim',width:13},{header:'Duração (dias)',key:'dur',width:14},{header:'Predecessoras',key:'pred',width:16},{header:'% concluído',key:'pct',width:12}];
+    ws.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}}; ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1E3A5F'}};
+    var toD=function(iso){ return iso?new Date(iso+'T12:00:00'):null; };
+    ts.forEach(function(t){ var r=ws.addRow({ eap:String(t.wbs||''), nome:t.nome, ini:toD(t.inicio), fim:toD(t.fim), dur:(t.inicio&&t.fim)?(days(pd(t.inicio),pd(t.fim))+1):null, pred:'', pct:t.resumo?null:(t.pct||0) });
+      r.getCell('eap').numFmt='@'; r.getCell('ini').numFmt='dd/mm/yyyy'; r.getCell('fim').numFmt='dd/mm/yyyy'; if(t.resumo) r.font={bold:true}; });
+    if(SIM){ var d=simDiff(); var w2=wb.addWorksheet('Alterações'); w2.columns=[{header:'EAP',key:'eap',width:12},{header:'Tarefa',key:'nome',width:60},{header:'Início original',key:'i0',width:14},{header:'Início novo',key:'i1',width:14},{header:'Fim original',key:'f0',width:14},{header:'Fim novo',key:'f1',width:14},{header:'% original',key:'p0',width:11},{header:'% novo',key:'p1',width:11}];
+      w2.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}}; w2.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1E3A5F'}};
+      d.forEach(function(x){ var r=w2.addRow({ eap:String(x.wbs||''), nome:x.nome, i0:toD(x.base.inicio), i1:toD(x.inicio), f0:toD(x.base.fim), f1:toD(x.fim), p0:x.base.pct||0, p1:x.pct }); ['i0','i1','f0','f1'].forEach(function(k){ r.getCell(k).numFmt='dd/mm/yyyy'; }); r.getCell('eap').numFmt='@'; });
+      var w3=wb.addWorksheet('Sobre'); w3.addRow(['Simulação', SIM.nome||'(sem nome)']); w3.addRow(['Empreendimento', EMP_ID]); w3.addRow(['Fase', (PV.vinculo&&PV.vinculo.fase)||'']); w3.addRow(['Gerado em', new Date().toLocaleString('pt-BR')]); w3.addRow(['Modelo', 'Prevision — importação via Excel: EAP, Tarefa, Início, Fim (linha do 1º item = 2)']); }
+    var buf=await wb.xlsx.writeBuffer(); var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='cronograma'+((PV.vinculo&&PV.vinculo.fase)?'_'+PV.vinculo.fase:'')+(SIM&&SIM.nome?'_'+SIM.nome.replace(/[^a-z0-9]+/gi,'_').slice(0,30):'')+'_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(a.href); },30000);
+  }catch(e){ alert('Não foi possível exportar: '+(e.message||e)); }
+  if(b) b.disabled=false;
+}
 // ── Item 79: exportar para projetista ──────────────────────────────────────
 var SEL_MODE=false, SEL=new Set(), SEL_DISCS=[], SEL_RECORTES={}, SEL_ROT={};
 function selToggle(){
