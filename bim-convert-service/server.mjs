@@ -128,7 +128,10 @@ function reportarProgresso(arquivoId, progress, data) {
   if (pct - anterior.pct < 5 && agora - anterior.ts < 3000) return;
 
   progressoPorArquivo.set(arquivoId, { pct, ts: agora });
-  marcarStatus(arquivoId, { frag_progress: pct }).catch(() => {});
+  // frag_heartbeat: sinal de vida para o watchdog (supabase_cde_frag_watchdog.sql).
+  // Sem ele, um container morto por memória/timeout deixaria o arquivo em
+  // "processando…" para sempre — o watchdog reenfileira quem parou de carimbar.
+  marcarStatus(arquivoId, { frag_progress: pct, frag_heartbeat: new Date().toISOString() }).catch(() => {});
 }
 
 const app = express();
@@ -150,7 +153,10 @@ app.post("/convert", async (req, res) => {
   console.log(`[convert] iniciando arquivo=${arquivoId} path=${ifcPath}`);
 
   try {
-    await marcarStatus(arquivoId, { frag_status: "processando", frag_error: null, frag_progress: 0 });
+    await marcarStatus(arquivoId, { frag_status: "processando", frag_error: null, frag_progress: 0,
+      frag_inicio: new Date().toISOString(), frag_heartbeat: new Date().toISOString() });
+    // batimento fixo a cada 60s: as fases longas do IfcImporter ficam minutos sem reportar progresso
+    var bat = setInterval(() => { marcarStatus(arquivoId, { frag_heartbeat: new Date().toISOString() }).catch(() => {}); }, 60000);
 
     const ifcBytes = await r2Get(ifcPath);
     const mb = ifcBytes.length / 1048576;
@@ -173,12 +179,14 @@ app.post("/convert", async (req, res) => {
       + ` — ${mb.toFixed(1)}MB de IFC, ${(seg/mb).toFixed(2)}s por MB`);
     if (fases) console.log(`[convert] por fase: ${JSON.stringify(fases)}`);
 
-    await marcarStatus(arquivoId, { frag_status: "pronto", frag_path: fragPath, frag_error: null, frag_progress: null });
+    clearInterval(bat);
+    await marcarStatus(arquivoId, { frag_status: "pronto", frag_path: fragPath, frag_error: null, frag_progress: null, frag_tentativas: 0 });
     // 74b: tamanho do .frag (painel do CEO › Uso & armazenamento). Em chamada separada: se a coluna ainda não
     // existir no banco (supabase_ceo_uso_frag.sql), o status "pronto" acima já foi gravado.
     await marcarStatus(arquivoId, { frag_bytes: fragBytes.byteLength });
     res.status(200).json({ success: true, fragPath, tempoSeg: Number(seg.toFixed(1)) });
   } catch (e) {
+    clearInterval(bat);
     const msg = String((e && e.message) || e).slice(0, 500);
     console.error(`[convert] falhou (arquivo=${arquivoId}):`, msg);
     await marcarStatus(arquivoId, { frag_status: "erro", frag_error: msg, frag_progress: null });

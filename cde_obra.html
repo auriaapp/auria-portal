@@ -1233,7 +1233,7 @@ async function carregarDocs(){
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       // 'rotacao' (item 60) é coluna nova: se o SQL ainda não rodou, cai para a lista sem ela.
-      const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress';
+      const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress,frag_inicio,frag_heartbeat,frag_tentativas';
       let q = await sb.from('cde_arquivo_auria').select(COLS+',rotacao').in('revisao_id',revIds);
       if(q.error) q = await sb.from('cde_arquivo_auria').select(COLS).in('revisao_id',revIds);
       arqs=q.data||[];
@@ -1736,7 +1736,14 @@ function cardFdocBim(d){
     const p = ifc.frag_progress;
     const rotulo = (typeof p!=='number') ? 'Processando…'
                  : (p >= 75 ? 'Finalizando…' : `Processando… ${p}%`);
-    selo = `<span class="pill" style="background:#B7791F;color:#fff" title="A conversão roda em segundo plano e pode levar alguns minutos em modelos grandes">⏳ ${rotulo}</span>`;
+    // Item 83: sem sinal de vida (frag_heartbeat) há muito tempo = conversor caiu. O watchdog do
+    // banco reenfileira sozinho em até 10 min; aqui a tela diz isso e oferece forçar na hora.
+    const visto = Date.parse(ifc.frag_heartbeat || ifc.frag_inicio || 0) || 0;
+    const min = visto ? Math.floor((Date.now()-visto)/60000) : 0;
+    const tent = Number(ifc.frag_tentativas||0);
+    selo = visto && min >= 25
+      ? `<button class="btn sec sm" style="border-color:#B7791F;color:#7C3E06" onclick="event.stopPropagation();destravarConversaoBim('${ifc.id}','${d.id}')" title="O conversor não dá sinal há ${min} min. O Auria tenta de novo sozinho em até 10 min; clique para forçar agora.">⏳ Sem resposta há ${min} min — reenviar${tent?` (tentativa ${tent+1})`:''}</button>`
+      : `<span class="pill" style="background:#B7791F;color:#fff" title="A conversão roda em segundo plano e pode levar alguns minutos em modelos grandes${min?' · último sinal há '+min+' min':''}">⏳ ${rotulo}</span>`;
   }else if(st==='erro'){
     selo = `<button class="btn sec sm" style="border-color:#A32D2D;color:#A32D2D" onclick="event.stopPropagation();iniciarConversaoBim('${ifc.id}','${d.id}')" title="${esc(ifc.frag_error||'Falhou — tentar de novo')}">⚠ Falhou — tentar de novo</button>`;
   }else{
@@ -1761,6 +1768,19 @@ async function iniciarConversaoBim(arquivoId, docId){
   }catch(e){
     if(ifc){ ifc.frag_status='erro'; ifc.frag_error=(e&&e.message)||String(e); renderNav(); }
     alert('Não foi possível iniciar a conversão: '+((e&&e.message)||e));
+  }
+}
+// Item 83: força um novo disparo da conversão (zera as tentativas do watchdog).
+async function destravarConversaoBim(arquivoId, docId){
+  const d=DOCS.find(x=>x.id===docId); const ifc=d&&arquivoIfcDe(d);
+  if(ifc){ ifc.frag_status='pendente'; ifc.frag_error=null; ifc.frag_progress=null; ifc.frag_heartbeat=new Date().toISOString(); ifc.frag_inicio=ifc.frag_heartbeat; renderNav(); }
+  try{
+    const r=await sb.rpc('cde_frag_destravar',{ p_arquivo:arquivoId });
+    if(r.error) throw r.error;
+  }catch(e){
+    // sem a RPC (SQL ainda não rodado) cai no caminho antigo pela Edge Function
+    try{ await iniciarConversaoBim(arquivoId, docId); }
+    catch(_){ alert('Não foi possível reenviar: '+((e&&e.message)||e)); }
   }
 }
 function abrirBim3D(docId){ openDocInWindow(docId, 'bim'); }
@@ -2058,7 +2078,7 @@ function bimAtualizarPoll(){
     if(SEL_DISC!=='__BIM__'){ bimPararPoll(); return; }
     const ids=pendentes.map(a=>a.id);
     try{
-      const { data } = await sb.from('cde_arquivo_auria').select('id,frag_status,frag_path,frag_error,frag_progress').in('id',ids);
+      const { data } = await sb.from('cde_arquivo_auria').select('id,frag_status,frag_path,frag_error,frag_progress,frag_inicio,frag_heartbeat,frag_tentativas').in('id',ids);
       (data||[]).forEach(row=>{
         for(const d of DOCS){ const a=arquivoIfcDe(d); if(a && a.id===row.id){ Object.assign(a,row); break; } }
       });
