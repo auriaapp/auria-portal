@@ -582,7 +582,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         </a>
         <div class="sb-section">Padrões</div>
         <a class="sb-item" data-page="disciplinas" onclick="goPage('disciplinas')">
-          <span class="sb-item-icon">&#128209;</span> Disciplinas
+          <span class="sb-item-icon">&#128209;</span> Configura&ccedil;&otilde;es e Nomenclaturas
           <span id="discNotifBadge" style="display:none;margin-left:auto;background:var(--orange);color:#231703;font-size:10px;font-weight:800;border-radius:20px;padding:1px 7px"></span>
         </a>
         <div class="sb-section">Financeiro</div>
@@ -810,18 +810,21 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <!-- ══ PAGE: DISCIPLINAS (padrão de nomenclatura por construtora) ══ -->
         <div class="page" id="pageDisciplinas">
           <div class="toolbar">
-            <div class="toolbar-title">Disciplinas</div>
+            <div class="toolbar-title">Configura&ccedil;&otilde;es e Nomenclaturas</div>
           </div>
           <div style="font-size:13px;color:var(--text-soft);margin-bottom:14px">
-            Código e nome das disciplinas do <b>padrão de nomenclatura</b>. É compartilhado por
-            todos os empreendimentos da construtora escolhida (não é por empreendimento).
+            C&oacute;digos e nomes do <b>padr&atilde;o de nomenclatura</b>: disciplinas e etapas de projeto.
+            &Eacute; compartilhado por todos os empreendimentos da construtora escolhida (n&atilde;o &eacute; por empreendimento).
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
             <span style="font-size:13px;color:var(--text-mid);font-weight:600">Construtora:</span>
-            <select id="discEscopo" onchange="discCarregar()" style="min-width:240px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;background:#fff;outline:none"></select>
+            <select id="discEscopo" onchange="discCarregar();etapaCarregar()" style="min-width:240px;padding:8px 10px;border:1px solid var(--gray-border);border-radius:8px;font-size:13px;background:#fff;outline:none"></select>
           </div>
           <div id="discNovidades"></div>
+          <div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 8px">Disciplinas</div>
           <div id="discBody"><div class="loading-spinner"><div class="spinner"></div></div></div>
+          <div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em;margin:20px 0 8px">Etapas de projeto</div>
+          <div id="etapaBody"><div class="loading-spinner"><div class="spinner"></div></div></div>
         </div>
 
         <!-- ══ PAGE: FINANCEIRO (resumo, somente leitura) ═══════════════ -->
@@ -1552,7 +1555,7 @@ async function afterLogin(user){
     distribuicao:   { rotulo:'Abrir Distribuição de acessos', run:()=>goPage('distribuicao') },
     fornecedores:   { rotulo:'Abrir Fornecedores (cadastros a aprovar)', run:()=>goPage('fornecedores') },
     convidar_fornecedor:{ rotulo:'Convidar um fornecedor', run:()=>gdIrConviteFornecedor() },
-    disciplinas:    { rotulo:'Abrir Disciplinas (padrão de codificação)', run:()=>goPage('disciplinas') },
+    disciplinas:    { rotulo:'Abrir Configurações e Nomenclaturas (disciplinas e etapas)', run:()=>goPage('disciplinas') },
     financeiro:     { rotulo:'Abrir Custos & NFs', run:()=>goPage('financeiro') },
     implantacao:    { rotulo:'Abrir a Implantação do empreendimento em foco', quando:()=>!!_gdFoco(), run:()=>gdImplantacao(_gdFoco().id) },
     acessos:        { rotulo:'Abrir Acessos do empreendimento em foco', descricao:'convidar setor/obra/analista/projetista, acesso temporário', quando:()=>!!_gdFoco(), run:()=>gdAcessos(_gdFoco().id) }
@@ -2308,7 +2311,7 @@ function gdImplantacao(empId){
   const semForn=gdAtivas(emp).filter(v=>!df[v]);
   const cid=emp.construtora_id||'';
   const acoes={
-    'convenção':  { txt:'Padrão de codificação (disciplinas) da construtora '+esc(nomeEmpresa(cid)||''), btn:'Disciplinas', go:"gdImplIr('disciplinas','"+cid+"')" },
+    'convenção':  { txt:'Padrão de codificação (disciplinas) da construtora '+esc(nomeEmpresa(cid)||''), btn:'Configurações', go:"gdImplIr('disciplinas','"+cid+"')" },
     'pavimentos': { txt:'Pavimentos, vistas e grupos do empreendimento', btn:'Pavimentos', go:"closeModal('modalImpl');editarPavimentos('"+emp.id+"')" },
     'ficha':      { txt:'Características, viabilidades e documentos legais', btn:'Ficha', go:"closeModal('modalImpl');editarBriefing('"+emp.id+"')" },
     'logo':       { txt:'Logo do empreendimento (aparece nos cards, no CDE e nos e-mails)', btn:'Editar', go:"closeModal('modalImpl');abrirEditarEmp('"+emp.id+"')" },
@@ -3893,7 +3896,64 @@ function discEscopoAtual(){ const v=(document.getElementById('discEscopo')||{}).
 function renderDisciplinasPage(){
   const sel=document.getElementById('discEscopo');
   if(sel && !sel.dataset.pronto){ sel.innerHTML='<option value="g">Grupo (padrão geral)</option>'+(CONSTRUTORAS||[]).map(c=>`<option value="c:${c.id}">${esc(c.nome)}</option>`).join(''); sel.dataset.pronto='1'; }
-  discCarregarNotifs(); discCarregar();
+  discCarregarNotifs(); discCarregar(); etapaCarregar();
+}
+// ── Item 84: ETAPAS de projeto (mesma convenção, campo mapeado como 'fase') ──
+// Os códigos aparecem nas pastas do CDE e no código da prancha; editar aqui vale
+// para todos os empreendimentos da construtora escolhida.
+let ETAPA_DOM=[];
+const ETAPAS_SUGERIDAS=[['LV','Levantamento'],['EV','Estudo de Viabilidade'],['EP','Estudo Preliminar'],['AP','Anteprojeto'],
+  ['PL','Projeto Legal'],['PB','Projeto Básico'],['PE','Pré-executivo'],['EX','Executivo'],['PX','Projeto Executivo'],
+  ['DE','Detalhamento'],['CO','Compatibilização'],['AB','As-Built'],['LB','Liberado para obra'],['MA','Manutenção']];
+async function etapaCarregar(){
+  const body=document.getElementById('etapaBody'); if(!body) return;
+  body.innerHTML='<div class="loading-spinner"><div class="spinner"></div></div>';
+  const e=discEscopoAtual();
+  let q=sb.from('cde_convencao_auria').select('*');
+  q = e.construtora ? q.eq('construtora_id',e.construtora) : q.eq('grupo_id',e.grupo);
+  let data=null; try{ const r=await q.maybeSingle(); data=r.data; }catch(err){}
+  if(!data){ ETAPA_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">Sem padrão de codificação para esta construtora.</div>'; return; }
+  const campos=data.campos||[];
+  const f=campos.find(c=>c.mapeia==='fase') || campos.find(c=>['fase','etapa'].includes(String(c.chave||'').toLowerCase()));
+  if(!f){ ETAPA_DOM=[]; body.innerHTML='<div style="padding:16px;color:var(--text-mid);font-size:13px;border:1px dashed var(--gray-border);border-radius:10px">A convenção desta construtora não tem um campo de <b>etapa</b> — inclua-o no padrão de codificação para editar os códigos aqui.</div>'; return; }
+  ETAPA_DOM=(f.dominio||[]).map(d=> (typeof d==='object')?{v:d.v||'',rotulo:d.rotulo||''}:{v:d,rotulo:''});
+  body.innerHTML='<div style="background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:16px">'
+    +'<div id="etapaRows"></div>'
+    +'<div style="font-size:11.5px;color:var(--text-soft);margin-top:6px">O <b>código</b> entra no nome da prancha e nas pastas por etapa do CDE. Trocar um código já usado não renomeia pranchas antigas — prefira acrescentar um novo.</div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="etapaAdd()">+ Etapa</button>'
+    +'<button class="btn-secondary" style="padding:6px 12px;font-size:12px" onclick="etapaSugeridas()" title="Preenche com as etapas usuais de projeto que ainda não estão na lista">&#10022; Sugeridas</button>'
+    +'<button class="btn-primary" style="padding:6px 14px;font-size:12px;margin-left:auto" onclick="etapaSalvar()">Salvar etapas</button></div></div>';
+  etapaRenderRows();
+}
+function etapaRenderRows(){
+  const box=document.getElementById('etapaRows'); if(!box) return;
+  box.innerHTML = ETAPA_DOM.length ? ETAPA_DOM.map((d,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+      <input value="${_escAttr(d.v)}" oninput="etapaSet(${i},'v',this.value)" placeholder="COD" maxlength="8"
+        style="width:92px;padding:7px 9px;border:1px solid var(--gray-border);border-radius:7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;text-transform:uppercase;outline:none">
+      <input value="${_escAttr(d.rotulo)}" oninput="etapaSet(${i},'rotulo',this.value)" placeholder="Nome da etapa"
+        style="flex:1;min-width:140px;padding:7px 10px;border:1px solid var(--gray-border);border-radius:7px;font-size:13px;outline:none">
+      <button type="button" onclick="etapaDel(${i})" title="Remover" style="border:none;background:none;color:#94a3b8;font-size:17px;cursor:pointer;padding:2px 6px">&#215;</button>
+    </div>`).join('') : '<div style="color:var(--text-mid);font-size:12px">Nenhuma etapa ainda. Use "+ Etapa" ou "Sugeridas".</div>';
+}
+function etapaSet(i,f,v){ if(ETAPA_DOM[i]) ETAPA_DOM[i][f]=v; }
+function etapaAdd(){ ETAPA_DOM.push({v:'',rotulo:''}); etapaRenderRows();
+  const box=document.getElementById('etapaRows'); const ins=box&&box.querySelectorAll('input'); if(ins&&ins.length) ins[ins.length-2].focus(); }
+function etapaDel(i){ ETAPA_DOM.splice(i,1); etapaRenderRows(); }
+function etapaSugeridas(){
+  const tem=new Set(ETAPA_DOM.map(d=>String(d.v||'').trim().toUpperCase()));
+  ETAPAS_SUGERIDAS.forEach(([v,r])=>{ if(!tem.has(v)) ETAPA_DOM.push({v,rotulo:r}); });
+  etapaRenderRows();
+}
+async function etapaSalvar(){
+  const seen=new Set(), dom=[];
+  for(const d of ETAPA_DOM){ const v=(d.v||'').trim().toUpperCase(), r=(d.rotulo||'').trim();
+    if(!v) continue; if(seen.has(v)){ showToast('Código de etapa repetido: '+v,'red'); return; } seen.add(v); dom.push({v, rotulo:r||v}); }
+  const e=discEscopoAtual();
+  const { data, error } = await sb.rpc('cde_campo_salvar',{ p_construtora:e.construtora, p_grupo:e.grupo, p_mapeia:'fase', p_dominio:dom });
+  if(error){ showToast('Erro: '+error.message+(/cde_campo_salvar/.test(error.message)?' (rode supabase_cde_etapas.sql)':''),'red'); return; }
+  if(data!=='ok'){ showToast(({sem_campo_fase:'A convenção não tem campo de etapa.',sem_permissao:'Sem permissão para editar.',sem_convencao:'Construtora sem convenção.',erro_escopo:'Escopo inválido.',campo_invalido:'Campo inválido.'})[data]||('Falha: '+data),'red'); return; }
+  showToast('Etapas salvas.','green'); etapaCarregar();
 }
 async function discCarregar(){
   const body=document.getElementById('discBody'); if(!body) return;
@@ -4580,7 +4640,7 @@ function goPage(name){
     dashboard:'Painel da Gestão', detalhe:'Detalhe',
     empreendimentos:'Empreendimentos', empresas:'Empresas', analistas:'Usuários',
     distribuicao:'Distribuição', fornecedores:'Fornecedores',
-    disciplinas:'Disciplinas', financeiro:'Custos & NFs'
+    disciplinas:'Configurações e Nomenclaturas', financeiro:'Custos & NFs'
   };
   const subMap = {
     dashboard:'Todos os empreendimentos',
