@@ -1789,8 +1789,7 @@ async function salvarGrupoNome(){
 }
 
 async function salvarGrupoLogo(input){
-  const file = input.files?.[0]; if(!file) return;
-  if(window.AuriaValida){ const v=await AuriaValida.checar(file,'logo'); if(!v.ok){ showToast(v.motivo,'red'); input.value=''; return; } }
+  const file = await logoEscolher(input, 'Logo do grupo'); if(!file) return;
   try{
     // ?v= para o navegador não mostrar a imagem antiga (o path é sempre o mesmo, upsert)
     const url = (await uploadLogoGenerico(file, 'grupos', EMPRESA.id)) + '?v=' + Date.now();
@@ -1813,13 +1812,14 @@ function openModalEmpresa(id){
   const ic  = document.getElementById('empresaLogoIcon');
   if(EMPRESA_EDIT?.logo_url){ img.src=EMPRESA_EDIT.logo_url; img.style.display='block'; ic.style.display='none'; }
   else { img.src=''; img.style.display='none'; ic.style.display=''; }
-  document.getElementById('empresaLogoInput').value = '';
+  document.getElementById('empresaLogoInput').value = ''; if(window.LOGO_CROP) delete LOGO_CROP['empresaLogoInput'];
   document.getElementById('modalEmpresa').classList.add('open');
 }
 
 async function previewEmpresaLogo(input){
-  const f=input.files?.[0]; if(!f) return;
-  if(window.AuriaValida){ const v=await AuriaValida.checar(f,'logo'); if(!v.ok){ showToast(v.motivo,'red'); input.value=''; return; } }
+  const f=await logoEscolher(input, 'Logo da empresa');
+  if(!f){ const img=document.getElementById('empresaLogoImg'), ico=document.getElementById('empresaLogoIcon');
+    if(img){ img.src=''; img.style.display='none'; } if(ico) ico.style.display=''; return; }
   const r=new FileReader();
   r.onload=e=>{ const img=document.getElementById('empresaLogoImg'); img.src=e.target.result; img.style.display='block'; document.getElementById('empresaLogoIcon').style.display='none'; };
   r.readAsDataURL(f);
@@ -1842,7 +1842,7 @@ async function salvarEmpresa(){
       if(error) throw error;
       id = data.id;
     }
-    const logoFile = document.getElementById('empresaLogoInput').files?.[0];
+    const logoFile = logoArquivo('empresaLogoInput');
     if(logoFile){
       btn.textContent='Enviando logo...';
       try{
@@ -3609,7 +3609,7 @@ async function salvarEmpreendimento(empId){
       tipo_empreendimento:_config.tipo_empreendimento, tipologia:_config.tipologia,
       n_pavimentos:_config.n_pavimentos, tipo_de:_config.tipo_de, tipo_ate:_config.tipo_ate,
       tem_garagem:_config.tem_garagem, tem_edicula:_config.tem_edicula, config:_config };
-    const logoFile=document.getElementById('empLogoInput')?.files?.[0];
+    const logoFile=logoArquivo('empLogoInput');
     if(logoFile){ btn.textContent='Enviando logo...'; try{ upd.logo_url=await uploadLogoStorage(logoFile,empId); }catch(le){ showToast('Logo não enviada: '+(le.message||le),''); } btn.textContent='Salvando...'; }
     const { error }=await sb.from('empreendimentos_auria').update(upd).eq('id',empId);
     if(error) throw error;
@@ -4066,10 +4066,26 @@ async function discCarregarNotifs(){
 }
 async function discNotifLida(id){ try{ await sb.from('cde_disc_notif_auria').update({lida:true}).eq('id',id); }catch(e){} discCarregarNotifs(); }
 
+// Item 85: a logo passa pelo enquadramento antes de virar arquivo — o recorte é
+// guardado em LOGO_CROP[<input>] e é ele que sobe (o input original fica intacto).
+var LOGO_CROP={};
+function logoArquivo(inputId){
+  const inp=document.getElementById(inputId); const orig=inp&&inp.files&&inp.files[0];
+  return LOGO_CROP[inputId] || orig || null;
+}
+async function logoEscolher(input, titulo){
+  const file = input.files?.[0]; if(!file) return null;
+  if(window.AuriaValida){ const v=await AuriaValida.checar(file,'logo'); if(!v.ok){ showToast(v.motivo,'red'); input.value=''; delete LOGO_CROP[input.id]; return null; } }
+  if(!window.AuriaLogoCrop) return file;                 // script ainda não carregou: segue sem recorte
+  const cortada = await AuriaLogoCrop.abrir(file, { titulo: titulo||'Enquadrar a logo' });
+  if(!cortada){ input.value=''; delete LOGO_CROP[input.id]; return null; }   // cancelou
+  LOGO_CROP[input.id]=cortada;
+  return cortada;
+}
 async function previewLogo(input){
-  const file = input.files?.[0];
-  if(!file) return;
-  if(window.AuriaValida){ const v=await AuriaValida.checar(file,'logo'); if(!v.ok){ showToast(v.motivo,'red'); input.value=''; return; } }
+  const file = await logoEscolher(input, 'Logo do empreendimento');
+  if(!file) { const img=document.getElementById('logoPreviewImg'), ico=document.getElementById('logoPreviewIcon');
+    if(img){ img.src=''; img.style.display='none'; } if(ico) ico.style.display=''; return; }
   const reader = new FileReader();
   reader.onload = e => {
     const img = document.getElementById('logoPreviewImg');
@@ -4125,6 +4141,7 @@ function resetFormEmp(){
   // Logo
   const logoInp = document.getElementById('empLogoInput');
   if(logoInp) logoInp.value = '';
+  if(window.LOGO_CROP) delete LOGO_CROP['empLogoInput'];   // item 85: não reaproveitar recorte de outro empreendimento
   const img = document.getElementById('logoPreviewImg');
   if(img){ img.src=''; img.style.display='none'; }
   const ico = document.getElementById('logoPreviewIcon');
@@ -4184,7 +4201,7 @@ async function criarEmpreendimento(){
     if(error) throw error;
 
     // 2. Upload da logo (se selecionada)
-    const logoFile = document.getElementById('empLogoInput')?.files?.[0];
+    const logoFile = logoArquivo('empLogoInput');
     if(logoFile && empRow?.id){
       btn.textContent = 'Enviando logo...';
       try{
@@ -4798,6 +4815,7 @@ document.getElementById('btnLogin').addEventListener('click', doLogin);
 init();
 </script>
 <script src="auria_valida.js"></script>
+<script src="auria_logo_crop.js"></script>
 <script src="auria_cronocustos.js"></script>
 <script src="auria_ajuda.js"></script>
 </body>
