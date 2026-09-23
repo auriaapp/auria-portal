@@ -489,6 +489,15 @@
   .fdoc .fc{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--navy);line-height:1.2}
   .fdoc .ft{font-size:11px;color:var(--mut);line-height:1.2}
   .fdoc .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  /* Item 104: a bolinha de 8px virou BARRA + nome do status por extenso (verde e
+     cinza eram difíceis de distinguir). A data do recebimento e a revisão ficam
+     numa coluna à direita, com numerais de largura fixa para alinharem entre si. */
+  .fdoc .fbarra{width:3px;border-radius:2px;align-self:stretch;flex-shrink:0;min-height:30px}
+  .fdoc .fstatus-txt{font-size:10px;font-weight:700;letter-spacing:.02em;display:inline-block;margin-top:3px}
+  .fdoc .fcoluna{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;align-self:flex-start;padding-top:1px}
+  .fdoc .fdata{font-family:var(--mono);font-size:9.5px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .fdoc .fdata.velha{color:var(--accent);font-weight:700}
+  .fdoc .frev{font-family:var(--mono);font-size:9.5px;color:var(--mut);opacity:.75}
   .fdoc .fmeta{flex:1;min-width:0}
   .fdoc .fchips{display:flex;gap:3px;margin-top:3px;flex-wrap:wrap}
   .fmini{font-family:var(--mono);font-size:9px;font-weight:700;color:var(--mut);background:var(--panel2);
@@ -1587,6 +1596,28 @@ function docPassaFiltro(d){
   return true;
 }
 function _dataEnvio(d){ return (d.atual&&d.atual.recebido_em) ? +new Date(d.atual.recebido_em) : 0; }
+// Item 104: data do recebimento da revisão vigente no card — dd/mm/aa.
+function _ddmmaa(v){ if(!v) return ''; const d=new Date(v); if(isNaN(d)) return '';
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+String(d.getFullYear()).slice(2); }
+// Parada: mais de 30 dias no mesmo status sem estar liberada/substituída. Em laranja,
+// a cor de atenção do CDE — a prancha esquecida salta na lista sem abrir nada.
+function _docParada(d){
+  const t=_dataEnvio(d); if(!t) return false;
+  const st=(d.atual&&d.atual.status)||'';
+  if(['A1','B1','SUBSTITUIDO'].includes(st)) return false;
+  return (Date.now()-t) > 30*864e5;
+}
+// Coluna da direita do card: data do recebimento + revisão.
+function _colunaData(d){
+  if(!d.atual) return '';
+  const dt=_ddmmaa(d.atual.recebido_em);
+  const tit=dt?('Recebido em '+new Date(d.atual.recebido_em).toLocaleDateString('pt-BR')):'';
+  return `<span class="fcoluna">${dt?`<span class="fdata${_docParada(d)?' velha':''}" title="${esc(tit)}${_docParada(d)?' · parada há mais de 30 dias':''}">${dt}</span>`:''}`
+       + `${d.atual.revisao?`<span class="frev">${esc(d.atual.revisao)}</span>`:''}</span>`;
+}
+// Nome do status por extenso, na cor dele.
+function _statusTxt(s){ return s?`<br><span class="fstatus-txt" style="color:${s.cor}">${esc(s.rotulo)}</span>`:''; }
 function _dataLiberacao(d){   // data em que virou PUBLICADO (A1/B1)
   const r=(d.revs||[]).find(x=>x.estado==='PUBLICADO' && x.aprovado_em);
   return r ? +new Date(r.aprovado_em) : 0;
@@ -1776,8 +1807,9 @@ function cardFdocBim(d){
 
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" style="flex-wrap:wrap">
     ${chk}
-    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(_docTit(d))} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">${selo}</div>
   </div>`;
@@ -2240,8 +2272,9 @@ function cardFdocGrupo(d,gid){
   const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
     ${chk}
-    <span class="dot" style="background:${cor}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span><br><span class="ft">${esc(_docTit(d))}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <button class="gx" title="Remover do grupo" onclick="removeDoGrupo('${gid}','${d.id}')">×</button>
   </div>`;
@@ -2310,7 +2343,7 @@ function cardFdoc(d){
   // clique para abrir/baixar, e o status em DESTAQUE (é o que a obra precisa ver).
   if(docBloqueado(d)){
     return `<div class="fdoc bloq" title="Ainda não liberado para a obra">
-      <span class="dot" style="background:${cor}"></span>
+      <span class="fbarra" style="background:${cor}"></span>
       <span class="fmeta"><span class="fc">${esc(d.codigo)}</span><br>
         <span class="ft">${esc(_docTit(d))} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span></span>
       <span class="fstat" style="background:${cor}">${esc(s?s.rotulo:'sem revisão')}</span>
@@ -2322,8 +2355,9 @@ function cardFdoc(d){
   const analise = docEmAnalise(d) ? `<span class="fanalise" title="Em análise — não liberado para execução">em análise</span>` : '';
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
     ${chk}
-    <span class="dot" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}${analise}</span><br><span class="ft">${esc(_docTit(d))} ${d.atual?('· rev '+esc(d.atual.revisao)):''}</span><span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
+    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
 }
