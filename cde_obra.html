@@ -416,6 +416,7 @@
   .nav .navgrip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:30;background:transparent}
   .nav .navgrip:hover,.nav .navgrip.on{background:rgba(232,150,10,.45)}
   .nav.redim{transition:none}
+  body.redim .navToggleBtn{transition:none}
   .nav.collapsed .navgrip{display:none}
   /* Busca de arquivos: barra fixa no topo da coluna; o corpo (lista+trilho)
      rola por baixo. Fica FORA do #navPanel de propósito — o painel é reescrito a
@@ -467,7 +468,7 @@
   /* z-index alto de propósito: as janelas de prancha vivem a partir de 101 e
      sobem a cada foco, então com um valor baixo elas cobriam este botão e não
      havia como reabrir a coluna. Fica abaixo dos modais (9000+). */
-  .navToggleBtn{position:absolute;top:50%;right:322px;transform:translate(50%,-50%);z-index:8500;
+  .navToggleBtn{position:absolute;top:50%;right:var(--nav-w,322px);transform:translate(50%,-50%);z-index:8500;
                 width:26px;height:58px;border-radius:14px;background:var(--panel);border:1px solid var(--line);
                 color:var(--mut);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;
                 box-shadow:0 3px 14px rgba(8,14,26,.28);transition:right .16s ease, background .12s, color .12s, border-color .12s}
@@ -1156,6 +1157,8 @@ function navSetLargura(w, salvar){
   const nav=$('navAside'); if(!nav) return;
   const v=Math.max(NAV_W_MIN, Math.min(NAV_W_MAX, Math.round(w)));
   nav.style.width=v+'px';
+  // o botão de recolher fica ANCORADO na borda da coluna: mesma variável
+  document.documentElement.style.setProperty('--nav-w', v+'px');
   if(salvar){ try{ localStorage.setItem('cde_nav_w', String(v)); }catch(_){} }
 }
 function navLarguraRestaurar(){
@@ -1165,14 +1168,17 @@ function navLarguraRestaurar(){
 function navGripBind(){
   const g=$('navGrip'), nav=$('navAside'); if(!g||!nav) return;
   g.onmousedown=(e)=>{
-    e.preventDefault(); g.classList.add('on'); nav.classList.add('redim');
+    e.preventDefault(); g.classList.add('on'); nav.classList.add('redim'); document.body.classList.add('redim');
     const x0=e.clientX, w0=nav.getBoundingClientRect().width;
     // a coluna cresce para a ESQUERDA: arrastar para a esquerda aumenta a largura
     const mv=(m)=>navSetLargura(w0-(m.clientX-x0), false);
     const up=(m)=>{
       document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up);
-      g.classList.remove('on'); nav.classList.remove('redim');
+      // grava a largura AINDA sem transição; só depois devolve a animação, senão o
+      // navegador reanima a partir do valor antigo e a coluna "volta" por um instante
       navSetLargura(w0-(m.clientX-x0), true);
+      g.classList.remove('on');
+      requestAnimationFrame(()=>{ nav.classList.remove('redim'); document.body.classList.remove('redim'); });
       // as janelas de prancha redesenham na resolução do novo espaço
       setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V&&w.V.page) w._revisarBase(); }); }, 180);
     };
@@ -4584,7 +4590,14 @@ class CdeWin {
       try{ n += Object.values(await x.model.getItemsOfCategories([/^IFCSPACE$/i])||{}).flat().length; }catch(_){}
     }
     const lin=cfg&&cfg.querySelector('[data-lin=espacos]');
-    if(lin) lin.style.display = n ? '' : 'none';
+    if(lin){
+      lin.style.display='';                       // a opção SEMPRE aparece — some dela é pior que vê-la inativa
+      lin.style.opacity = n ? '' : '.5';
+      const chk=lin.querySelector('[data-c=espacos]'); if(chk) chk.disabled=!n;
+      const rot=lin.querySelector('span');
+      if(rot) rot.textContent = n ? ('Mostrar ambientes (IfcSpace) · '+n) : 'Mostrar ambientes (IfcSpace) — nenhum neste modelo';
+      lin.title = n ? (n+' ambiente(s) no modelo aberto') : 'O modelo aberto não traz IfcSpace (o exportador não incluiu os ambientes)';
+    }
     if(n) await this.bimEspacos(!!this.bimCfgLer().espacos);
   }
   bimCfgLer(){
