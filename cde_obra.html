@@ -1701,11 +1701,33 @@ function toggleEtapa(disc, et){
 function arquivoIfcDe(d){
   return ((d.atual&&d.atual.arqs)||[]).find(a=>(a.extensao||'').toLowerCase()==='ifc');
 }
+// Item 87: ordem das etapas — a da convenção quando existir; senão a sequência usual
+// de projeto. Serve para saber o que é "etapa anterior" e poder escondê-la.
+const ETAPA_ORDEM_PAD=['LV','EV','EP','AP','PL','PB','PE','EX','PX','DE','CO','AB','LB','MA'];
+function etapaOrdem(v){
+  const c=faseCampo(); const V=String(v||'').toUpperCase(); if(!V) return -1;
+  if(c&&Array.isArray(c.dominio)&&c.dominio.length){
+    const i=c.dominio.findIndex(x=>String((typeof x==='object')?x.v:x).toUpperCase()===V);
+    if(i>=0) return i;
+  }
+  const j=ETAPA_ORDEM_PAD.indexOf(V); return j>=0 ? j : -1;
+}
+let BIM_SO_ATUAL = (()=>{ try{ return localStorage.getItem('cdeBimSoAtual')==='1'; }catch(_){ return false; } })();
+function bimSoAtualToggle(v){ BIM_SO_ATUAL=!!v; try{ localStorage.setItem('cdeBimSoAtual', v?'1':'0'); }catch(_){} renderNav(); }
 function navBim(){
-  const bims=DOCS.filter(docEhBim);
+  let bims=DOCS.filter(docEhBim);
   if(!bims.length) return '<div class="nav-hint">Nenhum modelo BIM (IFC, RVT…) recebido ainda.</div>';
+  // Etapa mais avançada presente: com o filtro ligado, os modelos de etapas
+  // anteriores somem da lista (quem não tem etapa definida continua aparecendo).
+  const ords=bims.map(d=>etapaOrdem(d.etapa)).filter(n=>n>=0);
+  const topo=ords.length?Math.max(...ords):-1;
+  const nAnteriores=topo>=0 ? bims.filter(d=>{ const o=etapaOrdem(d.etapa); return o>=0 && o<topo; }).length : 0;
+  if(BIM_SO_ATUAL && topo>=0) bims=bims.filter(d=>{ const o=etapaOrdem(d.etapa); return o<0 || o>=topo; });
   const porDisc={}; bims.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
   let out='<h3>🧱 Modelos BIM</h3><div class="nav-hint" style="margin:-4px 0 8px">Modelos 3D recebidos. Abra para ver as revisões e baixar o arquivo.</div>';
+  if(nAnteriores) out+=`<label class="nav-hint" style="display:flex;align-items:center;gap:7px;margin:-2px 0 8px;cursor:pointer">
+      <input type="checkbox" ${BIM_SO_ATUAL?'checked':''} onchange="bimSoAtualToggle(this.checked)" style="accent-color:var(--accent)">
+      <span>Ocultar etapas anteriores${BIM_SO_ATUAL?` <b>(${nAnteriores} oculto${nAnteriores>1?'s':''})</b>`:''}</span></label>`;
   Object.keys(porDisc).sort().forEach(k=>{
     const ds=porDisc[k].sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     out+=`<div class="folder open"><div class="folder-h" style="cursor:default">
@@ -1844,7 +1866,7 @@ const EIXO_IFC = { x:'X', y:'Z', z:'Y' };
 
 // Configuração de visualização do BIM do CDE — salva numa chave só do
 // localStorage (cdeBimCfg) e reaplicada ao abrir cada modelo, como no App.
-const CDE_BIM_CFG_PAD = { fundo:'escuro', grade:false,
+const CDE_BIM_CFG_PAD = { fundo:'escuro', grade:false, espacos:false,
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
   ao:false, aoInt:6, aoRaio:50, aoAm:16, snap:true, dica:true };
 
@@ -2953,6 +2975,7 @@ class CdeWin {
       +       '<div class="lin"><span>Luz ambiente</span><input type="range" data-c="amb" min="0" max="200" value="125"><i class="val">1,25</i></div>'
       +       '<div class="lin"><span>Contraste da luz</span><input type="range" data-c="sol" min="0" max="300" value="155"><i class="val">1,55</i></div>'
       +       '<div class="lin"><span>Faces internas (tubos)</span><input type="checkbox" data-c="faces" checked></div>'
+      +       '<div class="lin" data-lin="espacos" style="display:none"><span>Mostrar ambientes (IfcSpace)</span><input type="checkbox" data-c="espacos"></div>'
       +       '<div class="lin"><span>Trena com encaixe (snap)</span><input type="checkbox" data-c="snap" checked></div>'
       +       '<div class="lin"><span>Dicas de navegação</span><input type="checkbox" data-c="dica" checked></div>'
       +       '<h5 style="margin-top:10px">Efeitos pesados</h5>'
@@ -3024,6 +3047,9 @@ class CdeWin {
       b.addEventListener('click', ()=>{ this.bimVisualFundo(b.dataset.bg); this.bimCfgSalvar({ fundo:b.dataset.bg }); });
     });
     cfg('grade').addEventListener('change', (e)=>{ this.bimVisualGrade(e.target.checked); this.bimCfgSalvar({ grade:!!e.target.checked }); });
+    // Item 86: ambientes (IfcSpace) tapam o modelo — por padrão ficam ocultos.
+    cfg('espacos').addEventListener('change', (e)=>{ const v=!!e.target.checked;
+      this.bimCfgSalvar({ espacos:v }); this.bimEspacos(v); });
     cfg('expo').addEventListener('input', (e)=>{
       const v=(+e.target.value)/100; mostrar('expo', v.toFixed(2).replace('.',','));
       const B=this.B3; if(B) B.renderer.toneMappingExposure=v;
@@ -3702,6 +3728,7 @@ class CdeWin {
       this.bimEnquadrar();
       this.bimRenderCamadas();
       this.bimCfgAplicar(this.bimCfgLer());   // reaplica as preferências salvas
+      this.bimEspacosDetectar();              // item 86: ambientes (IfcSpace) ocultos por padrão
       await fragments.update(true);
 
       let tAnt = performance.now();
@@ -4453,6 +4480,28 @@ class CdeWin {
     document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
   }
   // ── Config de visualização: salva no localStorage e reaplica ao abrir ────
+  // Item 86: IfcSpace é o VOLUME do ambiente — vem como caixa fechada e tapa o
+  // modelo quando o exportador o inclui. Por padrão fica oculto; a linha só
+  // aparece na configuração quando o modelo realmente tem ambientes.
+  async bimEspacos(mostrar){
+    const B=this.B3; if(!B) return;
+    B._espacosOn=!!mostrar;
+    for(const x of (B.modelos||[])){
+      let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories([/^IFCSPACE$/i])||{}).flat(); }catch(_){}
+      if(ids.length){ try{ await x.model.setVisible(ids, !!mostrar); }catch(_){} }
+    }
+    try{ await B.fragments.update(true); }catch(_){}
+  }
+  async bimEspacosDetectar(){
+    const B=this.B3, cfg=this.bimCfgEl; if(!B) return;
+    let n=0;
+    for(const x of (B.modelos||[])){
+      try{ n += Object.values(await x.model.getItemsOfCategories([/^IFCSPACE$/i])||{}).flat().length; }catch(_){}
+    }
+    const lin=cfg&&cfg.querySelector('[data-lin=espacos]');
+    if(lin) lin.style.display = n ? '' : 'none';
+    if(n) await this.bimEspacos(!!this.bimCfgLer().espacos);
+  }
   bimCfgLer(){
     try{ return Object.assign({}, CDE_BIM_CFG_PAD, JSON.parse(localStorage.getItem('cdeBimCfg')||'{}')); }
     catch(_){ return Object.assign({}, CDE_BIM_CFG_PAD); }
@@ -4542,7 +4591,7 @@ class CdeWin {
       const setChk=(n,val)=>{ const el=cfg.querySelector('[data-c='+n+']'); if(el) el.checked=!!val; };
       setV('expo', c.expo, true); setV('amb', c.amb, true); setV('sol', c.sol, true);
       setV('aoInt', c.aoInt); setV('aoRaio', c.aoRaio); setV('aoAm', c.aoAm);
-      setChk('faces', c.faces!==false); setChk('snap', c.snap!==false);
+      setChk('faces', c.faces!==false); setChk('snap', c.snap!==false); setChk('espacos', !!c.espacos);
       setChk('dica', c.dica!==false);
       setChk('gq', !!c.gq); setChk('grade', !!c.grade); setChk('ao', !!c.ao);
       cfg.querySelector('[data-c=aoSub]').classList.toggle('off', !c.ao);

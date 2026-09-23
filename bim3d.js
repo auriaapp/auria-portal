@@ -213,6 +213,8 @@ export async function adicionarModelo(V, m, msg){
   V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //novo modelo → recalcula níveis/pavimentos/caixas do clash
   try{ await V.fragments.update(true); }catch(_){}
   V._pronto = true;   // defensivo: qualquer caminho de carga libera pins/sombra
+  // mantém a escolha de ocultar ambientes quando entra um modelo novo na federação
+  if(V._espacosOn===false){ try{ await setEspacosVisiveis(V,false); }catch(_){} }
   return wrapper;
 }
 // Remove um modelo específico da cena e libera memória.
@@ -815,6 +817,27 @@ export async function filtrarPavimentos(V, sel){
 }
 
 // ── Transparência (ver o que está atrás) ───────────────────────────────────
+// ── Ambientes (IfcSpace) ───────────────────────────────────────────────────
+//  IfcSpace é o volume do ambiente: vem como caixa fechada e tapa o modelo
+//  inteiro quando o exportador o inclui. Aqui ele pode ser desligado — e o
+//  estado fica no visualizador (V._espacosOn) para valer também nos modelos
+//  carregados depois (federação).
+export async function setEspacosVisiveis(V, lig){
+  V._espacosOn = !!lig;
+  for(const x of V.modelos){
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories([/^IFCSPACE$/i])||{}).flat(); }catch(_){}
+    if(ids.length){ try{ await x.model.setVisible(ids, !!lig); }catch(_){} }
+  }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+// Quantos ambientes existem na cena (0 = o modelo não tem IfcSpace, a opção some da UI).
+export async function contarEspacos(V){
+  let n=0;
+  for(const x of (V&&V.modelos)||[]){
+    try{ n += Object.values(await x.model.getItemsOfCategories([/^IFCSPACE$/i])||{}).flat().length; }catch(_){}
+  }
+  return n;
+}
 export async function transparente(V, modelo, ids, valor){
   try{ await modelo.model.setOpacity(ids, valor); await V.fragments.update(true); }catch(_){}
 }

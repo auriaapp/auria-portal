@@ -652,6 +652,10 @@
                 <input type="checkbox" id="f3dCfgFaces" checked
                        onchange="f3dSetFaces(this.checked)">
               </div>
+              <div class="lin" id="f3dCfgEspacosLin" style="display:none"><span>Mostrar ambientes (IfcSpace)</span>
+                <input type="checkbox" id="f3dCfgEspacos"
+                       onchange="f3dSetEspacos(this.checked)">
+              </div>
               <div class="lin"><span>Alta qualidade</span>
                 <input type="checkbox" id="f3dCfgGQ"
                        onchange="f3dSetGQ(this.checked)">
@@ -3753,12 +3757,24 @@ function bim3d(){
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
 
+// Item 87: etapa do documento (campo 'fase'/'etapa' da convenção) e sua ordem na
+// sequência de projeto — usadas para esconder modelos de etapas anteriores.
+const ETAPA_ORDEM_PAD=['LV','EV','EP','AP','PL','PB','PE','EX','PX','DE','CO','AB','LB','MA'];
+function _etapaDoDoc(d){
+  const c=(d&&d.campos)||{};
+  for(const k of Object.keys(c)){ if(['fase','etapa'].includes(String(k).toLowerCase())) return String(c[k]||'').toUpperCase(); }
+  return '';
+}
+function etapaOrdem(v){ const i=ETAPA_ORDEM_PAD.indexOf(String(v||'').toUpperCase()); return i>=0?i:-1; }
+let F3D_SO_ATUAL = (()=>{ try{ return localStorage.getItem('f3dSoAtual')==='1'; }catch(_){ return false; } })();
+function f3dSoAtualToggle(v){ F3D_SO_ATUAL=!!v; try{ localStorage.setItem('f3dSoAtual', v?'1':'0'); }catch(_){} f3dRenderLista(); }
+
 // Modelos 3D disponíveis no CDE deste empreendimento: IFC da revisão vigente
 // com conversão pronta. Mesma trilha documento → revisão → arquivo do CDE.
 async function f3dModelosDoCde(){
   if(!EMP) return [];
   const { data:docs } = await sb.from('cde_documento_auria')
-    .select('id,codigo,titulo,disciplina').eq('empreendimento_id',EMP.id).eq('arquivado',false);
+    .select('id,codigo,titulo,disciplina,campos').eq('empreendimento_id',EMP.id).eq('arquivado',false);
   if(!docs || !docs.length) return [];
   const { data:revs } = await sb.from('cde_revisao_auria')
     .select('id,documento_id,revisao,recebido_em').in('documento_id', docs.map(d=>d.id));
@@ -3780,6 +3796,7 @@ async function f3dModelosDoCde(){
       porDoc[d.id]={ arq:a, rev:r, doc:d };
   });
   return Object.values(porDoc).map(x=>({
+    etapa: _etapaDoDoc(x.doc),
     arquivoId: x.arq.id,
     path: x.arq.frag_path,
     nome: x.doc.codigo || x.arq.nome,
@@ -4187,7 +4204,17 @@ function f3dRenderLista(){
     el.innerHTML='<div class="hint">Nenhum modelo com 3D pronto. No CDE, aba BIM, use “Converter para 3D”.</div>';
     return;
   }
-  el.innerHTML = F3D_LISTA.map((m,i)=>{
+  // Item 87: etapas anteriores podem sair da lista (o modelo carregado continua aberto).
+  const ords=F3D_LISTA.map(m=>etapaOrdem(m.etapa)).filter(n=>n>=0);
+  const topo=ords.length?Math.max(...ords):-1;
+  const anteriores=topo>=0 ? F3D_LISTA.map((m,i)=>i).filter(i=>{ const o=etapaOrdem(F3D_LISTA[i].etapa); return o>=0 && o<topo; }) : [];
+  const esconder=new Set(F3D_SO_ATUAL?anteriores.filter(i=>!F3D_SEL.has(i)):[]);
+  const cabecalho = anteriores.length
+    ? `<label class="hint" style="display:flex;align-items:center;gap:7px;margin:0 0 6px;cursor:pointer">
+        <input type="checkbox" ${F3D_SO_ATUAL?'checked':''} onchange="f3dSoAtualToggle(this.checked)" style="accent-color:var(--accent)">
+        <span>Ocultar etapas anteriores${F3D_SO_ATUAL?` <b>(${esconder.size})</b>`:''}</span></label>` : '';
+  el.innerHTML = cabecalho + F3D_LISTA.map((m,i)=>{
+    if(esconder.has(i)) return '';
     const on=F3D_SEL.has(i);
     const cod=m.disciplina||'';                         // código (ex.: HID)
     const nome=COD_DISC[cod]||deduzDisc(m.nome)||'';    // nome completo (ex.: Instalações Hidrossanitárias)
@@ -4357,6 +4384,7 @@ async function f3dAbrirSelecionados(){
   // tem uma configuração preferida (fundo, luzes, sombra), cada abertura
   // de modelo já vem assim, sem precisar refazer no painel.
   f3dCfgAplicar(f3dCfgLer()).catch(e=>console.warn('f3dCfg:', e));
+  f3dEspacosDetectar();   // item 86: só mostra a opção de ambientes se o modelo tiver IfcSpace
   f3dDica(DICA_NAV);
   const ps=$('f3dPavSel'); if(ps) ps.dataset.pronto='';   // pavimento populado sob demanda (ao abrir)
 }
@@ -5256,7 +5284,7 @@ function f3dCfgToggle(){
 //  Guardadas em localStorage (não sessionStorage) para sobreviver a fechar
 //  a aba e voltar outro dia. Uma chave só (`f3dCfg`), objeto JSON com todos
 //  os valores. Padrão vem dos números do bim3d.js:criar().
-const F3D_CFG_PAD = { fundo:'escuro', grade:false,
+const F3D_CFG_PAD = { fundo:'escuro', grade:false, espacos:false,   // item 86: IfcSpace oculto por padrão (tapa o modelo)
   expo:1.15, amb:1.25, sol:1.55, faces:true, gq:false,
   ao:false, aoInt:6, aoRaio:50, aoAm:16,
   vidro:100,    // opacidade do vidro em % (100 = normal; menor = mais transparente)
@@ -5264,6 +5292,17 @@ const F3D_CFG_PAD = { fundo:'escuro', grade:false,
   snap:true,    // trena com encaixe em vértice/aresta/face (default ligado)
   dica:true };  // barra de dica de navegação (default ligada)
 let F3D_DICA_ON = true;   // espelha cfg.dica; f3dDica() respeita este estado
+// Item 86: ambientes (IfcSpace) são volumes fechados que tapam o modelo — ficam
+// ocultos por padrão e a linha só aparece quando o modelo aberto tem ambientes.
+async function f3dSetEspacos(on){
+  f3dCfgSalvar({ espacos: !!on });
+  if(F3D && B3 && B3.setEspacosVisiveis){ try{ await B3.setEspacosVisiveis(F3D, !!on); }catch(_){} }
+}
+async function f3dEspacosDetectar(){
+  const lin=$('f3dCfgEspacosLin'); if(!lin) return;
+  let n=0; try{ if(F3D && B3 && B3.contarEspacos) n=await B3.contarEspacos(F3D); }catch(_){}
+  lin.style.display = n ? '' : 'none';
+}
 function f3dCfgLer(){
   try{
     const raw = localStorage.getItem('f3dCfg');
@@ -5338,6 +5377,7 @@ async function f3dCfgAplicar(c){
   B3.setLuzSol(F3D,      c.sol);
   B3.setFacesDuplas(F3D, c.faces);
   B3.setAltaQualidade(F3D, c.gq);
+  if(B3.setEspacosVisiveis) try{ await B3.setEspacosVisiveis(F3D, !!c.espacos); }catch(_){}
   B3.setSnap(F3D, c.snap!==false);   // default ligado quando ausente
   F3D_DICA_ON = c.dica!==false;      // barra de dica (default ligada)
   { const d=$('f3dDica'); if(d && !F3D_DICA_ON) d.style.display='none'; }
@@ -5347,6 +5387,7 @@ async function f3dCfgAplicar(c){
   set('f3dCfgGrade', !!c.grade);
   set('f3dCfgFaces', !!c.faces);
   set('f3dCfgGQ',    !!c.gq);
+  set('f3dCfgEspacos', !!c.espacos);
   set('f3dCfgSnap',  c.snap!==false);
   set('f3dCfgDica',  c.dica!==false);
   set('f3dCfgSao',   !!c.ao);
