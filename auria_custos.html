@@ -223,6 +223,10 @@
 
       <!-- Contratos: cards por empreendimento → contratos por disciplina -->
       <div id="viewEmps" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <span class="cd-hint" style="flex:1">Cadastre aqui os contratos (fornecedor, empreendimento, disciplina, valor e parcelas em %). Só com o contrato cadastrado é poss&iacute;vel vincular as NFs que chegam pelo link p&uacute;blico.</span>
+          <button class="mini go" onclick="ctfAbrir()">&#65291; Novo contrato</button>
+        </div>
         <div id="empsBody"><div class="empty">Carregando&hellip;</div></div>
       </div>
 
@@ -272,7 +276,7 @@
 </div>
 
 <!-- MODAL: vincular NF externa a parcela (item 40 fase 2) -->
-<div class="modalbg" id="modalVinc" onclick="if(event.target===this)vincFechar()">
+<div class="modalbg" id="modalVinc" onclick="if(event.target===this)vincFechar(true)">
   <div class="modalcard" style="max-width:760px">
     <button class="x" onclick="vincFechar()">&times;</button>
     <h3 style="margin-bottom:2px;color:var(--navy)">Vincular NF a uma parcela</h3>
@@ -280,10 +284,50 @@
     <div id="vincLista" style="max-height:52vh;overflow:auto;border:1px solid var(--line,#E5E9F0);border-radius:10px"></div>
     <div class="cd-hint" style="margin-top:8px">A parcela escolhida passa a <b>faturada</b> (ou <b>paga</b>, se a NF já estiver paga). Dá para desfazer depois com “Desvincular”.</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-      <button class="mini" onclick="vincFechar()">Cancelar</button>
+      <button class="mini" onclick="vincFechar(true)">Cancelar</button>
       <button class="mini go" id="vincSalvar" onclick="vincSalvar()" disabled>Vincular</button>
     </div>
     <div class="msg-err" id="vincErr" style="display:none;margin-top:10px;color:var(--err);font-size:12.5px"></div>
+  </div>
+</div>
+
+<!-- MODAL: cadastro de contrato pelo financeiro (item 40 fase 2b) -->
+<div class="modalbg" id="modalCtf" onclick="if(event.target===this)ctfFechar()">
+  <div class="modalcard" style="max-width:820px">
+    <button class="x" onclick="ctfFechar()">&times;</button>
+    <h3 style="margin-bottom:2px;color:var(--navy)" id="ctfTitulo">Novo contrato</h3>
+    <div class="cd-hint" style="margin-bottom:12px">O contrato entra no mesmo fluxo dos cadastrados pela coordena&ccedil;&atilde;o: o projetista solicita, o coordenador autoriza, a NF chega e &eacute; vinculada &agrave; parcela.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label class="cd-hint" style="font-weight:700">Empreendimento *</label><select class="cd-sel" id="ctfEmp" style="width:100%"></select></div>
+      <div><label class="cd-hint" style="font-weight:700">Disciplina *</label><input class="cd-sel" id="ctfDisc" list="ctfDiscList" style="width:100%" placeholder="EST, ARQ, HID&hellip;"><datalist id="ctfDiscList"></datalist></div>
+      <div><label class="cd-hint" style="font-weight:700">Fornecedor *</label><select class="cd-sel" id="ctfForn" style="width:100%" onchange="ctfFornChg()"></select></div>
+      <div><label class="cd-hint" style="font-weight:700">Projetista / contato</label><select class="cd-sel" id="ctfProj" style="width:100%" onchange="ctfProjChg()"></select></div>
+      <div id="ctfOutro" style="grid-column:1/-1;display:none;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="cd-hint" style="font-weight:700">Nome do fornecedor *</label><input class="cd-sel" id="ctfNome" style="width:100%"></div>
+        <div><label class="cd-hint" style="font-weight:700">E-mail do fornecedor *</label><input class="cd-sel" id="ctfEmail" type="email" style="width:100%" placeholder="financeiro@escritorio.com.br"></div>
+      </div>
+      <div><label class="cd-hint" style="font-weight:700">N&ordm; do contrato</label><input class="cd-sel" id="ctfNum" style="width:100%"></div>
+      <div><label class="cd-hint" style="font-weight:700">Valor total (R$) *</label><input class="cd-sel mono" id="ctfValor" type="number" step="0.01" min="0" style="width:100%" oninput="ctfRecalc()"></div>
+      <div style="grid-column:1/-1"><label class="cd-hint" style="font-weight:700">Objeto / descri&ccedil;&atilde;o</label><input class="cd-sel" id="ctfObj" style="width:100%" placeholder="Ex.: Projeto executivo de estrutura"></div>
+      <div><label class="cd-hint" style="font-weight:700">Assinatura</label><input class="cd-sel" id="ctfAss" type="date" style="width:100%"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><label class="cd-hint" style="font-weight:700">In&iacute;cio</label><input class="cd-sel" id="ctfIni" type="date" style="width:100%"></div><div><label class="cd-hint" style="font-weight:700">Fim</label><input class="cd-sel" id="ctfFim" type="date" style="width:100%"></div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <label class="cd-hint" style="font-weight:700;flex:1">Parcelas (% do valor total) *</label>
+      <button class="mini" type="button" onclick="ctfDividir()" title="Divide 100% igualmente entre as linhas">&#8801; Dividir igual</button>
+      <button class="mini" type="button" onclick="CTF_P.push({descricao:'',pct:0,vencimento:''});ctfRender()">&#65291; Parcela</button>
+    </div>
+    <table style="width:100%;margin-top:6px;border:1px solid var(--line,#E5E9F0);border-radius:8px;overflow:hidden;font-size:12.5px">
+      <thead><tr><th style="width:34px">#</th><th>Descri&ccedil;&atilde;o</th><th style="width:80px">%</th><th style="width:130px;text-align:right">Valor</th><th style="width:140px">Vencimento</th><th style="width:70px">Status</th><th style="width:34px"></th></tr></thead>
+      <tbody id="ctfBody"></tbody>
+      <tfoot><tr><td colspan="2" style="text-align:right;font-weight:700">Soma</td><td id="ctfPct" class="mono">0%</td><td id="ctfSoma" class="mono" style="text-align:right">R$ 0,00</td><td colspan="3"></td></tr></tfoot>
+    </table>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;align-items:center">
+      <label id="ctfStatusWrap" style="display:none;font-size:12px;color:var(--txt2);margin-right:auto">Status <select class="cd-sel" id="ctfStatus"><option value="ativo">Ativo</option><option value="encerrado">Encerrado</option><option value="cancelado">Cancelado</option></select></label>
+      <button class="mini" onclick="ctfFechar()">Cancelar</button>
+      <button class="mini go" id="ctfSalvar" onclick="ctfSalvar()">Salvar contrato</button>
+    </div>
+    <div class="msg-err" id="ctfErr" style="display:none;margin-top:10px;color:var(--err);font-size:12.5px"></div>
   </div>
 </div>
 
@@ -612,7 +656,7 @@ async function abrirResumoContrato(ctrId){
   const parcs=(c.parcelas||[]).slice().sort((a,b)=>(a.numero||0)-(b.numero||0));
   const tot=Number(c.valor_total||0), fat=ctrFaturado(c);
   $('modalCtrBody').innerHTML=`
-    <h3 style="margin-bottom:2px;color:var(--navy)">${esc(c.objeto||c.numero||'Contrato')}</h3>
+    <div style="display:flex;align-items:flex-start;gap:10px"><h3 style="margin-bottom:2px;color:var(--navy);flex:1">${esc(c.objeto||c.numero||'Contrato')}</h3><button class="mini" style="margin-right:28px" onclick="fecharResumo();ctfAbrir('${c.contrato_id}')">&#9998; Editar</button></div>
     <div style="font-size:12px;color:var(--mut);margin-bottom:12px">
       ${esc(c.empreendimento)} · ${esc(c.disciplina||'—')} · ${esc(c.projetista||'—')}</div>
     <div style="display:flex;gap:18px;font-size:13px;margin-bottom:12px;flex-wrap:wrap">
@@ -788,6 +832,106 @@ async function janCarregar(){
     bt.innerHTML=`<button class="mini go" onclick="janAbrir()">Abrir recebimento</button>`+(ultima&&!proxima?`<button class="mini" title="Abre o formulário já preenchido com a última janela deslocada um mês (mesma mensagem e e-mails)" onclick="janAbrir('${ultima.id}')">↻ Repetir última (mês seguinte)</button>`:'')+(proxima?`<button class="mini" onclick="janFecharAgora('${proxima.id}','cancelar')">Cancelar próxima</button>`:'');
   }
 }
+// ═══ Item 40 fase 2b: cadastro de contrato pelo financeiro ═══
+let CTF_BASE=null, CTF_ID=null, CTF_P=[];
+async function ctfBase(){ if(CTF_BASE) return CTF_BASE; const r=await sb.rpc('fin_cadastro_base'); if(r.error) throw r.error; CTF_BASE=r.data||{}; return CTF_BASE; }
+function ctfPct(v){ const t=Number($('ctfValor').value)||0; return t?Math.round(Number(v||0)/t*10000)/100:0; }
+async function ctfAbrir(ctrId, pre){
+  CTF_ID=ctrId||null; CTF_P=[]; $('ctfErr').style.display='none';
+  $('ctfTitulo').textContent=ctrId?'Editar contrato':'Novo contrato';
+  $('ctfStatusWrap').style.display=ctrId?'':'none';
+  ['ctfDisc','ctfNum','ctfValor','ctfObj','ctfAss','ctfIni','ctfFim','ctfNome','ctfEmail'].forEach(i=>$(i).value='');
+  $('modalCtf').classList.add('on');
+  let B; try{ B=await ctfBase(); }catch(e){ $('ctfErr').textContent='Não foi possível carregar a base: '+(e.message||e)+' (rode supabase_fin_contratos.sql)'; $('ctfErr').style.display=''; return; }
+  $('ctfEmp').innerHTML='<option value="">— escolha —</option>'+(B.empreendimentos||[]).map(e=>`<option value="${e.id}">${esc(e.nome)}${e.construtora?' · '+esc(e.construtora):''}</option>`).join('');
+  $('ctfDiscList').innerHTML=(B.disciplinas||[]).map(d=>`<option value="${esc(d)}">`).join('');
+  $('ctfForn').innerHTML='<option value="">— escolha —</option>'+(B.fornecedores||[]).map(f=>`<option value="${f.id}">${esc(f.nome)}${f.cnpj?' · '+esc(f.cnpj):''}</option>`).join('')+'<option value="__outro">Outro (não cadastrado) — informar nome e e-mail</option>';
+  let c=null;
+  if(ctrId){
+    try{ const r=await sb.rpc('fin_contrato_ler',{p_id:ctrId}); if(r.error) throw r.error; c=r.data; }
+    catch(e){ $('ctfErr').textContent=e.message||String(e); $('ctfErr').style.display=''; return; }
+  } else if(pre){ c=pre; }
+  if(c){
+    $('ctfEmp').value=c.empreendimento_id||''; $('ctfDisc').value=c.disciplina||''; $('ctfNum').value=c.numero||''; $('ctfObj').value=c.objeto||'';
+    $('ctfValor').value=c.valor_total!=null?Number(c.valor_total).toFixed(2):''; $('ctfAss').value=c.data_assinatura||''; $('ctfIni').value=c.data_inicio||''; $('ctfFim').value=c.data_fim||'';
+    $('ctfStatus').value=c.status||'ativo';
+    // fornecedor: acha pelo e-mail do projetista/contato; senão "outro"
+    const em=(c.projetista_email||'').toLowerCase();
+    const f=(B.fornecedores||[]).find(f=>(f.email||'').toLowerCase()===em||(f.projetistas||[]).some(p=>(p.email||'').toLowerCase()===em))
+          ||(c.projetista_nome?(B.fornecedores||[]).find(f=>f.nome.toLowerCase()===String(c.projetista_nome).toLowerCase()):null);
+    if(f){ $('ctfForn').value=f.id; ctfFornChg(); const pj=(f.projetistas||[]).find(p=>(p.email||'').toLowerCase()===em); if(pj) $('ctfProj').value=pj.id; else if(em) $('ctfProj').value='__contato'; }
+    else if(em||c.projetista_nome){ $('ctfForn').value='__outro'; ctfFornChg(); $('ctfNome').value=c.projetista_nome||''; $('ctfEmail').value=c.projetista_email||''; }
+    else ctfFornChg();
+    CTF_P=(c.parcelas||[]).map(p=>({id:p.id,descricao:p.descricao||'',pct:ctfPct(p.valor),valor:Number(p.valor||0),vencimento:p.vencimento||'',status:p.status,tem_nf:p.tem_nf}));
+  } else { ctfFornChg(); }
+  if(!CTF_P.length) CTF_P=[{descricao:'',pct:100,vencimento:''}];
+  ctfRender();
+}
+function ctfFornChg(){
+  const B=CTF_BASE||{}; const v=$('ctfForn').value; const f=(B.fornecedores||[]).find(x=>x.id===v);
+  $('ctfOutro').style.display=v==='__outro'?'grid':'none';
+  const ps=f?(f.projetistas||[]):[];
+  $('ctfProj').innerHTML=(f&&f.email?`<option value="__contato">${esc(f.nome)} · ${esc(f.email)} (contato da empresa)</option>`:'')+ps.map(p=>`<option value="${p.id}">${esc(p.nome||p.email)} · ${esc(p.email)}${p.disciplinas&&p.disciplinas.length?' · '+esc([].concat(p.disciplinas).join(', ')):''}</option>`).join('')||'<option value="">—</option>';
+  $('ctfProj').disabled=!f;
+  ctfProjChg();
+}
+function ctfProjChg(){
+  const B=CTF_BASE||{}; const f=(B.fornecedores||[]).find(x=>x.id===$('ctfForn').value); if(!f) return;
+  const pj=(f.projetistas||[]).find(p=>p.id===$('ctfProj').value);
+  if(pj&&!$('ctfDisc').value&&pj.disciplinas&&pj.disciplinas.length) $('ctfDisc').value=[].concat(pj.disciplinas)[0];
+}
+function ctfRecalc(){ const t=Number($('ctfValor').value)||0; CTF_P.forEach(p=>{ if(!(p.status&&['faturada','paga'].includes(p.status))) p.valor=Math.round(t*Number(p.pct||0))/100; }); ctfRender(); }
+function ctfDividir(){
+  const n=CTF_P.length||1, t=Number($('ctfValor').value)||0;
+  if(t>0){ // divide o VALOR igualmente (centavos na última) e deriva o % — evita 99.990 por arredondamento de %
+    const v=Math.floor(t/n*100)/100; CTF_P.forEach(p=>{ p.valor=v; p.pct=Math.round(v/t*10000)/100; });
+    const last=CTF_P[n-1]; last.valor=Math.round((t-v*(n-1))*100)/100; last.pct=Math.round(last.valor/t*10000)/100; ctfRender();
+  } else { const base=Math.floor(10000/n)/100; CTF_P.forEach(p=>p.pct=base); CTF_P[n-1].pct=Math.round((100-base*(n-1))*100)/100; ctfRecalc(); }
+}
+function ctfSet(i,k,v){ CTF_P[i][k]=v; if(k==='pct'){ const t=Number($('ctfValor').value)||0; CTF_P[i].valor=Math.round(t*Number(v||0))/100; } ctfRender(true); }
+function ctfDel(i){ const p=CTF_P[i]; if(p.status&&p.status!=='a_faturar'){ alert('Parcela já '+pstLbl(p.status).toLowerCase()+' não pode ser removida.'); return; } if(p.tem_nf){ alert('Esta parcela já tem NF.'); return; } CTF_P.splice(i,1); ctfRender(); }
+function ctfRender(keepFocus){
+  const t=Number($('ctfValor').value)||0; const sv=CTF_P.reduce((s,p)=>s+Number(p.valor||0),0); const sp=t?sv/t*100:CTF_P.reduce((s,p)=>s+Number(p.pct||0),0);
+  const act=keepFocus&&document.activeElement&&document.activeElement.dataset?{i:document.activeElement.dataset.i,k:document.activeElement.dataset.k,ss:document.activeElement.selectionStart}:null;
+  $('ctfBody').innerHTML=CTF_P.map((p,i)=>{ const lock=p.status&&['faturada','paga'].includes(p.status); return `<tr>
+    <td class="mono">${i+1}</td>
+    <td><input class="cd-sel" data-i="${i}" data-k="descricao" style="width:100%" value="${esc(p.descricao||'')}" placeholder="Ex.: Anteprojeto" oninput="ctfSet(${i},'descricao',this.value)"></td>
+    <td><input class="cd-sel mono" data-i="${i}" data-k="pct" type="number" step="0.01" min="0" max="100" style="width:100%" value="${p.pct??''}" ${lock?'disabled':''} oninput="ctfSet(${i},'pct',this.value)"></td>
+    <td class="mono" style="text-align:right">${brl(p.valor||0)}</td>
+    <td><input class="cd-sel" data-i="${i}" data-k="vencimento" type="date" style="width:100%" value="${p.vencimento||''}" oninput="ctfSet(${i},'vencimento',this.value)"></td>
+    <td>${p.status?`<span class="pst" style="background:${pstCor(p.status)}">${pstLbl(p.status)}</span>`:'<span class="cd-hint">nova</span>'}</td>
+    <td>${lock?'':`<button class="mini" type="button" title="Remover" onclick="ctfDel(${i})">&times;</button>`}</td></tr>`; }).join('');
+  $('ctfPct').textContent=(Math.round(sp*100)/100)+'%'; $('ctfPct').style.color=Math.abs(sp-100)<0.01?'var(--ok)':'var(--err)';
+  $('ctfSoma').textContent=brl(sv); $('ctfSoma').style.color=t&&Math.abs(sv-t)<=0.05?'var(--ok)':'var(--err)';
+  if(act&&act.i!=null){ const el=$('ctfBody').querySelector(`[data-i="${act.i}"][data-k="${act.k}"]`); if(el){ el.focus(); try{ if(act.ss!=null&&el.type!=='number'&&el.type!=='date') el.setSelectionRange(act.ss,act.ss); }catch(_){} } }
+}
+function ctfFechar(){ $('modalCtf').classList.remove('on'); }
+async function ctfSalvar(){
+  const err=$('ctfErr'); err.style.display='none';
+  const B=CTF_BASE||{}; const fv=$('ctfForn').value; const f=(B.fornecedores||[]).find(x=>x.id===fv);
+  let email='', nome='';
+  if(fv==='__outro'){ nome=$('ctfNome').value.trim(); email=$('ctfEmail').value.trim(); }
+  else if(f){ const pj=(f.projetistas||[]).find(p=>p.id===$('ctfProj').value); nome=pj&&pj.nome?pj.nome:f.nome; email=pj?pj.email:(f.email||''); }
+  const t=Number($('ctfValor').value)||0; const sv=CTF_P.reduce((s,p)=>s+Number(p.valor||0),0);
+  const falta=[]; if(!$('ctfEmp').value) falta.push('empreendimento'); if(!$('ctfDisc').value.trim()) falta.push('disciplina'); if(!fv) falta.push('fornecedor'); if(!email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) falta.push('e-mail do fornecedor'); if(!(t>0)) falta.push('valor total');
+  if(falta.length){ err.textContent='Falta: '+falta.join(', ')+'.'; err.style.display=''; return; }
+  if(Math.abs(sv-t)>0.05){ err.textContent='As parcelas somam '+brl(sv)+' e o contrato é de '+brl(t)+' — ajuste os percentuais.'; err.style.display=''; return; }
+  // ajusta centavos na última parcela editável para a soma bater com o total
+  const parcs=CTF_P.map((p,i)=>({id:p.id||null,numero:i+1,descricao:p.descricao||'',valor:Math.round(Number(p.valor||0)*100)/100,vencimento:p.vencimento||null}));
+  const diff=Math.round((t-parcs.reduce((s,p)=>s+p.valor,0))*100)/100;
+  if(diff!==0){ for(let i=parcs.length-1;i>=0;i--){ const st=CTF_P[i].status; if(!st||!['faturada','paga'].includes(st)){ parcs[i].valor=Math.round((parcs[i].valor+diff)*100)/100; break; } } }
+  const b=$('ctfSalvar'); b.disabled=true; b.textContent='Salvando…';
+  try{
+    const r=await sb.rpc('fin_contrato_salvar',{p:{ id:CTF_ID, empreendimento_id:$('ctfEmp').value, projetista_email:email, projetista_nome:nome, disciplina:$('ctfDisc').value.trim(),
+      numero:$('ctfNum').value.trim(), objeto:$('ctfObj').value.trim(), valor_total:t, data_assinatura:$('ctfAss').value||null, data_inicio:$('ctfIni').value||null, data_fim:$('ctfFim').value||null,
+      status:CTF_ID?$('ctfStatus').value:'ativo', parcelas:parcs }});
+    if(r.error) throw r.error;
+    ctfFechar(); FIN_CTRS=null; CTF_BASE=null; EMP_SEL=null;
+    if($('viewEmps').style.display==='none') verAba('emps'); else renderEmpDash();
+    if(VINC_NF){ vincAbrir(VINC_NF); }
+  }catch(e){ err.textContent=e.message||String(e); err.style.display=''; }
+  b.disabled=false; b.textContent='Salvar contrato';
+}
 // ═══ Item 40 fase 2: vincular NF externa a parcela ═══
 let VINC_NF=null, VINC_SEL=null;
 async function vincAbrir(nfId){
@@ -799,17 +943,18 @@ async function vincAbrir(nfId){
   try{
     const r=await sb.rpc('fin_parcelas_vinculaveis',{p_nf:nfId}); if(r.error) throw r.error;
     const L=r.data||[];
-    if(!L.length){ $('vincLista').innerHTML='<div class="empty">Nenhuma parcela em aberto (a faturar / solicitada / autorizada) nos contratos ativos desta empresa.</div>'; return; }
+    const novo=`<div style="padding:10px 12px;border-top:1px solid #EEF2F7;text-align:right"><button class="mini" onclick="vincFechar();ctfAbrir(null,{empreendimento_id:'${esc(n.empreendimento_id||'')}',disciplina:'${esc(n.disciplina||'')}',projetista_nome:'${esc(n.projetista||'')}',projetista_email:'${esc(n.projetista_email||'')}',objeto:'${esc(n.conteudo||'')}',valor_total:null,parcelas:[]})" title="Cadastra o contrato já com os dados desta NF; ao salvar, volta para o vínculo">&#65291; Cadastrar contrato para esta NF</button></div>`;
+    if(!L.length){ $('vincLista').innerHTML='<div class="empty">Nenhuma parcela em aberto (a faturar / solicitada / autorizada) nos contratos ativos desta empresa. Cadastre o contrato primeiro.</div>'+novo; return; }
     $('vincLista').innerHTML=L.map(p=>`<label style="display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:8px 12px;border-top:1px solid #EEF2F7;cursor:pointer;font-size:12.5px${p.sugerida?';background:rgba(232,150,10,.07)':''}">
       <input type="radio" name="vincP" value="${p.parcela_id}" onchange="VINC_SEL=this.value;$('vincSalvar').disabled=false">
       <span><b class="mono" style="color:var(--navy)">${esc(p.empreendimento)}</b> · ${esc(p.disciplina||'')} · ${esc(p.projetista||'')}${p.sugerida?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06">sugerida</span>':''}<br><span style="color:var(--mut)">${esc(p.contrato||'')} · parcela ${p.numero}${p.descricao?' · '+esc(p.descricao):''}${p.vencimento?' · venc. '+dbr(p.vencimento):''}</span></span>
-      <span style="text-align:right"><b class="mono">${brl(p.valor)}</b><br><span class="st" style="background:${pstCor(p.status)}22;color:${pstCor(p.status)}">${pstLbl(p.status)}</span></span></label>`).join('');
+      <span style="text-align:right"><b class="mono">${brl(p.valor)}</b><br><span class="st" style="background:${pstCor(p.status)}22;color:${pstCor(p.status)}">${pstLbl(p.status)}</span></span></label>`).join('')+novo;
   }catch(e){ $('vincLista').innerHTML='<div class="empty">Erro: '+esc(e.message||e)+' (rode supabase_nf_janela_p2.sql)</div>'; }
 }
-function vincFechar(){ $('modalVinc').classList.remove('on'); }
+function vincFechar(cancel){ $('modalVinc').classList.remove('on'); if(cancel) VINC_NF=null; }
 async function vincSalvar(){
   if(!VINC_NF||!VINC_SEL) return; const b=$('vincSalvar'); b.disabled=true; b.textContent='Vinculando…'; $('vincErr').style.display='none';
-  try{ const r=await sb.rpc('nf_vincular_parcela',{p_nf:VINC_NF,p_parcela:VINC_SEL}); if(r.error) throw r.error; vincFechar(); FIN_CTRS=null; await carregar(); }
+  try{ const r=await sb.rpc('nf_vincular_parcela',{p_nf:VINC_NF,p_parcela:VINC_SEL}); if(r.error) throw r.error; vincFechar(true); FIN_CTRS=null; await carregar(); }
   catch(e){ $('vincErr').textContent=e.message||String(e); $('vincErr').style.display=''; }
   b.disabled=false; b.textContent='Vincular';
 }
