@@ -3791,6 +3791,29 @@ async function f3dModelosDoCde(){
   })).sort((a,b)=> (a.nome||'').localeCompare(b.nome||''));
 }
 
+// Modelos pedidos por ID de ARQUIVO (vem do CDE em ?cde_bim=). Busca direto — não
+// depende do arquivo estar na revisão vigente, senão "Analisar no App" abriria vazio.
+async function f3dModelosPorArquivo(ids){
+  if(!ids || !ids.length) return { modelos:[], semFrag:[] };
+  const { data:arqs } = await sb.from('cde_arquivo_auria')
+    .select('id,revisao_id,nome,extensao,frag_status,frag_path').in('id', ids);
+  if(!arqs || !arqs.length) return { modelos:[], semFrag:ids.slice() };
+  const { data:revs } = await sb.from('cde_revisao_auria')
+    .select('id,documento_id,revisao,recebido_em').in('id', arqs.map(a=>a.revisao_id));
+  const revDe={}; (revs||[]).forEach(r=>{ revDe[r.id]=r; });
+  const { data:docs } = await sb.from('cde_documento_auria')
+    .select('id,codigo,titulo,disciplina').in('id', (revs||[]).map(r=>r.documento_id));
+  const docDe={}; (docs||[]).forEach(d=>{ docDe[d.id]=d; });
+  const modelos=[], semFrag=[];
+  arqs.forEach(a=>{
+    if(a.frag_status!=='pronto' || !a.frag_path){ semFrag.push(a.nome||a.id); return; }
+    const r=revDe[a.revisao_id]||{}; const d=docDe[r.documento_id]||{};
+    modelos.push({ arquivoId:a.id, path:a.frag_path, nome:d.codigo||a.nome, titulo:d.titulo||'',
+      disciplina:d.disciplina||'', revisao:r.revisao||'', documentoId:d.id||null, revisaoId:a.revisao_id });
+  });
+  return { modelos, semFrag };
+}
+
 // Monta a cena pelo módulo e liga os callbacks do App. Tudo o que o módulo
 // NÃO sabe fazer (e não deve saber) entra por aqui: o que acontece ao clicar
 // num elemento, quem desenha os pinos, onde vai a dica.
@@ -4085,7 +4108,26 @@ async function f3dModo(lig, preSel){
   }catch(e){ console.warn('modelos CDE:', e); F3D_LISTA=[]; }
   if(preSel && preSel.length){
     F3D_SEL=new Set();
-    preSel.forEach(aid=>{ const i=F3D_LISTA.findIndex(m=>m.arquivoId===aid); if(i>=0) F3D_SEL.add(i); });
+    const faltam=[];
+    preSel.forEach(aid=>{ const i=F3D_LISTA.findIndex(m=>m.arquivoId===aid); if(i>=0) F3D_SEL.add(i); else faltam.push(aid); });
+    // Item 101: o que não está na lista (revisão anterior, documento arquivado) é buscado
+    // direto pelo ID e acrescentado — o App abre exatamente o que o CDE mandou.
+    if(faltam.length){
+      let extra={ modelos:[], semFrag:[] };
+      try{ extra=await f3dModelosPorArquivo(faltam); }catch(e){ console.warn('modelos por arquivo:', e); }
+      extra.modelos.forEach(m=>{ F3D_LISTA.push(m); F3D_SEL.add(F3D_LISTA.length-1); });
+      const perdidos=extra.semFrag.length + (faltam.length - extra.modelos.length - extra.semFrag.length);
+      if(!F3D_SEL.size){
+        f3dRenderLista();
+        const msg=$('bimMsg');
+        const txt = extra.semFrag.length
+          ? ('A conversão 3D deste modelo ainda não está pronta: '+extra.semFrag.join(', ')+'. Converta no CDE e tente de novo.')
+          : 'Não encontrei o modelo pedido pelo CDE neste empreendimento.';
+        if(msg){ msg.textContent=txt; msg.style.display='flex'; } else alert(txt);
+        return;
+      }
+      if(perdidos>0 && extra.semFrag.length) console.warn('sem .frag pronto:', extra.semFrag.join(', '));
+    }
   }
   f3dRenderLista();
   if(F3D_SEL.size) await f3dAbrirSelecionados();

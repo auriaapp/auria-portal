@@ -233,13 +233,26 @@
     res.forEach(r=>{ r.conf=Math.min(1,r.conf); });
     return res.slice(0,4);
   }
+  // CONCEITO de um token: a palavra literal e o seu grupo de sinônimos valem UMA coisa só
+  // (antes "prancha" contava duas vezes — literal + ~grupo — e sozinha já abria uma ação).
+  function _conc(x){ return x[0]==='~' ? x : (SIN_MAP[x]||x); }
+  function _concSet(txt){ const o=new Set(); toks(txt).forEach(x=>o.add(_conc(x))); return o; }
   function acaoPara(texto){   // melhor ação da tela para o texto (pergunta + resposta)
-    const A=acoesDisponiveis(); const t=new Set(toks(texto)); let best=null, bs=0;
-    Object.keys(A).forEach(k=>{ const a=A[k]; const forte=new Set(toks(k.replace(/_/g,' ')+' '+(a.rotulo||''))), fraco=new Set(toks(a.descricao||''));
-      const GEN=new Set(['abr','obr','pain','cde','arqu','list','tel','mostr','model']);   // palavras que estão em várias ações: valem pouco
-      let s=0, sf=0; forte.forEach(x=>{ if(t.has(x)){ const g=GEN.has(x); s+=(x[0]==='~'?0.6:(g?0.3:1.5)); if(x[0]!=='~'&&!g) sf++; } }); fraco.forEach(x=>{ if(!forte.has(x)&&t.has(x)) s+=(x[0]==='~'?0.4:0.5); });
-      if(sf>0 && s>bs){ bs=s; best=k; } });
-    return bs>=2 ? best : null;
+    const A=acoesDisponiveis(); const t=_concSet(texto); let best=null, bs=0, bs2=0, bsf=0, bfn=0;
+    const GEN=new Set(['abr','obr','pain','cde','arqu','list','tel','mostr']);   // palavras que estão em várias ações: valem pouco
+    Object.keys(A).forEach(k=>{ const a=A[k];
+      const forte=_concSet(k.replace(/_/g,' ')+' '+(a.rotulo||'')), fraco=_concSet(a.descricao||'');
+      let s=0, sf=0, fn=0;
+      forte.forEach(x=>{ const g=GEN.has(x); if(!g) fn++; if(t.has(x)){ s+=(g?0.3:1.2); if(!g) sf++; } });
+      fraco.forEach(x=>{ if(!forte.has(x)&&t.has(x)) s+=(GEN.has(x)?0.2:0.5); });
+      if(sf>0 && (s>bs || (s===bs && sf>bsf))){ bs2=bs; bs=s; bsf=sf; best=k; bfn=fn; }
+      else if(s>bs2){ bs2=s; } });
+    // dois conceitos fortes (ou pontuação alta) E folga sobre a 2ª melhor ação —
+    // sem isso, uma palavra solta como "prancha" levava para a tela errada.
+    // Exceção: ação de conceito único (ex.: "Etiquetas QR") cujo conceito a pergunta cobre inteiro.
+    const firme = (bsf>=2 && bs>=2.2) || bs>=3.2;
+    const cobriuTudo = bfn>0 && bsf>=bfn && bs>=1.2;
+    return ((firme && bs-bs2>=0.8) || (cobriuTudo && bs-bs2>=0.5)) ? best : null;
   }
   function secaoHtmlTexto(it){
     let corpo=it.corpo; if(corpo.length>1100){ const cut=corpo.slice(0,1100); corpo=cut.slice(0, Math.max(cut.lastIndexOf('\n'), 700))+'\n…'; }
@@ -255,8 +268,12 @@
       const man=manualParaPapel(MANUAL||'', CFG.papel);
       let resp='', acao=null, naoSabe=false, extras=[];
       // "me leva lá" / "abre pra mim" como continuação da resposta anterior
-      if(/(me lev|leva l[aá]|leve l[aá]|abr[ae] (pra|para) mim|me manda|vai l[aá]|abrir isso|pode abrir)/i.test(q) && ULT.acao && acoesDisponiveis()[ULT.acao]){
+      const pediuLevar=/(me lev|leva l[aá]|leve l[aá]|abr[ae] (pra|para) mim|me manda|vai l[aá]|abrir isso|pode abrir)/i.test(q);
+      if(pediuLevar && ULT.acao && acoesDisponiveis()[ULT.acao]){
         resp='Pronto — é este botão:'; acao=ULT.acao;
+      } else if(pediuLevar && toks(q).filter(t=>t[0]!=='~').length<=2){
+        // pediu para levar, mas não há atalho guardado desta tela: melhor dizer do que chutar
+        resp='Nesta tela eu não tenho um atalho para abrir isso. Diga o que você quer fazer (ex.: “onde mudo o status de uma prancha?”) que eu mostro o caminho.'; naoSabe=true;
       } else if(!man){
         resp='O manual não pôde ser carregado agora. Tente de novo em instantes ou fale com o suporte.'; naoSabe=true;
       } else {
