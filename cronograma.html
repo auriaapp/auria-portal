@@ -81,6 +81,15 @@ body.light .caret:hover{color:#1E293B}
 table.sched{border-collapse:collapse;width:100%;font-size:12px}
 table.sched thead th{position:sticky;top:0;background:#161A23;color:#94A3B8;text-align:left;padding:10px 14px;font-weight:700;border-bottom:1px solid #2A2D3A;white-space:nowrap;z-index:2}
 table.sched td{padding:7px 14px;border-bottom:1px solid #20242E;white-space:nowrap;color:#C4D2E0}
+/* Item 105: largura de CADA coluna ajustável pelo cabeçalho (arrastar a divisória;
+   duplo clique ajusta ao conteúdo). Com colgroup + table-layout fixo a largura vale
+   de verdade; por isso a célula precisa cortar com reticências. */
+table.sched.fixo{table-layout:fixed}
+table.sched.fixo td{overflow:hidden;text-overflow:ellipsis}
+table.sched thead th{position:sticky;overflow:hidden}
+table.sched thead th .thgrip{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;z-index:3}
+table.sched thead th .thgrip:hover,table.sched thead th .thgrip.on{background:rgba(232,150,10,.45)}
+body.light table.sched td{color:#334155}
 table.sched tr.sum td{font-weight:700;color:#E2E8F0;background:#161A23}
 table.sched tr.mrow td{color:#E8960A}
 table.sched tr.mrow td:first-child{border-left:3px solid #E8960A}
@@ -237,7 +246,7 @@ body.light .legend{color:#64748B}
 <div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
 <div id="scroll"><div id="grid"></div></div>
 <div id="tablewrap">
-  <table class="sched"><thead><tr>
+  <table class="sched"><colgroup id="schedCols"></colgroup><thead><tr>
     <th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Dias</th><th>Avanço</th><th class="pvcol" title="Avanço previsto pelo cronograma">Previsto</th><th class="pvcol" title="Situação da tarefa declarada no Prevision">Situação</th><th class="pvcol">Responsável</th><th>Status</th><th>Tipo</th>
   </tr></thead><tbody id="tbody"></tbody></table>
 </div>
@@ -253,6 +262,65 @@ function gripBind(){
     var up=function(m){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); setNameW(w0+(m.clientX-x0)); render(DATA); };
     document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up); };
   g.ondblclick=function(){ var max=0; document.querySelectorAll('.names .nrow').forEach(function(r){ var s=r.scrollWidth+16; if(s>max) max=s; }); if(max) { setNameW(max); render(DATA); } };
+}
+// ── Item 105: largura das colunas da planilha ──────────────────────────────
+// Guardada por índice de coluna em localStorage; vale para o usuário, não para o
+// cronograma (é preferência de leitura). Duplo clique na divisória ajusta ao conteúdo.
+var SCHED_W={};
+try{ SCHED_W=JSON.parse(localStorage.getItem('auria_cron_colw')||'{}')||{}; }catch(e){ SCHED_W={}; }
+function schedSalvarW(){ try{ localStorage.setItem('auria_cron_colw', JSON.stringify(SCHED_W)); }catch(e){} }
+function schedAplicarCols(){
+  var tb=document.querySelector('table.sched'), cg=document.getElementById('schedCols');
+  if(!tb||!cg) return;
+  var ths=tb.querySelectorAll('thead th'); if(!ths.length) return;
+  var visivel=tb.getBoundingClientRect().width>0;
+  var temTudoSalvo=true; for(var k=0;k<ths.length;k++){ if(!SCHED_W[k]) temTudoSalvo=false; }
+  if(!visivel && !temTudoSalvo) return;   // escondida: mediria 0 — espera a aba da planilha
+  // primeira vez: mede o que o navegador já calculou e congela essas larguras
+  var larguras=[];
+  for(var i=0;i<ths.length;i++){
+    var w=SCHED_W[i];
+    if(!w){ w=Math.max(60, Math.round(ths[i].getBoundingClientRect().width)||120); }
+    larguras.push(w);
+  }
+  cg.innerHTML=larguras.map(function(w){ return '<col style="width:'+w+'px">'; }).join('');
+  tb.classList.add('fixo');
+}
+function schedSetW(i,w){
+  var cg=document.getElementById('schedCols'); if(!cg) return;
+  var col=cg.children[i]; if(!col) return;
+  var v=Math.max(60, Math.min(900, Math.round(w)));
+  col.style.width=v+'px'; SCHED_W[i]=v;
+}
+function schedGripsBind(){
+  var tb=document.querySelector('table.sched'); if(!tb) return;
+  var ths=tb.querySelectorAll('thead th');
+  for(var i=0;i<ths.length;i++){
+    (function(th,idx){
+      if(th.querySelector('.thgrip')) return;
+      var g=document.createElement('div'); g.className='thgrip';
+      g.title='Arraste para mudar a largura · duplo clique ajusta ao conteúdo';
+      th.style.position='sticky'; th.appendChild(g);
+      g.onmousedown=function(e){
+        e.preventDefault(); e.stopPropagation(); g.classList.add('on');
+        var cg=document.getElementById('schedCols');
+        var x0=e.clientX, w0=(cg&&cg.children[idx]) ? parseInt(cg.children[idx].style.width,10) : th.getBoundingClientRect().width;
+        var mv=function(m){ schedSetW(idx, w0+(m.clientX-x0)); };
+        var up=function(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up);
+          g.classList.remove('on'); schedSalvarW(); };
+        document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+      };
+      g.ondblclick=function(e){
+        e.preventDefault(); e.stopPropagation();
+        // mede o conteúdo real da coluna com a tabela solta por um instante
+        var tabela=document.querySelector('table.sched'); tabela.classList.remove('fixo');
+        var max=th.scrollWidth;
+        tabela.querySelectorAll('tbody tr').forEach(function(tr){ var c=tr.children[idx]; if(c && c.scrollWidth>max) max=c.scrollWidth; });
+        tabela.classList.add('fixo');
+        schedSetW(idx, max+28); schedSalvarW();
+      };
+    })(ths[i], i);
+  }
 }
 var MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 function pd(s){if(!s)return null;var p=s.split('-');return new Date(Date.UTC(+p[0],+p[1]-1,+p[2]));}
@@ -548,6 +616,8 @@ function buildTable(){
       +'<td>'+tipoCell+'</td></tr>';
   });
   document.getElementById('tbody').innerHTML=h||'<tr><td colspan="11" style="padding:30px;text-align:center;color:#475569">Sem tarefas</td></tr>';
+  // item 105: com as linhas na tela, congela/reaplica as larguras e liga as alças
+  schedAplicarCols(); schedGripsBind();
 }
 function setField(idx,campo,val){
   if(SIM){ simSet(idx,campo,val); return; }
@@ -662,6 +732,8 @@ async function publicarOnline(){
 function setView(v){
   document.getElementById('scroll').style.display=(v==='gantt')?'block':'none';
   document.getElementById('tablewrap').style.display=(v==='table')?'block':'none';
+  // item 105: as larguras só podem ser medidas com a planilha na tela
+  if(v==='table') setTimeout(function(){ schedAplicarCols(); schedGripsBind(); }, 0);
   document.getElementById('legend').style.visibility=(v==='gantt')?'visible':'hidden';
   document.getElementById('vGantt').classList.toggle('active',v==='gantt');
   document.getElementById('vTable').classList.toggle('active',v==='table');

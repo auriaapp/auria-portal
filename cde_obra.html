@@ -247,9 +247,15 @@
     border-left:1px solid rgba(255,255,255,.15)}
   .cdeWin-bim .bimXrayOpc.on{display:flex}
   /* Painel de configuração de visualização */
+  /* O painel cresceu (ambientes/IfcSpace, efeitos) e passava do rodapé da janela:
+     limita à altura da janela do modelo e rola por dentro. */
   .cdeWin-bim .bimCfg{position:absolute;top:46px;left:8px;z-index:6;width:238px;display:none;
     background:rgba(15,23,42,.95);border:1px solid rgba(255,255,255,.16);border-radius:9px;
-    padding:10px 11px;color:#e2e8f0;font-size:12px}
+    padding:10px 11px;color:#e2e8f0;font-size:12px;
+    bottom:12px;overflow-y:auto;overscroll-behavior:contain}
+  .cdeWin-bim .bimCfg::-webkit-scrollbar{width:9px}
+  .cdeWin-bim .bimCfg::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:6px}
+  .cdeWin-bim .bimCfg::-webkit-scrollbar-track{background:transparent}
   .cdeWin-bim .bimCfg.on{display:block}
   .cdeWin-bim .bimCfg h5{margin:0 0 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8}
   .cdeWin-bim .bimCfg .lin{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 7px}
@@ -402,8 +408,15 @@
 
   /* ── Coluna direita: navegação ──────────────────────────── */
   .nav{width:322px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);
-       transition:width .16s ease;overflow:hidden}
+       transition:width .16s ease;overflow:hidden;position:relative}
   .nav.collapsed{width:0;border-left:none}
+  /* Item 106: divisória arrastável na borda ESQUERDA da coluna (ela fica à direita
+     da tela). Durante o arrasto a transição de largura é desligada, senão a coluna
+     "persegue" o mouse com atraso. Duplo clique volta à largura padrão. */
+  .nav .navgrip{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:30;background:transparent}
+  .nav .navgrip:hover,.nav .navgrip.on{background:rgba(232,150,10,.45)}
+  .nav.redim{transition:none}
+  .nav.collapsed .navgrip{display:none}
   /* Busca de arquivos: barra fixa no topo da coluna; o corpo (lista+trilho)
      rola por baixo. Fica FORA do #navPanel de propósito — o painel é reescrito a
      cada tecla, e um input dentro dele perderia foco/cursor. */
@@ -683,6 +696,7 @@
 
   <!-- Navegação -->
   <aside class="nav" id="navAside">
+    <div class="navgrip" id="navGrip" title="Arraste para mudar a largura da coluna · duplo clique volta ao padrão"></div>
     <div class="navSearch">
       <div class="navSearchIn">
         <span class="navSearchIc">🔎</span>
@@ -1136,6 +1150,37 @@ function toggleNav(){
   // janela cresceu o bastante pra pedir mais resolução.
   setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V.page) w._revisarBase(); }); }, 180);
 }
+// Item 106: largura da coluna de arquivos — arrastar a divisória, lembrada por navegador.
+const NAV_W_PAD=322, NAV_W_MIN=240, NAV_W_MAX=760;
+function navSetLargura(w, salvar){
+  const nav=$('navAside'); if(!nav) return;
+  const v=Math.max(NAV_W_MIN, Math.min(NAV_W_MAX, Math.round(w)));
+  nav.style.width=v+'px';
+  if(salvar){ try{ localStorage.setItem('cde_nav_w', String(v)); }catch(_){} }
+}
+function navLarguraRestaurar(){
+  let w=NAV_W_PAD; try{ const v=parseInt(localStorage.getItem('cde_nav_w')||'',10); if(v>=NAV_W_MIN&&v<=NAV_W_MAX) w=v; }catch(_){}
+  navSetLargura(w, false);
+}
+function navGripBind(){
+  const g=$('navGrip'), nav=$('navAside'); if(!g||!nav) return;
+  g.onmousedown=(e)=>{
+    e.preventDefault(); g.classList.add('on'); nav.classList.add('redim');
+    const x0=e.clientX, w0=nav.getBoundingClientRect().width;
+    // a coluna cresce para a ESQUERDA: arrastar para a esquerda aumenta a largura
+    const mv=(m)=>navSetLargura(w0-(m.clientX-x0), false);
+    const up=(m)=>{
+      document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up);
+      g.classList.remove('on'); nav.classList.remove('redim');
+      navSetLargura(w0-(m.clientX-x0), true);
+      // as janelas de prancha redesenham na resolução do novo espaço
+      setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V&&w.V.page) w._revisarBase(); }); }, 180);
+    };
+    document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+  };
+  g.ondblclick=()=>{ navSetLargura(NAV_W_PAD, true);
+    setTimeout(()=>{ WIN_STATE.list.forEach(w=>{ if(w.V&&w.V.page) w._revisarBase(); }); }, 180); };
+}
 function restaurarNavColapsada(){
   // Regra: ao ENTRAR no sistema a coluna de arquivos começa SEMPRE aberta,
   // mesmo que a última posição tenha sido recolhida. O toggle segue livre na
@@ -1143,6 +1188,7 @@ function restaurarNavColapsada(){
   const nav=$('navAside'), btn=$('navToggleBtn');
   if(nav) nav.classList.remove('collapsed');
   if(btn){ btn.classList.remove('collapsed'); btn.textContent='›'; }
+  navLarguraRestaurar(); navGripBind();
 }
 
 async function carregarGrupos(){
