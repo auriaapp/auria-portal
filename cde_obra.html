@@ -1500,15 +1500,18 @@ function restaurarUltimoCDE(){
 
 function renderNav(){
   const p=$('navPanel');
-  // Busca ativa: mostra os arquivos que batem, agrupados por disciplina —
-  // atravessa todas as disciplinas (não depende do trilho selecionado).
-  if(BUSCA){ p.innerHTML = navBuscaResultados(); renderMultiBar(); return; }
-  const toggle = `<div class="navtog">
+  // Barra de ações (modo de navegação + seleção múltipla). Na BUSCA o seletor de
+  // Disciplinas/Grupos não faz sentido — a busca atravessa tudo —, mas o botão de
+  // selecionar várias faz, e é o que permite marcar pranchas no resultado (item 98).
+  const toggle = (BUSCA ? '' : `<div class="navtog">
     <button class="${NAV_MODE==='disc'?'on':''}" onclick="setNavMode('disc')">Disciplinas</button>
     <button class="${NAV_MODE==='grupo'?'on':''}" onclick="setNavMode('grupo')">Grupos${GRUPOS.length?(' ('+GRUPOS.length+')'):''}</button>
-  </div>
-  <button class="btn sec sm" onclick="toggleMultiMode()" style="width:100%;margin-top:8px${MULTI_MODE?';background:var(--accent);border-color:var(--accent);color:#231703':''}">☑ ${MULTI_MODE?'Cancelar seleção':'Selecionar várias'}</button>`
-  + (MULTI_MODE ? `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sec sm" style="flex:1" onclick="selecionarVisiveis()" title="Marca todas as pranchas que estão na lista atual (disciplina/filtro/busca)">☑ Todas as visíveis (${docsNaVista().length})</button><button class="btn sec sm" onclick="MULTI_SEL.clear();renderNav()" title="Desmarcar tudo">☐</button></div>` : '');
+  </div>`)
+  + `<button class="btn sec sm" onclick="toggleMultiMode()" style="width:100%;margin-top:8px${MULTI_MODE?';background:var(--accent);border-color:var(--accent);color:#231703':''}">☑ ${MULTI_MODE?'Cancelar seleção':'Selecionar várias'}</button>`
+  + (MULTI_MODE ? `<div style="display:flex;gap:6px;margin-top:6px"><button class="btn sec sm" style="flex:1" onclick="selecionarVisiveis()" title="Marca todas as pranchas que estão na lista atual (disciplina/filtro/busca)">☑ ${BUSCA?'Todo o resultado':'Todas as visíveis'} (${docsNaVista().length})</button><button class="btn sec sm" onclick="MULTI_SEL.clear();renderNav()" title="Desmarcar tudo">☐</button></div>` : '');
+  // Busca ativa: mostra os arquivos que batem, agrupados por disciplina —
+  // atravessa todas as disciplinas (não depende do trilho selecionado).
+  if(BUSCA){ p.innerHTML = toggle + navBuscaResultados(); renderMultiBar(); return; }
   if(!DOCS.length){ p.innerHTML=toggle+'<div class="nav-hint">Nenhum documento ainda. Clique em <b>Enviar arquivo(s)</b> para registrar a primeira entrega.</div>'; return; }
   p.innerHTML = toggle + (NAV_MODE==='grupo' ? navGrupos() : navDisciplina());
   renderMultiBar();
@@ -1549,6 +1552,8 @@ async function buscaConteudo(q){
   renderNav();
 }
 function limparBusca(){
+  // a seleção múltipla sobrevive à limpeza da busca: dá para juntar pranchas de
+  // buscas diferentes antes de aplicar a ação em lote (item 98)
   BUSCA=''; BUSCA_IDS=null; const i=$('navBusca'); if(i){ i.value=''; i.focus(); }
   const x=$('navBuscaX'); if(x) x.style.display='none';
   renderNav();
@@ -5951,26 +5956,55 @@ function statusLoteAbrir(){
   const docs=[...MULTI_SEL].map(id=>DOCS.find(x=>x.id===id)).filter(d=>d&&d.atual); if(!docs.length){ alert('Nenhuma prancha com revisão selecionada.'); return; }
   const old=$('stLotePop'); if(old) old.remove();
   const ordem=Object.values(STMAP).sort((a,b)=>(a.ordem||99)-(b.ordem||99)).filter(s=>s.codigo!=='SUBSTITUIDO');
-  const atuais={}; docs.forEach(d=>{ const k=d.atual.status; atuais[k]=(atuais[k]||0)+1; });
   const pop=document.createElement('div'); pop.className='zipPop'; pop.id='stLotePop';
   pop.innerHTML=`<h4>Mudar status de ${docs.length} prancha(s)</h4>
-    <div style="font-size:11.5px;color:var(--mut);margin-bottom:8px">Hoje: ${Object.entries(atuais).map(([k,n])=>n+'× '+esc((STMAP[k]||{}).rotulo||k)).join(' · ')}</div>
+    <div style="font-size:11px;color:var(--mut);margin:-2px 0 5px">Status de hoje, por conjunto:</div>
+    <div id="stLoteAtuais" style="margin-bottom:9px;max-height:168px;overflow:auto"></div>
     <select id="stLoteSel" class="rdo-in" style="width:100%" onchange="statusLoteCampo()">${ordem.map(s=>`<option value="${esc(s.codigo)}">${esc(s.rotulo)}${s.iso?' ('+esc(s.iso)+')':''}</option>`).join('')}</select>
     <div id="stLoteExtra" style="margin-top:8px;display:none"><textarea id="stLoteTxt" class="rdo-in" style="width:100%;min-height:56px" placeholder=""></textarea></div>
     <div class="tot" style="margin-top:8px">A revisão vigente de cada prancha recebe o novo status e um evento no histórico. Devolvida / liberada avisa o projetista por e-mail.</div>
     <div class="acts"><button class="btn sec sm" onclick="$('stLotePop').remove()">Cancelar</button><button class="btn pri sm" id="stLoteGo" onclick="statusLoteAplicar()">Aplicar</button></div>`;
   document.body.appendChild(pop); pop._docs=docs; statusLoteCampo();
 }
+// Um bloco por status atual: cor, rótulo, quantas pranchas e quais (códigos).
+function statusLoteResumo(){
+  const pop=$('stLotePop'); if(!pop) return;
+  const docs=pop._docs||[]; const box=$('stLoteAtuais'); if(!box) return;
+  const alvo=$('stLoteSel')?$('stLoteSel').value:'';
+  const grupos={}; docs.forEach(d=>{ const k=d.atual.status; (grupos[k]=grupos[k]||[]).push(d); });
+  const ordenado=Object.entries(grupos).sort((a,b)=>((STMAP[a[0]]||{}).ordem||99)-((STMAP[b[0]]||{}).ordem||99));
+  box.innerHTML=ordenado.map(([k,ds])=>{
+    const st=STMAP[k]||{}; const cor=st.cor||'#94A3B8'; const igual=(k===alvo);
+    const cods=ds.map(d=>d.codigo).filter(Boolean);
+    const mostra=cods.slice(0,6).join(', ')+(cods.length>6?(' +'+(cods.length-6)):'');
+    return `<div style="display:flex;gap:7px;align-items:flex-start;padding:4px 0;border-top:1px solid var(--line)${igual?';opacity:.5':''}">
+      <span style="width:3px;align-self:stretch;min-height:26px;border-radius:2px;background:${cor};flex:none"></span>
+      <span style="flex:1;min-width:0">
+        <span style="font-size:11px;font-weight:700;color:${cor}">${esc(st.rotulo||k)}</span>
+        <span style="font-size:11px;color:var(--mut)"> · ${ds.length} prancha${ds.length>1?'s':''}${igual?' · <b>já está neste status</b>':''}</span>
+        <div style="font-family:var(--mono);font-size:9.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(cods.join(', '))}">${esc(mostra)}</div>
+      </span></div>`;
+  }).join('');
+  const mudam=docs.filter(d=>d.atual.status!==alvo).length;
+  const go=$('stLoteGo'); if(go) go.textContent = mudam===docs.length ? 'Aplicar' : ('Aplicar a '+mudam);
+  if(go) go.disabled = mudam===0;
+}
 function statusLoteCampo(){
   const v=$('stLoteSel').value, ex=$('stLoteExtra'), t=$('stLoteTxt');
   if(v==='B1'){ ex.style.display=''; t.placeholder='Ressalvas (pendências que a obra deve saber) — valem para todas'; }
   else if(v==='DEVOLVIDO'){ ex.style.display=''; t.placeholder='Motivo da devolução ao projetista — vale para todas'; }
   else ex.style.display='none';
+  statusLoteResumo();
 }
 async function statusLoteAplicar(){
-  const pop=$('stLotePop'); if(!pop) return; const docs=pop._docs||[]; const novo=$('stLoteSel').value; const txt=($('stLoteTxt').value||'').trim();
+  const pop=$('stLotePop'); if(!pop) return; const novo=$('stLoteSel').value; const txt=($('stLoteTxt').value||'').trim();
+  // Item 89: quem já está no status de destino fica de fora — nada de evento repetido
+  // nem e-mail ao projetista por uma mudança que não aconteceu.
+  const todas=pop._docs||[]; const docs=todas.filter(d=>d.atual.status!==novo);
+  const jaEstavam=todas.length-docs.length;
+  if(!docs.length){ alert('Todas as pranchas selecionadas já estão neste status.'); return; }
   if((novo==='B1'||novo==='DEVOLVIDO') && !txt){ alert(novo==='B1'?'Descreva as ressalvas.':'Informe o motivo da devolução.'); return; }
-  if(!confirm('Mudar '+docs.length+' prancha(s) para "'+((STMAP[novo]||{}).rotulo||novo)+'"?')) return;
+  if(!confirm('Mudar '+docs.length+' prancha(s) para "'+((STMAP[novo]||{}).rotulo||novo)+'"?'+(jaEstavam?('\n\n'+jaEstavam+' já está(ão) neste status e fica(m) de fora.'):''))) return;
   const go=$('stLoteGo'); go.disabled=true;
   const est=(STMAP[novo]&&STMAP[novo].estado)||'RECEBIDO'; const agora=new Date().toISOString(); let ok=0, falhas=[];
   for(let i=0;i<docs.length;i++){
