@@ -6531,17 +6531,26 @@ const _BCQ=[]; let _bcRodando=false, _bcPendentes=0;
 function _bcEnfileirar(tarefa){ _BCQ.push(tarefa); _bcRodar(); }
 function _bcPlaceholder(){
   const inp=$('navBusca'); if(!inp) return;
-  inp.placeholder = _BCQ.length ? ('Indexando PDFs… faltam '+_BCQ.length)
+  const falta=_BCQ.length + (typeof _bcAtivos==='number'?_bcAtivos:0);
+  inp.placeholder = (_BCQ.length||_bcRodando) ? ('Indexando PDFs… faltam '+falta)
                   : (BUSCA_CONTEUDO ? 'Buscar no conteúdo dos PDFs…' : 'Buscar arquivo pelo nome…');
 }
+// 3 em paralelo: rápido o bastante para o acúmulo e longe do que derrubava
+// (eram 100 de uma vez). Cada tarefa baixa um PDF e extrai o texto.
+const _BC_SIMULT=3; let _bcAtivos=0;
 async function _bcRodar(){
   if(_bcRodando) return; _bcRodando=true;
-  while(_BCQ.length){
-    _bcPlaceholder();
-    const t=_BCQ.shift();
-    try{ await t(); }catch(e){ console.warn('fila de indexação:', e&&(e.message||e)); }
-  }
-  _bcRodando=false; _bcPlaceholder();
+  const worker=async ()=>{
+    while(_BCQ.length){
+      _bcPlaceholder();
+      const t=_BCQ.shift();
+      try{ await t(); }catch(e){ console.warn('fila de indexação:', e&&(e.message||e)); }
+    }
+  };
+  const n=Math.min(_BC_SIMULT, Math.max(1,_BCQ.length));
+  _bcAtivos=n;
+  await Promise.all(Array.from({length:n}, worker));
+  _bcAtivos=0; _bcRodando=false; _bcPlaceholder();
   if(BUSCA_CONTEUDO && BUSCA) buscaConteudo(BUSCA);   // reexibe a busca com os recém-indexados
 }
 // Extrai o texto de um PDF já em memória e grava.
