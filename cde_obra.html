@@ -1633,7 +1633,9 @@ function navBuscaResultados(){
     if(BUSCA_IDS===null) return '<div class="nav-hint">Buscando no conteúdo…</div>';
     if(_BCQ.length||_bcRodando) setTimeout(()=>{ if(BUSCA_CONTEUDO&&BUSCA) renderNav(); }, 2500);
     achados = DOCS.filter(d=> BUSCA_IDS.has(d.id) && docPassaFiltro(d));
-    ondeTxt = ' no <b>conteúdo</b>';
+    const _falta = _BCQ.length + (_bcRodando?1:0);
+    ondeTxt = ' no <b>conteúdo</b>'
+      + (_falta ? ' <span style="color:var(--accent)">(ainda indexando '+_falta+' prancha'+(_falta>1?'s':'')+'…)</span>' : '');
   }else{
     const bate = d => (d.codigo||'').toLowerCase().includes(q)
       || (d.titulo||'').toLowerCase().includes(q)
@@ -6520,7 +6522,7 @@ async function cdeUpload(path, file){
 // Item 99: um recebimento com 100 pranchas disparava 100 leituras de PDF ao mesmo tempo;
 // a maioria morria por memória e só um punhado (~14) ficava indexado. Agora tudo passa por
 // uma FILA de um por vez — o upload e o backfill usam a mesma fila.
-const _BCQ=[]; let _bcRodando=false;
+const _BCQ=[]; let _bcRodando=false, _bcPendentes=0;
 function _bcEnfileirar(tarefa){ _BCQ.push(tarefa); _bcRodar(); }
 function _bcPlaceholder(){
   const inp=$('navBusca'); if(!inp) return;
@@ -6562,10 +6564,20 @@ async function cdeIndexarPendentes(){
   if(!window.pdfjsLib) return 0;
   let docs=[];
   try{
-    const { data, error } = await sb.from('cde_documento_auria')
-      .select('id').eq('empreendimento_id',EMP_ID).is('texto_busca',null);
-    if(error) throw error; docs=data||[];
-  }catch(e){ console.warn('backfill:', e&&(e.message||e)); return 0; }
+    // Item 99 (2ª volta): documentos que falharam ficaram com texto_busca=' ' e
+    // sumiram do "is null" — a RPC olha texto_em (quando foi indexado) e o texto
+    // vazio, então eles voltam para a fila uma vez.
+    const rp=await sb.rpc('cde_texto_pendentes',{ p_emp:EMP_ID });
+    if(rp.error) throw rp.error;
+    docs=rp.data||[];
+  }catch(e){
+    try{  // sem o SQL novo, o caminho antigo ainda funciona (só pega os nunca indexados)
+      const { data, error } = await sb.from('cde_documento_auria')
+        .select('id').eq('empreendimento_id',EMP_ID).is('texto_busca',null);
+      if(error) throw error; docs=data||[];
+    }catch(e2){ console.warn('backfill:', e2&&(e2.message||e2)); return 0; }
+  }
+  _bcPendentes=docs.length;
   docs.forEach(d=>_bcEnfileirar(async ()=>{
     const { data:revs } = await sb.from('cde_revisao_auria')
       .select('id,revisao').eq('documento_id',d.id).order('revisao',{ascending:false}).limit(1);
