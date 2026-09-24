@@ -137,10 +137,16 @@ Deno.serve(async (req) => {
     const { data: perfil } = await admin.from("usuarios_auria").select("role,empresa_id").eq("id", user.id).maybeSingle();
     const body0 = await req.clone().json().catch(() => ({}));
     const gestao = !!perfil && ["gerente", "super_admin"].includes(perfil.role);
-    // Coordenador com edição no empreendimento pode SINCRONIZAR (não vincular) — botão ↻ do cronograma
-    let podeSync = gestao;
-    if (!gestao && body0.acao === "sync" && body0.empreendimento_id) { const { data: ed } = await caller.rpc("estacao_edita", { p_emp: String(body0.empreendimento_id) }); podeSync = ed === true; }
-    if (!podeSync) return j({ error: "só a gestão usa a integração com o Prevision" }, 403);
+    // Item 90: o COORDENADOR com edição no empreendimento também importa o cronograma —
+    // pode sugerir/vincular/sincronizar o empreendimento dele (a gestão segue com tudo).
+    // 'projetos', 'ping' e 'get' continuam só da gestão: leem a base inteira do Prevision.
+    const ACOES_COORD = ["sugerir", "vincular", "sync"];
+    let pode = gestao;
+    if (!gestao && ACOES_COORD.includes(String(body0.acao || "")) && body0.empreendimento_id) {
+      const { data: ed } = await caller.rpc("estacao_edita", { p_emp: String(body0.empreendimento_id) });
+      pode = ed === true;
+    }
+    if (!pode) return j({ error: "sem permissão para a integração do cronograma neste empreendimento" }, 403);
 
     if (!PV_KEY) return j({ ok: false, error: "PREVISION_API_KEY não configurada nos Secrets" }, 500);
     if (/\s/.test(PV_KEY)) return j({ ok: false, error: "PREVISION_API_KEY contém espaço/quebra de linha — cole só o token, numa linha. Tamanho atual: " + PV_KEY.length }, 500);

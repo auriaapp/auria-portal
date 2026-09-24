@@ -1663,12 +1663,25 @@ async function loadApontamentosLive(){
   });
 }
 
+var GESTORES=[], CONVITES=[];
 async function loadAnalistas(){
   // Sem embed PostgREST (o relacionamento falha); busca os vínculos à parte.
-  let q = sb.from('usuarios_auria').select('*').eq('role','analista');
+  let q = sb.from('usuarios_auria').select('*').in('role',['analista','gerente','super_admin']);
   if(USER.role==='gerente' && EMPRESA?.id) q = q.eq('empresa_id', EMPRESA.id);
   const { data } = await q;
-  ANALISTAS = data || [];
+  const todos = data || [];
+  ANALISTAS = todos.filter(u=>u.role==='analista');
+  GESTORES  = todos.filter(u=>u.role!=='analista');
+  // Convites ainda não aceitos: o gestor convidado só vira linha em usuarios_auria
+  // depois de ativar a conta — sem isto ele "some" da tela e parece que não foi criado.
+  CONVITES = [];
+  try{
+    let cq = sb.from('convites_auria').select('*').order('criado_em',{ascending:false}).limit(50);
+    if(EMPRESA?.id) cq = cq.eq('empresa_id', EMPRESA.id);
+    const { data:cvs } = await cq;
+    const jaTem = new Set(todos.map(u=>String(u.email||'').toLowerCase()));
+    CONVITES = (cvs||[]).filter(c=>!c.aceito && !jaTem.has(String(c.email||'').toLowerCase()));
+  }catch(_){ CONVITES=[]; }
   if(ANALISTAS.length){
     const ids = ANALISTAS.map(a=>a.id);
     const { data: aes } = await sb.from('analista_empreendimento_auria')
@@ -3027,12 +3040,41 @@ async function cronSalvar(){
 // ═══════════════════════════════════════════════════════
 // ANALISTAS PAGE
 // ═══════════════════════════════════════════════════════
+function _usrSecao(t, n){ return '<div style="grid-column:1/-1;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:6px 0 -2px">'+t+(n!=null?(' · '+n):'')+'</div>'; }
+function _cardGestor(g){
+  const av=(g.nome||g.email||'?')[0].toUpperCase();
+  const eu = g.id===USER.id;
+  return `<div class="analista-card">
+    <div class="analista-card-av" style="background:var(--navy,#1E3A5F)">${av}</div>
+    <div class="analista-card-info">
+      <div class="analista-card-nome">${esc(g.nome||g.email)}${eu?' <span style="font-size:11px;color:var(--text-soft)">(você)</span>':''}</div>
+      <div class="analista-card-email">${esc(g.email||'')}</div>
+      <div class="analista-card-emps">${g.role==='super_admin'?'Super admin':'Gestor do grupo'}${g.ativo===false?' · inativo':''}${g.ultimo_acesso?(' · último acesso '+_dtBr(g.ultimo_acesso)):' · nunca acessou'}</div>
+    </div>
+  </div>`;
+}
+function _cardConvite(c){
+  const venceu = c.expira_em && new Date(c.expira_em) < new Date();
+  return `<div class="analista-card" style="opacity:.92;border-style:dashed">
+    <div class="analista-card-av" style="background:var(--orange,#E8960A);color:#231703">✉</div>
+    <div class="analista-card-info">
+      <div class="analista-card-nome">${esc(c.email||'')}</div>
+      <div class="analista-card-email">convite de ${c.role==='gerente'?'gestor':esc(c.role||'')}${c.criado_em?(' · enviado em '+_dtBr(c.criado_em)):''}</div>
+      <div class="analista-card-emps" style="color:${venceu?'var(--red)':'var(--text-soft)'}">${venceu?'link expirado — convide de novo':'aguardando o primeiro acesso'}</div>
+    </div>
+  </div>`;
+}
+function _dtBr(v){ try{ return new Date(v).toLocaleDateString('pt-BR'); }catch(_){ return ''; } }
 function renderAnalistasPage(){
+  const partes=[];
+  if(GESTORES.length) partes.push(_usrSecao('Gestores', GESTORES.length) + GESTORES.map(_cardGestor).join(''));
+  if(CONVITES.length) partes.push(_usrSecao('Convites pendentes', CONVITES.length) + CONVITES.map(_cardConvite).join(''));
   if(!ANALISTAS.length){
-    setHTML('analistasList','<div class="empty-state"><div class="empty-state-icon">&#9786;</div><div class="empty-state-txt">Nenhum analista cadastrado. Envie um convite!</div></div>');
+    setHTML('analistasList', partes.join('') + '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">&#9786;</div><div class="empty-state-txt">Nenhum analista cadastrado. Envie um convite!</div></div>');
     return;
   }
-  setHTML('analistasList', ANALISTAS.map(a=>{
+  partes.push(_usrSecao('Analistas', ANALISTAS.length));
+  setHTML('analistasList', partes.join('') + ANALISTAS.map(a=>{
     const aes = (a.analista_empreendimento_auria||[]).filter(x=>x.ativo);
     const empNomes = aes.map(ae=>{
       const e=EMPS.find(x=>x.id===ae.empreendimento_id);

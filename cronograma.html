@@ -121,6 +121,20 @@ table.sched tr:hover td{background:#1A1D27}
 #pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
 #pvbar .fchip .star{margin-left:4px}
 #pvbar .pvinfo{margin-left:auto;color:#94A3B8}
+/* Item 90: importar/vincular o cronograma sem passar pela gestão (coordenador do empreendimento) */
+#pvImpBg{position:fixed;inset:0;background:rgba(8,12,20,.6);z-index:900;display:none;align-items:center;justify-content:center;padding:18px}
+#pvImpBg.on{display:flex}
+#pvImp{background:#121722;border:1px solid #2A2D3A;border-radius:14px;width:min(640px,96vw);max-height:88vh;overflow:auto;padding:18px;color:#E2E8F0}
+body.light #pvImp{background:#fff;border-color:#E2E8F0;color:#0F172A}
+#pvImp h3{margin:0 0 3px;font-size:15px}
+#pvImp .sub{font-size:12px;color:#94A3B8;margin-bottom:12px}
+#pvImp .cx{border:1px solid #2A2D3A;border-radius:10px;margin-bottom:12px;max-height:30vh;overflow:auto}
+body.light #pvImp .cx{border-color:#E2E8F0}
+#pvImp label.li{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid rgba(148,163,184,.14);font-size:12.5px;cursor:pointer}
+#pvImp .rot{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#94A3B8;margin:0 0 6px}
+#pvImp .fase{font-family:ui-monospace,Consolas,monospace;font-weight:800;font-size:10.5px;padding:1px 7px;border-radius:8px;border:1px solid #3A4A66;color:#CBD5E1}
+#pvImp .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
+#pvImp input[type=search]{width:100%;padding:6px 9px;border-radius:8px;border:1px solid #2A2D3A;background:transparent;color:inherit;font-size:12.5px;font-family:inherit;margin-bottom:6px}
 body.light #pvbar{background:#F6F9FC;border-color:#E2E8F0;color:#334155}
 body.light #pvbar .fchip{border-color:#CBD5E1;color:#334155}
 body.light #pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
@@ -243,8 +257,25 @@ body.light .legend{color:#64748B}
   <input id="selMsg" placeholder="Mensagem ao projetista (opcional)" style="flex:1;min-width:220px">
   <button class="tbtn primary" id="selEnviar" onclick="selEnviar()">&#9993; Enviar</button><button class="tbtn" onclick="selToggle()">Cancelar</button>
 </div>
-<div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
+<div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span id="pvImpBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
 <div id="scroll"><div id="grid"></div></div>
+<!-- Item 90: vincular projetos do Prevision a partir do próprio cronograma -->
+<div id="pvImpBg" onclick="if(event.target===this)pvImpFechar()"><div id="pvImp">
+  <h3>Importar cronograma</h3>
+  <div class="sub" id="pvImpSub">Escolha os projetos deste empreendimento. Um por fase (EXE, PROD, ORC, INC); a fase padrão é a que abre nos painéis. <b>Fonte: Prevision</b> — sentido único, o Auria só lê.</div>
+  <div id="pvImpStatus" style="font-size:12.5px;color:#94A3B8;margin-bottom:10px">Consultando…</div>
+  <div class="rot">Vinculados</div>
+  <div class="cx" id="pvImpVinc"></div>
+  <div class="rot">Sugeridos pela sigla <span id="pvImpSigla" style="font-family:ui-monospace,Consolas,monospace"></span></div>
+  <div class="cx" id="pvImpSug"></div>
+  <div class="rot">Outro projeto</div>
+  <input type="search" id="pvImpBusca" placeholder="buscar pelo nome…" oninput="pvImpRenderTodos()">
+  <div class="cx" id="pvImpTodos"></div>
+  <div class="acts">
+    <button class="tbtn" onclick="pvImpFechar()">Fechar</button>
+    <button class="tbtn primary" id="pvImpSalvar" onclick="pvImpSalvar()">Salvar e sincronizar</button>
+  </div>
+</div></div>
 <div id="tablewrap">
   <table class="sched"><colgroup id="schedCols"></colgroup><thead><tr>
     <th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Dias</th><th>Avanço</th><th class="pvcol" title="Avanço previsto pelo cronograma">Previsto</th><th class="pvcol" title="Situação da tarefa declarada no Prevision">Situação</th><th class="pvcol">Responsável</th><th>Status</th><th>Tipo</th>
@@ -764,6 +795,9 @@ function pvRenderBar(){
   document.getElementById('pvFases').innerHTML=(PV.fases||[]).map(function(f){ return '<button class="fchip'+(f.fase===atual?' on':'')+'" onclick="pvTrocarFase(\''+f.fase+'\')" title="'+escA(f.projeto_nome||'')+(f.n_tarefas?' · '+f.n_tarefas+' tarefas':'')+'">'+esc(f.fase)+(f.padrao?'<span class="star" title="fase padrão">★</span>':'')+'</button>'; }).join('');
   var pb=document.getElementById('pvPadraoBtn');
   pb.innerHTML=(PV.pode_editar && PV.vinculo && !PV.vinculo.padrao)?'<button class="tbtn" style="margin-left:4px;padding:3px 10px" onclick="pvUsarPadrao()" title="Esta fase passa a ser a exibida por padrão neste empreendimento">★ Usar como padrão</button>':'';
+  // Item 90: coordenador do empreendimento importa/troca os projetos vinculados aqui mesmo
+  var ib=document.getElementById('pvImpBtn');
+  if(ib) ib.innerHTML=(PV.pode_editar && !RECORTE)?'<button class="tbtn" style="margin-left:4px;padding:3px 10px" onclick="pvImpAbrir()" title="Escolher quais cronogramas deste empreendimento o Auria acompanha">&#9881; Importar cronograma…</button>':'';
   var v=PV.vinculo||{};
   var pad=(PV.fases||[]).filter(function(f){ return f.padrao; })[0];
   document.getElementById('pvInfo').textContent=(v.projeto_nome||'')+(v.sincronizado_em?' · sincronizado em '+fmtDTbr(v.sincronizado_em):'')+(v.sync_erro?' · erro: '+v.sync_erro:'')
@@ -967,6 +1001,83 @@ async function pvSincronizar(){
     if(info) info.textContent=(err.length?'Erro em '+err.map(function(x){return x.fase;}).join(', ')+' · ':'')+res.filter(function(x){return !x.erro;}).map(function(x){return x.fase+' '+x.tarefas+' tarefas';}).join(' · ')+' · sincronizado agora';
   }catch(e){ if(info) info.textContent='Não sincronizou: '+(e.message||e); }
   b.disabled=false; b.innerHTML='&#8635;';
+}
+// ── Item 90: importar (vincular) cronogramas — mesma Edge Function da gestão ──
+var PVI={ sug:[], todos:[], vinc:[], sel:null };
+async function pvImpInvoke(body){
+  var r=await _sb.functions.invoke('prevision',{ body:body });
+  if(r.error){ var m=r.error.message; try{ var jb=await r.error.context.json(); if(jb&&jb.error) m=jb.error; }catch(e){} throw new Error(m); }
+  if(r.data&&r.data.ok===false) throw new Error(r.data.error||'falha');
+  return r.data;
+}
+function pvImpFechar(){ document.getElementById('pvImpBg').classList.remove('on'); }
+async function pvImpAbrir(){
+  PVI={ sug:[], todos:[], vinc:[], sel:new Set() };
+  document.getElementById('pvImpBg').classList.add('on');
+  document.getElementById('pvImpStatus').textContent='Consultando…';
+  ['pvImpVinc','pvImpSug','pvImpTodos'].forEach(function(id){ document.getElementById(id).innerHTML=''; });
+  document.getElementById('pvImpBusca').value='';
+  try{
+    var d=await pvImpInvoke({ acao:'sugerir', empreendimento_id:EMP_ID });
+    PVI.sug=d.sugeridos||[]; PVI.todos=d.todos||[]; PVI.vinc=(d.vinculos||[]).filter(function(v){ return v.ativo; });
+    PVI.vinc.forEach(function(v){ PVI.sel.add(v.projeto_id); });
+    if(!PVI.vinc.length) PVI.sug.forEach(function(p){ if(p.bate) PVI.sel.add(p.id); });   // 1ª vez: já marca o que bate com a sigla
+    document.getElementById('pvImpSigla').textContent=d.sigla?('"'+d.sigla+'"'):'(sem sigla)';
+    document.getElementById('pvImpStatus').textContent=PVI.todos.length+' projeto(s) acessíveis · '+PVI.sug.filter(function(p){return p.bate;}).length+' batem com a sigla';
+    pvImpRender();
+  }catch(e){
+    document.getElementById('pvImpStatus').textContent='Não consultou: '+(e.message||e);
+  }
+}
+function pvImpLinha(p, marcado){
+  return '<label class="li"><input type="checkbox" value="'+escA(p.id)+'" '+(marcado?'checked':'')+' onchange="pvImpToggle(this)">'
+    +'<span class="fase">'+esc(p.fase||'—')+'</span>'
+    +'<span style="flex:1;font-family:ui-monospace,Consolas,monospace;font-weight:700">'+esc(p.nome||'')+'</span>'
+    +(p.vinculado?'<span style="font-size:11px;color:#94A3B8">vinculado</span>':'')+'</label>';
+}
+function pvImpToggle(cb){ if(cb.checked) PVI.sel.add(cb.value); else PVI.sel.delete(cb.value); pvImpRenderVinc(); }
+function pvImpRender(){
+  document.getElementById('pvImpSug').innerHTML=PVI.sug.length?PVI.sug.map(function(p){ return pvImpLinha(p, PVI.sel.has(p.id)); }).join('')
+    :'<div style="padding:10px;font-size:12.5px;color:#94A3B8">Nenhum projeto com a sigla deste empreendimento. Use a busca.</div>';
+  pvImpRenderTodos(); pvImpRenderVinc();
+}
+function pvImpRenderTodos(){
+  var q=(document.getElementById('pvImpBusca').value||'').trim().toUpperCase();
+  var jaSug={}; PVI.sug.forEach(function(p){ jaSug[p.id]=1; });
+  var lst=PVI.todos.filter(function(p){ return !jaSug[p.id] && (!q || String(p.nome||'').toUpperCase().indexOf(q)>=0); }).slice(0,40);
+  document.getElementById('pvImpTodos').innerHTML=lst.length?lst.map(function(p){ return pvImpLinha(p, PVI.sel.has(p.id)); }).join('')
+    :'<div style="padding:8px 10px;font-size:12px;color:#94A3B8">'+(q?'Nada encontrado.':'Digite para buscar entre os '+PVI.todos.length+' projetos.')+'</div>';
+}
+function pvImpRenderVinc(){
+  var byId={}; PVI.todos.forEach(function(p){ byId[p.id]=p; });
+  var linhas=[].slice.call(PVI.sel).map(function(id){
+    var v=PVI.vinc.filter(function(x){ return x.projeto_id===id; })[0];
+    var p=byId[id]||{ id:id, nome:(v&&v.projeto_nome)||id, fase:(v&&v.fase)||'—' };
+    return '<div class="li" style="cursor:default"><span class="fase">'+esc(p.fase||'—')+'</span>'
+      +'<span style="flex:1;font-family:ui-monospace,Consolas,monospace;font-weight:700">'+esc(p.nome||'')+'</span>'
+      +(v?'<span style="font-size:11px;color:#94A3B8">'+(v.n_tarefas?v.n_tarefas+' tarefas':'sincronizar')+'</span>'
+         :'<span style="font-size:11px;color:#E8960A;font-weight:700">novo</span>')+'</div>';
+  });
+  document.getElementById('pvImpVinc').innerHTML=linhas.length?linhas.join('')
+    :'<div style="padding:10px;font-size:12.5px;color:#94A3B8">Nenhum vinculado. Marque abaixo e salve.</div>';
+}
+async function pvImpSalvar(){
+  var b=document.getElementById('pvImpSalvar'); b.disabled=true;
+  var st=document.getElementById('pvImpStatus'); st.textContent='Salvando e baixando as tarefas… (alguns segundos por fase)';
+  try{
+    var byId={}; PVI.todos.forEach(function(p){ byId[p.id]=p; });
+    var projetos=[].slice.call(PVI.sel).map(function(id){
+      var v=PVI.vinc.filter(function(x){ return x.projeto_id===id; })[0];
+      return { id:id, nome:(byId[id]&&byId[id].nome)||(v&&v.projeto_nome)||'' };
+    });
+    var d=await pvImpInvoke({ acao:'vincular', empreendimento_id:EMP_ID, projetos:projetos });
+    var res=d.sync||[], err=res.filter(function(r){ return r.erro; });
+    st.textContent=res.filter(function(r){ return !r.erro; }).map(function(r){ return r.fase+' '+r.tarefas+' tarefas'; }).join(' · ')
+      +(err.length?' · ERRO em '+err.map(function(r){ return r.fase; }).join(', '):'');
+    await carregarCron(null);
+    if(!err.length) setTimeout(pvImpFechar, 900);
+  }catch(e){ st.textContent='Não salvou: '+(e.message||e); }
+  b.disabled=false;
 }
 async function pvUsarPadrao(){
   if(!PV.vinculo) return;
