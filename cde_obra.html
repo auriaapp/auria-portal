@@ -94,6 +94,8 @@
   /* Camada 3 (engenheiro chefe): revisão em análise é VISÍVEL mas marcada — na
      lista (chip no card) e na janela (faixa fixa sob o cabeçalho). Não é
      decoração: é o aviso de que aquela prancha não pode ir para execução. */
+  .rev-motivo{font-size:11.5px;color:var(--txt2);background:var(--panel2);border-left:3px solid var(--navy);
+    border-radius:0 6px 6px 0;padding:5px 9px;margin:6px 0 2px;line-height:1.4}
   .fdoc .fanalise{margin-left:6px;font-size:9.5px;font-weight:800;letter-spacing:.04em;color:#7C3E06;
     background:#FDE7C4;border:1px solid #F0B25B;border-radius:8px;padding:1px 6px;white-space:nowrap}
   .cdeWin-analise{display:none;flex:none;align-items:center;justify-content:center;gap:8px;
@@ -1297,9 +1299,11 @@ async function carregarDocs(){
   // pavimentos e pranchas vinculadas não dependem das revisões: já saem em paralelo
   const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas()]);
   if(ids.length){
-    const { data:r } = await sb.from('cde_revisao_auria')
-      .select('id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas').in('documento_id',ids);
-    revs=r||[];
+    // 'motivo' (item 110) é coluna nova: sem o SQL rodado, cai para a lista sem ela.
+    const RCOLS='id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas';
+    let rq = await sb.from('cde_revisao_auria').select(RCOLS+',motivo').in('documento_id',ids);
+    if(rq.error) rq = await sb.from('cde_revisao_auria').select(RCOLS).in('documento_id',ids);
+    revs=rq.data||[];
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       // 'rotacao' (item 60) é coluna nova: se o SQL ainda não rodou, cai para a lista sem ela.
@@ -6764,23 +6768,70 @@ function avaliarLote(){
         return `<span class="fchip ${ext.toLowerCase()==='pdf'?'pdf':''}" style="${antigo?'opacity:.4':''}" title="${antigo?'já enviado':'novo'}">${esc(ext.toUpperCase()||'?')}</span>`; }).join('');
       // Documento NOVO exige um TÍTULO (resumo do conteúdo). Revisão de doc já
       // existente herda o título — não re-pergunta.
+      // Item 110: revisão de documento existente pede a JUSTIFICATIVA do que mudou e
+      // mostra, ali mesmo, o que foi feito nas revisões anteriores.
+      const motRow = (a.tipo==='rev' && a.doc)
+        ? `<tr><td colspan="5" style="padding-top:0">
+             <input class="loteTit" data-mot="${esc(g.base)}" maxlength="200" value="${esc(g.motivo||'')}"
+                    placeholder="O que mudou nesta revisão? (obrigatório)" oninput="loteMotInput(this)"
+                    style="border-color:${(g.motivo||'').trim()?'var(--line)':'#E67E22'}">
+             <div class="loteHist" data-hist="${esc(a.doc.id)}" style="font-size:11px;color:var(--mut);margin-top:4px"></div>
+           </td></tr>`
+        : '';
       const titRow = a.tipo==='novo'
         ? `<tr><td colspan="5" style="padding-top:0"><input class="loteTit" data-base="${esc(g.base)}" maxlength="90" value="${esc(g.titulo||'')}" placeholder="Título / resumo do conteúdo desta prancha (obrigatório, até 90 caracteres)" oninput="loteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid ${(g.titulo||'').trim()?'var(--line)':'#E67E22'};border-radius:7px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:12.5px"></td></tr>`
         : '';
       return `<tr><td><div class="cod">${esc(p.codigoDoc||g.base)}</div>${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
         <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td><td class="cod">${esc(p.revisao||'—')}</td>
-        <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`+titRow;
+        <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`+titRow+motRow;
     }).join('')+'</tbody>';
+  loteHistCarregar();
   $('prevWrap').style.display='block';
   $('btnConfirmar').disabled=!loteConfirmavel();
-  const falta=LOTE.some(g=>g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim());
-  $('recMsg').textContent = falta ? 'Preencha o título dos documentos novos para confirmar.' : '';
+  $('recMsg').textContent = loteFaltaMsg();
 }
-// Confirmável = há algo a registrar E todo documento NOVO tem título.
+// Confirmável = há algo a registrar, todo documento NOVO tem título e toda
+// REVISÃO tem justificativa (item 110).
 function loteConfirmavel(){
   const validos=LOTE.filter(g=>g.acao&&['novo','rev','add'].includes(g.acao.tipo));
   if(!validos.length) return false;
-  return !LOTE.some(g=> g.acao&&g.acao.tipo==='novo' && !(g.titulo||'').trim());
+  if(LOTE.some(g=> g.acao&&g.acao.tipo==='novo' && !(g.titulo||'').trim())) return false;
+  if(LOTE.some(g=> g.acao&&g.acao.tipo==='rev'  && !(g.motivo||'').trim())) return false;
+  return true;
+}
+function loteFaltaMsg(){
+  if(LOTE.some(g=>g.acao&&g.acao.tipo==='novo'&&!(g.titulo||'').trim())) return 'Preencha o título dos documentos novos para confirmar.';
+  if(LOTE.some(g=>g.acao&&g.acao.tipo==='rev'&&!(g.motivo||'').trim()))  return 'Descreva o que mudou em cada nova revisão para confirmar.';
+  return '';
+}
+function loteMotInput(el){
+  const g=LOTE.find(x=>x.base===el.dataset.mot); if(g) g.motivo=el.value;
+  el.style.borderColor=(el.value||'').trim()?'var(--line)':'#E67E22';
+  $('btnConfirmar').disabled=!loteConfirmavel();
+  $('recMsg').textContent = loteFaltaMsg();
+}
+// Histórico das revisões anteriores, logo abaixo do campo — quem envia vê o que já
+// foi feito antes (e a coordenação recebe um texto que não repete o anterior).
+const _LOTE_HIST={};
+async function loteHistCarregar(){
+  const caixas=[...document.querySelectorAll('.loteHist[data-hist]')];
+  for(const box of caixas){
+    const doc=box.dataset.hist;
+    if(_LOTE_HIST[doc]){ box.innerHTML=_LOTE_HIST[doc]; continue; }
+    box.textContent='carregando revisões anteriores…';
+    try{
+      const r=await sb.rpc('cde_revisoes_doc',{ p_doc:doc });
+      if(r.error) throw r.error;
+      const l=(r.data||[]).slice(0,6);
+      _LOTE_HIST[doc] = l.length
+        ? '<b>Revisões anteriores:</b> '+l.map(x=>`<span title="${esc(x.motivo||'sem justificativa registrada')}">${esc(x.revisao)}${x.recebido_em?(' ('+new Date(x.recebido_em).toLocaleDateString('pt-BR')+')'):''}${x.motivo?': '+esc(String(x.motivo).slice(0,70)):''}</span>`).join(' · ')
+        : '<i>Primeira revisão registrada no CDE.</i>';
+    }catch(e){
+      _LOTE_HIST[doc] = /does not exist|schema cache/i.test(e.message||'') ? '' : '';
+    }
+    box.innerHTML=_LOTE_HIST[doc];
+    if(!_LOTE_HIST[doc]) box.style.display='none';
+  }
 }
 function loteTitInput(el){
   const g=LOTE.find(x=>x.base===el.dataset.base); if(g) g.titulo=el.value;
@@ -6813,9 +6864,13 @@ async function confirmarLote(){
       let revId;
       if(g.acao.tipo==='add'){ revId=g.acao.rev.id; }
       else{
-        const { data:rev, error:er } = await sb.from('cde_revisao_auria').insert({
-          documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0', recebido_em:new Date().toISOString(), criado_por:USER.id
-        }).select('id').single();
+        const _novaRev={ documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0',
+          recebido_em:new Date().toISOString(), criado_por:USER.id };
+        if((g.motivo||'').trim()) _novaRev.motivo=(g.motivo||'').trim();   // item 110
+        let { data:rev, error:er } = await sb.from('cde_revisao_auria').insert(_novaRev).select('id').single();
+        // coluna nova: se o SQL do item 110 ainda não rodou, registra a revisão sem o motivo
+        if(er && /motivo/i.test(er.message||'')){ delete _novaRev.motivo;
+          ({ data:rev, error:er } = await sb.from('cde_revisao_auria').insert(_novaRev).select('id').single()); }
         if(er) throw er; revId=rev.id;
       }
       // Só um PDF é o "principal" da revisão (o que a obra abre por padrão).
@@ -6842,7 +6897,7 @@ async function confirmarLote(){
       await sb.from('cde_evento_auria').insert({
         revisao_id:revId, acao:'recebeu', para_status:'S0',
         usuario_id:USER.id, usuario_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email,
-        nota:(g.acao.tipo==='add'?'Formato adicional · ':'')+g._upload.length+' arquivo(s)'
+        nota:(g.acao.tipo==='add'?'Formato adicional · ':'')+g._upload.length+' arquivo(s)'+((g.motivo||'').trim()?' · '+g.motivo.trim():'')
       });
       recebidos.push({ codigo:g.parse.codigoDoc, disciplina:g.parse.disciplina,
         disciplinaLabel:g.parse.disciplina?(g.parse.disciplina+' — '+discLabel(g.parse.disciplina)):'—',
@@ -6912,7 +6967,7 @@ async function renderDetalhe(){
     const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span>${btnDl(a)}</div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
     const trans=TRANSICOES[r.status]||[]; const podeAgir=!SEM_ESCRITA&&idx===0&&r.status!=='SUBSTITUIDO';
     const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
-    return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
+    return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.motivo?`<div class="rev-motivo">✎ <b>O que mudou:</b> ${esc(r.motivo)}</div>`:''}${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
 
   // Histórico / log do documento
