@@ -481,9 +481,10 @@
         <tbody id="ct-parc-body"></tbody>
         <tfoot><tr><td colspan="2" style="text-align:right;font-weight:700">Soma:</td><td id="ct-parc-soma">R$ 0,00</td><td id="ct-parc-pct">0%</td><td colspan="2"><button class="ctr-btn sec" type="button" style="font-size:11px;padding:4px 10px" onclick="addParcelaModal()">＋ Linha</button></td></tr></tfoot>
       </table>
-      <label style="margin-top:14px">PDF do contrato assinado *</label>
+      <label style="margin-top:14px" id="ct-pdf-lbl">PDF do contrato assinado *</label>
       <input id="ct-pdf" type="file" accept="application/pdf">
       <div id="ct-pdf-info" style="font-size:11px;color:var(--mut);margin-top:4px"></div>
+      <div id="ct-hist" style="display:none;margin-top:14px;border-top:1px solid var(--line);padding-top:10px"></div>
     </div>
     <div class="cmodal-f">
       <button class="ctr-btn sec" onclick="fecharContrato()">Cancelar</button>
@@ -1418,7 +1419,19 @@ var DISC_FULLNAME = {
 function discFullName(v){ if(!v) return v; return DISC_FULLNAME[v] || v; }
 
 var FORNECEDORES=[], PROJETISTAS=[], CT_PARCS_BUF=[], FN_PROJS_BUF=[], FATURA_PARC=null;
-var CTR_EMP_ID=null, CTR_LIST=[], CTR_DET=null, CRON_TASKS=[], A_NFS_PARC={}, PV_TASKS=[], PV_LIBERAVEIS=[];
+var CTR_EMP_ID=null, CTR_LIST=[], CTR_DET=null, CRON_TASKS=[], A_NFS_PARC={}, PV_TASKS=[], PV_ALL=[], PV_LIBERAVEIS=[];
+// Item 115: a CABEÇA da tarefa (fase pai) vem do WBS — "1.4.3.2" é pai de "1.4.3.2.3".
+// Sem isso, duas tarefas chamadas "Revisão de projeto" em fases diferentes ficam iguais na lista.
+function pvCabeca(t){
+  if(!t || !t.wbs) return '';
+  const partes=String(t.wbs).split('.');
+  for(let n=partes.length-1; n>=1; n--){
+    const pai=partes.slice(0,n).join('.');
+    const p=(PV_ALL||[]).find(x=>String(x.wbs||'')===pai);
+    if(p && p.nome) return p.nome;
+  }
+  return '';
+}
 var CDE_AC_LIST=[], CDE_AC_DISCS=[], CDE_AC_CONV=null, CDE_AC_EMPID=null, CDE_SETOR_LIST=[];
 
 // ── Abas por empreendimento (Contratos/Financeiro) ─────────────────────────
@@ -1481,7 +1494,10 @@ async function loadContratos(empId){
   // Item 77d: com vínculo Prevision, os marcos de medição são as TAREFAS do Prevision (fase padrão, folhas)
   PV_TASKS=[]; PV_LIBERAVEIS=[];
   try{ const rr=await sb.rpc('cronograma_ler',{ p_emp:empId, p_fase:null });
-    if(!rr.error && rr.data && rr.data.fonte==='prevision') PV_TASKS=(rr.data.tarefas||[]).filter(t=>t.tipo!=='fase'); }catch(_){}
+    if(!rr.error && rr.data && rr.data.fonte==='prevision'){
+      PV_ALL=rr.data.tarefas||[];
+      PV_TASKS=PV_ALL.filter(t=>t.tipo!=='fase');
+    } }catch(_){}
   try{ const rl=await sb.rpc('parcelas_liberaveis',{ p_emp:empId }); if(!rl.error) PV_LIBERAVEIS=rl.data||[]; }catch(_){}
   try{
     const rf=await sb.from('fornecedores_auria').select('*,projetistas_auria(*)').order('nome');
@@ -1530,6 +1546,7 @@ function renderContratos(){
         <div style="font-size:11px;color:var(--mut);margin-top:4px">${pct}% faturado · ${parcs.length} parcela(s)${venc?' · <b style="color:#EF4444">'+venc+' vencida(s)</b>':''}</div>
         <div class="ctr-acoes">
           <button class="mini" ${nSol?'style="background:#E8960A;color:#fff;border-color:#E8960A"':''} onclick="abrirContratoDet(${i})">📋 Parcelas / Aditivos${nSol?' ('+nSol+')':''}</button>
+          <button class="mini" onclick="abrirContrato(null,'${c.id}')" title="Ver e editar os dados do contrato (log guardado)">✎ Ver / editar</button>
           ${c.pdf_data?`<button class="mini" onclick="abrirPdfData(CTR_LIST[${i}].pdf_data)" title="Visualizar em nova aba">📄 PDF</button> <a class="mini" href="${c.pdf_data}" download="${esc(c.pdf_nome||'contrato.pdf')}" style="text-decoration:none" title="Baixar">⬇</a>`:''}
         </div>
       </div>`;
@@ -1592,10 +1609,17 @@ function ctEtapasAplicar(){
   if(Math.abs(soma-100)<=0.01 && diff!==0 && CT_PARCS_BUF.length) CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor=Math.round((CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor+diff)*100)/100;
   $('ct-nparc').value=CT_PARCS_BUF.length||1; $('ct-etapas').style.display='none'; renderCtParcs();
 }
-function abrirContrato(pre){
+// Item 113/116: o mesmo modal serve para CRIAR e para VER/EDITAR — com ctrId, carrega
+// o contrato salvo (e as parcelas) e o salvar vira update + log das diferenças.
+var CT_EDIT=null;      // {id, antes:{...}, parcelas:[...]}
+function abrirContrato(pre, ctrId){
+  CT_EDIT=null;
   CT_PARCS_BUF=[{descricao:'',valor:0,vencimento:''}]; CT_ETAPAS=[];
   const et=$('ct-etapas'); if(et) et.style.display='none';
   $('contratoModalT').textContent='Novo contrato';
+  { const b=$('ct-save'); if(b) b.textContent='💾 Salvar contrato'; }
+  { const h=$('ct-hist'); if(h){ h.style.display='none'; h.innerHTML=''; } }
+  { const l=$('ct-pdf-lbl'); if(l) l.textContent='PDF do contrato assinado *'; }
   $('ct-projetista').innerHTML=_projOptions();
   $('ct-disc').innerHTML=_discOptions('');
   ['ct-num','ct-obj','ct-valor','ct-assinatura','ct-ini','ct-fim'].forEach(id=>$(id).value='');
@@ -1621,6 +1645,45 @@ function abrirContrato(pre){
     }
     CT_ORIGEM = pre.cotacao_id ? { cotacao_id:pre.cotacao_id, proposta_id:pre.proposta_id||null } : null;
     if(CT_ORIGEM) $('contratoModalT').textContent='Novo contrato — a partir da proposta vencedora';
+  }
+  if(ctrId) ctrCarregarNoModal(ctrId);
+}
+// Preenche o modal com o contrato salvo.
+function ctrCarregarNoModal(ctrId){
+  const c=(CTR_LIST||[]).find(x=>x.id===ctrId); if(!c){ alert('Contrato não encontrado na lista — atualize a página.'); return; }
+  CT_EDIT={ id:c.id, antes:{
+      projetista_id:c.projetista_id||'', disciplina:c.disciplina||'', numero:c.numero||'', objeto:c.objeto||'',
+      valor_total:Number(c.valor_total||0), data_assinatura:c.data_assinatura||'', data_inicio:c.data_inicio||'', data_fim:c.data_fim||'' } };
+  $('contratoModalT').textContent='Contrato '+(c.numero||c.objeto||'')+' — ver / editar';
+  { const b=$('ct-save'); if(b) b.textContent='💾 Salvar alterações'; }
+  { const l=$('ct-pdf-lbl'); if(l) l.textContent='PDF do contrato assinado (só se for trocar)'; }
+  if(c.projetista_id && PROJETISTAS.some(p=>p.id===c.projetista_id)){ $('ct-projetista').value=c.projetista_id; onSelProj(); }
+  if(c.disciplina){ if(!DISC_OPTS.includes(c.disciplina)) DISC_OPTS.push(c.disciplina); $('ct-disc').innerHTML=_discOptions(c.disciplina); }
+  $('ct-num').value=c.numero||''; $('ct-obj').value=c.objeto||'';
+  $('ct-valor').value=c.valor_total!=null?Number(c.valor_total).toFixed(2):'';
+  $('ct-assinatura').value=c.data_assinatura||''; $('ct-ini').value=c.data_inicio||''; $('ct-fim').value=c.data_fim||'';
+  const parcs=(c.parcelas_auria||[]).slice().sort((a,b)=>(a.numero||0)-(b.numero||0));
+  CT_PARCS_BUF=parcs.map(p=>({ id:p.id, descricao:p.descricao||'', valor:Number(p.valor||0), vencimento:p.vencimento||'',
+                               status:p.status||'a_faturar' }));
+  if(!CT_PARCS_BUF.length) CT_PARCS_BUF=[{descricao:'',valor:0,vencimento:''}];
+  $('ct-nparc').value=CT_PARCS_BUF.length; renderCtParcs();
+  ctrHistorico(c.id);
+}
+// Histórico de modificações (contrato_eventos_auria).
+async function ctrHistorico(ctrId){
+  const box=$('ct-hist'); if(!box) return;
+  box.style.display=''; box.innerHTML='<div style="color:var(--mut);font-size:11.5px">carregando histórico…</div>';
+  try{
+    const r=await sb.from('contrato_eventos_auria').select('*').eq('contrato_id',ctrId).order('quando',{ascending:false}).limit(40);
+    if(r.error) throw r.error;
+    const l=r.data||[];
+    if(!l.length){ box.innerHTML='<div style="color:var(--mut);font-size:11.5px">Sem modificações registradas.</div>'; return; }
+    box.innerHTML='<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin-bottom:4px">Histórico</div>'
+      + l.map(e=>`<div style="font-size:11.5px;color:var(--txt2);border-top:1px solid var(--line);padding:4px 0">
+          <b>${esc(e.campo||e.evento)}</b>${e.de||e.para?`: <span style="color:var(--mut)">${esc(e.de||'—')}</span> → <b>${esc(e.para||'—')}</b>`:''}
+          <span style="color:var(--mut)"> · ${esc(e.por_nome||e.por_email||'')} · ${new Date(e.quando).toLocaleString('pt-BR')}</span></div>`).join('');
+  }catch(e){
+    box.innerHTML='<div style="color:var(--mut);font-size:11.5px">Histórico indisponível'+(/does not exist|schema cache/i.test(e.message||'')?' — rode supabase_contrato_log.sql':'')+'.</div>';
   }
 }
 var CT_ORIGEM=null;
@@ -1671,6 +1734,77 @@ function onNParcChg(){
   if(diff!==0 && CT_PARCS_BUF.length) CT_PARCS_BUF[CT_PARCS_BUF.length-1].valor=Math.round((val+diff)*100)/100;
   renderCtParcs();
 }
+// ── Item 115: escolher o MARCO do cronograma com busca e com a fase (cabeça) ──
+//  O <select> puro não servia: são centenas de tarefas, nomes repetidos entre fases
+//  e sem como procurar. Aqui o campo mostra o escolhido e abre um buscador.
+function pvMarcoCampo(p){
+  const t=(window._pvById||{})[p.prevision_tarefa_id];
+  const rot = t ? ((t.wbs?t.wbs+' · ':'')+(t.nome||'')) : 'escolher…';
+  const cab = t ? pvCabeca(t) : '';
+  const pron = t && (t.progresso||0)>=100;
+  return `<button type="button" class="mini" style="width:100%;text-align:left;white-space:normal;line-height:1.25"
+    onclick="pvMarcoAbrir('${p.id}')" title="${t?esc(rot):'Escolher a tarefa do cronograma que libera esta parcela'}">
+    ${t?`${pron?'<span style="color:#10B981">✔ </span>':''}<span class="mono" style="font-weight:700">${esc(rot)}</span>${cab?`<br><span style="font-size:10px;color:var(--mut)">${esc(cab)}</span>`:''}`
+       :'<span style="color:var(--mut)">— escolher marco —</span>'}
+  </button><input type="hidden" data-f="prevision_tarefa_id" value="${p.prevision_tarefa_id||''}">`;
+}
+var PV_MARCO_PARC=null;
+function pvMarcoAbrir(parcId){
+  PV_MARCO_PARC=parcId;
+  let ov=document.getElementById('pvMarcoOv');
+  if(!ov){
+    ov=document.createElement('div'); ov.id='pvMarcoOv'; ov.className='cmodal-ov';
+    ov.innerHTML=`<div class="cmodal" style="width:640px">
+      <div class="cmodal-h"><span>Marco do cronograma</span><button class="cmodal-x" onclick="pvMarcoFechar()">×</button></div>
+      <div class="cmodal-b">
+        <input id="pvMarcoBusca" placeholder="Buscar por nome, WBS ou fase…" oninput="pvMarcoLista()" style="width:100%;margin-bottom:8px">
+        <div style="font-size:11.5px;color:var(--mut);margin-bottom:6px">A parcela fica liberável quando esta tarefa chega a 100% no cronograma.</div>
+        <div id="pvMarcoLista" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:10px"></div>
+      </div>
+      <div class="cmodal-f"><button class="ctr-btn sec" onclick="pvMarcoEscolher('')">Sem marco</button><button class="ctr-btn sec" onclick="pvMarcoFechar()">Cancelar</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e=>{ if(e.target===ov) pvMarcoFechar(); });
+  }
+  document.getElementById('pvMarcoBusca').value='';
+  pvMarcoLista();
+  modalAbrir('pvMarcoOv');
+  setTimeout(()=>{ const b=document.getElementById('pvMarcoBusca'); if(b) b.focus(); }, 60);
+}
+function pvMarcoFechar(){ modalFechar('pvMarcoOv'); PV_MARCO_PARC=null; }
+function pvMarcoLista(){
+  const q=(document.getElementById('pvMarcoBusca').value||'').trim().toLowerCase();
+  const casa=t=>{ if(!q) return true;
+    return String(t.nome||'').toLowerCase().includes(q) || String(t.wbs||'').toLowerCase().includes(q)
+        || String(pvCabeca(t)||'').toLowerCase().includes(q); };
+  const lst=PV_TASKS.filter(casa).slice(0,200);
+  const box=document.getElementById('pvMarcoLista');
+  box.innerHTML = lst.length ? lst.map(t=>{
+    const pron=(t.progresso||0)>=100, cab=pvCabeca(t);
+    return `<div onclick="pvMarcoEscolher('${t.id}')" style="padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12.5px"
+      onmouseover="this.style.background='var(--panel2)'" onmouseout="this.style.background=''">
+      <div><span class="mono" style="font-weight:700;color:var(--navy)">${esc(t.wbs||'')}</span> ${esc(t.nome||'')}
+        ${pron?'<span style="color:#10B981;font-weight:700"> ✔ concluída</span>':''}</div>
+      <div style="font-size:11px;color:var(--mut)">${cab?esc(cab)+' · ':''}${t.data_fim?('fim '+fmtDate(t.data_fim)):'sem data'}${t.progresso!=null?(' · '+Math.round(t.progresso)+'%'):''}</div>
+    </div>`; }).join('')
+    : '<div style="padding:12px;color:var(--mut);font-size:12.5px">Nada encontrado'+(q?' para “'+esc(q)+'”':'')+'.</div>';
+}
+function pvMarcoEscolher(tid){
+  const pid=PV_MARCO_PARC; if(!pid){ pvMarcoFechar(); return; }
+  const tr=document.querySelector('tr[data-pid="'+pid+'"]');
+  if(tr){
+    const inp=tr.querySelector('input[data-f="prevision_tarefa_id"]');
+    const td=inp?inp.closest('td'):null;
+    if(td){
+      const p=(CTR_DET&&(CTR_DET.parcelas_auria||[]).find(x=>x.id===pid))||{id:pid};
+      p.prevision_tarefa_id=tid||null;
+      td.innerHTML=pvMarcoCampo(p);        // o botão já vem com o campo escondido (salvarParcela lê dele)
+    }
+  }
+  pvMarcoFechar();
+}
+// Item 116: parcela já faturada/paga não é editável no modal do contrato.
+function _parcTrava(p){ return !!(p && ['faturada','paga'].includes(p.status)); }
 function renderCtParcs(){
   const tot=Number($('ct-valor').value||0);
   const tb=$('ct-parc-body');
@@ -1679,10 +1813,10 @@ function renderCtParcs(){
     return `<tr>
       <td class="n">${i+1}</td>
       <td><input data-pf="descricao" data-i="${i}" value="${esc(p.descricao||'')}"></td>
-      <td><input data-pf="valor" data-i="${i}" type="number" step="0.01" value="${p.valor||0}"></td>
+      <td><input data-pf="valor" data-i="${i}" type="number" step="0.01" value="${p.valor||0}" ${_parcTrava(p)?'disabled title="Parcela já faturada — o valor não muda por aqui"':''}></td>
       <td><input value="${pct.toFixed(1).replace('.',',')}%" disabled style="background:var(--panel2)"></td>
       <td><input data-pf="vencimento" data-i="${i}" type="date" value="${p.vencimento||''}"></td>
-      <td><button class="mini" onclick="rmParcelaModal(${i})">🗑</button></td>
+      <td>${_parcTrava(p)?`<span class="parc-st ${parcCls(p.status)}" title="Parcela já faturada — não pode ser alterada aqui">${parcLbl(p.status)}</span>`:`<button class="mini" onclick="rmParcelaModal(${i})">🗑</button>`}</td>
     </tr>`;
   }).join('');
   const soma=CT_PARCS_BUF.reduce((s,p)=>s+Number(p.valor||0),0);
@@ -1714,10 +1848,11 @@ async function salvarContrato(){
   const soma=CT_PARCS_BUF.reduce((s,p)=>s+Number(p.valor||0),0);
   if(Math.abs(soma-tot)>0.01 && !confirm('A soma das parcelas ('+fmtBRL(soma)+') é diferente do valor total ('+fmtBRL(tot)+'). Deseja continuar mesmo assim?')) return;
   const f=$('ct-pdf').files[0];
-  if(!f){ alert('Anexe o PDF do contrato assinado.'); return; }
-  if(f.size>8*1024*1024){ alert('PDF muito grande (máx ~8 MB).'); return; }
-  if(window.AuriaValida){ const v=await AuriaValida.checar(f,'pdf'); if(!v.ok){ alert(v.motivo); return; } }
-  let pdfData; try{ pdfData=await _fileToDataURL(f); }catch(e){ alert('Falha ao ler o PDF.'); return; }
+  // Na EDIÇÃO o PDF só é exigido se for trocado (o contrato já tem o dele).
+  if(!f && !CT_EDIT){ alert('Anexe o PDF do contrato assinado.'); return; }
+  if(f && f.size>8*1024*1024){ alert('PDF muito grande (máx ~8 MB).'); return; }
+  if(f && window.AuriaValida){ const v=await AuriaValida.checar(f,'pdf'); if(!v.ok){ alert(v.motivo); return; } }
+  let pdfData=null; if(f){ try{ pdfData=await _fileToDataURL(f); }catch(e){ alert('Falha ao ler o PDF.'); return; } }
   const obj={
     empreendimento_id:CTR_EMP_ID,
     projetista_id:proj.id, fornecedor_id:proj.fornecedor_id,
@@ -1734,6 +1869,7 @@ async function salvarContrato(){
     criado_por:USER.id, atualizado_em:new Date().toISOString()
   };
   const btn=$('ct-save'); btn.disabled=true; const t=btn.textContent; btn.textContent='Salvando…';
+  if(CT_EDIT){ const okEdit=await ctrSalvarEdicao(obj, pdfData, f); btn.disabled=false; btn.textContent=t; if(okEdit) return; return; }
   try{
     const r=await sb.from('contratos_auria').insert(obj).select().single();
     if(r.error) throw r.error;
@@ -1746,6 +1882,71 @@ async function salvarContrato(){
     await registrarPosContrato(CTR_EMP_ID, proj, disc);
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
+}
+
+// Item 116: edição de contrato salvo — grava o que mudou (campo, de, para) em
+// contrato_eventos_auria e só toca nas parcelas que ainda não foram faturadas.
+async function ctrSalvarEdicao(obj, pdfData, arquivo){
+  const id=CT_EDIT.id, antes=CT_EDIT.antes;
+  const upd={ projetista_id:obj.projetista_id, fornecedor_id:obj.fornecedor_id, projetista_email:obj.projetista_email,
+    projetista_nome:obj.projetista_nome, disciplina:obj.disciplina, numero:obj.numero, objeto:obj.objeto,
+    valor_total:obj.valor_total, data_assinatura:obj.data_assinatura, data_inicio:obj.data_inicio, data_fim:obj.data_fim,
+    atualizado_em:new Date().toISOString() };
+  if(pdfData){ upd.pdf_data=pdfData; upd.pdf_nome=arquivo.name; }
+  const rotulos={ projetista_id:'Projetista', disciplina:'Disciplina', numero:'Nº do contrato', objeto:'Objeto',
+    valor_total:'Valor total', data_assinatura:'Assinatura', data_inicio:'Início', data_fim:'Fim' };
+  const fmt=(k,v)=> k==='valor_total' ? fmtBRL(Number(v||0))
+                  : k==='projetista_id' ? ((PROJETISTAS.find(p=>p.id===v)||{}).nome||v||'—')
+                  : (v||'—');
+  const eventos=[];
+  Object.keys(rotulos).forEach(k=>{
+    const a=antes[k]==null?'':String(antes[k]), b=upd[k]==null?'':String(upd[k]);
+    if(String(a)!==String(b)) eventos.push({ contrato_id:id, evento:'editou', campo:rotulos[k], de:String(fmt(k,antes[k])), para:String(fmt(k,upd[k])) });
+  });
+  if(pdfData) eventos.push({ contrato_id:id, evento:'pdf', campo:'PDF do contrato', de:'', para:arquivo.name });
+  try{
+    const r=await sb.from('contratos_auria').update(upd).eq('id',id);
+    if(r.error) throw r.error;
+    // parcelas: atualiza as existentes (sem mexer em faturada/paga), cria novas, remove as apagadas ainda a faturar
+    const antesP=(((CTR_LIST||[]).find(c=>c.id===id)||{}).parcelas_auria)||[];
+    const vistos=new Set();
+    for(let i=0;i<CT_PARCS_BUF.length;i++){
+      const p=CT_PARCS_BUF[i], linha={ numero:i+1, descricao:p.descricao||('Parcela '+(i+1)), valor:Number(p.valor||0), vencimento:p.vencimento||null };
+      if(p.id){
+        vistos.add(p.id);
+        const orig=antesP.find(x=>x.id===p.id)||{};
+        if(['faturada','paga'].includes(orig.status)){
+          if(Number(orig.valor||0)!==linha.valor) eventos.push({ contrato_id:id, evento:'parcela', campo:'Parcela '+linha.numero+' (já faturada)', de:fmtBRL(orig.valor), para:'não alterada' });
+          continue;                                  // parcela faturada não muda de valor
+        }
+        const dif=[];
+        if((orig.descricao||'')!==linha.descricao) dif.push(['descrição',orig.descricao||'—',linha.descricao]);
+        if(Number(orig.valor||0)!==linha.valor)    dif.push(['valor',fmtBRL(orig.valor),fmtBRL(linha.valor)]);
+        if((orig.vencimento||'')!==(linha.vencimento||'')) dif.push(['vencimento',orig.vencimento||'—',linha.vencimento||'—']);
+        if(dif.length){
+          const ru=await sb.from('parcelas_auria').update(linha).eq('id',p.id); if(ru.error) throw ru.error;
+          dif.forEach(d=>eventos.push({ contrato_id:id, evento:'parcela', campo:'Parcela '+linha.numero+' · '+d[0], de:String(d[1]), para:String(d[2]) }));
+        }
+      }else{
+        const ri=await sb.from('parcelas_auria').insert({ ...linha, contrato_id:id, status:'a_faturar' }); if(ri.error) throw ri.error;
+        eventos.push({ contrato_id:id, evento:'parcela', campo:'Parcela '+linha.numero+' criada', de:'', para:linha.descricao+' · '+fmtBRL(linha.valor) });
+      }
+    }
+    for(const o of antesP){
+      if(o.id && !vistos.has(o.id) && (o.status==='a_faturar')){
+        const rd=await sb.from('parcelas_auria').delete().eq('id',o.id);
+        if(!rd.error) eventos.push({ contrato_id:id, evento:'parcela', campo:'Parcela '+o.numero+' removida', de:fmtBRL(o.valor), para:'' });
+      }
+    }
+    if(eventos.length){
+      const quem={ por_email:USER.email, por_nome:(PERFIL&&PERFIL.nome)||USER.email, por_role:'analista' };
+      try{ await sb.from('contrato_eventos_auria').insert(eventos.map(e=>({ ...e, ...quem }))); }
+      catch(_){ /* log é opcional: sem a tabela, a edição não deixa de valer */ }
+    }
+    fecharContrato(); CT_EDIT=null; await loadContratos(CTR_EMP_ID); refreshDet&&refreshDet();
+    alert(eventos.length? (eventos.length+' alteração(ões) salva(s) e registrada(s) no histórico.') : 'Nada mudou.');
+    return true;
+  }catch(e){ alert('Não salvou: '+(e.message||e)); return true; }
 }
 
 // ── Registro automático pós-contrato (item 38, peça 7) ───────────────────────
@@ -2320,7 +2521,7 @@ function renderContratoDet(){
   // Item 77d: marcos do Prevision (fase padrão) — só folhas; concluídas ficam no fim, marcadas
   const PV_ON=PV_TASKS.length>0;
   const pvById={}; PV_TASKS.forEach(t=>pvById[t.id]=t);
-  const pvMarcosHtml=PV_TASKS.slice().sort((a,b)=>((a.progresso||0)>=100)-((b.progresso||0)>=100) || String(a.data_fim||'').localeCompare(String(b.data_fim||''))).map(t=>`<option value="${t.id}">${(t.progresso||0)>=100?'✔ ':''}${esc(t.wbs||'')} ${esc(t.nome||'')}${t.data_fim?' ('+fmtDate(t.data_fim)+')':''}</option>`).join('');
+  window._pvById=pvById;
   const libIds=new Set(PV_LIBERAVEIS.map(l=>l.parcela_id));
   let h=`<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--txt2);margin-bottom:10px">
     <div><b>Projetista:</b> ${esc(c.projetista_email||'')}</div>
@@ -2339,7 +2540,7 @@ function renderContratoDet(){
       <td><input data-f="valor" type="number" step="0.01" value="${p.valor||0}"></td>
       <td><input data-f="vencimento" type="date" value="${p.vencimento||''}"></td>
       <td>${PV_ON
-        ? `<select data-f="prevision_tarefa_id" title="Tarefa do cronograma que libera esta parcela para faturamento"><option value="">—</option>${pvMarcosHtml.replace('value="'+p.prevision_tarefa_id+'"','value="'+p.prevision_tarefa_id+'" selected')}</select>`
+        ? pvMarcoCampo(p)
           +(p.prevision_tarefa_id&&pvById[p.prevision_tarefa_id]?`<div style="font-size:10px;color:${(pvById[p.prevision_tarefa_id].progresso||0)>=100?'#10B981':'var(--mut)'};margin-top:2px">${(pvById[p.prevision_tarefa_id].progresso||0)>=100?'✔ marco concluído no cronograma':'marco '+(pvById[p.prevision_tarefa_id].progresso||0)+'% · '+esc(pvById[p.prevision_tarefa_id].kanban||'')}</div>`:'')
         : `<select data-f="marco_cron_id"><option value="">—</option>${marcosHtml.replace('value="'+p.marco_cron_id+'"','value="'+p.marco_cron_id+'" selected')}</select>`}</td>
       <td>${(function(){
@@ -2835,7 +3036,7 @@ function accAtribuicaoHtml(){
   const lista = vinc.length
     ? vinc.map(v=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px 6px 4px 9px;font-size:12px">
           <b style="font-family:var(--mono,ui-monospace,Consolas,monospace);color:var(--txt)">${esc(v.disciplina)}</b>
-          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}${v.projetista_id?' <span style="color:var(--mut)">·</span> '+esc(accProjNome(v.fornecedor_id, v.projetista_id)):' <span style="color:var(--err);font-size:11px" title="Sem projetista responsável — defina abaixo">sem responsável</span>'}
+          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}${v.projetista_id?(accProjEhRT(v.fornecedor_id,v.projetista_id)?' <span title="Responsável técnico" style="background:#FEF3C7;color:#92400E;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:8px">RT</span>':'')+' <span style="color:var(--mut)">·</span> '+esc(accProjNome(v.fornecedor_id, v.projetista_id)):' <span style="color:var(--err);font-size:11px" title="Sem projetista responsável — defina abaixo">sem responsável</span>'}
           <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Contrato desta disciplina (pré-preenchido)" onclick="accContratoDe('${v.id}')">💼</button>
           <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Remover atribuição" onclick="accRemoverAtrib('${v.id}')">✕</button></span>`).join(' ')
     : '<span style="font-size:12px;color:var(--mut)">Nenhuma disciplina atribuída a fornecedor nesta obra.</span>';
@@ -2869,14 +3070,24 @@ function accAtribFornOpts(){
 }
 // Projetistas (pessoas) do fornecedor escolhido: primeiro os da disciplina.
 function accProjNome(fid, pid){ const f=(FORNECEDORES||[]).find(x=>x.id===fid); const p=f&&(f.projetistas_auria||[]).find(x=>x.id===pid); return p?(p.nome||p.email):'—'; }
+// Item 114: o profissional atribuído é o responsável técnico do fornecedor?
+function accProjEhRT(fid, pid){
+  const f=(FORNECEDORES||[]).find(x=>x.id===fid); if(!f) return false;
+  const p=(f.projetistas_auria||[]).find(x=>x.id===pid);
+  return !!(p && p.eh_rt);
+}
 function accAtribProjOpts(){
   const cod=($('accAtribDisc')||{}).value||'', fid=($('accAtribForn')||{}).value||''; const sel=$('accAtribProj'); if(!sel) return;
   const f=(FORNECEDORES||[]).find(x=>x.id===fid); const ps=f?(f.projetistas_auria||[]).filter(p=>p.ativo!==false):[];
   const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
   const daDisc=p=>{ const rot=(accDiscLabel(cod)||'').toLowerCase(), c=String(cod).toLowerCase();
     return (Array.isArray(p.disciplinas)?p.disciplinas:String(p.disciplinas||'').split(',')).some(d=>{ const x=String(d||'').trim().toLowerCase(); return x && (x===rot||x===c); }); };
-  const ord=ps.slice().sort((a,b)=>(daDisc(b)?1:0)-(daDisc(a)?1:0));
-  sel.innerHTML='<option value="">Responsável…</option>'+ord.map(p=>'<option value="'+p.id+'"'+(atual&&atual.projetista_id===p.id?' selected':'')+'>'+esc(p.nome||p.email)+(daDisc(p)?'':' (outra disciplina)')+'</option>').join('');
+  // ordem: quem atende a disciplina primeiro e, dentro disso, o RESPONSÁVEL TÉCNICO no topo
+  const ord=ps.slice().sort((a,b)=>(daDisc(b)?1:0)-(daDisc(a)?1:0) || ((b.eh_rt?1:0)-(a.eh_rt?1:0)));
+  sel.innerHTML='<option value="">Responsável…</option>'+ord.map(p=>'<option value="'+p.id+'"'+(atual&&atual.projetista_id===p.id?' selected':'')+'>'
+    +esc(p.nome||p.email)+(p.eh_rt?' · RT':'')+(daDisc(p)?'':' (outra disciplina)')+'</option>').join('');
+  // sem escolha e com um RT da disciplina: já vem marcado (é o caso comum)
+  if(!sel.value){ const rt=ord.find(p=>p.eh_rt && daDisc(p)); if(rt) sel.value=rt.id; }
   if(!sel.value && ord.length===1) sel.value=ord[0].id;
 }
 async function accAtribuirForn(){
