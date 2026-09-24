@@ -94,6 +94,21 @@ function mudarDia(n){diaAtual=new Date(diaAtual);diaAtual.setDate(diaAtual.getDa
 function mudarMes(n){calBase=new Date(calBase.getFullYear(),calBase.getMonth()+n,1);carregarMes();}
 function selDia(a,m,d){diaAtual=new Date(a,m,d);diaAtual.setHours(0,0,0,0);renderCal();carregarDia();}
 
+// O painel do analista mantém este iframe carregado e só o mostra/esconde; por isso
+// a agenda escuta um aviso do pai (e o foco da janela) para buscar de novo.
+var _ultCarga=0;
+async function recarregarAgenda(force){
+  if(!USER) return;
+  if(!force && Date.now()-_ultCarga < 20000) return;
+  _ultCarga=Date.now();
+  await carregarDados(); carregarDia(); carregarMes();
+}
+window.addEventListener('message', function(ev){ if(ev && ev.data==='auria:agenda-refresh') recarregarAgenda(true); });
+window.addEventListener('focus', function(){ recarregarAgenda(false); });
+function abrirKanban(){
+  if(window.parent && window.parent!==window){ window.parent.postMessage('auria:abrir-kanban','*'); return; }
+  location.href='kanban.html';
+}
 function carregarDia(){
   var d=fmtISO(diaAtual);
   document.getElementById('lblDia').textContent=DIASC[diaAtual.getDay()]+' '+diaAtual.getDate()+' '+MESES3[diaAtual.getMonth()]+' '+diaAtual.getFullYear();
@@ -124,7 +139,11 @@ function renderDia(dados,kanban,notas){
   }
   if(kanban&&kanban.length){
     html+='<div class="section-lbl">Tarefas Kanban</div>';
-    for(var k=0;k<kanban.length;k++){var tk=kanban[k];html+='<div class="card s-kanban"><div class="card-title">'+esc(tk.titulo||'Tarefa')+'</div><div class="card-sub">'+(tk.status?esc(tk.status):'')+(tk.prioridade?' &bull; '+esc(tk.prioridade):'')+'</div></div>';}
+    for(var k=0;k<kanban.length;k++){var tk=kanban[k];
+      var sub=(tk.status?esc(tk.status):'')+(tk.prioridade?' &bull; '+esc(tk.prioridade):'')+(tk.descricao?'<br>'+esc(tk.descricao):'');
+      html+='<div class="card s-kanban" style="cursor:pointer" title="Abrir no Kanban" onclick="abrirKanban()"><div class="card-title">'+esc(tk.titulo||'Tarefa')
+        +(tk.origem==='cronograma'?' <span style="font-size:10px;font-weight:700;color:#E8960A">cronograma</span>':'')
+        +'</div><div class="card-sub">'+sub+'</div></div>';}
   }
   if(!iss.length&&(!kanban||!kanban.length)){html+='<div class="empty"><div class="empty-txt">'+(isHoje?'Nenhum prazo para hoje':'Nenhum apontamento neste dia')+'</div></div>';}
   document.getElementById('dayView').innerHTML=html;
@@ -173,7 +192,13 @@ async function carregarDados(){
     }catch(e){}
   }
   try{ const rt=await sb.from('tarefas').select('*').eq('analista_id',USER.id);
-    (rt.data||[]).forEach(function(t){ if(t.status==='Concluído')return; var iso=prazoISO(t.prazo); if(!iso)return; (TAR_DAY[iso]=TAR_DAY[iso]||[]).push({titulo:t.titulo,status:t.status,prioridade:t.prioridade}); });
+    (rt.data||[]).forEach(function(t){
+      if(t.status==='Concluído')return;
+      if(t.ignorada)return;                       // cartão descartado no Kanban não volta pela agenda
+      var iso=prazoISO(t.prazo); if(!iso)return;
+      (TAR_DAY[iso]=TAR_DAY[iso]||[]).push({titulo:t.titulo,status:t.status,prioridade:t.prioridade,
+        descricao:t.descricao||'', origem:t.origem||''});
+    });
   }catch(e){}
 }
 async function carregar(){
@@ -188,7 +213,7 @@ async function carregar(){
   if(USER.role!=='analista' && USER.role!=='gerente' && USER.role!=='super_admin'){
     location.replace('painel_analista.html'); return;
   }
-  await carregarDados();
+  await carregarDados(); _ultCarga=Date.now();
   // dia inicial: ?date=YYYY-MM-DD (vindo da estação) ou hoje
   var qd=new URLSearchParams(location.search).get('date');
   if(qd&&/^\d{4}-\d{2}-\d{2}$/.test(qd)){ var p=qd.split('-'); diaAtual=new Date(+p[0],+p[1]-1,+p[2]); diaAtual.setHours(0,0,0,0); calBase=new Date(diaAtual.getFullYear(),diaAtual.getMonth(),1); }
