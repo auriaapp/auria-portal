@@ -1608,11 +1608,16 @@ async function buscaConteudo(q){
   q=(q||'').trim();
   if(q.length<2){ BUSCA_IDS=new Set(); renderNav(); return; }
   try{
+    // 'arquivado' não entra no filtro: a lista DOCS já exclui arquivado, e um
+    // .eq('arquivado',false) descartaria silenciosamente as linhas com null.
+    // O limite alto evita o teto padrão do PostgREST em empreendimentos grandes.
     const { data, error } = await sb.from('cde_documento_auria').select('id')
-      .eq('empreendimento_id',EMP_ID).eq('arquivado',false)
-      .textSearch('texto_busca', q, { type:'websearch', config:'portuguese' });
+      .eq('empreendimento_id',EMP_ID)
+      .textSearch('texto_busca', q, { type:'websearch', config:'portuguese' })
+      .limit(2000);
     if(error) throw error;
     BUSCA_IDS=new Set((data||[]).map(r=>r.id));
+    console.info('[busca conteúdo]', q, '→', BUSCA_IDS.size, 'documento(s) no banco');
   }catch(e){ BUSCA_IDS=new Set(); console.warn('busca conteúdo:', e.message||e); }
   renderNav();
 }
