@@ -121,6 +121,26 @@ table.sched tr:hover td{background:#1A1D27}
 #pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
 #pvbar .fchip .star{margin-left:4px}
 #pvbar .pvinfo{margin-left:auto;color:#94A3B8}
+/* Item 112: busca de tarefas e comentário por tarefa */
+#cronBusca{width:210px;padding:4px 9px;border-radius:8px;border:1px solid #3A4A66;background:transparent;color:inherit;font-size:12px;font-family:inherit}
+body.light #cronBusca{border-color:#CBD5E1}
+#cronBuscaInfo{font-size:11px;color:#94A3B8}
+.nrow.achou{background:rgba(232,150,10,.18)}
+.nrow .coment{margin-left:6px;font-size:10px;color:#E8960A;cursor:pointer;flex:none}
+.nrow .coment.vazio{color:#475569;opacity:0;transition:opacity .12s}
+.nrow:hover .coment.vazio{opacity:.9}
+#comOv{position:fixed;inset:0;background:rgba(8,12,20,.6);z-index:950;display:none;align-items:center;justify-content:center;padding:18px}
+#comOv.on{display:flex}
+#comBox{background:#121722;border:1px solid #2A2D3A;border-radius:14px;width:min(560px,96vw);max-height:86vh;overflow:auto;padding:18px;color:#E2E8F0}
+body.light #comBox{background:#fff;border-color:#E2E8F0;color:#0F172A}
+#comBox h3{margin:0 0 3px;font-size:15px}
+#comBox .sub{font-size:12px;color:#94A3B8;margin-bottom:12px}
+#comBox .lista{border:1px solid #2A2D3A;border-radius:10px;margin-bottom:10px;max-height:40vh;overflow:auto}
+body.light #comBox .lista{border-color:#E2E8F0}
+#comBox .item{padding:8px 11px;border-bottom:1px solid rgba(148,163,184,.16);font-size:12.5px}
+#comBox .item .meta{font-size:11px;color:#94A3B8;margin-top:3px}
+#comBox textarea{width:100%;min-height:70px;border-radius:9px;border:1px solid #2A2D3A;background:transparent;color:inherit;font-family:inherit;font-size:12.5px;padding:8px}
+body.light #comBox textarea{border-color:#E2E8F0}
 /* Item 111: avanço total do cronograma — previsto (pelas datas) × realizado (medido) */
 #totbar{display:none;align-items:center;gap:18px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid #2A2D3A;background:#12161F;font-size:12px}
 body.light #totbar{background:#fff;border-color:#E2E8F0}
@@ -215,6 +235,8 @@ body.light .legend{color:#64748B}
       <button id="vGantt" class="vbtn active" onclick="setView('gantt')">Gantt</button>
       <button id="vTable" class="vbtn" onclick="setView('table')">Planilha</button>
     </div>
+    <input id="cronBusca" type="search" placeholder="Buscar tarefa (nome, WBS, responsável)…" oninput="cronBuscar(this.value)" title="Mostra só as tarefas que casam — as fases-pai continuam visíveis">
+    <span id="cronBuscaInfo"></span>
     <button id="btnCollapse" class="tbtn" onclick="toggleCollapseAll()" title="Recolher/expandir todas as fases">&#8863; Recolher tudo</button>
     <label class="tbtn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer" title="Mostrar só o que ainda não chegou a 100% — tarefas e fases concluídas ficam ocultas">
       <input type="checkbox" id="chkHideDone" onchange="toggleHideDone()" style="cursor:pointer"> Ocultar concluídas
@@ -296,6 +318,16 @@ body.light .legend{color:#64748B}
     <button class="tbtn primary" id="pvImpSalvar" onclick="pvImpSalvar()">Salvar e sincronizar</button>
   </div>
 </div></div>
+<div id="comOv" onclick="if(event.target===this)comFechar()"><div id="comBox">
+  <h3 id="comTit">Comentários</h3>
+  <div class="sub" id="comSub"></div>
+  <div class="lista" id="comLista"></div>
+  <textarea id="comTxt" placeholder="Escrever um comentário sobre esta tarefa…"></textarea>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+    <button class="tbtn" onclick="comFechar()">Fechar</button>
+    <button class="tbtn primary" id="comEnviar" onclick="comEnviar()">Comentar</button>
+  </div>
+</div></div>
 <div id="tablewrap">
   <table class="sched"><colgroup id="schedCols"></colgroup><thead><tr>
     <th>WBS</th><th>Tarefa</th><th>Início</th><th>Fim</th><th>Dias</th><th>Avanço</th><th class="pvcol" title="Avanço previsto pelo cronograma">Previsto</th><th class="pvcol" title="Situação da tarefa declarada no Prevision">Situação</th><th class="pvcol">Responsável</th><th>Status</th><th>Tipo</th>
@@ -373,6 +405,87 @@ function schedGripsBind(){
     })(ths[i], i);
   }
 }
+// ── Item 112: busca de tarefas ────────────────────────────────────────────
+//  Filtra por nome, WBS ou responsável. As fases-pai do que casou continuam na
+//  lista (senão a tarefa aparece solta, sem contexto).
+var BUSCA_CRON='', BUSCA_UIDS=null;
+function cronBuscar(v){
+  BUSCA_CRON=(v||'').trim().toLowerCase();
+  if(!BUSCA_CRON){ BUSCA_UIDS=null; document.getElementById('cronBuscaInfo').textContent=''; rerender(); return; }
+  var achou=new Set(), porWbs={};
+  (DATA.tarefas||[]).forEach(function(t){ if(t.wbs) porWbs[t.wbs]=t; });
+  var n=0;
+  (DATA.tarefas||[]).forEach(function(t){
+    var alvo=[t.nome||'', t.wbs||'', (t.responsaveis||[]).join(' ')].join(' ').toLowerCase();
+    if(alvo.indexOf(BUSCA_CRON)>=0){
+      achou.add(t.uid); n++;
+      var partes=String(t.wbs||'').split('.');            // acende também as fases-pai
+      for(var k=partes.length-1;k>=1;k--){ var pai=porWbs[partes.slice(0,k).join('.')]; if(pai) achou.add(pai.uid); }
+    }
+  });
+  BUSCA_UIDS=achou;
+  document.getElementById('cronBuscaInfo').textContent=n+' tarefa'+(n!==1?'s':'');
+  rerender();
+}
+// ── Item 112: comentários por tarefa ──────────────────────────────────────
+var COMENT={};            // uid -> {n, ultimo, ultimo_autor}
+var COM_TAREFA=null;
+async function comCarregar(){
+  COMENT={};
+  try{
+    var r=await _sb.rpc('cronograma_comentarios',{ p_emp:EMP_ID });
+    if(r.error) throw r.error;
+    (r.data||[]).forEach(function(x){ COMENT[x.tarefa_id]={ n:x.n, ultimo:x.ultimo, autor:x.ultimo_autor }; });
+  }catch(e){ COMENT={}; }
+}
+function comMarca(t){
+  var c=COMENT[t.uid];
+  if(c) return '<span class="coment" title="'+escA((c.autor?c.autor+': ':'')+(c.ultimo||''))+'" onclick="event.stopPropagation();comAbrir(\''+escA(t.uid)+'\')">💬'+c.n+'</span>';
+  return '<span class="coment vazio" title="Comentar nesta tarefa" onclick="event.stopPropagation();comAbrir(\''+escA(t.uid)+'\')">💬</span>';
+}
+function comFechar(){ document.getElementById('comOv').classList.remove('on'); COM_TAREFA=null; }
+async function comAbrir(uid){
+  var t=(DATA.tarefas||[]).filter(function(x){ return x.uid===uid; })[0]; if(!t) return;
+  COM_TAREFA=t;
+  document.getElementById('comTit').textContent=(t.wbs?t.wbs+' · ':'')+(t.nome||'Tarefa');
+  document.getElementById('comSub').textContent=(t.inicio||'')+(t.fim?' → '+t.fim:'')+(t.pct!=null?' · '+t.pct+'%':'');
+  document.getElementById('comTxt').value='';
+  document.getElementById('comLista').innerHTML='<div style="padding:10px;color:#94A3B8;font-size:12.5px">carregando…</div>';
+  document.getElementById('comOv').classList.add('on');
+  document.getElementById('comEnviar').style.display = PV.pode_editar && !RECORTE ? '' : 'none';
+  document.getElementById('comTxt').style.display = PV.pode_editar && !RECORTE ? '' : 'none';
+  try{
+    var r=await _sb.from('cronograma_comentario_auria').select('*').eq('tarefa_id',uid).order('criado_em',{ascending:false});
+    if(r.error) throw r.error;
+    var l=r.data||[];
+    document.getElementById('comLista').innerHTML = l.length ? l.map(function(c){
+      return '<div class="item">'+esc(c.texto)+'<div class="meta">'+esc(c.autor_nome||'')+' · '+new Date(c.criado_em).toLocaleString('pt-BR')
+        +(c.autor_id===(USER&&USER.id)?' · <a href="#" onclick="comApagar(\''+c.id+'\');return false" style="color:#EF4444">apagar</a>':'')+'</div></div>';
+    }).join('') : '<div style="padding:10px;color:#94A3B8;font-size:12.5px">Sem comentários nesta tarefa.</div>';
+  }catch(e){
+    document.getElementById('comLista').innerHTML='<div style="padding:10px;color:#94A3B8;font-size:12.5px">Não foi possível carregar'
+      +(/does not exist|schema cache/i.test(e.message||'')?' — rode supabase_cronograma_comentarios.sql':'')+'.</div>';
+  }
+}
+async function comEnviar(){
+  var t=COM_TAREFA; if(!t) return;
+  var txt=(document.getElementById('comTxt').value||'').trim(); if(!txt) return;
+  var b=document.getElementById('comEnviar'); b.disabled=true;
+  try{
+    var r=await _sb.from('cronograma_comentario_auria').insert({
+      empreendimento_id:EMP_ID, tarefa_id:t.uid, tarefa_wbs:t.wbs||null, tarefa_nome:t.nome||null,
+      texto:txt, autor_id:(USER&&USER.id)||null, autor_nome:(USER&&(USER.nome||USER.email))||null });
+    if(r.error) throw r.error;
+    await comCarregar(); rerender(); comAbrir(t.uid);
+  }catch(e){ alert('Não comentou: '+(e.message||e)); }
+  b.disabled=false;
+}
+async function comApagar(id){
+  if(!confirm('Apagar este comentário?')) return;
+  try{ var r=await _sb.from('cronograma_comentario_auria').delete().eq('id',id); if(r.error) throw r.error;
+       await comCarregar(); rerender(); if(COM_TAREFA) comAbrir(COM_TAREFA.uid); }
+  catch(e){ alert('Não apagou: '+(e.message||e)); }
+}
 var MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 function pd(s){if(!s)return null;var p=s.split('-');return new Date(Date.UTC(+p[0],+p[1]-1,+p[2]));}
 function days(a,b){return Math.round((b-a)/86400000);}
@@ -436,7 +549,9 @@ function render(data){
       caret='<span class="caret" style="visibility:hidden">▸</span>';
     }
     var ck=SEL_MODE?'<input type="checkbox" class="selck" data-uid="'+escA(t.uid)+'" '+(SEL.has(t.uid)?'checked':'')+' onclick="event.stopPropagation();selToggleUid(\''+escA(t.uid)+'\',this.checked)">':'';
-    names+='<div class="'+cls+(SEL_MODE&&SEL.has(t.uid)?' selon':'')+'" style="padding-left:'+(10+ind)+'px" title="'+esc(t.nome)+'">'+ck+caret+(t.wbs?'<span class="wbs">'+esc(t.wbs)+'</span>':'')+esc(t.nome)+'</div>';
+    var hit=BUSCA_UIDS && BUSCA_UIDS.has(t.uid) && String(t.nome||'').toLowerCase().indexOf(BUSCA_CRON)>=0;
+    names+='<div class="'+cls+(SEL_MODE&&SEL.has(t.uid)?' selon':'')+(hit?' achou':'')+'" style="padding-left:'+(10+ind)+'px" title="'+esc(t.nome)+'">'
+      +ck+caret+(t.wbs?'<span class="wbs">'+esc(t.wbs)+'</span>':'')+esc(t.nome)+(t.resumo?'':comMarca(t))+'</div>';
     var bar='';
     if(t.inicio&&t.fim){
       var bx=x(t.inicio);
@@ -480,8 +595,9 @@ function visibleTasks(){
     var lvl=t.nivel||0;
     if(skip!==null){ if(lvl>skip){ continue; } else { skip=null; } }
     if(HIDE_DONE && (t.pct||0)>=100){ if(t.resumo){ skip=lvl; } continue; }
+    if(BUSCA_UIDS && !BUSCA_UIDS.has(t.uid)) continue;   // item 112: busca (fases-pai já estão no conjunto)
     out.push({t:t, idx:i});
-    if(t.resumo && COLLAPSED[keyOf(t)]){ skip=lvl; }
+    if(t.resumo && COLLAPSED[keyOf(t)] && !BUSCA_UIDS){ skip=lvl; }
   }
   return out;
 }
@@ -1167,6 +1283,7 @@ async function carregarCron(fase){
     previsto:(t.previsto!=null?t.previsto:null), critica:!!t.critica, kanban:t.kanban||'', kanban_status:t.kanban_status||'', responsaveis:t.responsaveis||[], colunas:t.colunas||{}, marco_medicao:!!t.marco_medicao}; }) };
   try{ HIDE_DONE=(localStorage.getItem('auria_cron_hidedone')==='1'); var ck=document.getElementById('chkHideDone'); if(ck) ck.checked=HIDE_DONE; }catch(e){}
   SDATE=isoOf(today0()); document.getElementById('sdate').value=SDATE;
+  await comCarregar();                       // item 112: marcadores de comentário
   recalc(); render(DATA); buildTable(); setView('gantt'); carregarLastEdit();
 }
 carregarCron();
