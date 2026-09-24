@@ -84,6 +84,72 @@ async function marcarStatus(arquivoId, campos) {
   } catch (e) { console.error("[db] não conseguiu marcar status:", e && e.message || e); }
 }
 
+// ── Item 125: indexação do TEXTO dos PDFs no servidor ─────────────────────
+//  Antes isso rodava no navegador (pdf.js na fila do CDE): dependia da aba
+//  aberta e levava minutos num acúmulo. Aqui é o mesmo caminho do IFC — o banco
+//  chama, o serviço baixa, processa e grava.
+async function sbGet(tabela, query) {
+  const url = `${SUPABASE_URL}/rest/v1/${tabela}?${query}`;
+  const resp = await fetch(url, { headers: {
+    "apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } });
+  if (!resp.ok) throw new Error(`PostgREST ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+  return await resp.json();
+}
+async function sbPatch(tabela, query, campos) {
+  const url = `${SUPABASE_URL}/rest/v1/${tabela}?${query}`;
+  const resp = await fetch(url, { method: "PATCH", headers: {
+    "Content-Type": "application/json", "apikey": SUPABASE_SERVICE_ROLE_KEY,
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, "Prefer": "return=minimal" }, body: JSON.stringify(campos) });
+  if (!resp.ok) throw new Error(`PostgREST ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+}
+// O arquivo pode estar no R2 (pesados) ou no Storage do Supabase (bucket cde).
+async function baixarArquivo(storagePath, provider) {
+  if ((provider || "supabase") === "r2") return await r2Get(storagePath);
+  const url = `${SUPABASE_URL}/storage/v1/object/cde/${encodePath(storagePath)}`;
+  const resp = await fetch(url, { headers: {
+    "apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } });
+  if (!resp.ok) throw new Error(`Storage ${resp.status} (${storagePath})`);
+  return new Uint8Array(await resp.arrayBuffer());
+}
+// pdfjs é carregado sob demanda: quem só converte IFC não paga por ele.
+let _pdfjs = null;
+async function pdfjs() {
+  if (!_pdfjs) _pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  return _pdfjs;
+}
+const MAX_PAGINAS = Number(process.env.MAX_PDF_PAGINAS || 80);
+const MAX_TEXTO  = Number(process.env.MAX_PDF_TEXTO || 20000);
+async function extrairTexto(bytes) {
+  const lib = await pdfjs();
+  const doc = await lib.getDocument({ data: bytes, useSystemFonts: false, isEvalSupported: false }).promise;
+  const n = Math.min(doc.numPages, MAX_PAGINAS);
+  const partes = [];
+  for (let i = 1; i <= n; i++) {
+    try {
+      const pg = await doc.getPage(i);
+      const tc = await pg.getTextContent();
+      partes.push(tc.items.map((it) => it.str).join(" "));
+    } catch (_) { /* página ilegível não invalida o resto */ }
+  }
+  try { await doc.destroy(); } catch (_) {}
+  return partes.join(" ").replace(/\s+/g, " ").trim().slice(0, MAX_TEXTO);
+}
+// Indexa UM documento: acha o PDF principal da revisão mais recente e grava.
+async function indexarDocumento(docId) {
+  const revs = await sbGet("cde_revisao_auria",
+    `documento_id=eq.${docId}&select=id,recebido_em&order=recebido_em.desc&limit=1`);
+  if (!revs.length) { await sbPatch("cde_documento_auria", `id=eq.${docId}`, { texto_busca: "", texto_em: new Date().toISOString() }); return { doc: docId, vazio: true, motivo: "sem revisão" }; }
+  const arqs = await sbGet("cde_arquivo_auria",
+    `revisao_id=eq.${revs[0].id}&select=nome,extensao,storage_path,storage_provider,eh_principal`);
+  const pdfs = arqs.filter((a) => String(a.extensao || "").toLowerCase() === "pdf");
+  const pdf = pdfs.find((a) => a.eh_principal) || pdfs[0];
+  if (!pdf) { await sbPatch("cde_documento_auria", `id=eq.${docId}`, { texto_busca: "", texto_em: new Date().toISOString() }); return { doc: docId, vazio: true, motivo: "sem PDF" }; }
+  const bytes = await baixarArquivo(pdf.storage_path, pdf.storage_provider);
+  const texto = await extrairTexto(bytes);
+  await sbPatch("cde_documento_auria", `id=eq.${docId}`, { texto_busca: texto, texto_em: new Date().toISOString() });
+  return { doc: docId, chars: texto.length };
+}
+
 // Progresso: o IfcImporter reporta 4 fases sequenciais (geometrias, atributos,
 // relações, conversão final), cada uma indo de 0 a 1 — combinamos num único
 // 0-100 assumindo peso igual entre elas (não temos dado real do custo relativo
@@ -194,6 +260,48 @@ app.post("/convert", async (req, res) => {
   } finally {
     progressoPorArquivo.delete(arquivoId);
     fasesPorArquivo.delete(arquivoId);
+  }
+});
+
+// Item 125: indexa o texto de UM documento (chamado pelo gatilho do upload).
+app.post("/index-pdf", async (req, res) => {
+  const secret = req.get("X-Auria-Secret");
+  if (!secret || secret !== TRIGGER_SECRET) return res.status(401).json({ error: "não autorizado" });
+  const { documentoId } = req.body || {};
+  if (!documentoId) return res.status(400).json({ error: "documentoId é obrigatório" });
+  try {
+    const r = await indexarDocumento(documentoId);
+    console.log(`[index] ${documentoId}: ${r.chars != null ? r.chars + " caracteres" : "vazio (" + r.motivo + ")"}`);
+    res.status(200).json({ success: true, ...r });
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 300);
+    console.error(`[index] falhou (${documentoId}):`, msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// Lote: pega os documentos ainda sem texto_em e processa até `limite`.
+// Serve para o acúmulo e para reprocessar quando a extração melhora.
+app.post("/index-pdf-lote", async (req, res) => {
+  const secret = req.get("X-Auria-Secret");
+  if (!secret || secret !== TRIGGER_SECRET) return res.status(401).json({ error: "não autorizado" });
+  const limite = Math.min(Number((req.body || {}).limite || 25), 200);
+  const emp = (req.body || {}).empreendimentoId;
+  try {
+    const filtro = `texto_em=is.null&select=id,codigo${emp ? `&empreendimento_id=eq.${emp}` : ""}&limit=${limite}`;
+    const docs = await sbGet("cde_documento_auria", filtro);
+    let ok = 0, vazios = 0, falhas = 0;
+    for (const d of docs) {
+      try { const r = await indexarDocumento(d.id); if (r.vazio || !r.chars) vazios++; else ok++; }
+      catch (e) { falhas++; console.error(`[index-lote] ${d.codigo || d.id}:`, String((e && e.message) || e).slice(0, 200)); }
+    }
+    const restam = await sbGet("cde_documento_auria", `texto_em=is.null&select=id${emp ? `&empreendimento_id=eq.${emp}` : ""}&limit=1000`);
+    console.log(`[index-lote] ${ok} com texto · ${vazios} sem texto · ${falhas} falha(s) · restam ${restam.length}`);
+    res.status(200).json({ success: true, processados: docs.length, com_texto: ok, sem_texto: vazios, falhas, restam: restam.length });
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 300);
+    console.error("[index-lote] falhou:", msg);
+    res.status(500).json({ error: msg });
   }
 });
 
