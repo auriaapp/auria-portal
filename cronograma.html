@@ -121,6 +121,19 @@ table.sched tr:hover td{background:#1A1D27}
 #pvbar .fchip.on{background:#E8960A;border-color:#E8960A;color:#231703}
 #pvbar .fchip .star{margin-left:4px}
 #pvbar .pvinfo{margin-left:auto;color:#94A3B8}
+/* Item 111: avanço total do cronograma — previsto (pelas datas) × realizado (medido) */
+#totbar{display:none;align-items:center;gap:18px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid #2A2D3A;background:#12161F;font-size:12px}
+body.light #totbar{background:#fff;border-color:#E2E8F0}
+#totbar .tot{display:flex;align-items:baseline;gap:7px}
+#totbar .tot b{font-size:17px;font-variant-numeric:tabular-nums}
+#totbar .tot span{color:#94A3B8;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+body.light #totbar .tot span{color:#64748B}
+#totbar .barra{flex:1;min-width:140px;max-width:320px;height:9px;border-radius:5px;background:#243044;overflow:hidden;position:relative}
+body.light #totbar .barra{background:#E2E8F0}
+#totbar .barra i{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+#totbar .barra i.real{background:linear-gradient(90deg,#10B981,#34D399);z-index:2}
+#totbar .barra i.prev{background:#3B82F6;opacity:.35;z-index:1}
+#totbar .desvio{font-weight:700}
 /* Item 90: importar/vincular o cronograma sem passar pela gestão (coordenador do empreendimento) */
 #pvImpBg{position:fixed;inset:0;background:rgba(8,12,20,.6);z-index:900;display:none;align-items:center;justify-content:center;padding:18px}
 #pvImpBg.on{display:flex}
@@ -258,6 +271,13 @@ body.light .legend{color:#64748B}
   <button class="tbtn primary" id="selEnviar" onclick="selEnviar()">&#9993; Enviar</button><button class="tbtn" onclick="selToggle()">Cancelar</button>
 </div>
 <div id="pvbar"><span style="font-weight:800;color:#E8960A">Fonte: Prevision</span><button class="fchip" id="pvSyncBtn" onclick="pvSincronizar()" title="Sincronizar agora: baixa de novo o cronograma do Prevision" style="padding:2px 7px">&#8635;</button><span id="pvFases"></span><span id="pvPadraoBtn"></span><span id="pvImpBtn"></span><span class="pvinfo" id="pvInfo"></span></div>
+<div id="totbar">
+  <div class="tot"><b id="totReal">—</b><span>realizado</span></div>
+  <div class="barra" title="verde = realizado · azul = previsto para hoje"><i class="prev" id="barPrev" style="width:0"></i><i class="real" id="barReal" style="width:0"></i></div>
+  <div class="tot"><b id="totPrev">—</b><span>previsto</span></div>
+  <div class="tot"><b class="desvio" id="totDesv">—</b><span id="totDesvLbl">desvio</span></div>
+  <div class="tot" style="margin-left:auto"><b id="totTar">—</b><span id="totTarLbl">tarefas</span></div>
+</div>
 <div id="scroll"><div id="grid"></div></div>
 <!-- Item 90: vincular projetos do Prevision a partir do próprio cronograma -->
 <div id="pvImpBg" onclick="if(event.target===this)pvImpFechar()"><div id="pvImp">
@@ -444,7 +464,7 @@ function render(data){
       +'<div class="names" style="width:'+NAMEW+'px">'+names+'<div id="colgrip" title="Arraste para alargar a coluna de tarefas · duplo clique ajusta ao maior nome"></div></div>'
       +'<div class="tl" style="width:'+tlW+'px;height:'+bodyH+'px">'+glines+todayLine+sdateLine+rows+'</div>'
     +'</div>';
-  gripBind(); selAtualizarContagem(); simResumoAtualizar(); kbContagem();
+  gripBind(); selAtualizarContagem(); simResumoAtualizar(); kbContagem(); totaisRender();   // item 111
 }
 var DATA={};
 var EDIT=false, DIRTY=false, SDATE='';
@@ -803,6 +823,47 @@ function pvRenderBar(){
   document.getElementById('pvInfo').textContent=(v.projeto_nome||'')+(v.sincronizado_em?' · sincronizado em '+fmtDTbr(v.sincronizado_em):'')+(v.sync_erro?' · erro: '+v.sync_erro:'')
     +(pad&&pad.padrao_por_nome?' · padrão '+pad.fase+' definido por '+pad.padrao_por_nome+(pad.padrao_em?' em '+fmtDTbr(pad.padrao_em):''):'');
   var eb=document.getElementById('editbar'); if(eb) eb.style.display='none';   // Prevision é a fonte: sem importar/editar aqui
+}
+// ── Item 111: totais de avanço ────────────────────────────────────────────
+//  Só as FOLHAS entram (fase é resumo das filhas, contaria duas vezes), ponderadas
+//  pela duração em dias: uma tarefa de 60 dias pesa mais que uma de 2. "Previsto" é
+//  o que o cronograma dizia que já estaria feito — do Prevision quando vem (campo
+//  previsto), senão calculado pela data de hoje dentro da janela de cada tarefa.
+function totaisAvanco(){
+  var hoje=new Date(); hoje.setHours(0,0,0,0);
+  var somaPeso=0, somaReal=0, somaPrev=0, n=0, temPrev=false;
+  (DATA.tarefas||[]).forEach(function(t){
+    if(t.resumo) return;                                  // fase = soma das filhas
+    var a=pd(t.inicio), b=pd(t.fim);
+    var dur = (a&&b) ? Math.max(1, days(a,b)+1) : 1;
+    var real = Math.max(0, Math.min(100, Number(t.pct)||0));
+    var prev;
+    if(t.previsto!=null && t.previsto!==''){ prev=Math.max(0,Math.min(100,Number(t.previsto)||0)); temPrev=true; }
+    else if(a&&b){ prev = hoje<a ? 0 : (hoje>=b ? 100 : Math.round(days(a,hoje)/Math.max(1,days(a,b))*100)); }
+    else prev = real;
+    somaPeso+=dur; somaReal+=real*dur; somaPrev+=prev*dur; n++;
+  });
+  if(!somaPeso) return null;
+  return { real:Math.round(somaReal/somaPeso), prev:Math.round(somaPrev/somaPeso), n:n, fontePrev:temPrev?'cronograma':'datas' };
+}
+function totaisRender(){
+  var bar=document.getElementById('totbar'); if(!bar) return;
+  var t=totaisAvanco();
+  if(!t){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  document.getElementById('totReal').textContent=t.real+'%';
+  document.getElementById('totPrev').textContent=t.prev+'%';
+  document.getElementById('barReal').style.width=t.real+'%';
+  document.getElementById('barPrev').style.width=t.prev+'%';
+  var d=t.real-t.prev, el=document.getElementById('totDesv');
+  el.textContent=(d>0?'+':'')+d+' p.p.';
+  el.style.color = d<-5 ? '#EF4444' : (d<0 ? '#E8960A' : '#10B981');
+  document.getElementById('totDesvLbl').textContent = d<0 ? 'atrás do previsto' : (d>0?'adiantado':'no previsto');
+  document.getElementById('totTar').textContent=t.n;
+  document.getElementById('totTarLbl').textContent='tarefas'+(t.fontePrev==='datas'?' · previsto pelas datas':'');
+  document.getElementById('totbar').title = t.fontePrev==='cronograma'
+    ? 'Média ponderada pela duração das tarefas; o previsto vem do próprio cronograma.'
+    : 'Média ponderada pela duração das tarefas; o previsto é calculado pela data de hoje dentro de cada tarefa.';
 }
 function exportBtnAtualizar(){ var b=document.getElementById('btnExportProj'); if(b) b.style.display=(PV.pode_editar && !RECORTE)?'':'none';
   var k=document.getElementById('btnKanban'); if(k) k.style.display=(FONTE==='prevision' && !RECORTE)?'':'none'; }
