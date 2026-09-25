@@ -396,11 +396,33 @@
   .cdePinCard .acts button.sec{background:transparent;border:1px solid var(--line);color:var(--txt2)}
   /* Seleção múltipla → abrir juntas no App */
   .multiChk{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);flex-shrink:0}
+  /* Barra da seleção múltipla — redesenhada em 2026-09-24.
+     Segue a linguagem dos pop-ups do CDE (fundo do painel, borda fina, filete
+     laranja no topo) em vez de uma barra escura alheia ao resto. Três coisas
+     que a versão antiga errava e que a nova resolve:
+       · fundo var(--navy): no tema escuro --navy vira azul CLARO, e o texto
+         branco em cima dele ficava ilegível;
+       · cinco botões do mesmo peso, dois em laranja — o laranja deixava de
+         significar "a ação principal";
+       · sem nowrap, os rótulos longos quebravam a barra em três linhas. */
   .multiBar{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:8000;
-    background:var(--navy);color:#fff;border-radius:14px;box-shadow:0 14px 40px rgba(8,14,26,.45);
-    padding:10px 16px;display:none;align-items:center;gap:12px;font-size:13px;font-weight:700}
-  .multiBar button{background:var(--accent);color:#231703;border:none;border-radius:9px;padding:8px 16px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit}
-  .multiBar button.sec{background:rgba(255,255,255,.14);color:#fff}
+    background:var(--panel);color:var(--txt);border:1px solid var(--line);border-top:2px solid var(--accent);
+    border-radius:12px;box-shadow:0 14px 38px rgba(8,14,26,.22);
+    padding:9px 11px;display:none;align-items:center;gap:9px;white-space:nowrap;
+    font-size:13px;font-weight:700;max-width:calc(100vw - 32px);overflow-x:auto}
+  body.dark .multiBar{box-shadow:0 14px 38px rgba(0,0,0,.55)}
+  .multiBar .mbCnt{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut);
+    font-weight:600;padding-left:4px;flex:none}
+  .multiBar .mbCnt b{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+    padding:0 6px;border-radius:7px;background:var(--accent);color:#231703;font-size:12px;font-weight:900}
+  .multiBar .mbDiv{width:1px;height:22px;background:var(--line);flex:none}
+  .multiBar button{border:1px solid var(--line);background:var(--panel2);color:var(--txt2);
+    border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;
+    white-space:nowrap;flex:none;display:inline-flex;align-items:center;gap:6px}
+  .multiBar button:hover{border-color:var(--accent);color:var(--txt)}
+  .multiBar button.pri{background:var(--accent);border-color:var(--accent);color:#231703;font-weight:800}
+  .multiBar button.x{border:none;background:transparent;color:var(--mut);padding:7px 9px;font-size:14px}
+  .multiBar button.x:hover{color:var(--err)}
   .multiBar button:disabled{opacity:.6;cursor:default}
   .zipPop{position:fixed;left:50%;bottom:74px;transform:translateX(-50%);z-index:8001;background:var(--panel);color:var(--txt);border:1px solid var(--line);
     border-top:2px solid var(--accent);border-radius:12px;box-shadow:0 14px 40px rgba(8,14,26,.35);padding:12px 14px;min-width:300px;font-size:12.5px}
@@ -6265,18 +6287,23 @@ function renderMultiBar(){
   // Item 100: com dois ou mais modelos marcados, dá para SALVAR a composição —
   // ela vira um card e reabre sempre com a revisão vigente de cada componente.
   const podeSalvarFed = ehBim && MULTI_SEL.size>=2 && !SEM_ESCRITA;
+  // Só UMA ação em laranja: a natural para o que está marcado. As demais são
+  // secundárias de contorno — o laranja volta a querer dizer "é por aqui".
   const acao = ehBim
-    ? `<button onclick="abrirBimFederado()">🧊 Ver federado aqui</button>`
+    ? `<button class="pri" onclick="abrirBimFederado()" title="Abrir os modelos marcados numa cena só">🧊 Ver federado</button>`
       + (podeSalvarFed?`<button onclick="fedSalvarSelecao()" title="${FED_EDIT?'Atualiza a federação que você está compondo':'Guarda esta composição como um card na aba BIM'}">💾 ${FED_EDIT?'Atualizar federação':'Salvar federação'}</button>`:'')
-      + `<button onclick="abrirBimNoApp([...MULTI_SEL]);multiConcluir()">🔍 Analisar no App</button>`
-    : `<button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>`;
+      + `<button onclick="abrirBimNoApp([...MULTI_SEL]);multiConcluir()" title="Levar para o App, onde a análise vira apontamento">🔍 Abrir no App</button>`
+    : `<button class="pri" onclick="abrirMultiNoApp()" title="Abrir as pranchas marcadas juntas no App">🔍 Abrir juntas no App</button>`;
   const baixaveis = zipArquivosDe(selDocs).length;
-  bar.innerHTML = `<span>${MULTI_SEL.size} ${ehBim?'modelo(s)':'prancha(s)'} selecionado(s)</span>
+  const n = MULTI_SEL.size;
+  const subst = ehBim ? (n>1?'modelos':'modelo') : (n>1?'pranchas':'prancha');
+  bar.innerHTML = `<span class="mbCnt"><b>${n}</b> ${subst}</span><span class="mbDiv"></span>
     ${acao}
-    ${baixaveis?`<button class="sec" id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
-    ${!SEM_ESCRITA?`<button class="sec" onclick="statusLoteAbrir()" title="Mudar o status da revisão vigente de todas as pranchas selecionadas">🔁 Mudar status</button>`:''}
-    ${!SEM_ESCRITA&&!ehBim?`<button class="sec" onclick="recodAbrir()" title="Corrigir o código das pranchas selecionadas (campos da convenção), com histórico">✎ Recodificar</button>`:''}
-    <button class="sec" onclick="MULTI_SEL.clear();renderNav()">Limpar</button>`;
+    ${baixaveis?`<button id="btnZip" onclick="zipAbrir()" title="Baixa os arquivos das pranchas selecionadas num único .zip">⬇ Baixar (.zip)</button>`:''}
+    ${!SEM_ESCRITA?`<button onclick="statusLoteAbrir()" title="Mudar o status da revisão vigente de todas as pranchas selecionadas">🔁 Mudar status</button>`:''}
+    ${!SEM_ESCRITA&&!ehBim?`<button onclick="recodAbrir()" title="Corrigir o código das pranchas selecionadas (campos da convenção), com histórico">✎ Recodificar</button>`:''}
+    <span class="mbDiv"></span>
+    <button class="x" title="Limpar seleção" onclick="MULTI_SEL.clear();renderNav()">✕</button>`;
 }
 
 // ── Item 54: Diário de Obra (RDO) ───────────────────────────────────────────
