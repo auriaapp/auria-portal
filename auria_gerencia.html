@@ -402,6 +402,27 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .mm-badge.v{color:var(--blue);background:var(--blue-light)}
 
 /* ── DISTRIBUIÇÃO ────────────────────────────────────── */
+  /* Item 121B: distribuição em ÁRVORE (grupo › empresa › empreendimento) e em CARDS */
+  .dtn{border-left:2px solid var(--gray-border);margin-left:10px;padding-left:12px}
+  .dtl{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:13px}
+  .dtl:hover{background:var(--gray-light)}
+  .dtl .cx{width:14px;color:var(--text-soft);flex:none;font-size:11px}
+  .dtl .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dtl .qt{font-size:11px;color:var(--text-soft);flex:none}
+  .dtl.grp{font-weight:800;font-size:13.5px}
+  .dtl.emp{font-weight:700;color:var(--navy)}
+  .dtp{display:flex;flex-wrap:wrap;gap:5px;padding:2px 8px 10px 34px}
+  .dtp .pes{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--gray-border);border-radius:9px;
+    padding:2px 8px;font-size:11.5px;background:#fff}
+  .dtp .pes.co{border-color:#E8960A;background:rgba(232,150,10,.10)}
+  .dtp .pes.vi{border-color:#93C5FD;background:rgba(59,130,246,.08)}
+  .dtp .pes.fo{border-color:#FDE68A;background:rgba(232,150,10,.06)}
+  .dtp .pes.se{border-color:#DDD6FE;background:rgba(108,52,131,.06)}
+  .dtp .pes.fi{border-color:#A7F3D0;background:rgba(30,132,73,.07)}
+  .dtp .vazio{font-size:11.5px;color:var(--text-soft)}
+  .dcard{background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:12px 14px}
+  .dcard h4{margin:0 0 2px;font-size:13.5px;color:var(--navy)}
+  .dcard .sub{font-size:11.5px;color:var(--text-soft);margin-bottom:8px}
 .dist-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .dist-panel{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);padding:18px}
 .dist-panel-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)}
@@ -756,12 +777,19 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
         <!-- ══ PAGE: DISTRIBUICAO ══════════════════════ -->
         <div class="page" id="pageDistribuicao">
           <div class="toolbar">
-            <div class="toolbar-title">Distribuicao de Empreendimentos</div>
+            <div class="toolbar-title">Distribui&ccedil;&atilde;o</div>
+            <div class="an-toggle" style="margin:0">
+              <button id="dtTabArv" class="an-tab active" onclick="distVista('arvore')"><span class="sb-item-icon">&#9903;</span> &Aacute;rvore</button>
+              <button id="dtTabCard" class="an-tab" onclick="distVista('cards')"><span class="sb-item-icon">&#9636;</span> Cards</button>
+              <button id="dtTabClas" class="an-tab" onclick="distVista('classica')"><span class="sb-item-icon">&#9776;</span> Atribuir analistas</button>
+            </div>
           </div>
+          <div id="distArvore" style="display:none"></div>
+          <div id="distCards" style="display:none"></div>
           <div style="font-size:13px;color:var(--text-soft);margin-bottom:16px">
             Selecione um empreendimento, marque quais analistas tem acesso a ele e escolha o papel de cada um: <b>Coordenador</b> (gere o empreendimento) ou <b>Visualizador</b> (so consulta).
           </div>
-          <div class="dist-grid">
+          <div class="dist-grid" id="distClassica">
             <div class="dist-panel">
               <div class="dist-panel-title">Empreendimentos</div>
               <div id="distEmpList"></div>
@@ -1522,12 +1550,27 @@ let DASH_EMPRESA = '';   // filtro de Empresa no dashboard (construtora_id)
 // ═══════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════
+
+// Item 126: marca o último acesso deste usuário (usuarios_auria.ultimo_acesso).
+// O gatilho antigo apontava para a tabela do schema velho, então o campo vivia
+// vazio e a gestão via "nunca acessou" de todo mundo. Guarda no navegador para
+// não chamar a cada abertura de aba.
+function auriaPingAcesso(){
+  try{
+    const k='auria_ping_acesso', t=Number(localStorage.getItem(k)||0);
+    if(Date.now()-t < 6*3600*1000) return;
+    localStorage.setItem(k, String(Date.now()));
+  }catch(_){}
+  try{ sb.rpc('auria_ping_acesso').then(()=>{},()=>{}); }catch(_){}
+}
+
 async function init(){
   const today = new Date();
   document.getElementById('topbarDate').textContent =
     today.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
   const { data:{ session } } = await sb.auth.getSession();
+  auriaPingAcesso();
   if(session){ await afterLogin(session.user); }
   else{ location.replace('./'); hide('app'); }
 }
@@ -3323,12 +3366,104 @@ window.addEventListener('resize',()=>{ const mp=document.getElementById('analist
 // ═══════════════════════════════════════════════════════
 // DISTRIBUICAO PAGE
 // ═══════════════════════════════════════════════════════
+// ── Item 121B: Distribuição em três vistas ────────────────────────────────
+//  árvore  = Grupo › Empresa › Empreendimento, com quem está ligado a cada nó
+//  cards   = uma ficha por empreendimento (mesma informação, varrendo lado a lado)
+//  clássica= a tela de sempre (marcar analistas de um empreendimento)
+var DIST_VISTA='arvore', DIST_ABERTO={};
+function distVista(v){
+  DIST_VISTA=v;
+  ['arvore','cards','classica'].forEach(k=>{
+    const el=document.getElementById(k==='classica'?'distClassica':('dist'+k[0].toUpperCase()+k.slice(1)));
+    if(el) el.style.display=(k===v)?'':'none';
+  });
+  const map={arvore:'dtTabArv',cards:'dtTabCard',classica:'dtTabClas'};
+  Object.entries(map).forEach(([k,id])=>{ const b=document.getElementById(id); if(b) b.classList.toggle('active',k===v); });
+  if(v==='arvore') distArvore(); else if(v==='cards') distCards();
+}
+// Quem está em cada empreendimento, a partir da mesma RPC da página Usuários.
+function distPorEmp(){
+  const porEmp={};
+  const push=(id,obj)=>{ if(!id) return; (porEmp[id]=porEmp[id]||[]).push(obj); };
+  (USUARIOS||[]).forEach(u=>{
+    const e=u.escopo||{};
+    if(u.tipo==='analista') (e.empreendimentos||[]).forEach(x=>push(x.id,{nome:u.nome||u.email,cls:(x.papel==='visualizador'?'vi':'co'),tit:(x.papel==='visualizador'?'Analista visualizador':'Analista coordenador')}));
+    if(u.tipo==='setor')    (e.empreendimentos||[]).forEach(x=>push(x.id,{nome:u.nome||u.email,cls:'se',tit:'Setor / cliente interno'+(u.papel?(' · obra '+u.papel):'')}));
+    if(u.tipo==='fornecedor')(e.empreendimentos||[]).forEach(x=>push(x.id,{nome:u.nome,cls:'fo',tit:'Fornecedor'+((e.disciplinas||[]).length?(' · '+e.disciplinas.join(', ')):'')}));
+    if(u.tipo==='financeiro'){
+      (e.empreendimentos||[]).forEach(x=>push(x.id,{nome:u.nome||u.email,cls:'fi',tit:'Administrativo financeiro'}));
+      (e.construtoras||[]).forEach(c=>(EMPS||[]).filter(x=>x.construtora_id===c.id).forEach(x=>push(x.id,{nome:u.nome||u.email,cls:'fi',tit:'Administrativo financeiro (por empresa)'})));
+    }
+  });
+  return porEmp;
+}
+function distPessoas(lista){
+  if(!lista||!lista.length) return '<div class="dtp"><span class="vazio">Ninguém atribuído.</span></div>';
+  const ordem={co:0,vi:1,fi:2,se:3,fo:4};
+  return '<div class="dtp">'+lista.slice().sort((a,b)=>(ordem[a.cls]-ordem[b.cls])||a.nome.localeCompare(b.nome))
+    .map(p=>`<span class="pes ${p.cls}" title="${esc(p.tit)}">${esc(p.nome)}</span>`).join('')+'</div>';
+}
+function distArvore(){
+  const box=document.getElementById('distArvore'); if(!box) return;
+  if(!USUARIOS){ box.innerHTML='<div style="font-size:13px;color:var(--text-soft)">Rode <b>supabase_gestao_usuarios.sql</b> para ver a árvore com as pessoas.</div>'; return; }
+  const porEmp=distPorEmp();
+  const gestores=(USUARIOS||[]).filter(u=>u.tipo==='gestor');
+  const finGrupo=(USUARIOS||[]).filter(u=>u.tipo==='financeiro' && !((u.escopo||{}).construtoras||[]).length && !((u.escopo||{}).empreendimentos||[]).length);
+  const porConstr={}; (EMPS||[]).forEach(e=>{ (porConstr[e.construtora_id||'—']=porConstr[e.construtora_id||'—']||[]).push(e); });
+  const nomeC=id=>((CONSTRUTORAS||[]).find(c=>c.id===id)||{}).nome||'Sem empresa';
+  const ab=k=>DIST_ABERTO[k]!==false;   // aberto por padrão
+  let h=`<div class="dtl grp" onclick="distToggle('g')"><span class="cx">${ab('g')?'▾':'▸'}</span>
+     <span class="nm">${esc((EMPRESA&&EMPRESA.nome)||'Grupo')}</span><span class="qt">${(EMPS||[]).length} empreendimento(s)</span></div>`;
+  h+=distPessoas(gestores.map(g=>({nome:g.nome||g.email,cls:'co',tit:'Gestor do grupo'}))
+        .concat(finGrupo.map(f=>({nome:f.nome||f.email,cls:'fi',tit:'Adm-financeiro — grupo inteiro'}))));
+  if(ab('g')){
+    h+='<div class="dtn">';
+    Object.keys(porConstr).sort((a,b)=>nomeC(a).localeCompare(nomeC(b))).forEach(cid=>{
+      const emps=porConstr[cid].slice().sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
+      h+=`<div class="dtl" onclick="distToggle('c${cid}')"><span class="cx">${ab('c'+cid)?'▾':'▸'}</span>
+          <span class="nm">🏢 ${esc(nomeC(cid))}</span><span class="qt">${emps.length}</span></div>`;
+      if(ab('c'+cid)){
+        h+='<div class="dtn">';
+        emps.forEach(e=>{
+          const lst=porEmp[e.id]||[];
+          h+=`<div class="dtl emp" onclick="distToggle('e${e.id}')"><span class="cx">${ab('e'+e.id)?'▾':'▸'}</span>
+              <span class="nm"><span class="mono">${esc(e.codigo||'')}</span> ${esc(e.nome)}</span><span class="qt">${lst.length} pessoa(s)</span></div>`;
+          if(ab('e'+e.id)) h+=distPessoas(lst);
+        });
+        h+='</div>';
+      }
+    });
+    h+='</div>';
+  }
+  box.innerHTML=h+`<div style="font-size:11.5px;color:var(--text-soft);margin-top:10px">
+    <span class="pes co" style="border:1px solid #E8960A;padding:1px 7px;border-radius:9px">coordenador</span>
+    <span class="pes vi" style="border:1px solid #93C5FD;padding:1px 7px;border-radius:9px;margin-left:5px">visualizador</span>
+    <span class="pes fi" style="border:1px solid #A7F3D0;padding:1px 7px;border-radius:9px;margin-left:5px">financeiro</span>
+    <span class="pes se" style="border:1px solid #DDD6FE;padding:1px 7px;border-radius:9px;margin-left:5px">setor</span>
+    <span class="pes fo" style="border:1px solid #FDE68A;padding:1px 7px;border-radius:9px;margin-left:5px">fornecedor</span>
+    · clique num nó para recolher · use <b>Atribuir analistas</b> para mudar vínculos</div>`;
+}
+function distToggle(k){ DIST_ABERTO[k]=(DIST_ABERTO[k]===false); distArvore(); }
+function distCards(){
+  const box=document.getElementById('distCards'); if(!box) return;
+  if(!USUARIOS){ box.innerHTML='<div style="font-size:13px;color:var(--text-soft)">Rode <b>supabase_gestao_usuarios.sql</b> para ver os cards com as pessoas.</div>'; return; }
+  const porEmp=distPorEmp();
+  const nomeC=id=>((CONSTRUTORAS||[]).find(c=>c.id===id)||{}).nome||'Sem empresa';
+  box.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">'
+    +(EMPS||[]).slice().sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')).map(e=>{
+      const lst=porEmp[e.id]||[];
+      return `<div class="dcard"><h4><span class="mono">${esc(e.codigo||'')}</span> ${esc(e.nome)}</h4>
+        <div class="sub">${esc(nomeC(e.construtora_id))} · ${lst.length} pessoa(s)</div>
+        ${distPessoas(lst).replace('class="dtp"','class="dtp" style="padding:0"')}</div>`;
+    }).join('')+'</div>';
+}
 function renderDistPage(){
   setHTML('distEmpList', EMPS.map(e=>`
     <div class="dist-emp-item${DIST_EMP===e.id?' selected':''}" onclick="selDistEmp('${e.id}')">
       <div class="dist-emp-nome">${esc(e.nome)}</div>
     </div>`).join(''));
   if(DIST_EMP) renderDistAnalistas();
+  distVista(DIST_VISTA);        // item 121B: entra na árvore por padrão
 }
 
 function selDistEmp(empId){

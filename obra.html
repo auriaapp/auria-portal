@@ -88,8 +88,23 @@ function tema(){ const d=document.body.classList.toggle('dark');
 try{ if(localStorage.getItem('auria_theme')==='dark') document.body.classList.add('dark'); }catch(e){}
 async function sair(){ try{ await sb.auth.signOut(); }catch(e){} location.replace('./'); }
 
+
+// Item 126: marca o último acesso deste usuário (usuarios_auria.ultimo_acesso).
+// O gatilho antigo apontava para a tabela do schema velho, então o campo vivia
+// vazio e a gestão via "nunca acessou" de todo mundo. Guarda no navegador para
+// não chamar a cada abertura de aba.
+function auriaPingAcesso(){
+  try{
+    const k='auria_ping_acesso', t=Number(localStorage.getItem(k)||0);
+    if(Date.now()-t < 6*3600*1000) return;
+    localStorage.setItem(k, String(Date.now()));
+  }catch(_){}
+  try{ sb.rpc('auria_ping_acesso').then(()=>{},()=>{}); }catch(_){}
+}
+
 async function boot(){
   const { data:{ session } } = await sb.auth.getSession();
+  auriaPingAcesso();
   if(!session){ location.replace('./'); return; }
   const user = session.user;
   const { data:p } = await sb.from('usuarios_auria').select('nome,email,role').eq('id', user.id).maybeSingle();

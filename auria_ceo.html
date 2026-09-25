@@ -585,6 +585,20 @@ const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY, {
 let USER = null;
 let _NC  = {};  // new client data
 
+
+// Item 126: marca o último acesso deste usuário (usuarios_auria.ultimo_acesso).
+// O gatilho antigo apontava para a tabela do schema velho, então o campo vivia
+// vazio e a gestão via "nunca acessou" de todo mundo. Guarda no navegador para
+// não chamar a cada abertura de aba.
+function auriaPingAcesso(){
+  try{
+    const k='auria_ping_acesso', t=Number(localStorage.getItem(k)||0);
+    if(Date.now()-t < 6*3600*1000) return;
+    localStorage.setItem(k, String(Date.now()));
+  }catch(_){}
+  try{ sb.rpc('auria_ping_acesso').then(()=>{},()=>{}); }catch(_){}
+}
+
 async function init(){
   const today = new Date();
   document.getElementById('topbarDate').textContent =
@@ -592,6 +606,7 @@ async function init(){
   // Página administrativa exclusiva: login próprio (não passa pelo roteador).
   // Aceita a sessão isolada se já existir; senão mostra o formulário de login.
   const { data:{ session } } = await sb.auth.getSession();
+  auriaPingAcesso();
   if(session){ await afterLogin(session.user); }
   else { document.getElementById('loginWrap').style.display = 'flex';
          document.getElementById('app').style.display = 'none'; }

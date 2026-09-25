@@ -358,9 +358,24 @@ function brl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFrac
 function dbr(s){ if(!s)return '—'; var p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s; }
 function stLbl(s){ return {enviada:'Enviada',recebida:'Recebida',encaminhada:'Encaminhada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
 
+
+// Item 126: marca o último acesso deste usuário (usuarios_auria.ultimo_acesso).
+// O gatilho antigo apontava para a tabela do schema velho, então o campo vivia
+// vazio e a gestão via "nunca acessou" de todo mundo. Guarda no navegador para
+// não chamar a cada abertura de aba.
+function auriaPingAcesso(){
+  try{
+    const k='auria_ping_acesso', t=Number(localStorage.getItem(k)||0);
+    if(Date.now()-t < 6*3600*1000) return;
+    localStorage.setItem(k, String(Date.now()));
+  }catch(_){}
+  try{ sb.rpc('auria_ping_acesso').then(()=>{},()=>{}); }catch(_){}
+}
+
 async function boot(){
   let session=null;
   try{ const r=await sb.auth.getSession(); session=r.data&&r.data.session; }catch(e){}
+  auriaPingAcesso();
   if(!session){ location.replace('./'); return; }
   let role=null;
   try{ const {data}=await sb.from('usuarios_auria').select('nome,email,role,empresas_auria(nome,logo_url)').eq('id',session.user.id).maybeSingle();
@@ -386,6 +401,7 @@ async function boot(){
 
 async function carregar(){
   janCarregar();   // bloco da janela é independente da lista (se nf_listar falhar, o link de envio continua visível)
+  finEscopoAviso();   // item 121B: diz em que recorte este usuário está
   try{
     const { data, error } = await sb.rpc('nf_listar', {});
     if(error) throw error;
@@ -520,6 +536,25 @@ function render(){
   }).join('') : '<tr><td colspan="10" class="empty">Nenhuma NF no filtro.</td></tr>';
 }
 
+// Item 121B: o recorte do adm-fin é aplicado nas RPCs (servidor). Aqui só
+// mostramos qual é — para ninguém achar que "sumiram" notas.
+async function finEscopoAviso(){
+  let box=document.getElementById('finEscopoBar');
+  try{
+    const r=await sb.rpc('financeiro_meu_escopo'); if(r.error) throw r.error;
+    const e=r.data||{};
+    if(!e.tem_recorte){ if(box) box.remove(); return; }
+    const partes=[];
+    if((e.construtoras||[]).length)   partes.push('empresas: '+e.construtoras.join(', '));
+    if((e.empreendimentos||[]).length) partes.push('empreendimentos: '+e.empreendimentos.join(', '));
+    if(!box){
+      box=document.createElement('div'); box.id='finEscopoBar';
+      box.style.cssText='background:#EEF6FF;border:1px solid #BFDBFE;color:#1E3A5F;border-radius:10px;padding:8px 14px;font-size:12.5px;margin-bottom:12px';
+      const alvo=document.getElementById('viewDash'); if(alvo) alvo.prepend(box); else return;
+    }
+    box.innerHTML='👁 Você vê apenas o que lhe foi atribuído — '+esc(partes.join(' · '))+'. <span style="color:var(--mut)">Peça à gestão para ampliar, se precisar.</span>';
+  }catch(_){ if(box) box.remove(); }
+}
 async function verPDF(path){
   try{
     const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
