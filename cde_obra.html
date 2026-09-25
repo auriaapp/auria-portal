@@ -518,6 +518,12 @@
      cinza eram difíceis de distinguir). A data do recebimento e a revisão ficam
      numa coluna à direita, com numerais de largura fixa para alinharem entre si. */
   .fdoc .fbarra{width:3px;border-radius:2px;align-self:stretch;flex-shrink:0;min-height:30px}
+  /* Item 100: federação salva — card azul claro, para não se confundir com prancha/modelo */
+  .fdoc.fed{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35)}
+  .fdoc.fed:hover{background:rgba(59,130,246,.14)}
+  .fdoc.fed .fc{color:#1D4ED8}
+  .fdoc.fed .fcomp{font-size:10.5px;color:var(--mut);margin-top:2px;display:block;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fdoc .fstatus-txt{font-size:10px;font-weight:700;letter-spacing:.02em;display:inline-block;margin-top:3px}
   .fdoc .fcoluna{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;align-self:flex-start;padding-top:1px}
   .fdoc .fdata{font-family:var(--mono);font-size:9.5px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1223,6 +1229,12 @@ function restaurarNavColapsada(){
   navLarguraRestaurar(); navGripBind();
 }
 
+// ── Item 100: federações salvas do empreendimento ─────────────────────────
+var FEDS=[];
+async function carregarFederacoes(){
+  try{ const r=await sb.rpc('cde_federacoes',{ p_emp:EMP_ID }); FEDS = r.error ? [] : (r.data||[]); }
+  catch(_){ FEDS=[]; }
+}
 async function carregarGrupos(){
   try{
     const { data: gs } = await sb.from('cde_grupo_auria').select('*').eq('empreendimento_id',EMP_ID).order('nome');
@@ -1312,7 +1324,7 @@ async function carregarDocs(){
   const ids = (docs||[]).map(d=>d.id);
   let revs=[], arqs=[];
   // pavimentos e pranchas vinculadas não dependem das revisões: já saem em paralelo
-  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas()]);
+  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas(), carregarFederacoes()]);
   if(ids.length){
     // 'motivo' (item 110) é coluna nova: sem o SQL rodado, cai para a lista sem ela.
     const RCOLS='id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas';
@@ -1849,6 +1861,13 @@ function navBim(){
   if(BIM_SO_ATUAL && topo>=0) bims=bims.filter(d=>{ const o=etapaOrdem(d.etapa); return o<0 || o>=topo; });
   const porDisc={}; bims.forEach(d=>{ const k=d.disciplina||'—'; (porDisc[k]=porDisc[k]||[]).push(d); });
   let out='<h3>🧱 Modelos BIM</h3><div class="nav-hint" style="margin:-4px 0 8px">Modelos 3D recebidos. Abra para ver as revisões e baixar o arquivo.</div>';
+  // Item 100: federações salvas vêm ANTES dos modelos soltos — é por elas que a
+  // coordenação costuma começar a análise.
+  if(FEDS.length){
+    out+='<div class="folder open"><div class="folder-h" style="cursor:default">'
+       + '<span class="fic">🧩</span><span class="fnm">Modelos federados</span><span class="fct">'+FEDS.length+'</span></div>'
+       + '<div class="folder-b">'+FEDS.map(cardFed).join('')+'</div></div>';
+  }
   if(nAnteriores) out+=`<label class="nav-hint" style="display:flex;align-items:center;gap:7px;margin:-2px 0 8px;cursor:pointer">
       <input type="checkbox" ${BIM_SO_ATUAL?'checked':''} onchange="bimSoAtualToggle(this.checked)" style="accent-color:var(--accent)">
       <span>Ocultar etapas anteriores${BIM_SO_ATUAL?` <b>(${nAnteriores} oculto${nAnteriores>1?'s':''})</b>`:''}</span></label>`;
@@ -1907,6 +1926,82 @@ function cardFdocBim(d){
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">${selo}</div>
   </div>`;
 }
+// Card da federação salva (azul claro). Mostra quantos componentes estão com o
+// 3D pronto HOJE — a cena é montada na abertura, com a revisão vigente de cada um.
+function cardFed(f){
+  const faltam=(f.n_componentes||0)-(f.n_prontos||0);
+  const nomes=(f.documentos||[]).map(id=>{ const d=DOCS.find(x=>x.id===id); return d?(d.codigo||''):''; }).filter(Boolean);
+  return `<div class="fdoc fed" style="flex-wrap:wrap">
+    <span class="fbarra" style="background:#3B82F6" title="Modelo federado salvo"></span>
+    <span class="fmeta" onclick="abrirFedSalva('${f.id}')" title="Abrir a federação com a revisão vigente de cada modelo">
+      <span class="fc">🧩 ${esc(f.nome)}</span>
+      <span class="fcomp" title="${esc(nomes.join(', '))}">${f.n_componentes} modelo(s)${faltam>0?(' · '+faltam+' sem 3D pronto'):''}${f.criado_por_nome?(' · '+esc(f.criado_por_nome)):''}</span>
+    </span>
+    ${SEM_ESCRITA?'':`<button class="fkebab" title="Renomear ou remover" onclick="fedMenu(event,'${f.id}')">⋮</button>`}
+    <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">
+      <button class="btn sec sm" onclick="abrirFedSalva('${f.id}')">👁 Abrir federado</button>
+      ${SEM_ESCRITA?'':`<button class="btn sec sm" onclick="fedEditar('${f.id}')" title="Trocar os modelos que compõem esta federação">✎ Compor</button>`}
+    </div>
+  </div>`;
+}
+async function abrirFedSalva(fid){
+  const f=FEDS.find(x=>x.id===fid); if(!f) return;
+  let linhas=[];
+  try{ const r=await sb.rpc('cde_federacao_abrir',{ p_fed:fid }); if(r.error) throw r.error; linhas=r.data||[]; }
+  catch(e){ alert('Não foi possível abrir: '+((e&&e.message)||e)); return; }
+  const prontos=linhas.filter(x=>x.pronto), faltam=linhas.filter(x=>!x.pronto);
+  if(!prontos.length){ alert('Nenhum modelo desta federação tem o 3D pronto ainda.'); return; }
+  if(faltam.length && !confirm('Estes ficam de fora (3D não convertido ou sem revisão):\n\n  '
+      + faltam.map(x=>x.codigo).join('\n  ') + '\n\nAbrir os '+prontos.length+' prontos?')) return;
+  const w=new CdeWin(); focar(w); atualizarVempty(); atualizarTaskbar();
+  await w.setModelosFederados(prontos.map(x=>({ path:x.frag_path, nome:x.codigo+(x.revisao?(' '+x.revisao):''), provider:x.storage_provider||'r2' })), f.nome);
+}
+// Salvar a composição aberta (ou a seleção múltipla) como federação.
+async function fedSalvarDaSelecao(docIds, nomeSugerido){
+  const ids=(docIds||[]).filter(Boolean);
+  if(ids.length<2){ alert('Escolha ao menos dois modelos para salvar uma federação.'); return; }
+  const nome=(prompt('Nome desta federação (ex.: "Federado executivo — torre"):', nomeSugerido||'')||'').trim();
+  if(!nome) return;
+  try{
+    const r=await sb.from('cde_federacao_auria').insert({
+      empreendimento_id:EMP_ID, nome, documentos:ids,
+      criado_por:USER.id, criado_por_nome:(USER.user_metadata&&USER.user_metadata.nome)||USER.email });
+    if(r.error) throw r.error;
+    await carregarFederacoes(); renderNav();
+    _cdeToast('Federação "'+nome+'" salva — ela abre sempre com a revisão vigente de cada modelo.');
+  }catch(e){
+    const m=(e&&e.message)||e;
+    alert('Não salvou: '+m+(/cde_federacao_auria|schema cache/i.test(m)?' — rode supabase_cde_federacao.sql':''));
+  }
+}
+function fedEditar(fid){
+  const f=FEDS.find(x=>x.id===fid); if(!f) return;
+  FED_EDIT=fid;
+  MULTI_MODE=true; MULTI_SEL=new Set(f.documentos||[]);
+  if(SEL_DISC!=='__BIM__') selDisc('__BIM__');
+  renderNav();
+  _cdeToast('Marque os modelos desta federação e clique em "Salvar federação".');
+}
+function fedMenu(ev, fid){
+  ev.stopPropagation();
+  const f=FEDS.find(x=>x.id===fid); if(!f) return;
+  const o=prompt('Nome da federação (apague o texto para REMOVER):', f.nome);
+  if(o===null) return;
+  const novo=o.trim();
+  (async()=>{
+    try{
+      if(!novo){
+        if(!confirm('Remover a federação "'+f.nome+'"? Os modelos não são apagados.')) return;
+        const r=await sb.from('cde_federacao_auria').delete().eq('id',fid); if(r.error) throw r.error;
+      }else{
+        const r=await sb.from('cde_federacao_auria').update({ nome:novo, atualizado_em:new Date().toISOString() }).eq('id',fid);
+        if(r.error) throw r.error;
+      }
+      await carregarFederacoes(); renderNav();
+    }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); }
+  })();
+}
+var FED_EDIT=null;
 async function iniciarConversaoBim(arquivoId, docId){
   const d=DOCS.find(x=>x.id===docId); const ifc=d&&arquivoIfcDe(d);
   if(ifc){ ifc.frag_status='pendente'; ifc.frag_error=null; ifc.frag_progress=null; renderNav(); }   // feedback na hora
@@ -1959,6 +2054,23 @@ function abrirBimNoApp(docIds){
 // Federar = abrir várias disciplinas na MESMA cena. Só entram os que já têm
 // conversão pronta; os demais são nomeados antes de abrir, para ninguém achar
 // que "sumiu" um modelo da seleção.
+// Item 100: salva a seleção atual como federação (ou atualiza a que está sendo composta).
+async function fedSalvarSelecao(){
+  const ids=[...MULTI_SEL].filter(id=>{ const d=DOCS.find(x=>x.id===id); return d && docEhBim(d); });
+  if(FED_EDIT){
+    const f=FEDS.find(x=>x.id===FED_EDIT);
+    if(ids.length<2){ alert('Uma federação precisa de ao menos dois modelos.'); return; }
+    try{
+      const r=await sb.from('cde_federacao_auria').update({ documentos:ids, atualizado_em:new Date().toISOString() }).eq('id',FED_EDIT);
+      if(r.error) throw r.error;
+      FED_EDIT=null; multiConcluir(); await carregarFederacoes(); renderNav();
+      _cdeToast('Federação "'+((f&&f.nome)||'')+'" atualizada ('+ids.length+' modelos).');
+    }catch(e){ alert('Não salvou: '+((e&&e.message)||e)); }
+    return;
+  }
+  await fedSalvarDaSelecao(ids);
+  multiConcluir();
+}
 async function abrirBimFederado(){
   const modelos=[], semModelo=[];
   [...MULTI_SEL].forEach(id=>{
@@ -3579,11 +3691,11 @@ class CdeWin {
   // Janela federada: várias disciplinas numa cena só. Não pertence a um
   // documento (DOC_SEL fica null), então nada que dependa de "a prancha desta
   // janela" se aplica aqui — inclusive o reaproveitamento em openDocInWindow.
-  async setModelosFederados(modelos){
+  async setModelosFederados(modelos, nomeFed){
     this.DOC_SEL = null;
     this.isFed = true;
-    this.fedLabel = 'Federado (' + modelos.length + ')';
-    this.titleEl.textContent = 'Modelo federado';
+    this.fedLabel = nomeFed || ('Federado (' + modelos.length + ')');
+    this.titleEl.textContent = nomeFed || 'Modelo federado';
     this.subEl.textContent   = modelos.map(m=>m.nome).join('  +  ');
     this.statusEl.textContent = modelos.length + ' modelos';
     this.statusEl.style.background = '#0E7C86';
@@ -6148,8 +6260,12 @@ function renderMultiBar(){
   const ehBim = SEL_DISC==='__BIM__' || (selDocs.length>0 && selDocs.every(docEhBim));
   // Na aba BIM há DOIS destinos: conferir aqui mesmo (federar) ou levar para
   // o App, que é onde a análise vira apontamento.
+  // Item 100: com dois ou mais modelos marcados, dá para SALVAR a composição —
+  // ela vira um card e reabre sempre com a revisão vigente de cada componente.
+  const podeSalvarFed = ehBim && MULTI_SEL.size>=2 && !SEM_ESCRITA;
   const acao = ehBim
     ? `<button onclick="abrirBimFederado()">🧊 Ver federado aqui</button>`
+      + (podeSalvarFed?`<button onclick="fedSalvarSelecao()" title="${FED_EDIT?'Atualiza a federação que você está compondo':'Guarda esta composição como um card na aba BIM'}">💾 ${FED_EDIT?'Atualizar federação':'Salvar federação'}</button>`:'')
       + `<button onclick="abrirBimNoApp([...MULTI_SEL]);multiConcluir()">🔍 Analisar no App</button>`
     : `<button onclick="abrirMultiNoApp()">🔍 Analisar juntas no App</button>`;
   const baixaveis = zipArquivosDe(selDocs).length;
