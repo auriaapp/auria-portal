@@ -598,7 +598,7 @@
       </div>
       <div style="font-size:11px;color:var(--mut);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marcar RT se for o responsável técnico. Ao editar, remover uma linha (🗑) desativa a pessoa ao salvar — ela deixa de aparecer e de enviar arquivos.</div>
       <table class="parc-tbl">
-        <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px">RT</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px" title="Responsável técnico">RT</th><th style="width:48px" title="Responsável administrativo/financeiro: painel só de contratos e notas fiscais">Fin</th><th></th></tr></thead>
         <tbody id="fn-proj-body"></tbody>
       </table>
     </div>
@@ -2026,7 +2026,7 @@ async function renderFornecedoresPage(){
     const projHtml = projs.length
       ? `<table class="parc-tbl" style="margin-top:8px"><thead><tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Disciplinas</th><th>RT</th></tr></thead><tbody>${projs.map(p=>{
           const discs=(p.disciplinas||[]).map(d=>`<span style="background:#EFF6FF;color:#1D4ED8;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;margin-right:3px">${esc(d)}</span>`).join('');
-          return `<tr><td>${esc(p.nome||'—')}</td><td>${esc(p.email||'')}</td><td>${esc(p.telefone||'—')}</td><td>${discs||'—'}</td><td>${p.eh_rt?'<span style="background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">RT</span>':'—'}</td></tr>`;
+          return `<tr><td>${esc(p.nome||'—')}${p.eh_adm_fin?' <span style="background:#DCFCE7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px" title="Responsável administrativo/financeiro">ADM-FIN</span>':''}</td><td>${esc(p.email||'')}</td><td>${esc(p.telefone||'—')}</td><td>${discs||'—'}</td><td>${p.eh_rt?'<span style="background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">RT</span>':'—'}</td></tr>`;
         }).join('')}</tbody></table>`
       : '<div style="color:var(--mut);font-size:12px;margin-top:6px">Nenhum projetista cadastrado.</div>';
     const logo = f.logo_url ? `<img src="${esc(f.logo_url)}" alt="" style="height:44px;max-width:180px;object-fit:contain;border-radius:8px;background:#fff;padding:3px 6px;border:1.5px solid var(--accent);flex-shrink:0">` : '';
@@ -2059,7 +2059,7 @@ var FN_EDIT_ID=null, FN_ORIG_PROJS=[];
 function abrirFornecedor(id){
   FN_EDIT_ID=null; FN_ORIG_PROJS=[];
   ['fn-nome','fn-cnpj','fn-tel','fn-email','fn-obs'].forEach(k=>$(k).value='');
-  FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+  FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
   $('fnT').textContent='Cadastrar fornecedor';
   $('fn-save').textContent='💾 Salvar fornecedor';
   if(id){
@@ -2071,8 +2071,8 @@ function abrirFornecedor(id){
     FN_ORIG_PROJS=(f.projetistas_auria||[]).slice();
     FN_PROJS_BUF=FN_ORIG_PROJS.filter(p=>p.ativo!==false).map(p=>({ id:p.id, nome:p.nome||'', email:p.email||'', telefone:p.telefone||'',
       disciplinas:(Array.isArray(p.disciplinas)?p.disciplinas:String(p.disciplinas||'').split(',')).map(x=>String(x).trim()).filter(Boolean).join(', '),
-      eh_rt:!!p.eh_rt }));
-    if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+      eh_rt:!!p.eh_rt, eh_adm_fin:!!p.eh_adm_fin }));
+    if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
     $('fnT').textContent='Editar fornecedor';
     $('fn-save').textContent='💾 Salvar alterações';
   }
@@ -2357,7 +2357,7 @@ async function ppSalvar(){
   }catch(e){ alert('Não foi possível registrar: '+((e&&e.message)||e)); }
   b.disabled=false; b.textContent='💾 Registrar proposta';
 }
-function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}); renderFnProjs(); }
+function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}); renderFnProjs(); }
 function rmProjetistaLinha(i){ FN_PROJS_BUF.splice(i,1); renderFnProjs(); }
 function abrirPdfData(dataUrl){
   try{
@@ -2394,6 +2394,7 @@ function renderFnProjs(){
       <select data-i="${i}" onchange="addDisc(this)" style="font-size:11px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;max-width:150px">
         <option value="">+ disciplina…</option>${opts}</select></td>
     <td style="text-align:center"><input data-pj="eh_rt" data-i="${i}" type="checkbox" ${p.eh_rt?'checked':''}></td>
+    <td style="text-align:center"><input data-pj="eh_adm_fin" data-i="${i}" type="checkbox" ${p.eh_adm_fin?'checked':''} title="Cuida de contratos e NFs — vê só a parte de faturamento"></td>
     <td style="white-space:nowrap"><button class="mini" title="Enviar convite de acesso" onclick="convidarProjetista(${i})">✉</button> <button class="mini" onclick="rmProjetistaLinha(${i})">🗑</button></td>
   </tr>`;}).join('');
 }
@@ -2413,7 +2414,7 @@ async function convidarProjetista(i){
 document.addEventListener('input',function(e){
   const t=e.target; if(!t||!t.getAttribute)return; const f=t.getAttribute('data-pj'); if(!f)return;
   const i=+t.getAttribute('data-i'); if(!FN_PROJS_BUF[i])return;
-  FN_PROJS_BUF[i][f]=(f==='eh_rt')?t.checked:t.value;
+  FN_PROJS_BUF[i][f]=(f==='eh_rt'||f==='eh_adm_fin')?t.checked:t.value;
 });
 async function salvarFornecedor(){
   const nome=($('fn-nome').value||'').trim();
@@ -2433,7 +2434,7 @@ async function salvarFornecedor(){
     const fid=r.data.id;
     const linhas=validos.map(p=>({fornecedor_id:fid, nome:p.nome||'', email:p.email.trim(), telefone:p.telefone||'',
       disciplinas:(p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean),
-      eh_rt:!!p.eh_rt, ativo:true}));
+      eh_rt:!!p.eh_rt, eh_adm_fin:!!p.eh_adm_fin, ativo:true}));
     const rp=await sb.from('projetistas_auria').insert(linhas);
     if(rp.error) throw rp.error;
     btn.textContent='Enviando convites…';
@@ -2459,7 +2460,7 @@ async function _salvarFornecedorEdicao(fid, obj, validos, btn){
   const mantidos=new Set(), novos=[];
   for(const p of validos){
     const email=p.email.trim();
-    const linha={ nome:p.nome||'', email, telefone:p.telefone||'', disciplinas:discsDe(p), eh_rt:!!p.eh_rt, ativo:true };
+    const linha={ nome:p.nome||'', email, telefone:p.telefone||'', disciplinas:discsDe(p), eh_rt:!!p.eh_rt, eh_adm_fin:!!p.eh_adm_fin, ativo:true };
     const existente = p.id ? FN_ORIG_PROJS.find(x=>x.id===p.id) : porEmail[email.toLowerCase()];
     if(existente){
       const r=await sb.from('projetistas_auria').update(linha).eq('id',existente.id);

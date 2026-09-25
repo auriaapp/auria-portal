@@ -1512,7 +1512,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       </div>
       <div style="font-size:11px;color:var(--text-soft);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marque RT se for o responsável técnico.</div>
       <table class="fn-proj-tbl">
-        <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px">RT</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px" title="Responsável técnico">RT</th><th style="width:48px" title="Responsável administrativo/financeiro">Fin</th><th></th></tr></thead>
         <tbody id="fn-proj-body"></tbody>
       </table>
       <div style="font-size:10px;color:var(--text-soft);margin-top:4px">Escolha as disciplinas na lista padrão do sistema (uma ou mais por pessoa).</div>
@@ -4794,7 +4794,7 @@ function abrirFornecedor(){
   FN_EDIT=null;
   document.getElementById('fnT').textContent='Cadastrar fornecedor';
   ['fn-nome','fn-cnpj','fn-tel','fn-email','fn-obs'].forEach(id=>document.getElementById(id).value='');
-  FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+  FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
   renderFnProjs();
   document.getElementById('fornecedorModal').classList.add('on');
 }
@@ -4806,14 +4806,14 @@ function editarFornecedor(i){
   document.getElementById('fn-tel').value=FN_EDIT.telefone||'';
   document.getElementById('fn-email').value=FN_EDIT.email_contato||'';
   document.getElementById('fn-obs').value=FN_EDIT.observacao||'';
-  FN_PROJS_BUF=(FN_EDIT.projetistas_auria||[]).map(p=>({id:p.id,nome:p.nome||'',email:p.email||'',telefone:p.telefone||'',disciplinas:(p.disciplinas||[]).join(', '),eh_rt:!!p.eh_rt}));
-  if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}];
+  FN_PROJS_BUF=(FN_EDIT.projetistas_auria||[]).map(p=>({id:p.id,nome:p.nome||'',email:p.email||'',telefone:p.telefone||'',disciplinas:(p.disciplinas||[]).join(', '),eh_rt:!!p.eh_rt, eh_adm_fin:!!p.eh_adm_fin}));
+  if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
   renderFnProjs();
   document.getElementById('fornecedorModal').classList.add('on');
 }
 function fecharFornecedor(){ document.getElementById('fornecedorModal').classList.remove('on'); }
-function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}); renderFnProjs(); }
-function rmProjetistaLinha(i){ FN_PROJS_BUF.splice(i,1); if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false}]; renderFnProjs(); }
+function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}); renderFnProjs(); }
+function rmProjetistaLinha(i){ FN_PROJS_BUF.splice(i,1); if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}]; renderFnProjs(); }
 // Disciplinas previstas pelo sistema (padroniza cadastro e BI — nada de campo livre)
 const DISCIPLINAS_PADRAO=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
   'Instalações Hidrossanitárias','Instalações Elétricas','Instalações PCI/SPDA/Gás',
@@ -4848,6 +4848,7 @@ function renderFnProjs(){
       <select data-i="${i}" onchange="addDisc(this)" style="font-size:11px;padding:3px 6px;border:1px solid var(--gray-border);border-radius:6px;max-width:150px">
         <option value="">+ disciplina…</option>${opts}</select></td>
     <td style="text-align:center"><input data-pj="eh_rt" data-i="${i}" type="checkbox" ${p.eh_rt?'checked':''}></td>
+    <td style="text-align:center"><input data-pj="eh_adm_fin" data-i="${i}" type="checkbox" ${p.eh_adm_fin?'checked':''} title="Responsável administrativo/financeiro"></td>
     <td style="white-space:nowrap"><button class="fn-mini" type="button" title="Enviar convite de acesso" onclick="convidarProjetista(${i})">&#9993;</button> <button class="fn-mini danger" type="button" onclick="rmProjetistaLinha(${i})">&#128465;</button></td>
   </tr>`;}).join('');
 }
@@ -4867,7 +4868,7 @@ async function convidarProjetista(i){
 document.addEventListener('input',function(e){
   const t=e.target; if(!t||!t.getAttribute)return; const f=t.getAttribute('data-pj'); if(!f)return;
   const i=+t.getAttribute('data-i'); if(!FN_PROJS_BUF[i])return;
-  FN_PROJS_BUF[i][f]=(f==='eh_rt')?t.checked:t.value;
+  FN_PROJS_BUF[i][f]=(f==='eh_rt'||f==='eh_adm_fin')?t.checked:t.value;
 });
 async function salvarFornecedor(){
   const nome=(document.getElementById('fn-nome').value||'').trim();
@@ -4903,7 +4904,7 @@ async function salvarFornecedor(){
     for(const p of validos){
       const linha={ fornecedor_id:fid, nome:p.nome||'', email:p.email.trim(),
         telefone:p.telefone||'', disciplinas:(p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean),
-        eh_rt:!!p.eh_rt, ativo:true };
+        eh_rt:!!p.eh_rt, eh_adm_fin:!!p.eh_adm_fin, ativo:true };
       if(p.id){ await sb.from('projetistas_auria').update(linha).eq('id',p.id); }
       else    { await sb.from('projetistas_auria').insert(linha); }
     }
