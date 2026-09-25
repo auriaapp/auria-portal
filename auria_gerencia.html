@@ -1037,6 +1037,23 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- Item 121: escopo do administrativo financeiro (empresas e/ou empreendimentos) -->
+<div class="modal-bg" id="modalFinEscopo" onclick="if(event.target===this)closeModal('modalFinEscopo')">
+  <div class="modal" style="width:620px">
+    <div class="modal-title">&#128176; Escopo do administrativo financeiro</div>
+    <div class="modal-sub" style="margin-bottom:12px" id="finEscopoSub"></div>
+    <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:0 0 6px">Empresas</div>
+    <div id="finEscopoConstr" style="border:1px solid var(--gray-border);border-radius:10px;max-height:22vh;overflow:auto;margin-bottom:12px"></div>
+    <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:0 0 6px">Empreendimentos (opcional, recorte fino)</div>
+    <div id="finEscopoEmps" style="border:1px solid var(--gray-border);border-radius:10px;max-height:24vh;overflow:auto"></div>
+    <div style="font-size:11.5px;color:var(--text-soft);margin-top:8px">Sem nada marcado, este usuário enxerga o <b>grupo inteiro</b> (como hoje).</div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="cd-btn" onclick="closeModal('modalFinEscopo')">Cancelar</button>
+      <button class="cd-btn navy" id="btnFinEscopo" onclick="finEscopoSalvar()">Salvar escopo</button>
+    </div>
+  </div>
+</div>
+
 <!-- Disciplinas → aplicar a outras empresas do grupo (item 48) -->
 <div class="modal-bg" id="modalDiscAplicar" onclick="if(event.target===this)closeModal('modalDiscAplicar')">
   <div class="modal" style="width:520px">
@@ -1663,7 +1680,7 @@ async function loadApontamentosLive(){
   });
 }
 
-var GESTORES=[], CONVITES=[];
+var GESTORES=[], CONVITES=[], USUARIOS=null;   // USUARIOS = retorno de gestao_usuarios_do_grupo (item 121)
 async function loadAnalistas(){
   // Sem embed PostgREST (o relacionamento falha); busca os vínculos à parte.
   let q = sb.from('usuarios_auria').select('*').in('role',['analista','gerente','super_admin']);
@@ -1682,6 +1699,12 @@ async function loadAnalistas(){
     const jaTem = new Set(todos.map(u=>String(u.email||'').toLowerCase()));
     CONVITES = (cvs||[]).filter(c=>!c.aceito && !jaTem.has(String(c.email||'').toLowerCase()));
   }catch(_){ CONVITES=[]; }
+  // Item 121: visão por TIPO (gestor/analista/financeiro/setor/fornecedor/convite).
+  // Vem de uma RPC que apenas REÚNE as fontes existentes — não cria cadastro novo.
+  try{
+    const ru=await sb.rpc('gestao_usuarios_do_grupo');
+    USUARIOS = ru.error ? null : (ru.data||[]);
+  }catch(_){ USUARIOS=null; }
   if(ANALISTAS.length){
     const ids = ANALISTAS.map(a=>a.id);
     const { data: aes } = await sb.from('analista_empreendimento_auria')
@@ -3040,6 +3063,35 @@ async function cronSalvar(){
 // ═══════════════════════════════════════════════════════
 // ANALISTAS PAGE
 // ═══════════════════════════════════════════════════════
+// Item 121: escopo do adm-fin — empresas e/ou empreendimentos que ele enxerga.
+var FIN_ESCOPO_USR=null;
+function finEscopoAbrir(uid){
+  const u=(USUARIOS||[]).find(x=>x.sujeito_id===uid && x.tipo==='financeiro'); if(!u) return;
+  FIN_ESCOPO_USR=uid;
+  const e=u.escopo||{}; const cSel=new Set((e.construtoras||[]).map(x=>x.id)), eSel=new Set((e.empreendimentos||[]).map(x=>x.id));
+  setHTML('finEscopoSub', esc(u.nome||u.email||'')+' — marque o que ele deve enxergar no Painel de Custos.');
+  setHTML('finEscopoConstr', (CONSTRUTORAS||[]).map(c=>`<label style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid #F1F5F9;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="fin-c" value="${c.id}" ${cSel.has(c.id)?'checked':''}> <b>${esc(c.nome)}</b></label>`).join('')
+      || '<div style="padding:10px;font-size:12.5px;color:var(--text-soft)">Nenhuma empresa cadastrada.</div>');
+  setHTML('finEscopoEmps', (EMPS||[]).map(x=>`<label style="display:flex;align-items:center;gap:9px;padding:6px 10px;border-bottom:1px solid #F1F5F9;font-size:12.5px;cursor:pointer">
+      <input type="checkbox" class="fin-e" value="${x.id}" ${eSel.has(x.id)?'checked':''}>
+      <span class="mono" style="font-weight:700;color:var(--navy)">${esc(x.codigo||'')}</span> ${esc(x.nome)}</label>`).join('')
+      || '<div style="padding:10px;font-size:12.5px;color:var(--text-soft)">Nenhum empreendimento.</div>');
+  document.getElementById('modalFinEscopo').classList.add('open');
+}
+async function finEscopoSalvar(){
+  const b=document.getElementById('btnFinEscopo'); b.disabled=true; b.textContent='Salvando…';
+  try{
+    const cs=[...document.querySelectorAll('.fin-c:checked')].map(x=>x.value);
+    const es=[...document.querySelectorAll('.fin-e:checked')].map(x=>x.value);
+    const r=await sb.rpc('financeiro_escopo_set',{ p_usuario:FIN_ESCOPO_USR, p_construtoras:cs, p_empreendimentos:es });
+    if(r.error) throw r.error;
+    closeModal('modalFinEscopo');
+    showToast(cs.length||es.length ? 'Escopo salvo.' : 'Escopo limpo — volta a ver o grupo inteiro.','green');
+    await loadAnalistas(); renderAnalistasPage();
+  }catch(e){ showToast('Não salvou: '+((e&&e.message)||e)+(/financeiro_escopo_set|schema cache/i.test((e&&e.message)||'')?' (rode supabase_gestao_usuarios.sql)':''),'red'); }
+  b.disabled=false; b.textContent='Salvar escopo';
+}
 function _usrSecao(t, n){ return '<div style="grid-column:1/-1;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:6px 0 -2px">'+t+(n!=null?(' · '+n):'')+'</div>'; }
 function _cardGestor(g){
   const av=(g.nome||g.email||'?')[0].toUpperCase();
@@ -3065,7 +3117,78 @@ function _cardConvite(c){
   </div>`;
 }
 function _dtBr(v){ try{ return new Date(v).toLocaleDateString('pt-BR'); }catch(_){ return ''; } }
+const USR_SECOES=[
+  ['gestor','Gestores','acesso a todo o grupo'],
+  ['analista','Analistas','coordenador ou visualizador por empreendimento'],
+  ['financeiro','Administrativo financeiro','contratos e notas fiscais'],
+  ['setor','Setores / clientes internos','consultam o que a coordenação liberou'],
+  ['fornecedor','Fornecedores','empresas que entregam projeto'],
+  ['convite','Convites pendentes','aguardando o primeiro acesso']
+];
+function _usrEsc(u){
+  const e=u.escopo||{};
+  const emps=(e.empreendimentos||[]), discs=(e.disciplinas||[]), constr=(e.construtoras||[]);
+  if(u.tipo==='gestor') return 'Todos os empreendimentos do grupo'+(e.total?(' ('+e.total+')'):'');
+  if(u.tipo==='convite') return 'convite de '+(u.papel==='gerente'?'gestor':esc(u.papel||''))
+    +(u.criado_em?(' · enviado em '+_dtBr(u.criado_em)):'')
+    +((e.expira_em && new Date(e.expira_em)<new Date())?' · <b style="color:var(--red)">link expirado</b>':'');
+  if(u.tipo==='analista'){
+    if(!emps.length) return 'Sem empreendimento atribuído';
+    const co=emps.filter(x=>x.papel!=='visualizador'), vi=emps.filter(x=>x.papel==='visualizador');
+    return (co.length?('<b>coordena</b> '+co.map(x=>esc(x.sigla||x.nome)).join(', ')):'')
+         + (co.length&&vi.length?' · ':'')
+         + (vi.length?('<span style="color:var(--blue)">vê</span> '+vi.map(x=>esc(x.sigla||x.nome)).join(', ')):'');
+  }
+  if(u.tipo==='financeiro'){
+    if(!constr.length && !emps.length) return 'Grupo inteiro (sem recorte definido)';
+    return [constr.length?('empresas: '+constr.map(x=>esc(x.nome)).join(', ')):'',
+            emps.length?('empreendimentos: '+emps.map(x=>esc(x.sigla||x.nome)).join(', ')):''].filter(Boolean).join(' · ');
+  }
+  if(u.tipo==='fornecedor'){
+    const p=(e.pessoas||[]);
+    return [emps.length?(emps.map(x=>esc(x.sigla||x.nome)).join(', ')):'sem empreendimento',
+            discs.length?('disciplinas: '+discs.map(esc).join(', ')):'',
+            p.length?(p.length+' profissional(is)'+(p.some(x=>x.rt)?' · RT cadastrado':'')):''].filter(Boolean).join(' · ');
+  }
+  // setor
+  return [emps.length?emps.map(x=>esc(x.sigla||x.nome)).join(', '):'sem empreendimento',
+          discs.length?('disciplinas: '+discs.map(esc).join(', ')):'todas as disciplinas liberadas',
+          u.papel?('obra · '+esc(u.papel)):''].filter(Boolean).join(' · ');
+}
+function _usrCard(u){
+  const nome=u.nome||u.email||'—';
+  const av=(nome[0]||'?').toUpperCase();
+  const cores={gestor:'var(--navy,#1E3A5F)',analista:'#3B82F6',financeiro:'#1E8449',setor:'#6C3483',fornecedor:'#B7791F',convite:'var(--orange,#E8960A)'};
+  const eu=u.sujeito_id===USER.id;
+  const acoes = u.tipo==='financeiro'
+    ? `<div class="analista-card-actions"><button class="btn-sm" onclick="finEscopoAbrir('${u.sujeito_id}')">Definir escopo</button></div>`
+    : (u.tipo==='analista'
+      ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button><button class="btn-sm" onclick="renomearAnalista('${u.sujeito_id}')">Renomear</button></div>`
+      : (u.tipo==='fornecedor'
+        ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('fornecedores')">Abrir</button></div>` : ''));
+  return `<div class="analista-card">
+    <div class="analista-card-av" style="background:${cores[u.tipo]||'#64748B'}">${u.tipo==='convite'?'✉':av}</div>
+    <div class="analista-card-info">
+      <div class="analista-card-nome">${esc(nome)}${eu?' <span style="font-size:11px;color:var(--text-soft)">(você)</span>':''}${u.ativo===false?' <span style="font-size:11px;color:var(--red)">inativo</span>':''}</div>
+      <div class="analista-card-email">${esc(u.email||'')}${u.ultimo_acesso?(' · último acesso '+_dtBr(u.ultimo_acesso)):(u.tipo!=='fornecedor'&&u.tipo!=='convite'?' · nunca acessou':'')}</div>
+      <div class="analista-card-emps">${_usrEsc(u)}</div>
+    </div>
+    ${acoes}
+  </div>`;
+}
+function renderUsuariosPorTipo(){
+  const html=USR_SECOES.map(([tipo,titulo,sub])=>{
+    const lst=(USUARIOS||[]).filter(u=>u.tipo===tipo);
+    if(!lst.length) return '';
+    return _usrSecao(titulo+' <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-soft)">· '+sub+'</span>', lst.length)
+         + lst.map(_usrCard).join('');
+  }).join('');
+  setHTML('analistasList', html || '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">&#9786;</div><div class="empty-state-txt">Nenhum usuário ainda.</div></div>');
+}
 function renderAnalistasPage(){
+  // Item 121: com a RPC nova, a lista é por TIPO; sem ela (SQL não rodado), cai
+  // na visão antiga de gestores/convites/analistas.
+  if(USUARIOS){ renderUsuariosPorTipo(); return; }
   const partes=[];
   if(GESTORES.length) partes.push(_usrSecao('Gestores', GESTORES.length) + GESTORES.map(_cardGestor).join(''));
   if(CONVITES.length) partes.push(_usrSecao('Convites pendentes', CONVITES.length) + CONVITES.map(_cardConvite).join(''));
