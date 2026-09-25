@@ -423,6 +423,19 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   .dcard{background:#fff;border:1px solid var(--gray-border);border-radius:12px;padding:12px 14px}
   .dcard h4{margin:0 0 2px;font-size:13.5px;color:var(--navy)}
   .dcard .sub{font-size:11.5px;color:var(--text-soft);margin-bottom:8px}
+/* Item 127: escolha do TIPO no modal "Adicionar usuário" */
+.nu-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.nu-tile{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1px solid var(--gray-border);
+  background:#fff;border-radius:11px;padding:11px 12px;cursor:pointer;font-family:inherit;transition:.15s}
+.nu-tile:hover{border-color:var(--orange);box-shadow:0 4px 14px rgba(232,150,10,.12)}
+.nu-tile .nu-ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;flex:none;color:#fff}
+.nu-tile b{display:block;font-size:13px;line-height:1.25;color:var(--navy)}
+.nu-tile span{display:block;font-size:11.5px;color:var(--text-soft);line-height:1.35;margin-top:2px}
+.nu-volta{background:none;border:none;color:var(--text-soft);font-size:12.5px;cursor:pointer;padding:0;font-family:inherit}
+.nu-volta:hover{color:var(--orange)}
+.nu-dica{font-size:12px;line-height:1.5;color:var(--text-soft);background:#F6F9FC;
+  border:1px solid var(--gray-border);border-left:3px solid var(--orange);border-radius:8px;padding:9px 11px;margin-bottom:14px}
 .dist-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .dist-panel{background:#fff;border-radius:var(--card-radius);box-shadow:var(--shadow);padding:18px}
 .dist-panel-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text)}
@@ -740,8 +753,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
               <div class="toolbar-title">Usuários</div>
             </div>
             <div style="display:flex;gap:8px">
-              <button class="btn-secondary" onclick="openModalGestor()">+ Adicionar Gestor</button>
-              <button class="btn-primary" onclick="openModalConvite()">+ Convidar Analista</button>
+              <button class="btn-primary" onclick="novoUsrAbrir()">+ Adicionar usu&aacute;rio</button>
             </div>
           </div>
           <div class="an-toggle">
@@ -918,6 +930,18 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
       <button class="btn-secondary" onclick="closeModal('modalConvite')">Cancelar</button>
       <button class="btn-primary" onclick="enviarConvite()">Enviar convite</button>
     </div>
+  </div>
+</div>
+
+<!-- MODAL: Adicionar usuário (item 127) — um caminho só para TODOS os tipos.
+     Antes, gestor e analista tinham botão aqui; setor e obra só de dentro do
+     empreendimento; e o administrativo financeiro não tinha lugar nenhum. -->
+<div class="modal-bg" id="modalNovoUsr">
+  <div class="modal" style="width:560px">
+    <button class="modal-close" onclick="closeModal('modalNovoUsr')">&#215;</button>
+    <div class="modal-title" id="nuTitulo">Adicionar usu&aacute;rio</div>
+    <div class="modal-sub" id="nuSub">Escolha o tipo de acesso &mdash; os campos mudam conforme o papel.</div>
+    <div id="nuCorpo"></div>
   </div>
 </div>
 
@@ -1953,33 +1977,166 @@ function openModalGestor(){
   document.getElementById('modalGestor').classList.add('open');
 }
 
+// Item 127: mesma implementação para o modal antigo do gestor e para o novo.
+async function _criarGestor(nome, email){
+  // Convite role='gerente' para o próprio grupo (RLS conv_ger_insere_gestor).
+  const { error:convErr } = await sb.from('convites_auria')
+    .insert({ email, role:'gerente', empresa_id:EMPRESA.id, convidado_por:USER.id });
+  if(convErr) return { ok:false, msg:'Erro ao convidar gestor: '+convErr.message };
+  // Mesmo e-mail de boas-vindas do CEO (send-welcome-email).
+  let emailOk=false, emailMsg='';
+  try{
+    const { data:{ session } } = await sb.auth.getSession();
+    const resp = await fetch('https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',{
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${session.access_token}`, 'apikey':SUPA_KEY },
+      body: JSON.stringify({ gerNome:nome, gerEmail:email, empNome:(EMPRESA?.nome||''), plano:(EMPRESA?.plano||'basic') })
+    });
+    emailOk = resp.ok;
+    if(!resp.ok) emailMsg = ('HTTP '+resp.status+' '+((await resp.text())||'')).slice(0,160);
+  }catch(ee){ emailMsg = String((ee&&ee.message)||ee); }
+  return emailOk
+    ? { ok:true, msg:'Gestor convidado e e-mail enviado para '+email }
+    : { ok:true, aviso:true, msg:'⚠️ Gestor convidado, MAS o e-mail falhou para '+email+'. ['+emailMsg+']' };
+}
 async function enviarConviteGestor(){
   const nome=(document.getElementById('gestorNome').value||'').trim();
   const email=(document.getElementById('gestorEmail').value||'').trim();
   if(!nome||!email){ showToast('Informe nome e e-mail do gestor','red'); return; }
   const btn=document.getElementById('btnConviteGestor'); btn.disabled=true; btn.textContent='Enviando...';
+  const r = await _criarGestor(nome, email);
+  if(r.ok) closeModal('modalGestor');
+  showToast(r.msg, (r.aviso||!r.ok) ? 'red' : 'green');
+  btn.disabled=false; btn.textContent='Convidar Gestor';
+}
+
+// ═══════════════════════════════════════════════════════
+// ITEM 127 — ADICIONAR USUÁRIO (qualquer tipo)
+// ═══════════════════════════════════════════════════════
+//  Um único caminho, no painel de Usuários, para criar quem quer que seja.
+//  Cada tipo mora numa tabela diferente e por isso tem campos diferentes:
+//   · gestor/analista → convites_auria + Edge Function (a conta nasce no aceite)
+//   · adm-fin/setor   → invite-setor (cria a conta na hora), com role no corpo
+//   · obra            → invite-obra (cria a conta e o vínculo com o nível)
+//   · fornecedor      → é EMPRESA, com CNPJ e disciplinas: atalho para a página
+const NU_TIPOS={
+  gestor:    { ic:'♛', cor:'var(--navy,#1E3A5F)', rot:'Gestor',
+               sub:'Enxerga e administra o grupo inteiro.',
+               dica:'O gestor vê todos os empreendimentos do grupo e cadastra empreendimentos, fornecedores e usuários. Recebe o mesmo e-mail de boas-vindas do primeiro acesso.' },
+  analista:  { ic:'◈', cor:'#3B82F6', rot:'Analista',
+               sub:'Coordena ou só visualiza empreendimentos.',
+               dica:'O analista nasce sem empreendimento. Depois do convite, vincule-o como <b>coordenador</b> ou <b>visualizador</b> em Distribuição (ou no Mapa de vínculos).' },
+  financeiro:{ ic:'₪', cor:'#1E8449', rot:'Administrativo financeiro',
+               sub:'Contratos, parcelas e notas fiscais.',
+               dica:'Entra direto no <b>Painel de Custos</b>: contratos, medições e notas fiscais. Sem recorte definido ele enxerga o grupo inteiro — por isso, logo após criar, a tela do escopo abre para você limitar por empresa ou empreendimento.' },
+  setor:     { ic:'▤', cor:'#6C3483', rot:'Setor / cliente interno',
+               sub:'Consulta o que a coordenação publicou.',
+               dica:'Orçamento, suprimentos, planejamento… Vê apenas o que está <b>publicado</b> no CDE do empreendimento escolhido, sem abrir apontamentos. Para liberar outros empreendimentos, use Acessos de cada um.' },
+  obra:      { ic:'⛑', cor:'#B7791F', rot:'Equipe de obra',
+               sub:'Vê o publicado e responde apontamentos de obra.',
+               dica:'O nível define o que ela faz: <b>engenheiro chefe</b> responde apontamentos e escreve o Diário de Obra; <b>coordenação de campo</b> abre apontamentos; <b>equipe de campo</b> só lê.' },
+  fornecedor:{ ic:'⌂', cor:'#0F766E', rot:'Fornecedor / projetista',
+               sub:'Escritório que entrega projeto.',
+               dica:'' }
+};
+let NU_TIPO=null;
+function novoUsrAbrir(){ nuPasso1(); document.getElementById('modalNovoUsr').classList.add('open'); }
+function nuPasso1(){
+  NU_TIPO=null;
+  setHTML('nuTitulo','Adicionar usuário');
+  setHTML('nuSub','Escolha o tipo de acesso — os campos mudam conforme o papel.');
+  setHTML('nuCorpo','<div class="nu-grid">'
+    + Object.keys(NU_TIPOS).map(k=>{ const t=NU_TIPOS[k];
+        return `<button class="nu-tile" onclick="nuEscolher('${k}')">
+          <span class="nu-ic" style="background:${t.cor}">${t.ic}</span>
+          <span style="flex:1;min-width:0"><b>${esc(t.rot)}</b><span>${esc(t.sub)}</span></span></button>`; }).join('')
+    + '</div>');
+}
+function nuEscolher(k){
+  // O fornecedor não é um usuário solto: é uma EMPRESA (CNPJ, disciplinas,
+  // pessoas, RT, adm-fin do escritório). Mandamos para a página que sabe disso.
+  if(k==='fornecedor'){
+    closeModal('modalNovoUsr'); goPage('fornecedores');
+    showToast('Fornecedor é cadastrado como escritório — as pessoas dele (inclusive o adm-fin) entram dentro do cadastro.','green');
+    return;
+  }
+  NU_TIPO=k; nuPasso2();
+}
+function nuPasso2(){
+  const t=NU_TIPOS[NU_TIPO];
+  const opEmp=(EMPS||[]).map(e=>`<option value="${e.id}">${esc((e.codigo?e.codigo+' · ':'')+(e.nome||''))}</option>`).join('');
+  const precisaEmp = (NU_TIPO==='setor'||NU_TIPO==='obra');
+  setHTML('nuTitulo','Adicionar · '+t.rot);
+  setHTML('nuSub','<button class="nu-volta" onclick="nuPasso1()">&larr; trocar o tipo</button>');
+  setHTML('nuCorpo',
+      `<div class="nu-dica">${t.dica}</div>`
+    + `<div class="form-group"><label class="form-label">Nome completo</label>
+         <input class="form-inp" id="nuNome" placeholder="Nome de quem vai receber o convite"></div>`
+    + `<div class="form-group"><label class="form-label">E-mail profissional</label>
+         <input class="form-inp" id="nuEmail" type="email" placeholder="pessoa@empresa.com"></div>`
+    + (precisaEmp && !opEmp
+        ? `<div class="nu-dica" style="border-left-color:var(--red)">Nenhum empreendimento cadastrado ainda — crie um antes de convidar ${NU_TIPO==='obra'?'a equipe de obra':'o setor'}.</div>`
+        : '')
+    + (precisaEmp && opEmp
+        ? `<div class="form-group"><label class="form-label">Empreendimento</label>
+             <select class="form-inp" id="nuEmp">${opEmp}</select></div>` : '')
+    + (NU_TIPO==='obra' && opEmp
+        ? `<div class="form-group"><label class="form-label">Nível na obra</label>
+             <select class="form-inp" id="nuNivel">${Object.keys(OBRA_NIVEL_ROTULO).map(k=>`<option value="${k}">${esc(OBRA_NIVEL_ROTULO[k])}</option>`).join('')}</select></div>` : '')
+    + `<div class="modal-footer">
+         <button class="btn-secondary" onclick="closeModal('modalNovoUsr')">Cancelar</button>
+         <button class="btn-primary" id="nuBtn" onclick="nuEnviar()"${precisaEmp&&!opEmp?' disabled':''}>Enviar convite</button>
+       </div>`);
+}
+async function nuEnviar(){
+  const tipo=NU_TIPO; if(!tipo) return;
+  const nome=(v('nuNome')||'').trim(), email=(v('nuEmail')||'').trim().toLowerCase();
+  if(!nome){ showToast('Informe o nome','red'); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showToast('Informe um e-mail válido','red'); return; }
+  const emp=(tipo==='setor'||tipo==='obra') ? v('nuEmp') : null;
+  if((tipo==='setor'||tipo==='obra') && !emp){ showToast('Escolha o empreendimento','red'); return; }
+  const btn=document.getElementById('nuBtn'); btn.disabled=true; btn.textContent='Enviando…';
+  let uidNovo=null;
   try{
-    // Convite role='gerente' para o próprio grupo (RLS conv_ger_insere_gestor).
-    const { error:convErr } = await sb.from('convites_auria')
-      .insert({ email, role:'gerente', empresa_id:EMPRESA.id, convidado_por:USER.id });
-    if(convErr) throw convErr;
-    // Mesmo e-mail de boas-vindas do CEO (send-welcome-email).
-    let emailOk=false, emailMsg='';
-    try{
-      const { data:{ session } } = await sb.auth.getSession();
-      const resp = await fetch('https://sabzccokueowpromwxdg.supabase.co/functions/v1/send-welcome-email',{
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${session.access_token}`, 'apikey':SUPA_KEY },
-        body: JSON.stringify({ gerNome:nome, gerEmail:email, empNome:(EMPRESA?.nome||''), plano:(EMPRESA?.plano||'basic') })
-      });
-      emailOk = resp.ok;
-      if(!resp.ok) emailMsg = ('HTTP '+resp.status+' '+((await resp.text())||'')).slice(0,160);
-    }catch(ee){ emailMsg = String((ee&&ee.message)||ee); }
-    closeModal('modalGestor');
-    if(emailOk) showToast('Gestor convidado e e-mail enviado para '+email,'green');
-    else showToast('⚠️ Gestor convidado, MAS o e-mail falhou para '+email+'. ['+emailMsg+']','red');
-  }catch(e){ showToast('Erro ao convidar gestor: '+e.message,'red'); }
-  finally{ btn.disabled=false; btn.textContent='Convidar Gestor'; }
+    if(tipo==='gestor'){
+      const r=await _criarGestor(nome,email); if(!r.ok) throw new Error(r.msg);
+      showToast(r.msg, r.aviso?'red':'green');
+    } else if(tipo==='analista'){
+      const r=await _criarAnalista(nome,email); if(!r.ok) throw new Error(r.msg);
+      showToast(r.msg, r.aviso?'red':'green');
+    } else if(tipo==='obra'){
+      const r=await sb.functions.invoke('invite-obra',{ body:{ email, nome, nivel:v('nuNivel'), empreendimento_id:emp, empresa_nome:(EMPRESA&&EMPRESA.nome)||'' } });
+      if(r.error){ let m=(r.error&&r.error.message)||String(r.error); try{ const bd=await r.error.context.json(); if(bd&&bd.error) m=bd.error; }catch(_){ } throw new Error(m); }
+      if(r.data&&r.data.error) throw new Error(r.data.error);
+      showToast((r.data&&r.data.ja_existia?'Vinculado à obra como ':'Convite enviado. Entra como ')+(OBRA_NIVEL_ROTULO[v('nuNivel')]||''),'green');
+    } else {
+      // setor e administrativo financeiro: mesma Edge Function, papel no corpo.
+      const r=await sb.functions.invoke('invite-setor',{ body:{ email, nome, role:tipo, empresa_nome:(EMPRESA&&EMPRESA.nome)||'' } });
+      if(r.error){ let m=(r.error&&r.error.message)||String(r.error); try{ const bd=await r.error.context.json(); if(bd&&bd.error) m=bd.error; }catch(_){ } throw new Error(m); }
+      if(r.data&&r.data.error) throw new Error(r.data.error);
+      uidNovo=r.data&&r.data.user_id;
+      if(!uidNovo) throw new Error('Convite enviado, mas sem id do usuário — tente de novo.');
+      // Conta que já existia com OUTRO papel não é promovida em silêncio.
+      const jaEra=r.data.ja_existia ? (r.data.role_atual||null) : null;
+      if(jaEra && jaEra!==tipo){
+        showToast('Este e-mail já existe no Auria como "'+jaEra+'". O papel NÃO foi trocado — mude pelo cadastro dele.','red');
+      } else if(tipo==='setor'){
+        const ins=await sb.from('cde_acesso_auria').upsert(
+          { empreendimento_id:emp, usuario_id:uidNovo, todas_disciplinas:true, download:true, criado_por:USER.id },
+          { onConflict:'empreendimento_id,usuario_id' });
+        if(ins.error) throw ins.error;
+        showToast(r.data.ja_existia?'Acesso concedido (já tinha conta).':'Convite enviado e acesso concedido.','green');
+      } else {
+        showToast(r.data.ja_existia?'Já tinha conta — agora aparece no administrativo financeiro.':'Convite enviado para '+email+'.','green');
+      }
+    }
+    closeModal('modalNovoUsr');
+    await loadAnalistas(); renderAnalistasPage();
+    // O adm-fin sem recorte enxerga o grupo inteiro — abrimos o escopo na
+    // sequência para que isso seja uma DECISÃO, e não um esquecimento.
+    if(tipo==='financeiro' && uidNovo) finEscopoAbrir(uidNovo);
+  }catch(e){ showToast('Não foi possível: '+((e&&e.message)||e),'red'); }
+  btn.disabled=false; btn.textContent='Enviar convite';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3160,14 +3317,23 @@ function _cardConvite(c){
   </div>`;
 }
 function _dtBr(v){ try{ return new Date(v).toLocaleDateString('pt-BR'); }catch(_){ return ''; } }
+// Item 129: a RPC devolve setor e obra com o MESMO tipo ('setor'); o que os
+// separa é o campo papel, que só a obra tem (é o nível dela). A divisão é feita
+// aqui, na tela, para não mexer numa RPC que já está em produção.
 const USR_SECOES=[
   ['gestor','Gestores','acesso a todo o grupo'],
   ['analista','Analistas','coordenador ou visualizador por empreendimento'],
   ['financeiro','Administrativo financeiro','contratos e notas fiscais'],
   ['setor','Setores / clientes internos','consultam o que a coordenação liberou'],
+  ['obra','Equipe de obra','campo: veem o publicado e respondem apontamentos'],
   ['fornecedor','Fornecedores','empresas que entregam projeto'],
   ['convite','Convites pendentes','aguardando o primeiro acesso']
 ];
+function _usrDoTipo(u, tipo){
+  if(tipo==='obra')  return u.tipo==='setor' && !!u.papel;
+  if(tipo==='setor') return u.tipo==='setor' && !u.papel;
+  return u.tipo===tipo;
+}
 function _usrEsc(u){
   const e=u.escopo||{};
   const emps=(e.empreendimentos||[]), discs=(e.disciplinas||[]), constr=(e.construtoras||[]);
@@ -3193,15 +3359,16 @@ function _usrEsc(u){
             discs.length?('disciplinas: '+discs.map(esc).join(', ')):'',
             p.length?(p.length+' profissional(is)'+(p.some(x=>x.rt)?' · RT cadastrado':'')):''].filter(Boolean).join(' · ');
   }
-  // setor
-  return [emps.length?emps.map(x=>esc(x.sigla||x.nome)).join(', '):'sem empreendimento',
-          discs.length?('disciplinas: '+discs.map(esc).join(', ')):'todas as disciplinas liberadas',
-          u.papel?('obra · '+esc(u.papel)):''].filter(Boolean).join(' · ');
+  // setor e obra (a obra é a que tem papel = nível de campo)
+  return [u.papel?('<b>'+esc(OBRA_NIVEL_ROTULO[u.papel]||u.papel)+'</b>'):'',
+          emps.length?emps.map(x=>esc(x.sigla||x.nome)).join(', '):'sem empreendimento',
+          discs.length?('disciplinas: '+discs.map(esc).join(', ')):'todas as disciplinas liberadas'].filter(Boolean).join(' · ');
 }
 function _usrCard(u){
   const nome=u.nome||u.email||'—';
   const av=(nome[0]||'?').toUpperCase();
-  const cores={gestor:'var(--navy,#1E3A5F)',analista:'#3B82F6',financeiro:'#1E8449',setor:'#6C3483',fornecedor:'#B7791F',convite:'var(--orange,#E8960A)'};
+  const cores={gestor:'var(--navy,#1E3A5F)',analista:'#3B82F6',financeiro:'#1E8449',setor:'#6C3483',obra:'#B7791F',fornecedor:'#0F766E',convite:'var(--orange,#E8960A)'};
+  const corTipo = (u.tipo==='setor' && u.papel) ? 'obra' : u.tipo;
   const eu=u.sujeito_id===USER.id;
   const acoes = u.tipo==='financeiro'
     ? `<div class="analista-card-actions"><button class="btn-sm" onclick="finEscopoAbrir('${u.sujeito_id}')">Definir escopo</button></div>`
@@ -3210,7 +3377,7 @@ function _usrCard(u){
       : (u.tipo==='fornecedor'
         ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('fornecedores')">Abrir</button></div>` : ''));
   return `<div class="analista-card">
-    <div class="analista-card-av" style="background:${cores[u.tipo]||'#64748B'}">${u.tipo==='convite'?'✉':av}</div>
+    <div class="analista-card-av" style="background:${cores[corTipo]||'#64748B'}">${u.tipo==='convite'?'✉':av}</div>
     <div class="analista-card-info">
       <div class="analista-card-nome">${esc(nome)}${eu?' <span style="font-size:11px;color:var(--text-soft)">(você)</span>':''}${u.ativo===false?' <span style="font-size:11px;color:var(--red)">inativo</span>':''}</div>
       <div class="analista-card-email">${esc(u.email||'')}${u.ultimo_acesso?(' · último acesso '+_dtBr(u.ultimo_acesso)):(u.tipo!=='fornecedor'&&u.tipo!=='convite'?' · nunca acessou':'')}</div>
@@ -3221,7 +3388,7 @@ function _usrCard(u){
 }
 function renderUsuariosPorTipo(){
   const html=USR_SECOES.map(([tipo,titulo,sub])=>{
-    const lst=(USUARIOS||[]).filter(u=>u.tipo===tipo);
+    const lst=(USUARIOS||[]).filter(u=>_usrDoTipo(u,tipo));
     if(!lst.length) return '';
     return _usrSecao(titulo+' <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-soft)">· '+sub+'</span>', lst.length)
          + lst.map(_usrCard).join('');
@@ -3521,32 +3688,31 @@ async function salvarDistribuicao(){
 // ═══════════════════════════════════════════════════════
 // CONVITE
 // ═══════════════════════════════════════════════════════
-async function enviarConvite(){
-  const email = v('conviteEmail'), nome = v('conviteNome');
-  if(!email){ showToast('Informe o e-mail','red'); return; }
-
-  // Gera token e insere na tabela convites
-  const { data, error } = await sb.from('convites_auria').insert({
+// Item 127: o envio virou helper para o modal antigo E o novo usarem a MESMA
+// implementação — o convite de analista tem duas etapas (linha em convites_auria
+// + e-mail pela Edge Function) e duplicar isso convidaria a divergirem.
+async function _criarAnalista(nome, email){
+  const { error } = await sb.from('convites_auria').insert({
     email, role:'analista', empresa_id:EMPRESA.id, convidado_por:USER.id
   }).select().single();
-
-  if(error){ showToast('Erro ao gerar convite: '+error.message,'red'); return; }
-
-  // Envia o convite por e-mail via Edge Function (gera link + Resend)
+  if(error) return { ok:false, msg:'Erro ao gerar convite: '+error.message };
   const redirect = location.href.replace(/auria_gerencia\.html.*$/, 'ativar_conta.html');
   const { data:fn, error:invErr } = await sb.functions.invoke('invite-analista', {
     body:{ email, nome, empresa_id:EMPRESA.id, redirect_to:redirect }
   });
-
+  if(!invErr && fn && fn.success) return { ok:true, msg:'Convite enviado para '+email };
+  const msg = (fn && fn.error) || (invErr && invErr.message) || 'erro desconhecido';
+  return { ok:true, aviso:true, msg:'Convite registrado, mas o e-mail falhou: '+msg };
+}
+async function enviarConvite(){
+  const email = v('conviteEmail'), nome = v('conviteNome');
+  if(!email){ showToast('Informe o e-mail','red'); return; }
+  const r = await _criarAnalista(nome, email);
+  if(!r.ok){ showToast(r.msg,'red'); return; }
   closeModal('modalConvite');
   document.getElementById('conviteEmail').value='';
   document.getElementById('conviteNome').value='';
-  if(!invErr && fn && fn.success){
-    showToast('Convite enviado para '+email,'green');
-  } else {
-    const msg = (fn && fn.error) || (invErr && invErr.message) || 'erro desconhecido';
-    showToast('Convite registrado, mas o e-mail falhou: '+msg,'red');
-  }
+  showToast(r.msg, r.aviso?'red':'green');
   await loadAnalistas();
   renderAnalistasPage();
 }

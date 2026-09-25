@@ -1,46 +1,45 @@
 -- ============================================================================
---  Item 121 — página USUÁRIOS por tipo, na gestão (2026-09-24)
+--  Itens 127 e 129 — usuários de SETOR e OBRA aparecendo na lista (2026-09-24)
 --  Rodar no SQL Editor do Supabase.
 --
---  "Quem é o quê" está espalhado por três lugares (usuarios_auria.role,
---  analista_empreendimento_auria e a matriz de acessos do CDE) — e assim deve
---  continuar: esta RPC só REÚNE para a tela, sem criar uma quarta verdade.
+--  Dois defeitos achados ao construir o "+ Adicionar usuário":
 --
---  Tipos devolvidos: gestor · analista · financeiro · setor (cliente interno /
---  equipe de obra) · fornecedor · convite (ainda não aceito).
+--  1) invite-setor e invite-obra criavam o perfil SEM empresa_id. Como
+--     gestao_usuarios_do_grupo filtra por empresa_id, essas pessoas existiam,
+--     acessavam o CDE — e não apareciam em lugar nenhum na gestão. A Edge
+--     Function já foi corrigida (passa a gravar o grupo de quem convida);
+--     aqui fica o backfill de quem foi criado antes.
 --
---  Acrescenta também o ESCOPO do adm-fin (financeiro_escopo_auria): por empresa
---  e/ou por empreendimento. Sem nenhuma linha, o financeiro enxerga o grupo
---  inteiro — como hoje; com linhas, passa a ser o recorte dele.
+--  2) A equipe de OBRA nunca aparecia: a consulta exigia linha em
+--     cde_acesso_auria, e invite-obra só escreve obra_empreendimento_auria.
+--     A função abaixo passa a aceitar as DUAS origens.
+--
+--  Nada é apagado: o backfill só preenche empresa_id que estava nulo.
 -- ============================================================================
 
-create table if not exists public.financeiro_escopo_auria (
-  id                uuid primary key default gen_random_uuid(),
-  usuario_id        uuid not null references public.usuarios_auria(id) on delete cascade,
-  empresa_id        uuid not null references public.empresas_auria(id) on delete cascade,   -- grupo (tenant)
-  construtora_id    uuid references public.construtoras_auria(id) on delete cascade,
-  empreendimento_id uuid references public.empreendimentos_auria(id) on delete cascade,
-  criado_por        uuid,
-  criado_em         timestamptz default now(),
-  constraint fin_escopo_alvo_chk check (construtora_id is not null or empreendimento_id is not null)
-);
-create index if not exists idx_fin_escopo_usr on public.financeiro_escopo_auria(usuario_id);
-create unique index if not exists uq_fin_escopo_constr on public.financeiro_escopo_auria(usuario_id, construtora_id)
-  where construtora_id is not null and empreendimento_id is null;
-create unique index if not exists uq_fin_escopo_emp on public.financeiro_escopo_auria(usuario_id, empreendimento_id)
-  where empreendimento_id is not null;
+-- ── 1. Backfill do grupo, a partir dos empreendimentos a que a pessoa já
+--       tem acesso. Quem tiver acesso a empreendimentos de grupos diferentes
+--       (não deveria acontecer) fica de fora de propósito, para não chutar.
+with origem as (
+  select u.id as usuario_id, min(e.empresa_id::text)::uuid as empresa_id,
+         count(distinct e.empresa_id) as n_grupos
+    from public.usuarios_auria u
+    join public.empreendimentos_auria e
+      on exists (select 1 from public.cde_acesso_auria a
+                  where a.usuario_id = u.id and a.empreendimento_id = e.id)
+      or exists (select 1 from public.obra_empreendimento_auria ob
+                  where ob.usuario_id = u.id and ob.empreendimento_id = e.id
+                    and coalesce(ob.ativo,true))
+   where u.empresa_id is null
+     and u.role in ('setor','obra')
+   group by u.id
+)
+update public.usuarios_auria u
+   set empresa_id = o.empresa_id
+  from origem o
+ where u.id = o.usuario_id and o.n_grupos = 1;
 
-alter table public.financeiro_escopo_auria enable row level security;
-drop policy if exists finesc_gestao on public.financeiro_escopo_auria;
-create policy finesc_gestao on public.financeiro_escopo_auria for all
-  using (empresa_id = public.minha_empresa() and public.minha_role_auria() in ('gerente','super_admin'))
-  with check (empresa_id = public.minha_empresa() and public.minha_role_auria() in ('gerente','super_admin'));
-drop policy if exists finesc_proprio on public.financeiro_escopo_auria;
-create policy finesc_proprio on public.financeiro_escopo_auria for select
-  using (usuario_id = auth.uid());
-grant select, insert, delete on public.financeiro_escopo_auria to authenticated;
-revoke all on public.financeiro_escopo_auria from anon;
-
+-- ── 2. A lista de usuários passa a enxergar a equipe de obra ───────────────
 -- ── A tela: todos os usuários do grupo, com tipo e escopo resumido ──────────
 create or replace function public.gestao_usuarios_do_grupo()
 returns table(
@@ -166,44 +165,10 @@ begin
 end $$;
 grant execute on function public.gestao_usuarios_do_grupo() to authenticated;
 
--- ── Escopo do adm-fin: definir (substitui o conjunto do usuário) ────────────
-create or replace function public.financeiro_escopo_set(p_usuario uuid, p_construtoras uuid[], p_empreendimentos uuid[])
-returns jsonb language plpgsql security definer set search_path = public as $$
-declare v_grp uuid := public.minha_empresa(); v_n int := 0;
-begin
-  if public.minha_role_auria() not in ('gerente','super_admin') then raise exception 'Só a gestão define o escopo do financeiro.'; end if;
-  if not exists (select 1 from public.usuarios_auria u where u.id = p_usuario and u.empresa_id = v_grp and u.role = 'financeiro') then
-    raise exception 'Usuário não é do financeiro deste grupo.';
-  end if;
-  delete from public.financeiro_escopo_auria where usuario_id = p_usuario;
-  insert into public.financeiro_escopo_auria(usuario_id, empresa_id, construtora_id, criado_por)
-    select p_usuario, v_grp, c.id, auth.uid() from public.construtoras_auria c
-     where c.id = any(coalesce(p_construtoras,'{}')) and c.grupo_id = v_grp;
-  get diagnostics v_n = row_count;
-  insert into public.financeiro_escopo_auria(usuario_id, empresa_id, empreendimento_id, criado_por)
-    select p_usuario, v_grp, e.id, auth.uid() from public.empreendimentos_auria e
-     where e.id = any(coalesce(p_empreendimentos,'{}')) and e.empresa_id = v_grp;
-  return jsonb_build_object('ok', true, 'construtoras', v_n,
-                            'empreendimentos', coalesce(array_length(p_empreendimentos,1),0));
-end $$;
-grant execute on function public.financeiro_escopo_set(uuid, uuid[], uuid[]) to authenticated;
-
--- Empreendimentos que ESTE financeiro enxerga (vazio no escopo = todos do grupo).
-create or replace function public.financeiro_meus_emps()
-returns setof uuid language sql security definer stable set search_path = public as $$
-  select e.id from public.empreendimentos_auria e
-   where e.empresa_id = public.minha_empresa()
-     and (
-       not exists (select 1 from public.financeiro_escopo_auria fe where fe.usuario_id = auth.uid())
-       or exists (select 1 from public.financeiro_escopo_auria fe
-                   where fe.usuario_id = auth.uid()
-                     and (fe.empreendimento_id = e.id or fe.construtora_id = e.construtora_id))
-     );
-$$;
-grant execute on function public.financeiro_meus_emps() to authenticated;
-
-select 'financeiro_escopo_auria' as item,
-       exists(select 1 from information_schema.tables where table_name='financeiro_escopo_auria') as ok
-union all select 'gestao_usuarios_do_grupo', exists(select 1 from pg_proc where proname='gestao_usuarios_do_grupo')
-union all select 'financeiro_escopo_set', exists(select 1 from pg_proc where proname='financeiro_escopo_set')
-union all select 'financeiro_meus_emps', exists(select 1 from pg_proc where proname='financeiro_meus_emps');
+-- Conferência: quantos setor/obra ainda estão sem grupo (ideal: 0) e quantos
+-- da obra a lista já enxerga.
+select 'setor/obra sem empresa_id' as item, count(*)::text as valor
+  from public.usuarios_auria where empresa_id is null and role in ('setor','obra')
+union all
+select 'usuarios com vinculo de obra', count(distinct usuario_id)::text
+  from public.obra_empreendimento_auria where coalesce(ativo,true);
