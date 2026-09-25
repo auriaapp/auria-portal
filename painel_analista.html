@@ -116,6 +116,10 @@
   .ctr-btn.sec{background:var(--panel2);color:var(--txt2);border:1px solid var(--line)}
   .ctr-btn.sec:hover{filter:brightness(0.97)}
   .ctr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+  /* Item 117: marcador de ENVIO dentro do chip de disciplina (só fornecedor) */
+  .acc-up{border:none;background:none;color:var(--mut);font-size:10px;cursor:pointer;padding:0 3px 0 0;line-height:1;opacity:.45}
+  .acc-up:hover{opacity:1;color:var(--txt)}
+  .acc-up.on{opacity:1;color:#166534;font-weight:900}
   .ctr-card{background:var(--panel);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;border-top:3px solid #3B82F6;border-left:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
   .ctr-nome{font-size:14px;font-weight:800;color:var(--txt)}
   .ctr-sub{font-size:12px;color:var(--mut);margin-top:2px}
@@ -2854,15 +2858,30 @@ var ACC_COLS=[
   ['bim_ler_apont','BIM ler','Ler apontamentos no BIM'],
   ['bim_abrir_apont','BIM abrir','Abrir apontamentos no BIM']
 ];
+// Item 117: no fornecedor, cada disciplina tem DOIS estados — ver (baixar) e
+// enviar. A disciplina que ele atende já vem com os dois; nas demais o
+// coordenador libera só o ver, ou também o enviar (fornecedor que entrega em
+// mais de uma disciplina sem ser o responsável por ela).
+function accUploadOn(row, cod){
+  const l=(row&&row.disciplinas_upload)||[];
+  return l.some(x=>String(x).toUpperCase()===String(cod).toUpperCase()
+                || String(x).toLowerCase()===String(accDiscLabel(cod)||'').toLowerCase());
+}
+function accChipEnviar(row, d){
+  if(row.tipo!=='fornecedor') return '';
+  const on=accUploadOn(row,d);
+  return `<button class="acc-up${on?' on':''}" title="${on?'Pode ENVIAR nesta disciplina — clique para tirar':'Liberar ENVIO nesta disciplina'}"
+    onclick="event.preventDefault();event.stopPropagation();accToggleUpload('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',${on?'false':'true'})">⬆</button>`;
+}
 function accChips(row){
   if(!ACC_DISCS.length) return '<span style="color:var(--mut);font-size:11px">—</span>';
   const contr=(row.disc_contratadas||[]);
   const isContr=cod=>contr.some(a=>String(a).toUpperCase()===String(cod).toUpperCase());
   return ACC_DISCS.map(d=>{
-    if(isContr(d)) return `<span class="cde-ac-orig" title="Disciplina contratada — sempre liberada">${esc(d)}</span>`;
+    if(isContr(d)) return `<span class="cde-ac-orig" title="Disciplina que este fornecedor atende — vê, baixa e envia">${esc(d)} ⬆</span>`;
     const on=row.todas_disciplinas||accDiscOn(row,d);
     const dis=row.todas_disciplinas?'opacity:.4;pointer-events:none':'';
-    return `<label class="acc-chip ${on?'on':''}" style="${dis}" title="${esc(accDiscLabel(d))}"><input type="checkbox" ${on?'checked':''} onchange="accToggleDisc('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',this.checked)">${esc(d)}</label>`;
+    return `<label class="acc-chip ${on?'on':''}" style="${dis}" title="${esc(accDiscLabel(d))}">${accChipEnviar(row,d)}<input type="checkbox" ${on?'checked':''} onchange="accToggleDisc('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',this.checked)">${esc(d)}</label>`;
   }).join(' ');
 }
 function accRow(row){
@@ -3153,6 +3172,32 @@ async function accToggleDisc(acessoId, tipo, sujeitoId, disc, on){
     if(r.error) throw r.error;
     if(row) row.disciplinas=arr;
   }catch(e){ alert('Não foi possível salvar: '+((e&&e.message)||e)); loadAcessos(CDE_AC_EMPID); }
+}
+// Item 117: liga/desliga o ENVIO do fornecedor numa disciplina (disciplinas_upload).
+// Liberar envio implica ver: marca a disciplina na lista de leitura também.
+async function accToggleUpload(acessoId, tipo, sujeitoId, disc, on){
+  try{
+    const id=await accGaranteLinha(acessoId, tipo, sujeitoId);
+    const row=ACC_LIST.find(x=>String(x.acesso_id)===String(id) || (x.tipo===tipo&&String(x.sujeito_id)===String(sujeitoId)));
+    let up=((row&&row.disciplinas_upload)||[]).slice();
+    up=up.filter(a=>String(a).toUpperCase()!==String(disc).toUpperCase());
+    const patch={ atualizado_em:new Date().toISOString() };
+    if(on){
+      up.push(disc);
+      patch.upload=true;                                   // o flag da linha habilita a regra
+      let ver=((row&&row.disciplinas)||[]).slice();
+      if(!ver.some(a=>String(a).toUpperCase()===String(disc).toUpperCase())){ ver.push(disc); patch.disciplinas=ver; }
+    }
+    patch.disciplinas_upload=up;
+    const r=await sb.from('cde_acesso_auria').update(patch).eq('id',id);
+    if(r.error) throw r.error;
+    if(row){ row.disciplinas_upload=up; if(patch.disciplinas) row.disciplinas=patch.disciplinas; if(on) row.upload=true; }
+    renderAcessos();
+  }catch(e){
+    const m=(e&&e.message)||e;
+    alert('Não foi possível salvar: '+m+(/disciplinas_upload|schema cache/i.test(m)?' — rode supabase_cde_upload_disc.sql':''));
+    loadAcessos(CDE_AC_EMPID);
+  }
 }
 async function accConvidarInterno(){
   const email=(prompt('E-mail do funcionário (orçamento, suprimentos, planejamento…):','')||'').trim();
