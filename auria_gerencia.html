@@ -400,6 +400,19 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 .mm-badge{font-size:11px;border-radius:20px;padding:1px 7px;white-space:nowrap}
 .mm-badge.c{color:var(--orange);background:var(--orange-light)}
 .mm-badge.v{color:var(--blue);background:var(--blue-light)}
+/* Item 128: o mapa passou a mostrar TODOS os tipos, agrupados por tipo. */
+.mm-chip{border:1px solid var(--gray-border);background:#fff;border-radius:20px;padding:4px 11px;font-size:12px;
+  font-weight:600;color:var(--text-mid);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px}
+.mm-chip:hover{border-color:var(--orange)}
+.mm-chip.on{border-color:var(--orange);color:var(--orange);background:var(--orange-light)}
+.mm-chip i{width:8px;height:8px;border-radius:50%;display:inline-block;font-style:normal;flex:none}
+.mm-sec{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);
+  margin:14px 0 2px;display:flex;align-items:center;gap:7px}
+.mm-sec:first-child{margin-top:0}
+.mm-sec i{width:9px;height:9px;border-radius:3px;display:inline-block;font-style:normal;flex:none}
+.mm-node.ro{border-style:dashed}
+.mm-node.ro:hover{border-color:var(--text-soft)}
+.mm-badge.n{color:var(--text-mid);background:var(--gray-light)}
 
 /* ── DISTRIBUIÇÃO ────────────────────────────────────── */
   /* Item 121B: distribuição em ÁRVORE (grupo › empresa › empreendimento) e em CARDS */
@@ -764,20 +777,24 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
             <div class="loading-spinner"><div class="spinner"></div></div>
           </div>
           <div id="analistasMapa" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              <div id="mmChips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+              <input id="mmBusca" class="form-inp" oninput="renderMapa()" placeholder="Filtrar empreendimento&hellip;" style="margin-left:auto;max-width:230px;height:34px">
+            </div>
             <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">
               <span class="mm-leg"><span class="mm-leg-line" style="background:var(--orange)"></span> Coordenador</span>
               <span class="mm-leg"><span class="mm-leg-line" style="background:var(--blue)"></span> Visualizador (s&oacute; leitura)</span>
-              <input id="mmBusca" class="form-inp" oninput="renderMapa()" placeholder="Filtrar empreendimento&hellip;" style="margin-left:auto;max-width:230px;height:34px">
-              <span id="mmHint" style="font-size:12px;color:var(--text-soft);flex-basis:100%">Clique num analista e depois num empreendimento &mdash; alterna coordenador &rarr; leitura &rarr; sem v&iacute;nculo (salva na hora).</span>
+              <span class="mm-leg" style="color:var(--text-soft)">&mdash; tracejado = v&iacute;nculo que n&atilde;o se edita aqui</span>
+              <span id="mmHint" style="font-size:12px;color:var(--text-soft);flex-basis:100%">Clique numa pessoa e depois num empreendimento.</span>
             </div>
             <div id="mmMap" style="position:relative;min-height:200px">
               <svg id="mmSvg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible"></svg>
               <div style="display:flex;justify-content:space-between;gap:28px;position:relative;z-index:2">
-                <div style="flex:1;min-width:0">
-                  <div class="mm-colh">&#128100; Analistas</div>
+                <div style="flex:0 0 40%;min-width:0">
+                  <div class="mm-colh">&#128101; Usu&aacute;rios</div>
                   <div id="mmColA" style="display:flex;flex-direction:column;gap:12px"></div>
                 </div>
-                <div style="flex:1;min-width:0">
+                <div style="flex:0 0 40%;min-width:0">
                   <div class="mm-colh" style="text-align:right">&#127970; Empreendimentos</div>
                   <div id="mmColE" style="display:flex;flex-direction:column;gap:12px"></div>
                 </div>
@@ -3444,89 +3461,220 @@ function anSetView(v){
   document.getElementById('anTabMapa').classList.toggle('active',mapa);
   if(mapa) renderMapa();
 }
-function mmPapel(a,empId){
-  if(!a) return null;
-  const ae=(a.analista_empreendimento_auria||[]).find(x=>x.empreendimento_id===empId && x.ativo);
-  return ae ? (ae.papel==='visualizador'?'visualizador':'coordenador') : null;
+// ═══════════════════════════════════════════════════════
+// ITEM 128 — MAPA DE VÍNCULOS DE TODOS OS TIPOS
+// ═══════════════════════════════════════════════════════
+//  Antes só desenhava analistas. A RPC gestao_usuarios_do_grupo já devolve o
+//  escopo de TODO MUNDO, então o mapa lê dela — nenhuma fonte nova de verdade.
+//  O que cada tipo significa é diferente, e por isso a edição também é:
+//   · analista → ciclo coordenador → visualizador → sem vínculo
+//   · setor    → liga/desliga a linha na matriz do CDE
+//   · adm-fin  → liga/desliga o empreendimento no recorte do Painel de Custos
+//   · gestor/obra/fornecedor → leitura; clicar leva ao editor certo, porque
+//     obra tem NÍVEL e fornecedor tem DISCIPLINAS, que um clique não resolve.
+const MM_TIPOS={
+  gestor:    { rot:'Gestores',     cor:'#1E3A5F', edit:false, implicito:true },
+  analista:  { rot:'Analistas',    cor:'#3B82F6', edit:true  },
+  financeiro:{ rot:'Adm-fin',      cor:'#1E8449', edit:true  },
+  setor:     { rot:'Setor',        cor:'#6C3483', edit:true  },
+  obra:      { rot:'Obra',         cor:'#B7791F', edit:false },
+  fornecedor:{ rot:'Fornecedores', cor:'#0F766E', edit:false }
+};
+let MM_TIPO='todos', MM_CACHE=null;
+// Uma pessoa (ou fornecedor) do mapa, com os empreendimentos a que está ligada.
+function mmPessoas(){
+  if(MM_CACHE) return MM_CACHE;
+  if(!USUARIOS){
+    // Sem a RPC nova, o mapa continua sendo o de antes: só analistas.
+    return (MM_CACHE = (ANALISTAS||[]).map(a=>({ key:'analista:'+a.id, id:a.id, tipo:'analista',
+      nome:a.nome||a.email||'—',
+      emps:(a.analista_empreendimento_auria||[]).filter(x=>x.ativo)
+            .map(x=>({ id:x.empreendimento_id, papel:x.papel==='visualizador'?'visualizador':'coordenador' })),
+      implicito:false, constr:[] })));
+  }
+  const out=[];
+  (USUARIOS||[]).forEach(u=>{
+    if(u.tipo==='convite') return;
+    const tipo = (u.tipo==='setor' && u.papel) ? 'obra' : u.tipo;   // item 129
+    if(!MM_TIPOS[tipo]) return;
+    const e=u.escopo||{};
+    const emps=(e.empreendimentos||[]).map(x=>({ id:x.id, papel:x.papel||null }));
+    const constr=(e.construtoras||[]).map(x=>x.id);
+    // "Implícito" = liga em tudo sem linha nenhuma (gestor sempre; adm-fin sem
+    // recorte). Essas linhas só são desenhadas quando a pessoa está selecionada,
+    // senão o mapa vira um borrão.
+    const implicito = (tipo==='gestor') || (tipo==='financeiro' && !emps.length && !constr.length);
+    out.push({ key:tipo+':'+u.sujeito_id, id:u.sujeito_id, tipo, nome:u.nome||u.email||'—',
+               emps, constr, implicito, papel:u.papel||null });
+  });
+  MM_CACHE=out;
+  return out;
 }
-function mmDeg(a){ let c=0,v=0; (a.analista_empreendimento_auria||[]).forEach(x=>{ if(x.ativo){ x.papel==='visualizador'?v++:c++; } }); return {c,v}; }
-function mmEmpDeg(empId){ let c=0,v=0; ANALISTAS.forEach(a=>{ const p=mmPapel(a,empId); if(p==='visualizador')v++; else if(p==='coordenador')c++; }); return {c,v}; }
-function mmBadge(d){ return (d.c||d.v)?`<span style="display:flex;gap:4px">${d.c?`<span class="mm-badge c" title="coordenador">${d.c}</span>`:''}${d.v?`<span class="mm-badge v" title="visualizador">${d.v}</span>`:''}</span>`:''; }
+function mmNo(key){ return mmPessoas().find(x=>x.key===key)||null; }
+function mmCor(no, empPapel){
+  if(no.tipo==='analista') return empPapel==='visualizador' ? 'var(--blue)' : 'var(--orange)';
+  return MM_TIPOS[no.tipo].cor;
+}
+function mmEmpsDoNo(no, emps){
+  return no.implicito ? emps.map(e=>({ id:e.id, papel:null })) : no.emps;
+}
+function mmChips(){
+  const pes=mmPessoas();
+  const box=document.getElementById('mmChips'); if(!box) return;
+  const cnt=t=>pes.filter(x=>x.tipo===t).length;
+  box.innerHTML = `<button class="mm-chip${MM_TIPO==='todos'?' on':''}" onclick="mmFiltro('todos')">Todos <span class="mm-badge n">${pes.length}</span></button>`
+    + Object.keys(MM_TIPOS).filter(t=>cnt(t)).map(t=>
+        `<button class="mm-chip${MM_TIPO===t?' on':''}" onclick="mmFiltro('${t}')">
+           <i style="background:${MM_TIPOS[t].cor}"></i>${MM_TIPOS[t].rot} <span class="mm-badge n">${cnt(t)}</span></button>`).join('');
+}
+function mmFiltro(t){ MM_TIPO=t; MM_SELA=null; renderMapa(); }
 function renderMapa(){
   const colA=document.getElementById('mmColA'), colE=document.getElementById('mmColE');
   if(!colA||!colE) return;
+  MM_CACHE=null;          // os dados podem ter mudado desde o último desenho
+  mmChips();
   const busca=(document.getElementById('mmBusca')?.value||'').trim().toLowerCase();
-  const emps=EMPS.filter(e=>!busca || (e.nome||'').toLowerCase().includes(busca));
-  colA.innerHTML = ANALISTAS.length ? ANALISTAS.map(a=>`
-    <div class="mm-node${MM_SELA===a.id?' sel':''}" data-a="${a.id}" onclick="mmClickA('${a.id}')" onmouseenter="mmHov('${a.id}')" onmouseleave="mmHov(null)">
-      <span class="mm-node-av">${(a.nome||a.email||'?')[0].toUpperCase()}</span>
-      <span class="mm-node-nome">${esc(a.nome||a.email)}</span>${mmBadge(mmDeg(a))}</div>`).join('')
-    : '<div style="color:var(--text-soft);font-size:13px">Nenhum analista cadastrado.</div>';
+  const emps=(EMPS||[]).filter(e=>!busca || (e.nome||'').toLowerCase().includes(busca) || (e.codigo||'').toLowerCase().includes(busca));
+  const pes=mmPessoas().filter(x=>MM_TIPO==='todos' || x.tipo===MM_TIPO);
+  let html='';
+  Object.keys(MM_TIPOS).forEach(t=>{
+    const lst=pes.filter(x=>x.tipo===t); if(!lst.length) return;
+    const cfg=MM_TIPOS[t];
+    html += `<div class="mm-sec"><i style="background:${cfg.cor}"></i>${cfg.rot}${cfg.edit?'':' · só leitura'}</div>`
+         + lst.map(no=>{
+             const n = no.implicito ? null : no.emps.length;
+             const badge = no.implicito
+               ? '<span class="mm-badge n" title="enxerga todos os empreendimentos">todos</span>'
+               : (no.tipo==='analista' ? mmBadge(mmDeg(no)) : (n?`<span class="mm-badge n">${n}</span>`:''));
+             return `<div class="mm-node${MM_SELA===no.key?' sel':''}${cfg.edit?'':' ro'}" data-p="${no.key}"
+                onclick="mmClickP('${no.key}')" onmouseenter="mmHov('${no.key}')" onmouseleave="mmHov(null)">
+                <span class="mm-node-av" style="background:${cfg.cor};color:#fff">${esc((no.nome[0]||'?').toUpperCase())}</span>
+                <span class="mm-node-nome">${esc(no.nome)}</span>${badge}</div>`;
+           }).join('');
+  });
+  colA.innerHTML = html || '<div style="color:var(--text-soft);font-size:13px">Ninguém neste filtro.</div>';
+  const sel = MM_SELA ? mmNo(MM_SELA) : null;
   colE.innerHTML = emps.length ? emps.map(e=>{
-    const cur = MM_SELA ? mmPapel(ANALISTAS.find(a=>a.id===MM_SELA),e.id) : null;
-    const sb2 = cur ? (cur==='visualizador'?'border-color:var(--blue)':'border-color:var(--orange)') : '';
-    return `<div class="mm-node" data-e="${e.id}" style="${sb2}" onclick="mmClickE('${e.id}')" onmouseenter="mmHov('${e.id}')" onmouseleave="mmHov(null)">
-      <span class="mm-node-av">${(e.nome||'?')[0].toUpperCase()}</span>
+    const lig = sel ? mmEmpsDoNo(sel, emps).find(x=>x.id===e.id) : null;
+    const borda = lig ? ('border-color:'+mmCor(sel, lig.papel)) : '';
+    return `<div class="mm-node" data-e="${e.id}" style="${borda}" onclick="mmClickE('${e.id}')" onmouseenter="mmHov('${e.id}')" onmouseleave="mmHov(null)">
+      <span class="mm-node-av">${esc((e.nome||'?')[0].toUpperCase())}</span>
       <span class="mm-node-nome">${esc(e.nome)}</span>${mmBadge(mmEmpDeg(e.id))}</div>`;
   }).join('') : '<div style="color:var(--text-soft);font-size:13px">Nenhum empreendimento.</div>';
   mmDraw();
 }
+// Badges do analista continuam contando coordenador × visualizador.
+function mmDeg(no){ let c=0,v=0; (no.emps||[]).forEach(x=>{ x.papel==='visualizador'?v++:c++; }); return {c,v}; }
+function mmEmpDeg(empId){
+  let c=0,v=0;
+  mmPessoas().filter(x=>x.tipo==='analista').forEach(no=>{
+    const x=(no.emps||[]).find(y=>y.id===empId); if(!x) return;
+    x.papel==='visualizador'?v++:c++;
+  });
+  return {c,v};
+}
+function mmBadge(d){ return (d.c||d.v)?`<span style="display:flex;gap:4px">${d.c?`<span class="mm-badge c" title="coordenador">${d.c}</span>`:''}${d.v?`<span class="mm-badge v" title="visualizador">${d.v}</span>`:''}</span>`:''; }
 function mmHov(id){ MM_HOVER=id; mmDraw(); }
-function mmClickA(id){ MM_SELA=(MM_SELA===id?null:id);
-  const hint=document.getElementById('mmHint');
-  if(hint) hint.innerHTML = MM_SELA
-    ? '<b>'+esc((ANALISTAS.find(a=>a.id===MM_SELA)||{}).nome||'analista')+'</b> selecionado &mdash; clique nos empreendimentos (coordenador &rarr; leitura &rarr; sem v&iacute;nculo).'
-    : 'Clique num analista e depois num empreendimento &mdash; alterna coordenador &rarr; leitura &rarr; sem v&iacute;nculo (salva na hora).';
+const MM_DICAS={
+  analista:'clique nos empreendimentos — o ciclo é coordenador → só leitura → sem vínculo (salva na hora).',
+  setor:'clique num empreendimento para liberar ou tirar a consulta ao CDE dele (salva na hora).',
+  financeiro:'clique num empreendimento para incluir ou tirar do recorte do Painel de Custos.',
+  gestor:'gestor enxerga o grupo inteiro — não há vínculo por empreendimento para editar.',
+  obra:'a obra tem NÍVEL de campo: clique num empreendimento para abrir os Acessos dele e definir isso.',
+  fornecedor:'fornecedor é vinculado por DISCIPLINA: clique num empreendimento para abrir a página de Fornecedores.'
+};
+function mmClickP(key){
+  MM_SELA=(MM_SELA===key?null:key);
+  const h=document.getElementById('mmHint'), no=MM_SELA?mmNo(MM_SELA):null;
+  if(h) h.innerHTML = no
+    ? '<b>'+esc(no.nome)+'</b> — '+MM_DICAS[no.tipo]
+    : 'Clique numa pessoa e depois num empreendimento.';
   renderMapa();
 }
 function mmClickE(empId){
-  if(!MM_SELA){ const h=document.getElementById('mmHint'); if(h) h.innerHTML='&larr; Escolha um analista primeiro.'; return; }
-  mmToggle(MM_SELA, empId);
+  const no = MM_SELA ? mmNo(MM_SELA) : null;
+  if(!no){ const h=document.getElementById('mmHint'); if(h) h.innerHTML='&larr; Escolha uma pessoa primeiro.'; return; }
+  if(no.tipo==='analista')   return mmToggleAnalista(no, empId);
+  if(no.tipo==='setor')      return mmToggleSetor(no, empId);
+  if(no.tipo==='financeiro') return mmToggleFin(no, empId);
+  if(no.tipo==='obra')       { gdAcessos(empId); return; }
+  if(no.tipo==='fornecedor') { goPage('fornecedores'); return; }
+  showToast('Gestor enxerga o grupo inteiro — não há o que ligar ou desligar aqui.','green');
+}
+async function mmToggleAnalista(no, empId){
+  const cur=(no.emps.find(x=>x.id===empId)||{}).papel || null;
+  const next = !cur ? 'coordenador' : (cur==='coordenador'?'visualizador':null);   // ciclo
+  try{
+    if(next){
+      const r=await sb.from('analista_empreendimento_auria').upsert(
+        { analista_id:no.id, empreendimento_id:empId, papel:next, ativo:true, concedido_por:USER.id },
+        { onConflict:'analista_id,empreendimento_id' });
+      if(r.error) throw r.error;
+    }else{
+      const r=await sb.from('analista_empreendimento_auria').update({ativo:false})
+        .eq('analista_id',no.id).eq('empreendimento_id',empId);
+      if(r.error) throw r.error;
+    }
+  }catch(e){ showToast('Erro ao salvar vínculo: '+((e&&e.message)||e),'red'); }
+  await loadAnalistas(); renderMapa();
+}
+async function mmToggleSetor(no, empId){
+  const tem=no.emps.some(x=>x.id===empId);
+  try{
+    if(tem){
+      if(!confirm('Tirar o acesso desta pessoa a este empreendimento?')) return;
+      const r=await sb.from('cde_acesso_auria').delete().eq('empreendimento_id',empId).eq('usuario_id',no.id);
+      if(r.error) throw r.error;
+    }else{
+      const r=await sb.from('cde_acesso_auria').upsert(
+        { empreendimento_id:empId, usuario_id:no.id, todas_disciplinas:true, download:true, criado_por:USER.id },
+        { onConflict:'empreendimento_id,usuario_id' });
+      if(r.error) throw r.error;
+    }
+  }catch(e){ showToast('Não salvou: '+((e&&e.message)||e),'red'); }
+  await loadAnalistas(); renderMapa();
+}
+async function mmToggleFin(no, empId){
+  const tem=no.emps.some(x=>x.id===empId);
+  // Sem recorte o adm-fin vê TUDO. Marcar o primeiro empreendimento restringe —
+  // é uma mudança grande para acontecer por um clique sem aviso.
+  if(no.implicito && !tem &&
+     !confirm('Hoje este adm-fin enxerga o grupo inteiro. Ao marcar este empreendimento, ele passa a ver SÓ o que estiver marcado. Continuar?')) return;
+  const ids = tem ? no.emps.filter(x=>x.id!==empId).map(x=>x.id) : no.emps.map(x=>x.id).concat([empId]);
+  try{
+    const r=await sb.rpc('financeiro_escopo_set',{ p_usuario:no.id, p_construtoras:no.constr, p_empreendimentos:ids });
+    if(r.error) throw r.error;
+    if(!ids.length && !no.constr.length) showToast('Sem recorte — ele volta a enxergar o grupo inteiro.','green');
+  }catch(e){ showToast('Não salvou: '+((e&&e.message)||e),'red'); }
+  await loadAnalistas(); renderMapa();
 }
 function mmDraw(){
   const svg=document.getElementById('mmSvg'), map=document.getElementById('mmMap');
   if(!svg||!map) return;
   while(svg.firstChild) svg.removeChild(svg.firstChild);
   const m=map.getBoundingClientRect(), NS='http://www.w3.org/2000/svg';
-  ANALISTAS.forEach(a=>{
-    (a.analista_empreendimento_auria||[]).forEach(x=>{
-      if(!x.ativo) return;
-      const ae=map.querySelector('.mm-node[data-a="'+a.id+'"]'), ee=map.querySelector('.mm-node[data-e="'+x.empreendimento_id+'"]');
+  const emps=[...map.querySelectorAll('.mm-node[data-e]')].map(el=>({ id:el.getAttribute('data-e') }));
+  mmPessoas().filter(x=>MM_TIPO==='todos' || x.tipo===MM_TIPO).forEach(no=>{
+    // Quem liga em tudo (gestor, adm-fin sem recorte) só desenha quando está em
+    // foco — senão são N linhas cobrindo o mapa inteiro.
+    const foco = (MM_SELA===no.key) || (MM_HOVER===no.key);
+    if(no.implicito && !foco) return;
+    mmEmpsDoNo(no, emps).forEach(x=>{
+      const ae=map.querySelector('.mm-node[data-p="'+no.key+'"]'), ee=map.querySelector('.mm-node[data-e="'+x.id+'"]');
       if(!ae||!ee) return;
       const ra=ae.getBoundingClientRect(), re=ee.getBoundingClientRect();
       const x1=ra.right-m.left, y1=ra.top-m.top+ra.height/2, x2=re.left-m.left, y2=re.top-m.top+re.height/2, mx=(x1+x2)/2;
-      const active = MM_SELA? (a.id===MM_SELA) : (MM_HOVER? (a.id===MM_HOVER||x.empreendimento_id===MM_HOVER): true);
-      const p=document.createElementNS(NS,'path');
-      p.setAttribute('d','M '+x1+' '+y1+' C '+mx+' '+y1+', '+mx+' '+y2+', '+x2+' '+y2);
-      p.setAttribute('fill','none');
-      p.setAttribute('stroke', x.papel==='visualizador'?'var(--blue)':'var(--orange)');
-      p.setAttribute('stroke-width', active?'2.4':'1.3');
-      p.setAttribute('opacity', active?'0.95':'0.25');
-      svg.appendChild(p);
+      const active = MM_SELA ? (no.key===MM_SELA) : (MM_HOVER ? (no.key===MM_HOVER || x.id===MM_HOVER) : true);
+      const path=document.createElementNS(NS,'path');
+      path.setAttribute('d','M '+x1+' '+y1+' C '+mx+' '+y1+', '+mx+' '+y2+', '+x2+' '+y2);
+      path.setAttribute('fill','none');
+      path.setAttribute('stroke', mmCor(no, x.papel));
+      path.setAttribute('stroke-width', active?'2.4':'1.3');
+      path.setAttribute('opacity', active?'0.95':'0.25');
+      if(!MM_TIPOS[no.tipo].edit) path.setAttribute('stroke-dasharray','5 4');
+      svg.appendChild(path);
     });
   });
-}
-async function mmToggle(aid, empId){
-  const a=ANALISTAS.find(x=>x.id===aid); if(!a) return;
-  a.analista_empreendimento_auria = a.analista_empreendimento_auria||[];
-  let ae=a.analista_empreendimento_auria.find(x=>x.empreendimento_id===empId);
-  const cur = (ae&&ae.ativo) ? (ae.papel==='visualizador'?'visualizador':'coordenador') : null;
-  const next = !cur ? 'coordenador' : (cur==='coordenador'?'visualizador':null);   // ciclo
-  if(next){ if(ae){ ae.ativo=true; ae.papel=next; } else { a.analista_empreendimento_auria.push({analista_id:aid, empreendimento_id:empId, ativo:true, papel:next}); } }
-  else if(ae){ ae.ativo=false; }
-  renderMapa();   // otimista
-  try{
-    if(next){
-      const { error } = await sb.from('analista_empreendimento_auria').upsert(
-        { analista_id:aid, empreendimento_id:empId, papel:next, ativo:true, concedido_por:USER.id },
-        { onConflict:'analista_id,empreendimento_id' });
-      if(error) throw error;
-    }else{
-      const { error } = await sb.from('analista_empreendimento_auria').update({ativo:false})
-        .eq('analista_id',aid).eq('empreendimento_id',empId);
-      if(error) throw error;
-    }
-  }catch(e){ showToast('Erro ao salvar vínculo: '+(e.message||e),'red'); await loadAnalistas(); renderMapa(); }
 }
 window.addEventListener('resize',()=>{ const mp=document.getElementById('analistasMapa'); if(mp && mp.style.display!=='none') mmDraw(); });
 
