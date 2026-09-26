@@ -175,6 +175,24 @@
   .acc-chip{display:inline-flex;align-items:center;gap:3px;background:var(--panel2);border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:2px 7px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--mono)}
   .acc-chip.on{background:#EAF1F9;border-color:#1D4ED8;color:#1D4ED8}
   .acc-chip input{margin:0;width:12px;height:12px;cursor:pointer;accent-color:#1D4ED8}
+  /* Item 142: a seta ⬆ escondida dentro da tag não dizia o que fazia. Agora
+     cada disciplina mostra os DOIS controles lado a lado, cada um com sua cor:
+     👁 = vê e baixa · ⬆ = envia. Contratada vem travada em verde. */
+  .chip2{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:7px;
+    overflow:hidden;font-family:var(--mono);font-size:11px;font-weight:700;margin:0 4px 5px 0}
+  .chip2 .cod{padding:3px 8px;background:var(--panel2);color:var(--txt2);display:flex;align-items:center}
+  .chip2 button{border:none;border-left:1px solid var(--line);background:var(--panel);color:#CBD5E1;
+    font-size:11px;padding:3px 7px;cursor:pointer;font-family:inherit;line-height:1.3}
+  .chip2 button:hover{background:var(--panel2);color:var(--txt2)}
+  .chip2 button.on{background:#EAF1F9;color:#1D4ED8}
+  .chip2 button.up.on{background:#DCFCE7;color:#166534}
+  .chip2.contr .cod{background:#DCFCE7;color:#166534}
+  .chip2.contr button{background:#DCFCE7;color:#166534;cursor:default}
+  .discbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .discbar .rot{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  .discbar button{border:1px solid var(--line);background:var(--panel);color:var(--txt2);border-radius:7px;
+    padding:3px 9px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .discbar button:hover{border-color:var(--accent);color:var(--txt)}
   .fn-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);padding:16px 18px;margin-bottom:14px}
   /* ── Casca na linguagem do CDE (item 25) — valores de cde_obra.html ─────── */
   :root{ --teal:#0E7490 }
@@ -2887,22 +2905,47 @@ function accUploadOn(row, cod){
   return l.some(x=>String(x).toUpperCase()===String(cod).toUpperCase()
                 || String(x).toLowerCase()===String(accDiscLabel(cod)||'').toLowerCase());
 }
-function accChipEnviar(row, d){
-  if(row.tipo!=='fornecedor') return '';
-  const on=accUploadOn(row,d);
-  return `<button class="acc-up${on?' on':''}" title="${on?'Pode ENVIAR nesta disciplina — clique para tirar':'Liberar ENVIO nesta disciplina'}"
-    onclick="event.preventDefault();event.stopPropagation();accToggleUpload('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',${on?'false':'true'})">⬆</button>`;
-}
+
 function accChips(row){
   if(!ACC_DISCS.length) return '<span style="color:var(--mut);font-size:11px">—</span>';
   const contr=(row.disc_contratadas||[]);
   const isContr=cod=>contr.some(a=>String(a).toUpperCase()===String(cod).toUpperCase());
-  return ACC_DISCS.map(d=>{
-    if(isContr(d)) return `<span class="cde-ac-orig" title="Disciplina que este fornecedor atende — vê, baixa e envia">${esc(d)} ⬆</span>`;
-    const on=row.todas_disciplinas||accDiscOn(row,d);
-    const dis=row.todas_disciplinas?'opacity:.4;pointer-events:none':'';
-    return `<label class="acc-chip ${on?'on':''}" style="${dis}" title="${esc(accDiscLabel(d))}">${accChipEnviar(row,d)}<input type="checkbox" ${on?'checked':''} onchange="accToggleDisc('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','${esc(d)}',this.checked)">${esc(d)}</label>`;
-  }).join(' ');
+  const ref=`'${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}'`;
+  // Ações em lote: marcar/limpar a LEITURA de tudo. O envio não entra no lote
+  // de propósito — liberar envio em massa é o tipo de clique que ninguém quer
+  // dar sem pensar.
+  const barra = row.todas_disciplinas ? '' :
+    `<div class="discbar"><span class="rot">Leitura</span>
+       <button type="button" onclick="accTodasDisc(${ref},true)">✓ Marcar todas</button>
+       <button type="button" onclick="accTodasDisc(${ref},false)">Limpar</button></div>`;
+  const tags = ACC_DISCS.map(d=>{
+    const rot=esc(accDiscLabel(d)||d);
+    if(isContr(d)) return `<span class="chip2 contr" title="${rot} — disciplina que este fornecedor atende: vê, baixa e envia"><span class="cod">${esc(d)}</span><button type="button">👁</button><button type="button">⬆</button></span>`;
+    const ve=row.todas_disciplinas||accDiscOn(row,d);
+    const up=accUploadOn(row,d);
+    const dis=row.todas_disciplinas?'opacity:.45;pointer-events:none':'';
+    const envia = row.tipo==='fornecedor'
+      ? `<button type="button" class="up ${up?'on':''}" title="${up?'Pode ENVIAR em '+rot+' — clique para tirar':'Liberar ENVIO em '+rot}" onclick="accToggleUpload(${ref},'${esc(d)}',${up?'false':'true'})">⬆</button>` : '';
+    return `<span class="chip2" style="${dis}" title="${rot}">
+      <span class="cod">${esc(d)}</span>
+      <button type="button" class="${ve?'on':''}" title="${ve?'Vê e baixa '+rot+' — clique para tirar':'Liberar leitura de '+rot}" onclick="accToggleDisc(${ref},'${esc(d)}',${ve?'false':'true'})">👁</button>
+      ${envia}</span>`;
+  }).join('');
+  return barra + tags;
+}
+// Item 142: liga/desliga a LEITURA de todas as disciplinas de uma vez.
+// A contratada não entra — ela é vista por direito, não por marcação.
+async function accTodasDisc(acessoId, tipo, sujeitoId, on){
+  try{
+    const id=await accGaranteLinha(acessoId, tipo, sujeitoId);
+    const row=ACC_LIST.find(x=>String(x.acesso_id)===String(id) || (x.tipo===tipo&&String(x.sujeito_id)===String(sujeitoId)));
+    const contr=((row&&row.disc_contratadas)||[]).map(x=>String(x).toUpperCase());
+    const arr = on ? ACC_DISCS.filter(d=>!contr.includes(String(d).toUpperCase())) : [];
+    const r=await sb.from('cde_acesso_auria').update({disciplinas:arr, atualizado_em:new Date().toISOString()}).eq('id',id);
+    if(r.error) throw r.error;
+    if(row) row.disciplinas=arr;
+    renderAcessos();
+  }catch(e){ alert('Não foi possível salvar: '+((e&&e.message)||e)); loadAcessos(CDE_AC_EMPID); }
 }
 function accRow(row){
   // Linha da COORDENAÇÃO (analista designado): tudo marcado e travado — o
