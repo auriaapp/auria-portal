@@ -70,9 +70,13 @@ with c(item, ok) as (values
   ('149 · destinatarios por ID',
    to_regprocedure('public.auria_emails_equipe(uuid)') is not null),
 
+  -- A assinatura real e (uuid). A primeira versao deste arquivo procurava
+  -- (integer) e (), e por isso acusou FALTA num item que estava de pe.
   ('125 · indexacao de PDF no servidor (cde_texto_pendentes)',
-   to_regprocedure('public.cde_texto_pendentes(integer)') is not null
-   or to_regprocedure('public.cde_texto_pendentes()') is not null),
+   to_regprocedure('public.cde_texto_pendentes(uuid)') is not null),
+
+  ('125 · gatilho que indexa no upload',
+   exists (select 1 from pg_trigger where tgname='trg_cde_texto_indexar' and not tgisinternal)),
 
   ('100 · federacao salva no CDE',
    exists (select 1 from information_schema.tables where table_name='cde_federacao_auria'))
