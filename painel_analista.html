@@ -1904,7 +1904,20 @@ document.addEventListener('input',function(e){
   CT_PARCS_BUF[i][f]=(f==='valor')?Number(t.value||0):t.value;
   if(f==='valor') renderCtParcs();
 });
+// Item 151: uma exceção inesperada aqui morria no console e a tela ficava
+// MUDA — foi assim que a edição de contrato ficou quebrada sem ninguém ver.
+// Botão de salvar que falha sem dizer nada é o pior modo de falha que existe.
 async function salvarContrato(){
+  try{ return await _salvarContrato(); }
+  catch(e){
+    console.error('salvarContrato:', e);
+    alert('Não foi possível salvar: '+((e&&e.message)||e)+
+          '\n\nSe a mensagem não fizer sentido, envie ela para o suporte — é falha do sistema, não do preenchimento.');
+    const b=$('ct-save');
+    if(b){ b.disabled=false; if(/Salvando/.test(b.textContent)) b.textContent='Salvar contrato'; }
+  }
+}
+async function _salvarContrato(){
   const projId=$('ct-projetista').value;
   if(!projId){ alert('Selecione um projetista (ou cadastre um fornecedor).'); return; }
   const proj=PROJETISTAS.find(p=>p.id===projId); if(!proj){ alert('Projetista inválido.'); return; }
@@ -1932,7 +1945,11 @@ async function salvarContrato(){
     data_assinatura:$('ct-assinatura').value||null,
     data_inicio:$('ct-ini').value||null,
     data_fim:$('ct-fim').value||null,
-    pdf_data:pdfData, pdf_nome:f.name,
+    // Na EDIÇÃO sem trocar o PDF, f é undefined — e ler f.name aqui lançava
+    // TypeError ANTES de salvar, fora de qualquer try: sem mensagem, sem
+    // gravação, nada no log. A validação acima já libera edição sem PDF; esta
+    // linha é que não tinha acompanhado.
+    pdf_data:pdfData, pdf_nome:(f&&f.name)||null,
     cotacao_id:(CT_ORIGEM&&CT_ORIGEM.cotacao_id)||null, proposta_id:(CT_ORIGEM&&CT_ORIGEM.proposta_id)||null,
     criado_por:USER.id, atualizado_em:new Date().toISOString()
   };
@@ -1973,8 +1990,15 @@ async function ctrSalvarEdicao(obj, pdfData, arquivo){
   });
   if(pdfData) eventos.push({ contrato_id:id, evento:'pdf', campo:'PDF do contrato', de:'', para:arquivo.name });
   try{
-    const r=await sb.from('contratos_auria').update(upd).eq('id',id);
+    // Pede a linha de volta: o PostgREST responde SUCESSO com zero linhas quando
+    // a RLS filtra o update. Sem isto, a tela diz "salvo" e nada foi gravado —
+    // o modo de falha mais caro que existe, porque some sem deixar rastro.
+    const r=await sb.from('contratos_auria').update(upd).eq('id',id).select('id');
     if(r.error) throw r.error;
+    if(!r.data || !r.data.length){
+      alert('Nada foi gravado: o banco recusou a alteração deste contrato para o seu usuário.\n\nSe você deveria poder editar, avise a gestão — é permissão, não erro de preenchimento.');
+      return true;
+    }
     // parcelas: atualiza as existentes (sem mexer em faturada/paga), cria novas, remove as apagadas ainda a faturar
     const antesP=(((CTR_LIST||[]).find(c=>c.id===id)||{}).parcelas_auria)||[];
     const vistos=new Set();

@@ -23,7 +23,8 @@ const CORS = {
 const escapeHtml = (s: string) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-type Item = { codigo: string; disciplina?: string; disciplinaLabel?: string; revisao?: string; novo?: boolean };
+type Item = { codigo: string; disciplina?: string; disciplinaLabel?: string; revisao?: string;
+              novo?: boolean; titulo?: string; motivo?: string };
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -85,13 +86,19 @@ serve(async (req) => {
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         ${porDisc[disc].map((it) => `
           <tr>
-            <td style="padding:5px 0;font-family:ui-monospace,Consolas,monospace">${escapeHtml(it.codigo)}</td>
-            <td style="padding:5px 0;text-align:right;color:#64748B">rev ${escapeHtml(it.revisao || "—")} · ${it.novo ? "novo" : "nova revisão"}</td>
+            <td style="padding:6px 0;font-family:ui-monospace,Consolas,monospace;vertical-align:top">
+              ${escapeHtml(it.codigo)}
+              ${it.titulo ? `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#334155;font-weight:600;margin-top:2px">${escapeHtml(it.titulo)}</div>` : ""}
+              ${it.motivo ? `<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#854F0B;margin-top:3px"><b>Revisado:</b> ${escapeHtml(it.motivo)}</div>` : ""}
+            </td>
+            <td style="padding:6px 0;text-align:right;color:#64748B;vertical-align:top;white-space:nowrap">rev ${escapeHtml(it.revisao || "—")} · ${it.novo ? "novo" : "nova revisão"}</td>
           </tr>`).join("")}
       </table>`).join("");
 
     const linhasText = Object.keys(porDisc).sort().map((disc) =>
-      disc + ":\n" + porDisc[disc].map((it) => `  - ${it.codigo}  (rev ${it.revisao || "—"} · ${it.novo ? "novo" : "nova revisão"})`).join("\n")
+      disc + ":\n" + porDisc[disc].map((it) =>
+        `  - ${it.codigo}${it.titulo ? " — " + it.titulo : ""}  (rev ${it.revisao || "—"} · ${it.novo ? "novo" : "nova revisão"})`
+        + (it.motivo ? `\n      revisado: ${it.motivo}` : "")).join("\n")
     ).join("\n\n");
 
     const total = itens.length;
