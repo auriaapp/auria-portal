@@ -2951,7 +2951,8 @@ function accRow(row){
   // Linha da COORDENAÇÃO (analista designado): tudo marcado e travado — o
   // acesso total vem de estacao_pode, não da matriz, então não se edita.
   if(row.bloqueado){
-    const cols=ACC_COLS.map(()=>`<td class="cde-ac-c"><input type="checkbox" checked disabled></td>`).join('');
+    const cols=ACC_COLS.map(()=>`<td class="cde-ac-c"><input type="checkbox" checked disabled></td>`).join('')
+      + '<td class="cde-ac-c"><span style="color:var(--mut);font-size:11px">—</span></td>';
     return `<tr style="background:var(--panel2)">
       <td><div style="font-weight:600;color:var(--txt)">${esc(row.nome||'—')} <span style="font-size:10px;font-weight:800;color:#5B4B8A;background:#EDE9F6;border-radius:10px;padding:1px 7px;margin-left:4px">COORDENAÇÃO</span></div>
           <div style="font-size:11px;color:var(--mut)">${esc(row.email||'')}</div></td>
@@ -2967,8 +2968,19 @@ function accRow(row){
     <td style="min-width:190px"><label class="acc-chip ${row.todas_disciplinas?'on':''}" title="Todas as disciplinas"><input type="checkbox" ${row.todas_disciplinas?'checked':''} onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','todas_disciplinas',this.checked,this)">todas</label>
         <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px">${accChips(row)}</div></td>
     ${cols}
+    <td class="cde-ac-c">${accLibObra(row)}</td>
     <td style="text-align:right">${row.tipo==='interno'?`<button class="ctr-btn sec" style="font-size:11px;padding:4px 9px" onclick="accRemoverInterno('${row.sujeito_id}')">Remover</button>`:''}</td>
   </tr>`;
+}
+// Item 147: delegação de liberação para obra. Só faz sentido para FORNECEDOR —
+// setor e obra não entregam prancha, logo não têm o que liberar.
+function accLibObra(row){
+  if(row.tipo!=='fornecedor') return '<span style="color:var(--mut);font-size:11px">—</span>';
+  const v=row.liberar_obra||'nao';
+  const op=(k,r)=>`<option value="${k}"${v===k?' selected':''}>${r}</option>`;
+  return `<select class="dist-papel" style="font-size:11px;padding:3px 6px"
+     onchange="accSet('${row.acesso_id||''}','${row.tipo}','${row.sujeito_id}','liberar_obra',this.value,this)">
+    ${op('nao','não')}${op('confirmar','com confirmação')}${op('direto','direto')}</select>`;
 }
 // Linha do RAMO OBRA: igual à do cliente interno, mas com o NÍVEL trocável no
 // lugar dos chips de disciplina (obra vê todas). Trocar o nível chama
@@ -2990,7 +3002,10 @@ function accRowObra(row){
 function renderAcessos(){
   if(PE_VIEW!=='acc') return;
   const v=$('peView');
-  const head='<tr><th style="min-width:200px">Nome</th><th>Disciplinas</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')+'<th></th></tr>';
+  const head='<tr><th style="min-width:200px">Nome</th><th>Disciplinas</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')
+    // Item 147: não é caixa de sim/não — são três modos, então é um seletor.
+    +'<th class="cde-ac-dth" title="Deixar o projetista mandar a prancha dele para a obra. Com confirmação: ele sinaliza e a coordenação libera num clique. Direto: sai na hora, com aviso para a coordenação. Vale só na disciplina que ele entrega.">Liberar p/ obra</th>'
+    +'<th></th></tr>';
   const headObra='<tr><th style="min-width:200px">Nome</th><th>Nível na obra</th>'+ACC_COLS.map(c=>`<th class="cde-ac-dth" title="${esc(c[2])}">${esc(c[1])}</th>`).join('')+'<th></th></tr>';
   // Três grupos, três tabelas. Obra e setor têm linha na MESMA matriz — o que
   // os separa é ter nível em obra_empreendimento_auria (ACC_OBRA).

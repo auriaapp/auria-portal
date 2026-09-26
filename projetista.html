@@ -1967,6 +1967,9 @@ async function enviarMensagem(id){
 //  supabase_cde_projetista.sql (RLS por e-mail → fornecedor → disciplina).
 //  O parser e o fluxo de lote espelham o cde_obra.html (mesma convenção).
 var CDE_ENT=[], CDE_EMPS=[], CDE_CUR=null, CDE_CONV=null, CDE_ST=null, CDE_DOCS=[], CDE_LOTE=[], CDE_PAVS=[];
+// Item 147: modo de liberação para obra que a coordenação delegou a este
+// fornecedor NESTE empreendimento — 'nao' | 'confirmar' | 'direto'.
+var CDE_LIB_OBRA='nao';
 function cdeEl(id){ return document.getElementById(id); }
 
 async function cdeBootCheck(){
@@ -2012,6 +2015,10 @@ async function cdeAbrirEmp(empId){
   CDE_LOTE=[]; CDE_CONV=null; CDE_DOCS=[]; CDE_PAVS=[];
   cdeEl('cde-body').innerHTML='<div class="loading">Carregando CDE de '+escH(CDE_CUR.nome)+'…</div>';
   try{
+    try{
+      const fl=await sb.rpc('cde_minhas_flags',{ p_emp:CDE_CUR.id });
+      CDE_LIB_OBRA = (!fl.error && fl.data && fl.data[0] && fl.data[0].liberar_obra) || 'nao';
+    }catch(_){ CDE_LIB_OBRA='nao'; }
     if(!CDE_ST){
       const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
       CDE_ST={}; (st||[]).forEach(function(s){ CDE_ST[s.codigo]=s; });
@@ -2104,7 +2111,7 @@ async function cdeCarregarDocs(){
     var revs=[];
     if(ids.length){
       const { data: r } = await sb.from('cde_revisao_auria')
-        .select('id,documento_id,revisao,estado,status,recebido_em,ressalvas,motivo_devolucao').in('documento_id',ids);
+        .select('id,documento_id,revisao,estado,status,recebido_em,ressalvas,motivo_devolucao,lib_pedida_em').in('documento_id',ids);
       revs=r||[];
     }
     const porDoc={}; revs.forEach(function(r){ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
@@ -2233,9 +2240,37 @@ function cdeDocsHtml(){
           +'<td class="cde-cod">'+escH(r?r.revisao:'—')+'</td>'
           +'<td>'+(s?'<span class="cde-badge" style="background:'+s.cor+'">'+escH(s.rotulo)+'</span>':'—')+'</td>'
           +'<td style="white-space:nowrap">'+cdeFmtData(r&&r.recebido_em)+'</td>'
-          +'<td>'+(r?'<button class="cde-btn sec" style="padding:5px 12px;font-size:11.5px" onclick="cdeBaixar(\''+d.id+'\')">Baixar</button>':'')+'</td></tr>';
+          +'<td style="white-space:nowrap">'+(r?'<button class="cde-btn sec" style="padding:5px 12px;font-size:11.5px" onclick="cdeBaixar(\''+d.id+'\')">Baixar</button>':'')
+            + cdeBtnObra(d, r, meu) +'</td></tr>';
       }).join('')
     +'</tbody></table></div>';
+}
+
+// Item 147: o botão só aparece quando a coordenação delegou, a prancha é de
+// disciplina que ESTE fornecedor entrega, e ainda não está liberada.
+function cdeBtnObra(d, r, meu){
+  if(CDE_LIB_OBRA==='nao' || !meu || !r) return '';
+  if(['A1','B1','AS_BUILT'].indexOf(r.status)>=0) return '';
+  if(r.lib_pedida_em) return ' <span class="cde-chip" style="background:#FEF3C7;color:#92400E;font-size:9.5px;padding:2px 7px" title="Aguardando a coordenação confirmar">⏳ pedido enviado</span>';
+  const rot = CDE_LIB_OBRA==='direto' ? 'Liberar p/ obra' : 'Pronto p/ obra';
+  const dica = CDE_LIB_OBRA==='direto'
+    ? 'Libera agora para a obra (a coordenação é avisada).'
+    : 'Avisa a coordenação de que esta prancha está pronta para a obra.';
+  return ' <button class="cde-btn" style="padding:5px 12px;font-size:11.5px" title="'+dica+'" onclick="cdeLiberarObra(\''+r.id+'\')">🏗 '+rot+'</button>';
+}
+async function cdeLiberarObra(revId){
+  const direto = CDE_LIB_OBRA==='direto';
+  const msg = direto
+    ? 'Liberar esta prancha para a OBRA agora?\n\nEla passa a valer como liberada (A1) e a coordenação é avisada.'
+    : 'Avisar a coordenação de que esta prancha está pronta para a obra?';
+  if(!confirm(msg)) return;
+  try{
+    const r=await sb.rpc('cde_obra_liberar',{ p_rev:revId });
+    if(r.error) throw r.error;
+    if(r.data && r.data.ok===false){ alert(r.data.motivo||'Não foi possível.'); return; }
+    alert(direto ? 'Liberada para a obra.' : 'Pedido enviado. A coordenação confirma e a obra recebe.');
+    await cdeCarregarDocs(); cdeRender();
+  }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); }
 }
 
 async function cdeAddFiles(fileList){

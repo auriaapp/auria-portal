@@ -672,6 +672,9 @@
   <button class="hbtn" id="btnRdo" onclick="abrirRdo()" style="display:none" title="Diário de Obra — registro diário da equipe de campo">📓 Diário</button>
   <button class="hbtn" id="btnFilaObra" onclick="filaObraToggle()" style="display:none" title="O que chegou para a obra: revisões liberadas, respostas aos apontamentos da obra">📋 Fila da obra<span class="fbad" id="filaObraBad" style="display:none">0</span></button>
   <button class="hbtn" id="btnOrgQR" onclick="abrirOrganizadorQR()" style="display:none" title="Organizar vários QR para impressão (A4/A3 paisagem)">🖨 Organizar QR</button>
+  <!-- Item 147: fila de pranchas que o projetista marcou como prontas para a obra.
+       Só aparece quando há pedido — botão morto no cabeçalho é ruído. -->
+  <button class="hbtn" id="btnPedObra" onclick="pedObraAbrir()" style="display:none" title="Pranchas que os projetistas marcaram como prontas para a obra">🏗 Pedidos da obra</button>
   <button class="hbtn pri" id="btnReceber" onclick="abrirReceber()" style="display:none">⬆ Enviar arquivo(s)</button>
 </header>
 
@@ -1166,6 +1169,7 @@ async function boot(){
   if(RAMO_OBRA){ const b=$('btnFilaObra'); if(b) b.style.display=''; setTimeout(filaObraCarregar, 800); }
   await carregarDocs();
   await carregarGrupos();
+  pedObraCarregar();          // item 147: fila de liberação para a obra (não bloqueia o boot)
   $('load').style.display='none';
   // "Me leva lá" (item 52 fase 2): ações que o assistente pode executar nesta tela.
   //  quando() = só oferece o que está visível para ESTE usuário (papel/permissão).
@@ -6304,6 +6308,60 @@ function renderMultiBar(){
     ${!SEM_ESCRITA&&!ehBim?`<button onclick="recodAbrir()" title="Corrigir o código das pranchas selecionadas (campos da convenção), com histórico">✎ Recodificar</button>`:''}
     <span class="mbDiv"></span>
     <button class="x" title="Limpar seleção" onclick="MULTI_SEL.clear();renderNav()">✕</button>`;
+}
+
+// ── Item 147: fila de liberação para a obra ─────────────────────────────────
+//  O projetista com delegação "com confirmação" sinaliza que a prancha está
+//  pronta; aqui a coordenação confirma num clique. O ganho sobre o fluxo antigo
+//  é a coordenação não precisar mais ADIVINHAR que chegou algo pronto.
+var PED_OBRA=[];
+async function pedObraCarregar(){
+  if(SEM_ESCRITA){ PED_OBRA=[]; return; }
+  try{
+    const r=await sb.rpc('cde_obra_pendentes',{ p_emp:EMP_ID });
+    PED_OBRA = r.error ? [] : (r.data||[]);
+  }catch(_){ PED_OBRA=[]; }
+  const b=$('btnPedObra');
+  if(b){ b.style.display = PED_OBRA.length ? '' : 'none';
+         b.textContent = '🏗 Pedidos da obra (' + PED_OBRA.length + ')'; }
+}
+function pedObraAbrir(){
+  const old=$('pedObraPop'); if(old) old.remove();
+  if(!PED_OBRA.length){ _cdeToast('Nenhum pedido pendente.'); return; }
+  const d=document.createElement('div'); d.id='pedObraPop'; d.className='zipPop';
+  d.style.bottom='auto'; d.style.top='64px'; d.style.minWidth='430px'; d.style.maxHeight='70vh'; d.style.overflowY='auto';
+  d.innerHTML='<h4>Prontas para a obra — aguardando sua confirmação</h4>'
+    + PED_OBRA.map(x=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line)">
+        <span style="flex:1;min-width:0">
+          <b class="mono" style="font-size:11.5px">${esc(x.codigo||'')}</b> ${esc(x.revisao||'')}
+          <span style="display:block;font-size:11px;color:var(--mut)">${esc(x.titulo||'')} · pedido por ${esc(x.pedida_por||'—')}</span>
+        </span>
+        <button class="btn sec sm" onclick="pedObraResponder('${x.revisao_id}',false)">Recusar</button>
+        <button class="btn pri sm" onclick="pedObraResponder('${x.revisao_id}',true)">Liberar</button>
+      </div>`).join('')
+    + `<div class="acts" style="margin-top:10px"><button class="btn sec sm" onclick="$('pedObraPop').remove()">Fechar</button>
+       <button class="btn pri sm" onclick="pedObraTodos()">Liberar todas (${PED_OBRA.length})</button></div>`;
+  document.body.appendChild(d);
+}
+async function pedObraResponder(revId, ok){
+  if(!ok && !confirm('Recusar este pedido? A prancha continua como está e o projetista fica sabendo.')) return;
+  try{
+    const r=await sb.rpc('cde_obra_confirmar',{ p_rev:revId, p_ok:ok, p_nota:null });
+    if(r.error) throw r.error;
+  }catch(e){ alert('Não foi possível: '+((e&&e.message)||e)); return; }
+  await pedObraCarregar(); await carregarDocs(); renderNav();
+  const pop=$('pedObraPop'); if(pop){ pop.remove(); if(PED_OBRA.length) pedObraAbrir(); }
+}
+async function pedObraTodos(){
+  if(!confirm('Liberar para a obra as '+PED_OBRA.length+' prancha(s) da lista?')) return;
+  const lista=PED_OBRA.slice(); let falhas=0;
+  for(const x of lista){
+    try{ const r=await sb.rpc('cde_obra_confirmar',{ p_rev:x.revisao_id, p_ok:true, p_nota:null }); if(r.error) throw r.error; }
+    catch(_){ falhas++; }
+  }
+  const pop=$('pedObraPop'); if(pop) pop.remove();
+  await pedObraCarregar(); await carregarDocs(); renderNav();
+  _cdeToast(falhas ? (lista.length-falhas)+' liberada(s), '+falhas+' falhou(aram).' : 'Liberadas para a obra.');
 }
 
 // ── Item 54: Diário de Obra (RDO) ───────────────────────────────────────────
