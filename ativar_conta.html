@@ -61,7 +61,7 @@ input:focus{border-color:#3B82F6}
   <div id="invalidWrap" style="display:none;text-align:center">
     <p style="font-size:40px;margin-bottom:16px">⚠️</p>
     <h2 style="margin-bottom:8px">Link inválido ou expirado</h2>
-    <p class="sub">Este link de ativação já foi usado ou expirou.<br>Entre em contato com a Auria para receber um novo convite.</p>
+    <p class="sub">Este link de ativação já foi usado ou expirou.<br>Peça um convite novo a quem cadastrou você &mdash; ele leva um clique no painel.</p>
   </div>
 </div>
 
@@ -72,6 +72,10 @@ const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 const sb      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 let PENDING = null;   // {token_hash, type} — só é validado quando o usuário define a senha
+// Item 141: token NOSSO, com 5 dias. Segue a MESMA regra do PENDING: não é
+// resgatado no carregamento, porque scanner de e-mail corporativo abre o link
+// sozinho e queimaria o convite antes de a pessoa chegar nele.
+let PENDING_CONVITE = null;
 let IS_RECOVERY = false;   // true = veio de "esqueci minha senha" (troca a copy do formulário)
 
 // "Ativar conta" (convite) e "Redefinir senha" (recovery) usam o MESMO
@@ -87,6 +91,22 @@ function aplicarCopyFormulario(){
 async function init(){
   // ── Fluxo NOVO: link do e-mail aponta para o NOSSO domínio, com token_hash.
   const qs    = new URLSearchParams(window.location.search);
+
+  // ── Item 141: convite com validade própria de 5 dias.
+  //    O link traz só o nosso token; o do Supabase é gerado no RESGATE, que
+  //    acontece quando a pessoa envia a senha. Por isso aqui não se chama nada:
+  //    Safe Links e afins abrem este endereço para escanear, e um resgate no
+  //    carregamento gastaria o convite sem ninguém ter clicado.
+  const cv = qs.get('convite');
+  if(cv){
+    PENDING_CONVITE = cv;
+    IS_RECOVERY = false;
+    aplicarCopyFormulario();
+    document.getElementById('loadWrap').style.display = 'none';
+    document.getElementById('formWrap').style.display = 'block';
+    return;
+  }
+
   const th    = qs.get('token_hash');
   const qtype = qs.get('type');
   if(th && ['invite','recovery'].includes(qtype)){
@@ -167,6 +187,34 @@ async function ativar(){
   const btn = document.getElementById('btnAtivar');
   const txtOk = IS_RECOVERY ? 'Salvar nova senha e entrar' : 'Ativar conta e entrar no painel';
   btn.disabled = true; btn.textContent = IS_RECOVERY ? 'Salvando...' : 'Ativando...';
+
+  // Item 141: o convite de 5 dias vira token do Supabase AQUI — ação humana.
+  if(PENDING_CONVITE && !PENDING){
+    try{
+      const r = await sb.functions.invoke('convite-resgatar', {
+        body:{ token: PENDING_CONVITE, redirect_to: location.href.split('?')[0] } });
+      const d = (r && r.data) || {};
+      if(d.success && d.token_hash){
+        PENDING = { token_hash: d.token_hash, type: d.type || 'invite' };
+        IS_RECOVERY = (d.type === 'recovery');
+      }else{
+        const motivo = d.error || (r && r.error && r.error.message) || 'convite_invalido';
+        const texto = motivo === 'convite_vencido'
+            ? 'Este convite passou dos 5 dias. Peça um novo ao administrador.'
+          : motivo === 'convite_usado'
+            ? 'Este convite já foi usado. Entre em auria.solutions com a sua senha.'
+            : 'Convite inválido. Confira se abriu o link mais recente que recebeu.';
+        errBox.textContent = texto; errBox.style.display = 'block';
+        btn.disabled = false; btn.textContent = txtOk;
+        return;
+      }
+    }catch(e){
+      errBox.textContent = 'Não foi possível validar o convite agora. Tente de novo em instantes.';
+      errBox.style.display = 'block';
+      btn.disabled = false; btn.textContent = txtOk;
+      return;
+    }
+  }
 
   // Fluxo novo: só AGORA (ação humana) consumimos o token de uso único.
   if(PENDING){

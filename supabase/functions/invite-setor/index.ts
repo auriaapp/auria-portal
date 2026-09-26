@@ -110,10 +110,18 @@ serve(async (req) => {
     if (linkErr) throw linkErr;
     const _base = redirect_to || DEFAULT_REDIRECT;
     const _hashed = linkData?.properties?.hashed_token;
-    const actionLink = _hashed
-      ? `${_base}?token_hash=${_hashed}&type=invite`
-      : linkData?.properties?.action_link;
-    if (!actionLink) throw new Error("Não foi possível gerar o link de convite.");
+    // Item 141: o link que vai no e-mail é o NOSSO, com validade de 5 dias.
+    // O token do Supabase (hashed_token acima) NÃO é usado aqui — ele nasce só
+    // no resgate, em convite-resgatar. Assim o convite dura 5 dias sem precisar
+    // subir o "Email OTP expiration" do projeto, que é global e governa também
+    // o link de RECUPERAÇÃO DE SENHA.
+    const _tk = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map((b) => b.toString(16).padStart(2, "0")).join("");
+    await admin.from("convite_token_auria").insert({
+      token: _tk, email, nome: nome || null, papel: role,
+      user_id: linkData?.user?.id ?? null, empresa_nome: empresa_nome || null, criado_por: cu?.user?.id ?? null,
+    });
+    const actionLink = `${_base}?convite=${_tk}`;
 
     // Perfil do convidado (service role ignora RLS).
     const newUserId = linkData?.user?.id;
