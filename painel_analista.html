@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auria — Painel do Analista</title>
 <link rel="icon" href="logo_symbol.png" type="image/png">
+<script src="auria_busy.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -2519,10 +2520,19 @@ const _fnKey=e=>String(e||'').trim().toLowerCase();
 function fnSeloConta(email){
   const st=FN_STATUS[_fnKey(email)]; if(!st) return '';
   const d=FN_SIT[st.situacao]||FN_SIT.nunca_convidado;
-  let extra='';
-  if(st.situacao==='convite_pendente'&&st.convite_expira)
-    extra=' · vence '+new Date(st.convite_expira).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
-  return '<span title="'+esc(d[4])+'" style="display:inline-block;margin-top:3px;background:'+d[2]+';color:'+d[1]+
+  const venc = st.convite_expira ? new Date(st.convite_expira) : null;
+  const dtv  = venc ? venc.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : '';
+  const linkVivo = !!(venc && !st.convite_usado && venc > new Date());
+  let extra='', dica=d[4];
+  if(st.situacao==='convite_pendente' && venc) extra=' · vence '+dtv;
+  // Conta ATIVA com link em aberto: a pessoa já tem senha, mas alguém pediu a
+  // troca e o link ainda não foi usado. Sem esta marca a tela ficava idêntica
+  // antes e depois do envio — dava para reenviar sem saber que já tinha ido.
+  if(st.situacao==='ativo' && linkVivo){
+    extra=' · link de nova senha enviado';
+    dica='Já tem senha e consegue entrar. Um link para cadastrar NOVA senha foi enviado e ainda não foi usado (vence '+dtv+').';
+  }
+  return '<span title="'+esc(dica)+'" style="display:inline-block;margin-top:3px;background:'+d[2]+';color:'+d[1]+
          ';border:1px solid '+d[3]+';border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">'+
          esc(d[0]+extra)+'</span>';
 }
@@ -2581,8 +2591,8 @@ async function _fnRedefinirSenha(email, nome){
       body:{ email, nome:nome||'', empresa_nome:empresaNome, redefinir:true } });
     if(r.error) throw r.error;
     if(r.data && r.data.error) throw new Error(r.data.error);
-    alert('Link para cadastrar nova senha enviado para '+email+'.\nO link vale 3 dias.');
-    carregarStatusContas();
+    await carregarStatusContas();   // o selo passa a registrar o envio ANTES do alerta
+    alert('Link para cadastrar nova senha enviado para '+email+'.\nO link vale 3 dias.\n\nA linha dele agora mostra "link de nova senha enviado".');
   }catch(e){ alert('Falha ao enviar: '+(e.message||e)); }
 }
 // Conta ativa não precisa de convite — precisa de redefinição de senha. Antes
