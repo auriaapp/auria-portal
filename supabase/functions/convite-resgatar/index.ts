@@ -41,9 +41,13 @@ serve(async (req) => {
     const { token, redirect_to } = await req.json().catch(() => ({}));
     if (!token || String(token).length < 20) return j({ error: "convite_invalido" }, 400);
 
+    // Busca pelo HASH: o token cru nunca é gravado, então nem o banco nem um
+    // backup dele servem para abrir conta.
+    const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(token)));
+    const sha = Array.from(new Uint8Array(dig)).map((b) => b.toString(16).padStart(2, "0")).join("");
     const { data: cv } = await admin.from("convite_token_auria")
       .select("id,email,nome,papel,user_id,expira_em,usado_em,tentativas")
-      .eq("token", token).maybeSingle();
+      .eq("token_sha", sha).maybeSingle();
 
     // Mesma resposta para token inexistente, já usado e vencido: quem está
     // sondando não aprende nada com a diferença.

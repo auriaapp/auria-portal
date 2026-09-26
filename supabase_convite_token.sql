@@ -16,11 +16,16 @@
 --  abre o link, a Edge Function convite-resgatar valida o token e SÓ ENTÃO
 --  pede ao Supabase um link de uso imediato — que a página consome na hora.
 --  As 24h do Supabase nunca chegam a correr. O prazo global fica em 86400.
+--
+--  O QUE VAI PARA O BANCO: só o SHA-256 do token. O token cru existe no e-mail
+--  e na memória da função, nunca numa linha. É o mesmo princípio do
+--  "hashed_token" do Supabase — se a tabela vazar num backup ou por uma chave
+--  de serviço exposta, o que sai de lá não abre conta nenhuma.
 -- ============================================================================
 
 create table if not exists public.convite_token_auria (
   id           uuid primary key default gen_random_uuid(),
-  token        text not null unique,          -- aleatório, alta entropia, gerado no servidor
+  token_sha    text not null unique,          -- SHA-256 do token; o token CRU nunca é gravado
   email        text not null,
   nome         text,
   papel        text,                          -- projetista | setor | financeiro | obra | analista
@@ -32,6 +37,21 @@ create table if not exists public.convite_token_auria (
   usado_em     timestamptz,                   -- uso ÚNICO
   tentativas   int not null default 0
 );
+-- Migração de quem rodou a 1ª versão deste arquivo (coluna 'token' em claro).
+do $$ begin
+  if exists (select 1 from information_schema.columns
+              where table_name='convite_token_auria' and column_name='token') then
+    alter table public.convite_token_auria add column if not exists token_sha text;
+    -- Nenhum convite tinha sido enviado ainda com a versão em claro: os que
+    -- existirem viram inválidos de propósito, em vez de migrar segredo.
+    delete from public.convite_token_auria where token_sha is null;
+    alter table public.convite_token_auria drop column token;
+    alter table public.convite_token_auria alter column token_sha set not null;
+    create unique index if not exists convite_token_auria_token_sha_key
+      on public.convite_token_auria(token_sha);
+  end if;
+end $$;
+
 create index if not exists idx_convtk_email on public.convite_token_auria(lower(email));
 create index if not exists idx_convtk_exp   on public.convite_token_auria(expira_em) where usado_em is null;
 

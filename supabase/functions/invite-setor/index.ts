@@ -56,6 +56,26 @@ async function acharUsuarioPorEmail(
   return null;
 }
 
+// Item 141: o e-mail leva o token; o banco guarda só o SHA-256 dele. Se a
+// tabela vazar (backup, chave de serviço exposta), o que sai de lá não abre
+// conta nenhuma — é o mesmo princípio do "hashed_token" do Supabase.
+async function criarConviteToken(
+  admin: ReturnType<typeof createClient>,
+  dados: { email: string; nome?: string; papel: string; user_id?: string | null;
+           empresa_nome?: string | null; criado_por?: string | null },
+): Promise<string> {
+  const bruto = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  const dig = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bruto));
+  const sha = Array.from(new Uint8Array(dig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  await admin.from("convite_token_auria").insert({
+    token_sha: sha, email: dados.email, nome: dados.nome || null, papel: dados.papel,
+    user_id: dados.user_id ?? null, empresa_nome: dados.empresa_nome ?? null,
+    criado_por: dados.criado_por ?? null,
+  });
+  return bruto;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const j = (b: unknown, s = 200) =>
@@ -115,12 +135,8 @@ serve(async (req) => {
     // no resgate, em convite-resgatar. Assim o convite dura 5 dias sem precisar
     // subir o "Email OTP expiration" do projeto, que é global e governa também
     // o link de RECUPERAÇÃO DE SENHA.
-    const _tk = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-      .map((b) => b.toString(16).padStart(2, "0")).join("");
-    await admin.from("convite_token_auria").insert({
-      token: _tk, email, nome: nome || null, papel: role,
-      user_id: linkData?.user?.id ?? null, empresa_nome: empresa_nome || null, criado_por: cu?.user?.id ?? null,
-    });
+    const _tk = await criarConviteToken(admin, { email, nome, papel: role,
+      user_id: linkData?.user?.id ?? null, empresa_nome, criado_por: cu?.user?.id ?? null });
     const actionLink = `${_base}?convite=${_tk}`;
 
     // Perfil do convidado (service role ignora RLS).
