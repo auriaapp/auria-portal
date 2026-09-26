@@ -5544,6 +5544,16 @@ async function f3dClique(ev){
   }
   const m=hit.__modelo;
   await B3.destacar(F3D, m, [hit.localId]);
+  // Item 133: com o editor de pin ligado, o clique ACRESCENTA um pin ao
+  // apontamento aberto. O caminho 2D e o do visualizador antigo (_bimClick) já
+  // faziam isso; este, o de Fragments, nunca fez — e por isso não havia como
+  // pôr mais de um pin no mesmo apontamento 3D. Remover já funcionava
+  // (f3dPinClick), só faltava acrescentar.
+  if(PIN_EDIT && APT_EDIT){
+    (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push(f3dPonto(hit, m));
+    renderPinsList(); f3dPinsRefresh();
+    return;
+  }
   if(F3D_APONTAR){
     f3dApontarToggle(false);
     f3dNovoApontamento(f3dPonto(hit, m), m);
@@ -6692,6 +6702,14 @@ function _bimClick(canvasPos, force){
   if(BIM_APONTAR) bimAtivarApontar();          // desliga o modo one-shot (se estava ligado)
   novoApontamentoBim(pt);
 }
+// Item 134: o erro de chave duplicada chega com formatos diferentes conforme a
+// camada (PostgREST devolve code 23505; o texto cru cita a constraint).
+function apontamentoIdDuplicado(err){
+  if(!err) return false;
+  return err.code==='23505'
+      || /duplicate key|already exists|apontamentos_emp_id_uni|apontamentos_empreendimento_id_id_key/i
+           .test(String(err.message||err.details||err));
+}
 function proximoIdBim(disc){
   const pref='BIM-'+(disc? disc.normalize('NFD').replace(/[̀-ͯ]/g,'').slice(0,3).toUpperCase() : 'GER');
   let num=1;
@@ -7334,7 +7352,29 @@ async function salvarApt(){
     // colide entre empresas; a linha do banco tem coluna id (uuid) + a
     // UNIQUE (empreendimento_id, id) criada em
     // supabase_apt_unique_empreendimento_id.sql.
-    const { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento_id,id' });
+    let { error }=await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento_id,id' });
+    // Item 134: o id vem do NAVEGADOR (proximoId varre a lista carregada), então
+    // basta uma linha que a lista não enxergue — filtro, recorte de RLS, outro
+    // analista criando ao mesmo tempo — para o id já existir. Pior: a tabela tem
+    // DUAS unicidades, e o upsert mira só a de (empreendimento_id, id); quando
+    // ela não casa vira INSERT e a legada, por NOME, estoura sozinha.
+    // O servidor é quem sabe o id livre — pedimos e tentamos de novo, uma vez.
+    if(error && apontamentoIdDuplicado(error) && a._novo){
+      const pref=String(a.id||'').replace(/-\d+$/,'');
+      const r=await sb.rpc('apt_proximo_id',{ p_emp:EMP.id, p_pref:pref });
+      if(!r.error && r.data){
+        const antigo=a.id, novo=r.data;
+        // grupo_id nasce igual ao id; se ainda estiver assim, acompanha a troca.
+        if(row.grupo_id===antigo) row.grupo_id=novo;
+        a.id=novo; row.id=novo;
+        const m=String(novo).match(/-(\d+)$/); if(m){ a.id_num=+m[1]; row.id_num=+m[1]; }
+        row.log_json=(row.log_json||[]).concat([{ data:hojeBr(),
+          texto:'C\u00f3digo ajustado de '+antigo+' para '+novo+' \u2014 o anterior j\u00e1 existia neste empreendimento.',
+          tipo:'sistema' }]);
+        ({ error } = await sb.from('apontamentos').upsert(row, { onConflict:'empreendimento_id,id' }));
+        if(!error) alert('O c\u00f3digo '+antigo+' j\u00e1 estava em uso. Este apontamento foi salvo como '+novo+'.');
+      }
+    }
     if(error) throw error;
     fecharApt();
     await carregarApts();
