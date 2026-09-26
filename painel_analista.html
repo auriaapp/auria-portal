@@ -3391,8 +3391,20 @@ async function accAtribuirForn(){
   // e a tela perguntava "trocar?" — agora ela ACRESCENTA, e só avisa quem já
   // está lá para a pessoa não achar que substituiu.
   const jaNaDisc=(ACC_DF||[]).filter(v=>v.disciplina===cod);
-  if(jaNaDisc.some(v=>v.fornecedor_id===fid)){
-    alert(accFornNome(fid)+' já atende '+cod+' nesta obra. Para trocar o responsável, use o botão de responsável no próprio vínculo.');
+  // Se a dupla JÁ existe, Atribuir não é "criar de novo" — é DEFINIR O
+  // RESPONSÁVEL. Eu tinha feito isto recusar e mandado usar um botão que não
+  // existe, o que deixava o responsável impossível de definir.
+  const mesmo=jaNaDisc.find(v=>v.fornecedor_id===fid);
+  if(mesmo){
+    const pid0=($('accAtribProj')||{}).value||null;
+    if(!pid0){ alert(accFornNome(fid)+' já atende '+cod+'. Escolha o responsável ao lado para definir quem responde por esta disciplina.'); return; }
+    try{
+      const r0=await sb.from('disciplina_fornecedor_auria').update({ projetista_id:pid0 }).eq('id',mesmo.id).select('id');
+      if(r0.error) throw r0.error;
+      if(!r0.data || !r0.data.length) throw new Error('o banco recusou a alteração');
+      await loadAcessos(CDE_AC_EMPID);
+      alert('Responsável de '+cod+' definido: '+accProjNome(fid,pid0)+'.');
+    }catch(e){ alert('Não foi possível definir o responsável: '+((e&&e.message)||e)); }
     return;
   }
   if(jaNaDisc.length && !confirm(cod+' já é atendida por '+jaNaDisc.map(v=>accFornNome(v.fornecedor_id)).join(', ')+'.'+String.fromCharCode(10,10)+
