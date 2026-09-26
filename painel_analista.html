@@ -2567,6 +2567,24 @@ function renderFnProjs(){
     <td style="white-space:nowrap"><span id="fn-bt-${i}">${_fnBotao(i,p)}</span> <button class="mini" onclick="rmProjetistaLinha(${i})">🗑</button></td>
   </tr>`;}).join('');
 }
+// Conta que JÁ TEM SENHA: avisa, pergunta, e com o sim manda um link novo para
+// a pessoa cadastrar outra senha. Reusa o token de 3 dias do item 141 — o link
+// de "Esqueci minha senha" do Supabase vale 1 HORA, que é o prazo curto que já
+// nos custou dois projetistas. O perfil dela não é tocado: só a senha muda.
+async function _fnRedefinirSenha(email, nome){
+  if(!confirm(email+' JÁ TEM SENHA cadastrada no Auria.\n\n'+
+     'Deseja enviar um link para esta pessoa cadastrar uma NOVA senha?\n\n'+
+     'A senha atual continua valendo até ela abrir o link e trocar.\nO link vale 3 dias.')) return;
+  try{
+    const empresaNome=($('fn-nome')?$('fn-nome').value:'')||'';
+    const r=await sb.functions.invoke('invite-projetista',{
+      body:{ email, nome:nome||'', empresa_nome:empresaNome, redefinir:true } });
+    if(r.error) throw r.error;
+    if(r.data && r.data.error) throw new Error(r.data.error);
+    alert('Link para cadastrar nova senha enviado para '+email+'.\nO link vale 3 dias.');
+    carregarStatusContas();
+  }catch(e){ alert('Falha ao enviar: '+(e.message||e)); }
+}
 // Conta ativa não precisa de convite — precisa de redefinição de senha. Antes
 // o clique aqui só devolvia um alerta sem saída nenhuma.
 function _fnBotao(i,p){
@@ -2582,16 +2600,7 @@ async function convidarProjetista(i){
   const email=(p.email||'').trim();
   if(!email){ alert('Preencha o e-mail do projetista antes de convidar.'); return; }
   const st=FN_STATUS[_fnKey(email)];
-  if(st && st.situacao==='ativo'){
-    if(!confirm(email+' já tem conta ativa no Auria.\n\nEnviar um link para REDEFINIR A SENHA?'))return;
-    try{
-      const r=await sb.functions.invoke('reset-password',{ body:{ email } });
-      if(r.error) throw r.error;
-      if(r.data && r.data.error) throw new Error(r.data.error);
-      alert('Link de redefinição enviado para '+email+'.\nO link vale 1 hora.');
-    }catch(e){ alert('Falha ao enviar: '+(e.message||e)); }
-    return;
-  }
+  if(st && st.situacao==='ativo'){ await _fnRedefinirSenha(email, p.nome); return; }
   if(!confirm('Enviar (ou reenviar) o convite de acesso para '+email+'?\n\nSe ele já recebeu e o link venceu, isto gera um link novo.'))return;
   try{
     const empresaNome=($('fn-nome')?$('fn-nome').value:'')||'';
@@ -2600,7 +2609,11 @@ async function convidarProjetista(i){
     if(r.data && r.data.error) throw new Error(r.data.error);
     // ja_existia + ativo = conta REALMENTE em uso. Convidado que nunca entrou
     // recebe link novo e volta com reenvio=true.
-    if(r.data && r.data.ativo) alert(r.data.aviso||'Este e-mail já tem conta ativa no Auria.');
+    // O selo pode não ter carregado (RPC ainda não no banco, pessoa recém
+    // digitada, papel sem permissão). Então quem decide de verdade é a
+    // resposta do servidor — e aqui também a pergunta tem saída, em vez do
+    // beco "use Esqueci minha senha".
+    if(r.data && r.data.ativo){ await _fnRedefinirSenha(email, p.nome); return; }
     else if(r.data && r.data.reenvio) alert('Link NOVO enviado para '+email+'.\nO link anterior deixou de valer.');
     else alert('Convite enviado para '+email+'.');
     carregarStatusContas();
