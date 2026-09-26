@@ -4,8 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // ============================================================================
 //  convite-resgatar — item 141 (2026-09-26)
 //
-//  Troca o NOSSO token de convite (válido 5 dias) por um token do Supabase de
-//  uso imediato. É isto que permite dar 5 dias ao convite sem subir o prazo
+//  Troca o NOSSO token de convite (válido 3 dias) por um token do Supabase de
+//  uso imediato. É isto que permite dar 3 dias ao convite sem subir o prazo
 //  global do projeto — que também governa o link de RECUPERAÇÃO DE SENHA.
 //
 //  A sequência importa: o link do Supabase só nasce AQUI, no momento em que a

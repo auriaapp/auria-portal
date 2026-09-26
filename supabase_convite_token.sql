@@ -1,5 +1,5 @@
 -- ============================================================================
---  Item 141 — convite com validade PRÓPRIA de 5 dias (2026-09-26)
+--  Item 141 — convite com validade PRÓPRIA de 3 dias (2026-09-26)
 --  Rodar no SQL Editor. Reaplicável.
 --
 --  O PROBLEMA MEDIDO: em uma semana de teste, DUAS vezes o projetista passou
@@ -8,11 +8,11 @@
 --
 --  POR QUE NÃO BASTAVA SUBIR O PRAZO NO SUPABASE: aquele campo ("Email OTP
 --  expiration") é GLOBAL — governa convite, magic link e RECUPERAÇÃO DE SENHA.
---  Subir para 5 dias faria um link de redefinir senha viver 5 dias numa caixa
+--  Subir para 3 dias faria um link de redefinir senha viver 3 dias numa caixa
 --  de entrada. Trocar segurança de senha por conveniência de convite é mau
 --  negócio.
 --
---  COMO FUNCIONA: o token desta tabela é o que vale 5 dias. Quando a pessoa
+--  COMO FUNCIONA: o token desta tabela é o que vale 3 dias. Quando a pessoa
 --  abre o link, a Edge Function convite-resgatar valida o token e SÓ ENTÃO
 --  pede ao Supabase um link de uso imediato — que a página consome na hora.
 --  As 24h do Supabase nunca chegam a correr. O prazo global fica em 86400.
@@ -33,7 +33,7 @@ create table if not exists public.convite_token_auria (
   empresa_nome text,
   criado_por   uuid,
   criado_em    timestamptz not null default now(),
-  expira_em    timestamptz not null default (now() + interval '5 days'),
+  expira_em    timestamptz not null default (now() + interval '3 days'),
   usado_em     timestamptz,                   -- uso ÚNICO
   tentativas   int not null default 0
 );
@@ -56,7 +56,7 @@ create index if not exists idx_convtk_email on public.convite_token_auria(lower(
 create index if not exists idx_convtk_exp   on public.convite_token_auria(expira_em) where usado_em is null;
 
 comment on table public.convite_token_auria is
-  'Convite com validade própria (item 141). O token daqui vale 5 dias; o link do Supabase só é gerado no resgate.';
+  'Convite com validade própria (item 141). O token daqui vale 3 dias; o link do Supabase só é gerado no resgate.';
 
 -- Ninguém acessa esta tabela pelo cliente: só as Edge Functions, com service
 -- role. Um token vazado é um convite vazado.

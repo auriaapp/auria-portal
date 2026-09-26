@@ -65,7 +65,7 @@ serve(async (req) => {
     // Cai no action_link do Supabase só se o hashed_token não vier.
     const _base = redirect_to || DEFAULT_REDIRECT;
     const _hashed = linkData?.properties?.hashed_token;
-    // Item 141: link NOSSO, 5 dias. O hashed_token acima não vai no e-mail.
+    // Item 141: link NOSSO, 3 dias. O hashed_token acima não vai no e-mail.
     const _tk = await criarConviteToken(admin, { email, nome, papel: "analista",
       user_id: linkData?.user?.id ?? null, empresa_nome: null,
       criado_por: null });

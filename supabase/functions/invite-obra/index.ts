@@ -186,7 +186,7 @@ serve(async (req) => {
 
       const _base   = redirect_to || DEFAULT_REDIRECT;
       const _hashed = linkData?.properties?.hashed_token;
-      // Item 141: link NOSSO, 5 dias. O hashed_token acima não vai no e-mail.
+      // Item 141: link NOSSO, 3 dias. O hashed_token acima não vai no e-mail.
       const _tk = await criarConviteToken(admin, { email, nome, papel: "obra",
         user_id: linkData?.user?.id ?? null, empresa_nome: empresa_nome ?? null,
         criado_por: cu?.user?.id ?? null });
@@ -246,7 +246,7 @@ serve(async (req) => {
             Definir minha senha e acessar
           </a>
         </p>
-        <p style="text-align:center;font-size:12px;color:#94A3B8;margin:0 0 22px">O link é válido por 24 horas.</p>
+        <p style="text-align:center;font-size:12px;color:#94A3B8;margin:0 0 22px">O link é válido por 3 dias.</p>
         <p style="font-size:12px;color:#64748B;line-height:1.6">
           Se o botão acima não funcionar, copie e cole este endereço no navegador:<br>
           <a href="${actionLink}" style="color:#1D4ED8;word-break:break-all">${actionLink}</a>
@@ -275,7 +275,7 @@ ${textoItens}
 Para definir sua senha e acessar:
 ${actionLink}
 
-O link é válido por 24 horas.
+O link é válido por 3 dias.
 
 Auria — Coordenação de Projetos
 https://auria.solutions`,

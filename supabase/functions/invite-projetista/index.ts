@@ -115,9 +115,9 @@ serve(async (req) => {
     // Cai no action_link do Supabase só se o hashed_token não vier.
     const _base = redirect_to || DEFAULT_REDIRECT;
     const _hashed = linkData?.properties?.hashed_token;
-    // Item 141: o link que vai no e-mail é o NOSSO, com validade de 5 dias.
+    // Item 141: o link que vai no e-mail é o NOSSO, com validade de 3 dias.
     // O token do Supabase (hashed_token acima) NÃO é usado aqui — ele nasce só
-    // no resgate, em convite-resgatar. Assim o convite dura 5 dias sem precisar
+    // no resgate, em convite-resgatar. Assim o convite dura 3 dias sem precisar
     // subir o "Email OTP expiration" do projeto, que é global e governa também
     // o link de RECUPERAÇÃO DE SENHA.
     const _tk = await criarConviteToken(admin, { email, nome, papel: "projetista",
@@ -150,7 +150,7 @@ serve(async (req) => {
             Definir minha senha e acessar
           </a>
         </p>
-        <p style="text-align:center;font-size:12px;color:#94A3B8;margin:0 0 22px">O link é válido por 24 horas.</p>
+        <p style="text-align:center;font-size:12px;color:#94A3B8;margin:0 0 22px">O link é válido por 3 dias.</p>
         <p style="font-size:12px;color:#64748B;line-height:1.6">
           Se o botão acima não funcionar, copie e cole este endereço no navegador:<br>
           <a href="${actionLink}" style="color:#1D4ED8;word-break:break-all">${actionLink}</a>
@@ -173,7 +173,7 @@ ${empresa_nome ? "A equipe da " + empresa_nome : "A equipe de coordenação"} co
 Para definir sua senha e acessar, acesse:
 ${actionLink}
 
-O link é válido por 24 horas.
+O link é válido por 3 dias.
 
 Auria — Coordenação de Projetos
 https://auria.solutions`,
