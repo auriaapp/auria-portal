@@ -1653,7 +1653,12 @@ async function accContratoDe(vid){
   // cadastrar o mesmo contrato duas vezes — e some com valor e parcelas da vista.
   const rot=String(accDiscLabel(v.disciplina)||'').toLowerCase();
   const cod=String(v.disciplina||'').toLowerCase();
-  const bate=c=>{ const d=String(c.disciplina||'').toLowerCase(); return d===rot || d===cod; };
+  // Item 153: o contrato cobre uma LISTA de disciplinas.
+  const bate=c=>{
+    const ds=[].concat(c.disciplinas||[], c.disciplina?[c.disciplina]:[])
+              .map(x=>String(x||'').toLowerCase());
+    return ds.includes(rot) || ds.includes(cod);
+  };
   const ja=(CTR_LIST||[]).find(c=>
       (v.fornecedor_id && c.fornecedor_id===v.fornecedor_id && bate(c))
    || (v.projetista_id && c.projetista_id===v.projetista_id && bate(c)));
@@ -3343,8 +3348,10 @@ function accAtribFornOpts(){
   const cod=($('accAtribDisc')||{}).value||''; const sel=$('accAtribForn'); if(!sel) return;
   if(!cod){ sel.innerHTML='<option value="">Escolha a disciplina primeiro</option>'; return; }
   const com=FORNECEDORES.filter(f=>accFornTemDisc(f,cod)), sem=FORNECEDORES.filter(f=>!accFornTemDisc(f,cod));
-  const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
-  const opt=f=>`<option value="${f.id}" ${atual&&atual.fornecedor_id===f.id?'selected':''}>${esc(f.nome)}${atual&&atual.fornecedor_id===f.id?' (atual)':''}</option>`;
+  // Item 153: pode haver VÁRIOS já atendendo — marca todos, e pré-seleciona o
+  // primeiro só para o seletor não abrir vazio.
+  const jaIds=(ACC_DF||[]).filter(v=>v.disciplina===cod).map(v=>v.fornecedor_id);
+  const opt=f=>`<option value="${f.id}" ${jaIds[0]===f.id?'selected':''}>${esc(f.nome)}${jaIds.includes(f.id)?' (já atende)':''}</option>`;
   sel.innerHTML = (com.length?'<optgroup label="Com profissional de '+esc(accDiscLabel(cod))+'">'+com.map(opt).join('')+'</optgroup>':'')
                 + (sem.length?'<optgroup label="Outros fornecedores">'+sem.map(opt).join('')+'</optgroup>':'')
                 + (FORNECEDORES.length?'':'<option value="">Nenhum fornecedor cadastrado</option>');
@@ -3379,14 +3386,24 @@ function accAtribProjOpts(){
 async function accAtribuirForn(){
   const cod=($('accAtribDisc')||{}).value||'', fid=($('accAtribForn')||{}).value||'';
   if(!cod||!fid){ alert('Escolha a disciplina e o fornecedor.'); return; }
-  const atual=(ACC_DF||[]).find(v=>v.disciplina===cod);
-  if(atual && atual.fornecedor_id!==fid && !confirm('A disciplina '+cod+' já é atendida por '+accFornNome(atual.fornecedor_id)+'. Trocar para '+accFornNome(fid)+'?')) return;
+  // Item 153: a mesma disciplina pode ter MAIS DE UM fornecedor (é comum
+  // contratar dois escritórios para a mesma frente). Antes a unicidade proibia,
+  // e a tela perguntava "trocar?" — agora ela ACRESCENTA, e só avisa quem já
+  // está lá para a pessoa não achar que substituiu.
+  const jaNaDisc=(ACC_DF||[]).filter(v=>v.disciplina===cod);
+  if(jaNaDisc.some(v=>v.fornecedor_id===fid)){
+    alert(accFornNome(fid)+' já atende '+cod+' nesta obra. Para trocar o responsável, use o botão de responsável no próprio vínculo.');
+    return;
+  }
+  if(jaNaDisc.length && !confirm(cod+' já é atendida por '+jaNaDisc.map(v=>accFornNome(v.fornecedor_id)).join(', ')+'.'+String.fromCharCode(10,10)+
+      'Acrescentar '+accFornNome(fid)+' TAMBÉM? (os dois passam a atender esta disciplina)')) return;
   try{
-    // unique (empreendimento_id, disciplina): upsert troca o fornecedor se já houver.
+    // unique (empreendimento_id, disciplina, fornecedor_id): o upsert agora só
+    // evita repetir a MESMA dupla — não troca mais ninguém.
     const pid=($('accAtribProj')||{}).value||null;
     const r=await sb.from('disciplina_fornecedor_auria').upsert(
       { empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, projetista_id:pid, criado_por:USER.id },
-      { onConflict:'empreendimento_id,disciplina' });
+      { onConflict:'empreendimento_id,disciplina,fornecedor_id' });
     if(r.error) throw r.error;
     await loadAcessos(CDE_AC_EMPID);
     // Responsável sem conta ainda → convite de acesso (a function devolve ja_existia quando já tem).

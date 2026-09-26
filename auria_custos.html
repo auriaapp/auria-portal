@@ -299,7 +299,12 @@
     <div class="cd-hint" style="margin-bottom:12px">O contrato entra no mesmo fluxo dos cadastrados pela coordena&ccedil;&atilde;o: o projetista solicita, o coordenador autoriza, a NF chega e &eacute; vinculada &agrave; parcela.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       <div><label class="cd-hint" style="font-weight:700">Empreendimento *</label><select class="cd-sel" id="ctfEmp" style="width:100%"></select></div>
-      <div><label class="cd-hint" style="font-weight:700">Disciplina *</label><input class="cd-sel" id="ctfDisc" list="ctfDiscList" style="width:100%" placeholder="EST, ARQ, HID&hellip;"><datalist id="ctfDiscList"></datalist></div>
+      <div><label class="cd-hint" style="font-weight:700">Disciplinas *</label>
+        <input class="cd-sel" id="ctfDisc" list="ctfDiscList" style="width:100%" placeholder="Digite e tecle Enter &mdash; o contrato pode cobrir mais de uma"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();ctfDiscAdd(this.value);this.value='';}"
+               onblur="if(this.value.trim()){ctfDiscAdd(this.value);this.value='';}">
+        <datalist id="ctfDiscList"></datalist>
+        <div id="ctfDiscChips" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"></div></div>
       <div><label class="cd-hint" style="font-weight:700">Fornecedor *</label><select class="cd-sel" id="ctfForn" style="width:100%" onchange="ctfFornChg()"></select></div>
       <div><label class="cd-hint" style="font-weight:700">Projetista / contato</label><select class="cd-sel" id="ctfProj" style="width:100%" onchange="ctfProjChg()"></select></div>
       <div id="ctfOutro" style="grid-column:1/-1;display:none;grid-template-columns:1fr 1fr;gap:10px">
@@ -869,10 +874,26 @@ async function janCarregar(){
 }
 // ═══ Item 40 fase 2b: cadastro de contrato pelo financeiro ═══
 let CTF_BASE=null, CTF_ID=null, CTF_P=[];
+// Item 153: um contrato cobre VÁRIAS disciplinas (o caso real: Fachada e
+// Moldura Fachada no mesmo objeto). Antes era uma só, e obrigava a cadastrar o
+// mesmo contrato duas vezes.
+let CTF_DISCS=[];
+function ctfDiscAdd(v){
+  const d=String(v||'').trim(); if(!d) return;
+  if(!CTF_DISCS.some(x=>x.toLowerCase()===d.toLowerCase())) CTF_DISCS.push(d);
+  ctfDiscRender();
+}
+function ctfDiscDel(i){ CTF_DISCS.splice(i,1); ctfDiscRender(); }
+function ctfDiscRender(){
+  const el=$('ctfDiscChips'); if(!el) return;
+  el.innerHTML = CTF_DISCS.length
+    ? CTF_DISCS.map((d,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:#EAF1F9;color:#1D4ED8;border:1px solid #BFD3EC;border-radius:7px;padding:2px 8px;font-size:11.5px;font-weight:700">${esc(d)}<button type="button" onclick="ctfDiscDel(${i})" style="border:none;background:none;color:#1D4ED8;cursor:pointer;font-size:13px;line-height:1;padding:0">&times;</button></span>`).join('')
+    : '<span style="font-size:11.5px;color:#94A3B8">nenhuma disciplina ainda</span>';
+}
 async function ctfBase(){ if(CTF_BASE) return CTF_BASE; const r=await sb.rpc('fin_cadastro_base'); if(r.error) throw r.error; CTF_BASE=r.data||{}; return CTF_BASE; }
 function ctfPct(v){ const t=Number($('ctfValor').value)||0; return t?Math.round(Number(v||0)/t*10000)/100:0; }
 async function ctfAbrir(ctrId, pre){
-  CTF_ID=ctrId||null; CTF_P=[]; $('ctfErr').style.display='none';
+  CTF_ID=ctrId||null; CTF_P=[]; CTF_DISCS=[]; ctfDiscRender(); $('ctfErr').style.display='none';
   $('ctfTitulo').textContent=ctrId?'Editar contrato':'Novo contrato';
   $('ctfStatusWrap').style.display=ctrId?'':'none';
   ['ctfDisc','ctfNum','ctfValor','ctfObj','ctfAss','ctfIni','ctfFim','ctfNome','ctfEmail'].forEach(i=>$(i).value='');
@@ -887,7 +908,8 @@ async function ctfAbrir(ctrId, pre){
     catch(e){ $('ctfErr').textContent=e.message||String(e); $('ctfErr').style.display=''; return; }
   } else if(pre){ c=pre; }
   if(c){
-    $('ctfEmp').value=c.empreendimento_id||''; $('ctfDisc').value=c.disciplina||''; $('ctfNum').value=c.numero||''; $('ctfObj').value=c.objeto||'';
+    $('ctfEmp').value=c.empreendimento_id||''; $('ctfNum').value=c.numero||''; $('ctfObj').value=c.objeto||'';
+    CTF_DISCS=[].concat(c.disciplinas||(c.disciplina?[c.disciplina]:[])).filter(Boolean); ctfDiscRender();
     $('ctfValor').value=c.valor_total!=null?Number(c.valor_total).toFixed(2):''; $('ctfAss').value=c.data_assinatura||''; $('ctfIni').value=c.data_inicio||''; $('ctfFim').value=c.data_fim||'';
     $('ctfStatus').value=c.status||'ativo';
     // fornecedor: acha pelo e-mail do projetista/contato; senão "outro"
@@ -913,7 +935,7 @@ function ctfFornChg(){
 function ctfProjChg(){
   const B=CTF_BASE||{}; const f=(B.fornecedores||[]).find(x=>x.id===$('ctfForn').value); if(!f) return;
   const pj=(f.projetistas||[]).find(p=>p.id===$('ctfProj').value);
-  if(pj&&!$('ctfDisc').value&&pj.disciplinas&&pj.disciplinas.length) $('ctfDisc').value=[].concat(pj.disciplinas)[0];
+  if(pj&&!CTF_DISCS.length&&pj.disciplinas&&pj.disciplinas.length) ctfDiscAdd([].concat(pj.disciplinas)[0]);
 }
 function ctfRecalc(){ const t=Number($('ctfValor').value)||0; CTF_P.forEach(p=>{ if(!(p.status&&['faturada','paga'].includes(p.status))) p.valor=Math.round(t*Number(p.pct||0))/100; }); ctfRender(); }
 function ctfDividir(){
@@ -948,7 +970,7 @@ async function ctfSalvar(){
   if(fv==='__outro'){ nome=$('ctfNome').value.trim(); email=$('ctfEmail').value.trim(); }
   else if(f){ const pj=(f.projetistas||[]).find(p=>p.id===$('ctfProj').value); nome=pj&&pj.nome?pj.nome:f.nome; email=pj?pj.email:(f.email||''); }
   const t=Number($('ctfValor').value)||0; const sv=CTF_P.reduce((s,p)=>s+Number(p.valor||0),0);
-  const falta=[]; if(!$('ctfEmp').value) falta.push('empreendimento'); if(!$('ctfDisc').value.trim()) falta.push('disciplina'); if(!fv) falta.push('fornecedor'); if(!email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) falta.push('e-mail do fornecedor'); if(!(t>0)) falta.push('valor total');
+  const falta=[]; if(!$('ctfEmp').value) falta.push('empreendimento'); if(!CTF_DISCS.length) falta.push('disciplina'); if(!fv) falta.push('fornecedor'); if(!email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) falta.push('e-mail do fornecedor'); if(!(t>0)) falta.push('valor total');
   if(falta.length){ err.textContent='Falta: '+falta.join(', ')+'.'; err.style.display=''; return; }
   if(Math.abs(sv-t)>0.05){ err.textContent='As parcelas somam '+brl(sv)+' e o contrato é de '+brl(t)+' — ajuste os percentuais.'; err.style.display=''; return; }
   // ajusta centavos na última parcela editável para a soma bater com o total
@@ -957,7 +979,8 @@ async function ctfSalvar(){
   if(diff!==0){ for(let i=parcs.length-1;i>=0;i--){ const st=CTF_P[i].status; if(!st||!['faturada','paga'].includes(st)){ parcs[i].valor=Math.round((parcs[i].valor+diff)*100)/100; break; } } }
   const b=$('ctfSalvar'); b.disabled=true; b.textContent='Salvando…';
   try{
-    const r=await sb.rpc('fin_contrato_salvar',{p:{ id:CTF_ID, empreendimento_id:$('ctfEmp').value, projetista_email:email, projetista_nome:nome, disciplina:$('ctfDisc').value.trim(),
+    const r=await sb.rpc('fin_contrato_salvar',{p:{ id:CTF_ID, empreendimento_id:$('ctfEmp').value, projetista_email:email, projetista_nome:nome, disciplina:CTF_DISCS[0], disciplinas:CTF_DISCS,
+      fornecedor_id:(fv&&fv!=='__outro')?fv:null,
       numero:$('ctfNum').value.trim(), objeto:$('ctfObj').value.trim(), valor_total:t, data_assinatura:$('ctfAss').value||null, data_inicio:$('ctfIni').value||null, data_fim:$('ctfFim').value||null,
       status:CTF_ID?$('ctfStatus').value:'ativo', parcelas:parcs }});
     if(r.error) throw r.error;
