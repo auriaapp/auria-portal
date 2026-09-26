@@ -1468,7 +1468,18 @@ function parcCls(s){ return {a_faturar:'st-af',solicitada:'st-so',autorizada:'st
 function parcLbl(s){ return {a_faturar:'A faturar',solicitada:'Solicitada',autorizada:'Autorizada',recusada:'Recusada',faturada:'Faturada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
 function _fileToDataURL(file){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){res(r.result);}; r.onerror=rej; r.readAsDataURL(file); }); }
 
-// Lista OFICIAL de disciplinas do sistema (mesma da Gestão)
+// Item 155: a lista de verdade vem da CONVENÇÃO do grupo (menu Disciplinas),
+// via disc_do_grupo(). O array abaixo virou só ponto de partida para o caso de
+// a RPC não responder — quem manda é o banco, não este arquivo.
+async function carregarDiscDoGrupo(){
+  try{
+    const r=await sb.rpc('disc_do_grupo');
+    if(r.error || !r.data || !r.data.length) return;
+    // Mostra "ARQ — Arquitetura": o código é o que vai no nome do arquivo no
+    // CDE, e era justamente essa correspondência que se perdia na lista fixa.
+    DISC_OPTS = r.data.map(d=>d.nome && d.nome!==d.codigo ? (d.codigo+' — '+d.nome) : d.codigo);
+  }catch(_){ /* mantém o padrão */ }
+}
 var DISC_OPTS=['Arquitetura','Estrutura Concreto','Estrutura Metálica',
   'Instalações Hidrossanitárias','Instalações Elétricas','Instalações PCI/SPDA/Gás',
   'Instalações Automação','Infraestrutura','Topografia / Sondagem','Ambientação',
@@ -2117,6 +2128,7 @@ async function cvEnviar(){
 }
 function fecharFornecedoresView(){ paAba('fila'); }
 async function renderFornecedoresPage(){
+  await carregarDiscDoGrupo();   // item 155: disciplinas da convenção, não da lista fixa
   const el=$('fn-list'); if(!el)return;
   el.innerHTML='<div class="load">Carregando…</div>';
   let lista=[];
