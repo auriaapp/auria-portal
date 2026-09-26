@@ -645,7 +645,7 @@
         <b style="font-size:13px">Projetistas (pessoas) desta empresa</b>
         <button type="button" class="ctr-btn sec" style="font-size:11px;padding:4px 10px" onclick="addProjetistaLinha()">＋ Adicionar pessoa</button>
       </div>
-      <div style="font-size:11px;color:var(--mut);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marcar RT se for o responsável técnico. Ao editar, remover uma linha (🗑) desativa a pessoa ao salvar — ela deixa de aparecer e de enviar arquivos.</div>
+      <div style="font-size:11px;color:var(--mut);margin:2px 0 8px">Cada pessoa pode atender uma ou mais disciplinas. Marcar RT se for o responsável técnico. Ao editar, remover uma linha (🗑) desativa a pessoa ao salvar — ela deixa de aparecer e de enviar arquivos.<br>O selo embaixo do e-mail diz a situação do acesso: <b>✉ convidar</b>, <b>⏳ convite enviado</b>, <b>⚠ pendência</b> ou <b>● ativo</b> (aí o botão vira 🔑, para redefinir a senha).</div>
       <table class="parc-tbl">
         <thead><tr><th>Nome</th><th>E-mail *</th><th>Telefone</th><th>Disciplinas *</th><th style="width:42px" title="Responsável técnico">RT</th><th style="width:48px" title="Responsável administrativo/financeiro: painel só de contratos e notas fiscais">Fin</th><th></th></tr></thead>
         <tbody id="fn-proj-body"></tbody>
@@ -2195,6 +2195,7 @@ function abrirFornecedor(id){
     $('fn-save').textContent='💾 Salvar alterações';
   }
   renderFnProjs();
+  carregarStatusContas();   // assíncrono: a tela abre já, os selos entram depois
   modalAbrir('fornecedorModal');
 }
 function fecharFornecedor(){ modalFechar('fornecedorModal'); }
@@ -2498,6 +2499,56 @@ function rmDisc(i,d){
   FN_PROJS_BUF[i].disciplinas=_discList(FN_PROJS_BUF[i]).filter(x=>x!==d).join(', ');
   renderFnProjs();
 }
+// ═══ Item 156: a linha diz a situação da conta ══════════════════════════════
+//  O ✉ era mudo — só clicando dava para saber se a pessoa já tinha senha, e a
+//  resposta vinha como alerta sem saída ("use Esqueci minha senha"). Agora o
+//  estado aparece na lista e o botão faz o que cabe: convidar, reenviar, ou
+//  mandar redefinir a senha.
+//  O sinal é encrypted_password (vazio = nunca definiu senha), não o último
+//  acesso: o resgate do convite cria sessão no clique, antes da senha existir.
+var FN_STATUS={};
+const FN_SIT={
+  ativo:            ['\u25CF Ativo',                  '#166534','#ECFDF5','#A7F3D0','Já definiu senha e consegue entrar'],
+  sem_senha:        ['\u26A0 Abriu o link, sem senha','#B45309','#FFFBEB','#FDE68A','Abriu o convite mas não chegou a salvar a senha — reenvie'],
+  convite_pendente: ['\u23F3 Convite enviado',        '#1D4ED8','#EFF6FF','#BFD3EC','Convite válido, ainda não foi usado'],
+  convite_vencido:  ['\u26A0 Convite vencido',        '#B91C1C','#FEF2F2','#FECACA','O link passou de 3 dias — reenvie'],
+  convidado:        ['\u23F3 Convidado',              '#64748B','#F1F5F9','#E2E8F0','Conta criada por convite antigo, ainda sem senha'],
+  nunca_convidado:  ['\u2709 Nunca convidado',        '#64748B','#F1F5F9','#E2E8F0','Esta pessoa ainda não recebeu acesso']
+};
+const _fnKey=e=>String(e||'').trim().toLowerCase();
+function fnSeloConta(email){
+  const st=FN_STATUS[_fnKey(email)]; if(!st) return '';
+  const d=FN_SIT[st.situacao]||FN_SIT.nunca_convidado;
+  let extra='';
+  if(st.situacao==='convite_pendente'&&st.convite_expira)
+    extra=' · vence '+new Date(st.convite_expira).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  return '<span title="'+esc(d[4])+'" style="display:inline-block;margin-top:3px;background:'+d[2]+';color:'+d[1]+
+         ';border:1px solid '+d[3]+';border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;white-space:nowrap">'+
+         esc(d[0]+extra)+'</span>';
+}
+async function carregarStatusContas(){
+  const emails=FN_PROJS_BUF.map(p=>_fnKey(p.email)).filter(Boolean);
+  if(!emails.length){ FN_STATUS={}; return; }
+  try{
+    const r=await sb.rpc('auria_status_contas',{p_emails:emails});
+    if(r.error) throw r.error;
+    FN_STATUS={}; (r.data||[]).forEach(x=>{ FN_STATUS[_fnKey(x.email)]=x; });
+  }catch(e){
+    // Sem a RPC no banco, ou sem papel para consultar: a tela segue SEM os
+    // selos em vez de travar. Some o selo, não a linha.
+    FN_STATUS={}; console.warn('situação das contas indisponível:', e.message||e);
+  }
+  fnPintarStatus();
+}
+// Troca só os selos e os botões. Redesenhar a tabela toda aqui tiraria o
+// cursor de quem já começou a digitar — a resposta da RPC chega depois de a
+// janela abrir.
+function fnPintarStatus(){
+  FN_PROJS_BUF.forEach((p,i)=>{
+    const sel=$('fn-selo-'+i); if(sel) sel.innerHTML=fnSeloConta(p.email);
+    const bt=$('fn-bt-'+i);    if(bt)  bt.innerHTML=_fnBotao(i,p);
+  });
+}
 function renderFnProjs(){
   const tb=$('fn-proj-body');
   tb.innerHTML=FN_PROJS_BUF.map((p,i)=>{
@@ -2506,20 +2557,41 @@ function renderFnProjs(){
     const opts=DISC_OPTS.filter(d=>!discs.includes(d)).map(d=>`<option>${esc(d)}</option>`).join('');
     return `<tr>
     <td><input data-pj="nome" data-i="${i}" value="${esc(p.nome||'')}"></td>
-    <td><input data-pj="email" data-i="${i}" value="${esc(p.email||'')}"></td>
+    <td><input data-pj="email" data-i="${i}" value="${esc(p.email||'')}"><span id="fn-selo-${i}">${fnSeloConta(p.email)}</span></td>
     <td><input data-pj="telefone" data-i="${i}" value="${esc(p.telefone||'')}"></td>
     <td style="min-width:200px">${chips}
       <select data-i="${i}" onchange="addDisc(this)" style="font-size:11px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;max-width:150px">
         <option value="">+ disciplina…</option>${opts}</select></td>
     <td style="text-align:center"><input data-pj="eh_rt" data-i="${i}" type="checkbox" ${p.eh_rt?'checked':''}></td>
     <td style="text-align:center"><input data-pj="eh_adm_fin" data-i="${i}" type="checkbox" ${p.eh_adm_fin?'checked':''} title="Cuida de contratos e NFs — vê só a parte de faturamento"></td>
-    <td style="white-space:nowrap"><button class="mini" title="Enviar convite de acesso" onclick="convidarProjetista(${i})">✉</button> <button class="mini" onclick="rmProjetistaLinha(${i})">🗑</button></td>
+    <td style="white-space:nowrap"><span id="fn-bt-${i}">${_fnBotao(i,p)}</span> <button class="mini" onclick="rmProjetistaLinha(${i})">🗑</button></td>
   </tr>`;}).join('');
+}
+// Conta ativa não precisa de convite — precisa de redefinição de senha. Antes
+// o clique aqui só devolvia um alerta sem saída nenhuma.
+function _fnBotao(i,p){
+  const st=FN_STATUS[_fnKey(p.email)];
+  if(st && st.situacao==='ativo')
+    return '<button class="mini" title="Conta ativa — enviar link para redefinir a senha" onclick="convidarProjetista('+i+')">🔑</button>';
+  const jaFoi = st && st.situacao!=='nunca_convidado';
+  return '<button class="mini" title="'+(jaFoi?'Reenviar convite de acesso':'Enviar convite de acesso')+
+         '" onclick="convidarProjetista('+i+')">✉</button>';
 }
 async function convidarProjetista(i){
   const p=FN_PROJS_BUF[i]; if(!p)return;
   const email=(p.email||'').trim();
   if(!email){ alert('Preencha o e-mail do projetista antes de convidar.'); return; }
+  const st=FN_STATUS[_fnKey(email)];
+  if(st && st.situacao==='ativo'){
+    if(!confirm(email+' já tem conta ativa no Auria.\n\nEnviar um link para REDEFINIR A SENHA?'))return;
+    try{
+      const r=await sb.functions.invoke('reset-password',{ body:{ email } });
+      if(r.error) throw r.error;
+      if(r.data && r.data.error) throw new Error(r.data.error);
+      alert('Link de redefinição enviado para '+email+'.\nO link vale 1 hora.');
+    }catch(e){ alert('Falha ao enviar: '+(e.message||e)); }
+    return;
+  }
   if(!confirm('Enviar (ou reenviar) o convite de acesso para '+email+'?\n\nSe ele já recebeu e o link venceu, isto gera um link novo.'))return;
   try{
     const empresaNome=($('fn-nome')?$('fn-nome').value:'')||'';
@@ -2531,6 +2603,7 @@ async function convidarProjetista(i){
     if(r.data && r.data.ativo) alert(r.data.aviso||'Este e-mail já tem conta ativa no Auria.');
     else if(r.data && r.data.reenvio) alert('Link NOVO enviado para '+email+'.\nO link anterior deixou de valer.');
     else alert('Convite enviado para '+email+'.');
+    carregarStatusContas();
   }catch(e){ alert('Falha ao enviar convite: '+(e.message||e)+'\n(A function invite-projetista precisa estar deployada.)'); }
 }
 document.addEventListener('input',function(e){

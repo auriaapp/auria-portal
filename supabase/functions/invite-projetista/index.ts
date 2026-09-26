@@ -86,18 +86,31 @@ serve(async (req) => {
     //  nunca tendo aberto o link. Era o relato: link vencido em 24h, e reenviar
     //  impossível. (2026-09-25)
     //
-    //  O que separa os dois casos é last_sign_in_at:
-    //    · nulo        → convidado que nunca entrou  → gera link novo e REENVIA
-    //    · preenchido  → conta de verdade, em uso    → não mexe; manda recuperar senha
+    //  Item 156 (2026-09-26): o que separa os dois casos NÃO é last_sign_in_at.
+    //  O resgate do convite (convite-resgatar → verifyOtp) cria sessão no
+    //  instante do CLIQUE, antes de ativar_conta.html gravar a senha. Quem abre
+    //  o link e fecha a aba fica com last_sign_in_at preenchido e SEM senha — e
+    //  o reenvio o recusava, mandando "usar Esqueci minha senha" para uma conta
+    //  que não tem senha para recuperar. O sinal honesto é encrypted_password,
+    //  que nem o admin API nem o PostgREST expõem: vem pela RPC.
+    //    · sem senha  → ainda não terminou o cadastro → gera link novo e REENVIA
+    //    · com senha  → conta de verdade, em uso      → não mexe; oferece reset
     const existente = await acharUsuarioPorEmail(admin, email);
-    const nuncaEntrou = !!existente && !existente.last_sign_in_at;
-    if (existente && !nuncaEntrou) {
+    let temSenha = false;
+    if (existente) {
+      const { data: ts, error: tsErr } = await admin.rpc("auria_conta_tem_senha", { p_email: email });
+      // Se a RPC não estiver no banco ainda, cai no critério antigo em vez de
+      // reenviar às cegas para uma conta em uso.
+      temSenha = tsErr ? !!existente.last_sign_in_at : !!ts;
+    }
+    if (existente && temSenha) {
       return j({
-        success: true, ja_existia: true, ativo: true,
+        success: true, ja_existia: true, ativo: true, tem_senha: true,
+        ultimo_acesso: existente.last_sign_in_at || null,
         aviso: "Este e-mail já tem conta ativa no Auria — ele deve entrar normalmente ou usar 'Esqueci minha senha'.",
       });
     }
-    const reenvio = nuncaEntrou;
+    const reenvio = !!existente;
 
     // 1. Gera o link. Para quem nunca entrou, é um convite NOVO para o mesmo
     //    usuário — o link antigo deixa de valer, que é o comportamento desejado.
