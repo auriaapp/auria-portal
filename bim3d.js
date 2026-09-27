@@ -2,7 +2,7 @@
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
-//  Existia uma cópia em cde_obra.html e outra em app.html. A do App nasceu
+//  Existia uma cópia em cde.html e outra em app.html. A do App nasceu
 //  depois e mais simples, e não recebeu as correções que vieram sendo feitas
 //  na do CDE — pivô da navegação, dupla face, ordem de carga. Resultado: o
 //  mesmo visualizador se comportando pior de um lado. Este módulo existe para

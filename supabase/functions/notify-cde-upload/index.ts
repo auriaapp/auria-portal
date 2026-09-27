@@ -1,7 +1,7 @@
 // ============================================================================
 //  notify-cde-upload — avisa analistas + gestores quando arquivos entram no CDE
 //  ----------------------------------------------------------------------------
-//  Chamado pelo cde_obra.html após um recebimento em lote. Recebe:
+//  Chamado pelo cde.html após um recebimento em lote. Recebe:
 //    { emp_id, itens: [{codigo, disciplina, disciplinaLabel, revisao, novo}] }
 //  Resolve os destinatários (analistas designados ao empreendimento + gestores
 //  da empresa), menos quem subiu, e envia um e-mail (Resend) no padrão Auria.
@@ -102,7 +102,7 @@ serve(async (req) => {
     ).join("\n\n");
 
     const total = itens.length;
-    const cdeUrl = `https://auria.solutions/cde_obra.html?emp=${emp_id}`;
+    const cdeUrl = `https://auria.solutions/cde.html?emp=${emp_id}`;
     const html = `
       <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:auto;color:#1A2F4A;padding:8px">
         <div style="text-align:center;margin-bottom:20px">
