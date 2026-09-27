@@ -62,7 +62,23 @@ jobs:
         run: |
           set -euo pipefail
           DIA=$(TZ=America/Sao_Paulo date +%F)
-          /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" -Fc -Z 9 --no-owner --no-privileges -f banco.dump
+          # Diagnóstico do endereço SEM expor a senha: só formato, host e tamanho.
+          python3 - <<'PY'
+          import os, urllib.parse as u
+          s = os.environ.get("DB_URL", "")
+          print("diag: tamanho do endereco =", len(s), "| espacos/quebras nas pontas =", s != s.strip())
+          try:
+              p = u.urlsplit(s.strip())
+              print("diag: esquema =", p.scheme, "| usuario =", p.username, "| host =", p.hostname, "| porta =", p.port, "| banco =", p.path)
+              pw = p.password or ""
+              print("diag: senha tem", len(pw), "caracteres | simbolos nao codificados:",
+                    sorted({c for c in u.unquote(pw) if not c.isalnum()} & set("@#/?:[] ")) if pw else "SEM SENHA")
+          except Exception as e:
+              print("diag: endereco invalido ->", type(e).__name__)
+          PY
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+          /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" -Fc -Z 9 --no-owner --no-privileges -f banco.dump 2>&1 \
+            | sed -E 's#(postgres(ql)?://[^:]+:)[^@]*@#\1****@#g' || { echo "pg_dump falhou (exit ${PIPESTATUS[0]})"; exit 1; }
           ls -lh banco.dump
           gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" \
               --symmetric --cipher-algo AES256 -o banco.dump.gpg banco.dump
