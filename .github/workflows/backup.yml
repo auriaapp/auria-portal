@@ -76,6 +76,20 @@ jobs:
           except Exception as e:
               print("diag: endereco invalido ->", type(e).__name__)
           PY
+          python3 - <<'PY'
+          import os, re, urllib.parse as u
+          e = os.environ.get("RCLONE_CONFIG_R2_ENDPOINT", "")
+          p = u.urlsplit(e.strip())
+          h = p.hostname or ""
+          m = re.fullmatch(r"([0-9a-f]+)((?:\.[a-z]+)?)\.r2\.cloudflarestorage\.com", h)
+          print("diag R2: esquema =", p.scheme or "FALTA https://", "| termina em .r2.cloudflarestorage.com =", bool(m),
+                "| account id com", len(m.group(1)) if m else "?", "caracteres (esperado 32)",
+                "| jurisdicao =", (m.group(2) or "default") if m else "?",
+                "| caminho depois do .com =", repr(p.path) if p.path not in ("", "/") else "nenhum (ok)",
+                "| espacos/quebras =", e != e.strip())
+          PY
+          export RCLONE_CONFIG_R2_ENDPOINT="$(printf '%s' "$RCLONE_CONFIG_R2_ENDPOINT" | tr -d '\r\n ')"
+          export RCLONE_RETRIES=1 RCLONE_LOW_LEVEL_RETRIES=2 RCLONE_CONTIMEOUT=20s
           DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
           /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" -Fc -Z 9 --no-owner --no-privileges -f banco.dump 2>&1 \
             | sed -E 's#(postgres(ql)?://[^:]+:)[^@]*@#\1****@#g' || { echo "pg_dump falhou (exit ${PIPESTATUS[0]})"; exit 1; }
