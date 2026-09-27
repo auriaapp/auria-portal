@@ -1,0 +1,83 @@
+# Backup diário do Auria → Cloudflare R2 (bucket auria-backup)
+#
+# O que faz, todo dia às 03:00 (Brasília):
+#   1. pg_dump completo do banco Supabase (formato custom), cifrado com GPG
+#      → auria-backup/banco/diario/AAAA-MM-DD.dump.gpg
+#      → no dia 1 também em banco/mensal/AAAA-MM.dump.gpg
+#   2. Cópia incremental dos buckets do Supabase Storage (só o novo/alterado)
+#      → auria-backup/storage/<bucket>/...
+#
+# A chave do R2 é só "Object Read & Write" no auria-backup; este script NUNCA
+# apaga nada. A retenção (30 dias diários / 12 meses mensais) é feita pela
+# regra de ciclo de vida do próprio bucket no painel da Cloudflare.
+#
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL        URI do Session pooler, com a senha do banco
+#   BACKUP_PASSPHRASE      senha da cifra — GUARDAR TAMBÉM NO BITWARDEN,
+#                          sem ela o backup não pode ser aberto
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT
+#   SUPABASE_S3_ACCESS_KEY_ID, SUPABASE_S3_SECRET_ACCESS_KEY, SUPABASE_S3_REGION
+#     (Supabase → Storage → S3 Configuration → New access key)
+#
+# Restauração: ver docs/restaurar_backup.md
+
+name: Backup diário
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 06:00 UTC = 03:00 Brasília
+  workflow_dispatch:       # botão "Run workflow" para rodar na hora
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: 'true'
+      RCLONE_CONFIG_SB_TYPE: s3
+      RCLONE_CONFIG_SB_PROVIDER: Other
+      RCLONE_CONFIG_SB_ACCESS_KEY_ID: ${{ secrets.SUPABASE_S3_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_SB_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_S3_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_SB_REGION: ${{ secrets.SUPABASE_S3_REGION }}
+      RCLONE_CONFIG_SB_ENDPOINT: https://sabzccokueowpromwxdg.storage.supabase.co/storage/v1/s3
+      RCLONE_CONFIG_SB_FORCE_PATH_STYLE: 'true'
+    steps:
+      - name: Instalar pg_dump 17 e rclone
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 rclone
+
+      - name: Banco → R2 (cifrado)
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          DIA=$(TZ=America/Sao_Paulo date +%F)
+          /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" -Fc -Z 9 --no-owner --no-privileges -f banco.dump
+          ls -lh banco.dump
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" \
+              --symmetric --cipher-algo AES256 -o banco.dump.gpg banco.dump
+          rclone copyto banco.dump.gpg "r2:auria-backup/banco/diario/$DIA.dump.gpg"
+          if [ "$(TZ=America/Sao_Paulo date +%d)" = "01" ]; then
+            rclone copyto banco.dump.gpg "r2:auria-backup/banco/mensal/$(TZ=America/Sao_Paulo date +%Y-%m).dump.gpg"
+          fi
+          echo "$DIA $(stat -c%s banco.dump.gpg)" > ultimo_backup.txt
+          rclone copyto ultimo_backup.txt r2:auria-backup/ultimo_backup.txt
+          rm -f banco.dump
+
+      - name: Arquivos (Storage) → R2 (incremental)
+        run: |
+          set -euo pipefail
+          for B in Auria apontamentos logos notas-fiscais cde cotacoes; do
+            echo "== $B"
+            rclone copy "sb:$B" "r2:auria-backup/storage/$B" --transfers 8 --stats-one-line --stats 30s
+          done
