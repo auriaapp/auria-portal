@@ -256,6 +256,9 @@ tr:hover td{background:var(--gray-light)}
         <a class="sb-item" data-page="saude" onclick="goPage('saude')">
           <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2 3.4 4.8v4.6c0 4.1 2.8 7.2 6.6 8.4 3.8-1.2 6.6-4.3 6.6-8.4V4.8Z"/><path d="M6.4 10.2h2l1.1-2.4 1.6 4.4 1.1-2h1.4"/></svg></span> Saúde &amp; custos
         </a>
+        <a class="sb-item" data-page="falhas" onclick="goPage('falhas')">
+          <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 1.9 16.8h16.2Z"/><path d="M10 7.6v4.2M10 14.4h.01"/></svg></span> Falhas <span id="flBadge" style="display:none;margin-left:auto;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px"></span>
+        </a>
         <a class="sb-item" data-page="uso" onclick="goPage('uso')">
           <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><ellipse cx="10" cy="4.6" rx="6.8" ry="2.4"/><path d="M3.2 4.6v4.2c0 1.3 3 2.4 6.8 2.4s6.8-1.1 6.8-2.4V4.6"/><path d="M3.2 8.8V13c0 1.3 3 2.4 6.8 2.4s6.8-1.1 6.8-2.4V8.8"/></svg></span> Uso &amp; armazenamento
         </a>
@@ -374,6 +377,28 @@ tr:hover td{background:var(--gray-light)}
           <div class="tbl-wrap" style="margin-top:18px">
             <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Histórico de backups e testes</div>
             <div style="padding:0 22px 18px;overflow-x:auto" id="saHist"></div>
+          </div>
+        </div>
+
+        <!-- FALHAS (Fase 2, 2026-09-28) — erro_auria (páginas) + ceo_falhas() (servidor) -->
+        <div class="page" id="pageFalhas">
+          <div class="toolbar">
+            <div class="toolbar-title">Falhas</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="flFiltro" onchange="falhasRender()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit">
+                <option value="abertos">Em aberto</option><option value="todos">Todos (inclui resolvidos)</option></select>
+              <select id="flPagina" onchange="falhasRender()" style="padding:7px 10px;border:1px solid var(--gray-border);border-radius:8px;font-family:inherit"><option value="">Todas as páginas</option></select>
+              <button class="btn-primary" onclick="falhasCarregar()">&#8635; Atualizar</button>
+            </div>
+          </div>
+          <div id="flKpis" class="kpi-row" style="grid-template-columns:repeat(4,1fr)"></div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Erros nas páginas <span style="text-transform:none;font-weight:500">— o mesmo erro aparece uma vez, com a contagem</span></div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="flErros"><div class="loading-row"><div class="spinner"></div></div></div>
+          </div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Servidor — tarefas agendadas, chamadas do banco e conversões BIM</div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="flServidor"></div>
           </div>
         </div>
 
@@ -981,9 +1006,10 @@ function goPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
   const map={overview:'pageOverview',clientes:'pageClientes',usuarios:'pageUsuarios',
-    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas',uso:'pageUso',saude:'pageSaude'};
+    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas',uso:'pageUso',saude:'pageSaude',falhas:'pageFalhas'};
   const titles={overview:'Overview Geral',clientes:'Clientes',usuarios:'Usuarios',
-    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda',uso:'Uso de dados e armazenamento',saude:'Saúde, backup e previsão de custo'};
+    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda',uso:'Uso de dados e armazenamento',saude:'Saúde, backup e previsão de custo',falhas:'Falhas do sistema'};
+  if(name==='falhas') falhasCarregar();
   if(name==='perguntas' && !PQ_LOADED) carregarPerguntas();
   if(name==='saude') saudeCarregar();
   // não basta checar USO: a aba Saúde carrega USO sem montar esta tela (ficava no spinner)
@@ -1186,6 +1212,57 @@ function saudeRender(hl, ops, cresc){
       +'<td style="font-weight:700;color:'+(o.ok?'var(--green)':'var(--red)')+'">'+(o.ok?'&#10003; ok':'&#10007; falhou')+'</td><td style="color:var(--text-soft)">'
       +(o.tipo==='backup'?'banco '+fmtB(d.dump_bytes)+' · '+(d.arquivos??'—')+' arquivos · '+fmtB(d.storage_bytes):(d.linhas??'—')+'/'+(d.linhas_prod??'—')+' linhas · '+esc(d.backup||''))+'</td></tr>'; }).join('')+'</table>'
     :'<div style="padding:12px;color:var(--text-soft)">Nenhum registro ainda.</div>');
+}
+
+// ── FALHAS (Fase 2, 2026-09-28) ──
+//  erro_auria: gravada por auria_busy.js em toda página (agregada por assinatura, reabre
+//  sozinha se o erro voltar). ceo_falhas(): pg_cron com falha (7 dias), pg_net com erro
+//  (o pg_net só guarda ~6 h) e conversões BIM em erro/travadas (> 30 min sem sinal).
+let FL=[], FLS=null;
+const FL_TIPO={js:'Erro de tela',promessa:'Erro de tela (assíncrono)',rede:'Rede / servidor',funcao:'Edge Function',manual:'Registrado pelo código'};
+async function falhasCarregar(){
+  setHTML('flErros','<div class="loading-row"><div class="spinner"></div></div>');
+  try{ const r=await sb.from('erro_auria').select('*').order('ultimo_em',{ascending:false}).limit(500); if(r.error) throw r.error; FL=r.data||[]; }
+  catch(e){ setHTML('flErros','<div style="padding:14px;color:var(--red)">Não foi possível carregar: '+esc(e.message||e)+' (rode supabase_erros.sql).</div>'); return; }
+  try{ const r=await sb.rpc('ceo_falhas'); FLS=r.error?null:r.data; }catch(_){ FLS=null; }
+  const sp=document.getElementById('flPagina'), atual=sp.value;
+  sp.innerHTML='<option value="">Todas as páginas</option>'+[...new Set(FL.map(x=>x.pagina).filter(Boolean))].sort().map(p=>'<option'+(p===atual?' selected':'')+'>'+esc(p)+'</option>').join('');
+  falhasRender();
+}
+function falhasRender(){
+  const so=document.getElementById('flFiltro').value==='abertos', pg=document.getElementById('flPagina').value;
+  const lista=FL.filter(x=>(!so||!x.resolvido)&&(!pg||x.pagina===pg));
+  const abertos=FL.filter(x=>!x.resolvido), h24=abertos.filter(x=>Date.now()-new Date(x.ultimo_em)<864e5);
+  const usu=new Set(abertos.flatMap(x=>x.usuarios||[]));
+  const srv=FLS?((FLS.cron||[]).length+(FLS.http||[]).length+(FLS.bim||[]).length):null;
+  const b=document.getElementById('flBadge'); const nb=abertos.length+(srv||0); b.style.display=nb?'':'none'; b.textContent=nb;
+  setHTML('flKpis',
+    saCard(abertos.length?'red':'green','Erros em aberto', abertos.length, abertos.reduce((s,x)=>s+x.qtd,0)+' ocorrências no total')
+   +saCard(h24.length?'yellow':'green','Últimas 24 h', h24.length, h24.length?'erros diferentes aconteceram hoje':'nenhum erro novo hoje')
+   +saCard(usu.size?'yellow':'green','Usuários afetados', usu.size, 'pessoas logadas que viram algum erro em aberto')
+   +saCard(srv==null?'yellow':srv?'red':'green','Servidor', srv==null?'—':srv, srv==null?'não foi possível consultar':srv?'problemas em tarefas, chamadas ou conversões':'tarefas, chamadas e conversões ok'));
+  setHTML('flErros', lista.length?'<table style="width:100%;font-size:12.5px;border-collapse:collapse"><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 4px">Erro</th><th style="text-align:left">Página</th><th style="text-align:right">Vezes</th><th style="text-align:right">Pessoas</th><th style="text-align:left;padding-left:12px">Última vez</th><th></th></tr>'
+    +lista.map(x=>'<tr style="border-top:1px solid #F1F5F9;vertical-align:top'+(x.resolvido?';opacity:.5':'')+'"><td style="padding:7px 4px;max-width:520px">'
+      +'<div style="font-size:10.5px;font-weight:700;color:var(--text-soft);text-transform:uppercase">'+esc(FL_TIPO[x.tipo]||x.tipo)+'</div>'
+      +'<div style="font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-word">'+esc(x.mensagem)+'</div>'
+      +(x.origem?'<div style="font-size:11px;color:var(--text-soft)">'+esc(x.origem)+'</div>':'')
+      +(x.pilha?'<details style="font-size:11px;color:var(--text-soft)"><summary style="cursor:pointer">detalhe técnico</summary><pre style="white-space:pre-wrap;margin:4px 0">'+esc(x.pilha)+'</pre></details>':'')+'</td>'
+      +'<td style="font-family:ui-monospace,Consolas,monospace;color:var(--navy)">'+esc(x.pagina||'—')+'</td><td style="text-align:right;font-weight:800">'+x.qtd+'</td><td style="text-align:right">'+(x.usuarios||[]).length+'</td>'
+      +'<td style="padding-left:12px;white-space:nowrap">'+saIdade(x.ultimo_em)+'<div style="font-size:11px;color:var(--text-soft)">'+esc(x.ultimo_email||'sem login')+(x.ultimo_papel?' · '+esc(x.ultimo_papel):'')+'</div></td>'
+      +'<td style="text-align:right;white-space:nowrap"><button class="btn-secondary" style="padding:4px 10px;font-size:11.5px" onclick="falhaResolver('+x.id+','+!x.resolvido+')">'+(x.resolvido?'Reabrir':'&#10003; Resolvido')+'</button></td></tr>').join('')+'</table>'
+    :'<div style="padding:12px;color:var(--green);font-weight:700">&#10003; Nenhum erro '+(so?'em aberto':'registrado')+'.</div>');
+  if(!FLS){ setHTML('flServidor','<div style="padding:12px;color:var(--text-soft)">Não foi possível consultar o servidor.</div>'); return; }
+  const bloco=(tit,itens,f)=>'<div style="font-size:12px;font-weight:800;margin:12px 0 4px">'+tit+'</div>'+(itens.length?'<table style="width:100%;font-size:12.5px;border-collapse:collapse">'+itens.map(f).join('')+'</table>':'<div style="font-size:12px;color:var(--green)">&#10003; nada</div>');
+  const tr=(a,b,c)=>'<tr style="border-top:1px solid #F1F5F9;vertical-align:top"><td style="padding:6px 4px;width:30%;font-weight:700">'+a+'</td><td style="font-family:ui-monospace,Consolas,monospace;font-size:11.5px;word-break:break-word">'+b+'</td><td style="text-align:right;white-space:nowrap;color:var(--text-soft);padding-left:10px">'+c+'</td></tr>';
+  setHTML('flServidor',
+    bloco('Tarefas agendadas com falha (7 dias)', FLS.cron||[], x=>tr(esc(x.tarefa)+'<div style="font-weight:500;font-size:11px;color:var(--red)">'+x.falhas+' de '+x.execucoes+' execuções falharam</div>', esc(x.mensagem||''), x.ultimo?saIdade(x.ultimo):''))
+   +bloco('Chamadas do banco com erro (últimas ~6 h)', FLS.http||[], x=>tr('HTTP '+esc(x.status)+'<div style="font-weight:500;font-size:11px;color:var(--red)">'+x.qtd+' vezes</div>', esc(x.mensagem||''), x.ultimo?saIdade(x.ultimo):''))
+   +bloco('Conversões BIM com erro ou travadas', FLS.bim||[], x=>tr(esc(x.nome||'—')+'<div style="font-weight:500;font-size:11px;color:var(--red)">'+esc(x.status)+(x.tentativas?' · '+x.tentativas+' tentativas':'')+'</div>', esc(x.erro||'sem sinal há mais de 30 min'), x.desde?saIdade(x.desde):'')));
+}
+async function falhaResolver(id, resolvido){
+  const r=await sb.from('erro_auria').update({resolvido, resolvido_em: resolvido?new Date().toISOString():null}).eq('id',id);
+  if(r.error){ showToast('Erro: '+r.error.message,'red'); return; }
+  const x=FL.find(f=>f.id===id); if(x){ x.resolvido=resolvido; } falhasRender();
 }
 
 // ── PERGUNTAS AO ASSISTENTE (item 52): banco de dúvidas reais dos usuários ──

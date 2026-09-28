@@ -114,3 +114,73 @@
     });
   };
 })();
+
+/* ============================================================================
+ *  Captura de erros (Fase 2, 2026-09-28) — alimenta a aba "Falhas" do CEO.
+ *
+ *  Mora aqui porque este arquivo já é carregado por quase todas as páginas e
+ *  ANTES do supabase-js (que guarda a referência do fetch ao ser criado).
+ *  Registra: erro de JavaScript, promessa rejeitada sem tratamento, resposta
+ *  5xx de qualquer chamada, 4xx de Edge Function e falha de rede.
+ *  Não registra: 4xx do banco (RLS/validação são respostas normais), "Script
+ *  error." (sem conteúdo, vem de script de outro domínio) e AbortError.
+ *
+ *  Cada erro é enviado UMA vez por carga de página (máx. 15), direto para
+ *  rpc/erro_registrar — que agrega por assinatura no banco. Nunca pode quebrar
+ *  a página: tudo aqui fica dentro de try/catch.
+ * ========================================================================== */
+(function(){
+  if (window.AuriaErros) return;
+  var URL_SB = 'https://sabzccokueowpromwxdg.supabase.co';
+  var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+  var RPC = URL_SB + '/rest/v1/rpc/erro_registrar';
+  var enviados = {}, total = 0;
+  var fetchOrig = window.fetch;   // já embrulhado pelo indicador acima — não volta a registrar
+
+  function token(){
+    try { var s = JSON.parse(localStorage.getItem('sb-sabzccokueowpromwxdg-auth-token') || 'null');
+          return (s && (s.access_token || (s.currentSession && s.currentSession.access_token))) || ANON; }
+    catch(_) { return ANON; }
+  }
+  function enviar(tipo, mensagem, origem, pilha){
+    try {
+      mensagem = String(mensagem || '').slice(0, 500);
+      if (!mensagem || /^Script error\.?$/i.test(mensagem) || /ResizeObserver loop/i.test(mensagem)) return;
+      var chave = tipo + '|' + mensagem + '|' + origem;
+      if (enviados[chave] || total >= 15) return;
+      enviados[chave] = 1; total++;
+      fetchOrig.call(window, RPC, { method: 'POST', keepalive: true,
+        headers: { 'apikey': ANON, 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p: { tipo: tipo, mensagem: mensagem, origem: String(origem || '').slice(0, 300),
+          pilha: String(pilha || '').slice(0, 2000), pagina: (location.pathname.split('/').pop() || 'index.html'),
+          navegador: navigator.userAgent.slice(0, 200) } }) }).catch(function(){});
+    } catch(_) {}
+  }
+  function curta(u){ try { var x = new URL(u, location.href); return x.host === location.host ? x.pathname : x.host + x.pathname; } catch(_) { return String(u).slice(0, 200); } }
+
+  window.addEventListener('error', function(ev){
+    if (ev.error || ev.message) enviar('js', ev.message || String(ev.error), curta(ev.filename || '') + ':' + (ev.lineno || 0), ev.error && ev.error.stack);
+  });
+  window.addEventListener('unhandledrejection', function(ev){
+    var r = ev.reason; if (r && r.name === 'AbortError') return;
+    enviar('promessa', (r && (r.message || r.error_description)) || String(r), '', r && r.stack);
+  });
+  // chamadas de rede: 5xx de qualquer lugar, 4xx só de Edge Function, e falha de conexão
+  window.fetch = function(recurso, opts){
+    var url = typeof recurso === 'string' ? recurso : (recurso && recurso.url) || '';
+    var p = fetchOrig.apply(this, arguments);
+    if (url.indexOf('/rpc/erro_registrar') >= 0) return p;
+    return p.then(function(r){
+      try {
+        var fn = url.indexOf('/functions/v1/') >= 0;
+        if (r.status >= 500 || (fn && r.status >= 400 && r.status !== 401))
+          enviar(fn ? 'funcao' : 'rede', 'HTTP ' + r.status + ' em ' + curta(url).split('?')[0], (opts && opts.method) || 'GET');
+      } catch(_) {}
+      return r;
+    }, function(e){
+      if (!(e && e.name === 'AbortError')) enviar('rede', 'Falha de conexão: ' + (e && e.message || e) + ' em ' + curta(url).split('?')[0], (opts && opts.method) || 'GET');
+      throw e;
+    });
+  };
+  window.AuriaErros = { registrar: function(msg, origem){ enviar('manual', msg, origem || '', new Error().stack); } };
+})();
