@@ -253,6 +253,9 @@ tr:hover td{background:var(--gray-light)}
         <a class="sb-item" data-page="perguntas" onclick="goPage('perguntas')">
           <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M17.2 11.6A6.6 6.6 0 0 1 10.6 18H3.4l1.9-2.5a6.6 6.6 0 1 1 11.9-3.9Z"/><path d="M8.3 8.5a2 2 0 1 1 2.7 1.9v1.1"/><path d="M11 14.1h.01"/></svg></span> Perguntas (ajuda)
         </a>
+        <a class="sb-item" data-page="saude" onclick="goPage('saude')">
+          <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.2 3.4 4.8v4.6c0 4.1 2.8 7.2 6.6 8.4 3.8-1.2 6.6-4.3 6.6-8.4V4.8Z"/><path d="M6.4 10.2h2l1.1-2.4 1.6 4.4 1.1-2h1.4"/></svg></span> Saúde &amp; custos
+        </a>
         <a class="sb-item" data-page="uso" onclick="goPage('uso')">
           <span class="sb-ico"><svg viewBox="0 0 20 20" aria-hidden="true"><ellipse cx="10" cy="4.6" rx="6.8" ry="2.4"/><path d="M3.2 4.6v4.2c0 1.3 3 2.4 6.8 2.4s6.8-1.1 6.8-2.4V4.6"/><path d="M3.2 8.8V13c0 1.3 3 2.4 6.8 2.4s6.8-1.1 6.8-2.4V8.8"/></svg></span> Uso &amp; armazenamento
         </a>
@@ -348,6 +351,32 @@ tr:hover td{background:var(--gray-light)}
           </div>
         </div>
 
+        <!-- SAÚDE, BACKUP & PREVISÃO DE CUSTO (2026-09-28) — dados de ops_status_auria (gravados pelas rotinas do GitHub) -->
+        <div class="page" id="pageSaude">
+          <div class="toolbar">
+            <div class="toolbar-title">Saúde do sistema</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <a class="btn-secondary" href="https://dashboard.uptimerobot.com/monitors" target="_blank" rel="noopener" style="text-decoration:none">&#8599; UptimeRobot</a>
+              <a class="btn-secondary" href="https://github.com/auriaapp/auria-portal/actions" target="_blank" rel="noopener" style="text-decoration:none">&#8599; Rotinas (GitHub)</a>
+              <button class="btn-secondary" onclick="usoCotasAbrir()">&#9881; Cotas e preços</button>
+              <button class="btn-primary" onclick="saudeCarregar()">&#8635; Atualizar</button>
+            </div>
+          </div>
+          <div id="saCards" class="kpi-row" style="grid-template-columns:repeat(4,1fr)"><div class="loading-row"><div class="spinner"></div></div></div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px"><div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Custo mensal &mdash; hoje e previsão</div><span style="font-size:11.5px;color:var(--text-soft);margin-left:auto" id="saCustoNota"></span></div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="saCusto"></div>
+          </div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Simulação: arquivos no Supabase &times; no Cloudflare R2</div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="saSim"></div>
+          </div>
+          <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Histórico de backups e testes</div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="saHist"></div>
+          </div>
+        </div>
+
         <!-- USO & ARMAZENAMENTO (item 74) -->
         <div class="page" id="pageUso">
           <div class="toolbar">
@@ -383,6 +412,9 @@ tr:hover td{background:var(--gray-light)}
               <div><label class="form-label">Excedente R2 (USD/GB-mês)</label><input class="form-inp" id="ct_pr2" type="number" step="0.001"></div>
               <div><label class="form-label">Banco (GB)</label><input class="form-inp" id="ct_db" type="number" step="0.5"></div>
               <div><label class="form-label">Câmbio (R$ por USD)</label><input class="form-inp" id="ct_fx" type="number" step="0.01"></div>
+              <div><label class="form-label">Plano Supabase (USD/mês)</label><input class="form-inp" id="ct_plano" type="number" step="1"></div>
+              <div><label class="form-label">Excedente banco (USD/GB-mês)</label><input class="form-inp" id="ct_pdb" type="number" step="0.001"></div>
+              <div style="grid-column:1/-1"><label class="form-label">Outros custos fixos (um por linha: nome = USD/mês)</label><textarea class="form-inp" id="ct_extras" rows="3" placeholder="Domínio auria.solutions = 1.5&#10;Resend = 0"></textarea></div>
             </div>
             <div class="modal-footer"><button class="btn-secondary" onclick="document.getElementById('modalCotas').classList.remove('open')">Cancelar</button><button class="btn-primary" onclick="usoCotasSalvar()">Salvar</button></div>
           </div>
@@ -949,10 +981,11 @@ function goPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.sb-item').forEach(i=>i.classList.remove('active'));
   const map={overview:'pageOverview',clientes:'pageClientes',usuarios:'pageUsuarios',
-    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas',uso:'pageUso'};
+    chamados:'pageChamados',metricas:'pageMetricas',novoCliente:'pageNovoCliente',perguntas:'pagePerguntas',uso:'pageUso',saude:'pageSaude'};
   const titles={overview:'Overview Geral',clientes:'Clientes',usuarios:'Usuarios',
-    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda',uso:'Uso de dados e armazenamento'};
+    chamados:'Chamados de Suporte',metricas:'Metricas de Uso',novoCliente:'Novo Cliente',perguntas:'Perguntas ao assistente de ajuda',uso:'Uso de dados e armazenamento',saude:'Saúde, backup e previsão de custo'};
   if(name==='perguntas' && !PQ_LOADED) carregarPerguntas();
+  if(name==='saude') saudeCarregar();
   if(name==='uso' && !USO) usoCarregar();
   document.getElementById(map[name]||'pageOverview').classList.add('active');
   document.querySelector(`[data-page="${name}"]`)?.classList.add('active');
@@ -1032,12 +1065,126 @@ async function usoMedirFrag(){
   catch(e){ showToast('Não mediu: '+(e.message||e),'red'); }
   b.disabled=false; b.innerHTML='&#128207; Medir .frag';
 }
-function usoCotasAbrir(){ const P=(USO&&USO.cotas)||{}; document.getElementById('ct_sb').value=P.storage_supabase_gb||''; document.getElementById('ct_psb').value=P.preco_gb_supabase||''; document.getElementById('ct_r2').value=P.r2_gb||''; document.getElementById('ct_pr2').value=P.preco_gb_r2||''; document.getElementById('ct_db').value=P.db_gb||''; document.getElementById('ct_fx').value=P.cambio||''; document.getElementById('modalCotas').classList.add('open'); }
+function usoCotasAbrir(){ const P=(USO&&USO.cotas)||{}; document.getElementById('ct_sb').value=P.storage_supabase_gb||''; document.getElementById('ct_psb').value=P.preco_gb_supabase||''; document.getElementById('ct_r2').value=P.r2_gb||''; document.getElementById('ct_pr2').value=P.preco_gb_r2||''; document.getElementById('ct_db').value=P.db_gb||''; document.getElementById('ct_fx').value=P.cambio||'';
+  document.getElementById('ct_plano').value=P.plano_supabase_usd??''; document.getElementById('ct_pdb').value=P.preco_gb_db??'';
+  document.getElementById('ct_extras').value=(P.extras||[]).map(x=>x.nome+' = '+x.usd).join('\n');
+  document.getElementById('modalCotas').classList.add('open'); }
 async function usoCotasSalvar(){
   const v=id=>Number(document.getElementById(id).value||0);
-  const r=await sb.from('ceo_cotas_auria').update({ storage_supabase_gb:v('ct_sb'), preco_gb_supabase:v('ct_psb'), r2_gb:v('ct_r2'), preco_gb_r2:v('ct_pr2'), db_gb:v('ct_db'), cambio:v('ct_fx'), atualizado_em:new Date().toISOString() }).eq('id',1);
+  const r=await sb.from('ceo_cotas_auria').update({ storage_supabase_gb:v('ct_sb'), preco_gb_supabase:v('ct_psb'), r2_gb:v('ct_r2'), preco_gb_r2:v('ct_pr2'), db_gb:v('ct_db'), cambio:v('ct_fx'),
+    plano_supabase_usd:v('ct_plano'), preco_gb_db:v('ct_pdb'),
+    extras:document.getElementById('ct_extras').value.split('\n').map(l=>l.split('=')).filter(p=>p.length===2&&p[0].trim())
+      .map(([n,u])=>({nome:n.trim(), usd:Number(String(u).replace(',','.').trim())||0})),
+    atualizado_em:new Date().toISOString() }).eq('id',1);
   if(r.error){ showToast('Erro: '+r.error.message,'red'); return; }
-  document.getElementById('modalCotas').classList.remove('open'); showToast('Cotas salvas','green'); usoCarregar();
+  document.getElementById('modalCotas').classList.remove('open'); showToast('Cotas salvas','green'); await usoCarregar();
+  if(document.getElementById('pageSaude').classList.contains('active')) saudeCarregar();
+}
+
+// ── SAÚDE, BACKUP & PREVISÃO DE CUSTO (2026-09-28) ──
+//  ops_status_auria é gravada pelas rotinas do GitHub (backup diário / teste mensal). Se uma
+//  rotina não roda, nada é gravado e o cartão fica vermelho pela IDADE do último registro.
+//  Custo = plano Supabase + excedentes (arquivos > cota, banco > cota) + R2 acima do grátis + fixos.
+//  Previsão: crescimento medido pelos backups (≥14 dias de histórico); antes disso, estimativa
+//  pelo ritmo de uploads no Storage (ceo_crescimento, últimos 3 meses).
+function saCard(cor, rot, valor, sub){
+  return '<div class="kpi-card '+cor+'"><div class="kpi-label">'+rot+'</div><div class="kpi-value" style="font-size:19px">'+valor+'</div><div style="font-size:11.5px;color:var(--text-soft);margin-top:4px;line-height:1.4">'+sub+'</div></div>';
+}
+function saIdade(iso){ const h=(Date.now()-new Date(iso))/36e5; return h<1?'há '+Math.round(h*60)+' min':h<48?'há '+Math.round(h)+' h':'há '+Math.round(h/24)+' dias'; }
+function saUsd(v,P){ return 'US$ '+v.toFixed(2)+' <span style="color:var(--text-soft);font-weight:500">≈ R$ '+(v*Number(P.cambio||0)).toFixed(2)+'</span>'; }
+// custo mensal (USD) para um cenário de uso em bytes
+function saCusto(P, sbB, dbB, r2B, semPlano){
+  const e=(b,cotaGb)=>Math.max(0, b/GB-Number(cotaGb||0));
+  const it={ plano: semPlano?0:Number(P.plano_supabase_usd??25),
+    arquivos: e(sbB,P.storage_supabase_gb)*Number(P.preco_gb_supabase||0),
+    banco: e(dbB,P.db_gb)*Number(P.preco_gb_db??0.125),
+    r2: e(r2B,P.r2_gb)*Number(P.preco_gb_r2||0),
+    fixos: (P.extras||[]).reduce((s,x)=>s+Number(x.usd||0),0) };
+  it.total=it.plano+it.arquivos+it.banco+it.r2+it.fixos; return it;
+}
+// inclinação (bytes/mês) por mínimos quadrados sobre [dias, bytes]
+function saTaxa(pts){ if(pts.length<2) return null; const n=pts.length, mx=pts.reduce((s,p)=>s+p[0],0)/n, my=pts.reduce((s,p)=>s+p[1],0)/n;
+  let a=0,b=0; pts.forEach(([x,y])=>{a+=(x-mx)*(y-my); b+=(x-mx)*(x-mx);}); return b? a/b*30 : null; }
+
+async function saudeCarregar(){
+  setHTML('saCards','<div class="loading-row" style="grid-column:1/-1"><div class="spinner"></div></div>');
+  // 1) no ar? (mesma função que o UptimeRobot consulta)
+  let hl={ok:false,ms:null};
+  try{ const t0=performance.now(); const r=await fetch(SUPA_URL+'/functions/v1/health',{cache:'no-store'}); const j=await r.json(); hl={ok:r.ok&&j.status==='AURIA_OK', ms:Math.round(performance.now()-t0)}; }catch(_){}
+  // 2) backups/testes, uso atual e ritmo de uploads
+  let ops=[], cresc=[];
+  try{ const r=await sb.from('ops_status_auria').select('tipo,ok,dados,criado_em').order('criado_em',{ascending:false}).limit(400); if(r.error) throw r.error; ops=r.data||[]; }
+  catch(e){ setHTML('saCards','<div style="padding:14px;color:var(--red);grid-column:1/-1">Não foi possível ler o status: '+esc(e.message||e)+' (rode supabase_ops_status.sql).</div>'); return; }
+  if(!USO){ try{ const r=await sb.rpc('ceo_uso'); if(!r.error) USO=r.data; }catch(_){} }
+  try{ const r=await sb.rpc('ceo_crescimento'); if(!r.error) cresc=r.data||[]; }catch(_){}
+  saudeRender(hl, ops, cresc);
+}
+
+function saudeRender(hl, ops, cresc){
+  const P=(USO&&USO.cotas)||{}; const T=(USO&&USO.totais)||{};
+  const bks=ops.filter(o=>o.tipo==='backup'), tst=ops.filter(o=>o.tipo==='teste');
+  const ub=bks[0], ubOk=bks.find(o=>o.ok), ut=tst[0];
+  // uso atual: Storage/banco pelo ceo_uso (ao vivo); R2 = modelos BIM + backup (espelho dos arquivos + dumps guardados)
+  const sbB=Object.values((USO&&USO.buckets)||{}).reduce((s,b)=>s+Number(b.bytes||0),0) || Number(ubOk?.dados?.storage_bytes||0);
+  const dbB=Number((USO&&USO.db||{}).total_bytes||ubOk?.dados?.db_bytes||0);
+  const r2Mod=Number(T.r2_bytes||0)+Number(T.frag_bytes||0);
+  const dumpB=Number(ubOk?.dados?.dump_bytes||0), nDumps=Math.min(30, bks.filter(o=>o.ok).length)+Math.min(12, new Set(bks.filter(o=>o.ok).map(o=>o.criado_em.slice(0,7))).size);
+  const r2Bk=sbB+dumpB*nDumps, r2B=r2Mod+r2Bk;
+
+  // ── cartões semáforo ──
+  const hB=ub?(Date.now()-new Date(ub.criado_em))/36e5:1e9, hT=ut?(Date.now()-new Date(ut.criado_em))/864e5:1e9;
+  const pct=(b,g)=>g?b/(g*GB)*100:0; const pmax=Math.max(pct(sbB,P.storage_supabase_gb),pct(dbB,P.db_gb));
+  setHTML('saCards',
+    saCard(hl.ok?'green':'red','Sistema no ar', hl.ok?'&#10003; Respondendo':'&#10007; Sem resposta', hl.ok?'banco respondeu em '+hl.ms+' ms · UptimeRobot checa a cada 5 min':'a função health não respondeu — veja o UptimeRobot e o status do Supabase')
+   +saCard(ub&&ub.ok&&hB<=26?'green':'red','Último backup', ub?(ub.ok?'&#10003; ':'&#10007; ')+saIdade(ub.criado_em):'nenhum',
+      ub?new Date(ub.criado_em).toLocaleString('pt-BR')+' · banco '+fmtB(ub.dados.dump_bytes)+' (cifrado) · '+(ub.dados.arquivos??'—')+' arquivos'+(hB>26?' · <b style="color:var(--red)">atrasado: mais de 26 h</b>':'')+(!ub.ok?' · <b style="color:var(--red)">a última execução falhou</b>':''):'a rotina ainda não gravou nenhum registro')
+   +saCard(ut&&ut.ok&&hT<=35?'green':ut&&ut.ok?'yellow':'red','Teste de restauração', ut?(ut.ok?'&#10003; APROVADO':'&#10007; REPROVADO'):'nunca feito',
+      ut?saIdade(ut.criado_em)+' · '+(ut.dados.linhas??'—')+' de '+(ut.dados.linhas_prod??'—')+' linhas · '+(ut.dados.tabelas_ok??'—')+' tabelas idênticas'+(hT>35?' · <b>mais de 35 dias — rode o teste</b>':''):'rode "Teste de restauração" no GitHub')
+   +saCard(pmax>80||pct(r2B,P.r2_gb)>100?'yellow':'green','Cotas', pmax.toFixed(0)+'% <span style="font-size:12px;color:var(--text-soft);font-weight:500">da maior cota paga</span>',
+      'arquivos '+fmtB(sbB)+' de '+(P.storage_supabase_gb||'—')+' GB · banco '+fmtB(dbB)+' de '+(P.db_gb||'—')+' GB · R2 '+fmtB(r2B)+' de '+(P.r2_gb||'—')+' GB grátis'));
+
+  // ── ritmo de crescimento (bytes/mês) ──
+  const pts=bks.filter(o=>o.ok&&o.dados.storage_bytes!=null).map(o=>[(new Date(o.criado_em)-new Date(bks[bks.length-1].criado_em))/864e5, o.dados]);
+  const dias=pts.length?Math.max(...pts.map(p=>p[0])):0; let fonte, gSb, gDb;
+  if(dias>=14){ gSb=saTaxa(pts.map(([x,d])=>[x,Number(d.storage_bytes)])); gDb=saTaxa(pts.filter(([,d])=>d.db_bytes).map(([x,d])=>[x,Number(d.db_bytes)])); fonte='medido pelos backups ('+Math.round(dias)+' dias)'; }
+  else{ const mesAtual=new Date().toISOString().slice(0,7); const ult=cresc.filter(c=>c.mes<mesAtual).slice(-3);
+    gSb=ult.length?ult.reduce((s,c)=>s+Number(c.bytes||0),0)/ult.length:0; gDb=dbB*0.05;
+    fonte='<b>estimativa inicial</b>: ritmo de uploads dos últimos '+ult.length+' meses; banco +5%/mês (vira medição real após 14 dias de backups)'; }
+  gSb=Math.max(0,gSb||0); gDb=Math.max(0,gDb||0);
+  const fut=m=>({sb:sbB+gSb*m, db:dbB+gDb*m, r2:r2Mod+(sbB+gSb*m)+dumpB*(1+gDb*m/Math.max(dbB,1))*nDumps});   // modelos BIM constantes; backup acompanha os arquivos
+  const quando=(atual,taxa,cotaGb)=>{ const c=Number(cotaGb||0)*GB; if(!c) return '—'; if(atual>=c) return '<b style="color:var(--red)">já passou</b>'; if(!taxa) return 'não no ritmo atual'; const m=(c-atual)/taxa; return m>120?'mais de 10 anos':'em ~'+(m<1?'1':Math.round(m))+' '+(m<1.5?'mês':'meses'); };
+
+  // ── tabela de custo: hoje, 3, 6, 12 meses ──
+  const cols=[0,3,6,12].map(m=>{ const u=fut(m); return {m,u,c:saCusto(P,u.sb,u.db,u.r2)}; });
+  const td='style="text-align:right;padding:6px 8px"', lin=(rot,f,neg)=>'<tr style="border-top:1px solid #F1F5F9'+(neg?';font-weight:800;background:#F8FAFC':'')+'"><td style="padding:6px 4px">'+rot+'</td>'+cols.map(x=>'<td '+td+'>'+f(x)+'</td>').join('')+'</tr>';
+  const usd=v=>v>=0.005?'US$ '+v.toFixed(2):v>0?'&lt; US$ 0.01':'<span style="color:var(--text-soft)">US$ 0</span>';
+  setHTML('saCusto','<table style="width:100%;font-size:12.5px;border-collapse:collapse"><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 4px">Item</th>'+cols.map(x=>'<th '+td+'>'+(x.m?'em '+x.m+' meses':'hoje')+'</th>').join('')+'</tr>'
+    +lin('Arquivos (Supabase Storage)',x=>fmtB(x.u.sb))+lin('Banco de dados',x=>fmtB(x.u.db))+lin('Cloudflare R2 (modelos BIM + backup)',x=>fmtB(x.u.r2))
+    +lin('Supabase Pro — plano',x=>usd(x.c.plano))+lin('Supabase — arquivos acima de '+(P.storage_supabase_gb||0)+' GB',x=>usd(x.c.arquivos))+lin('Supabase — banco acima de '+(P.db_gb||0)+' GB',x=>usd(x.c.banco))
+    +lin('Cloudflare R2 — acima de '+(P.r2_gb||0)+' GB grátis',x=>usd(x.c.r2))+((P.extras||[]).length?lin('Outros fixos ('+(P.extras||[]).map(e=>esc(e.nome)).join(', ')+')',x=>usd(x.c.fixos)):'')
+    +lin('Total por mês',x=>saUsd(x.c.total,P),true)+'</table>'
+    +'<div style="font-size:12px;color:var(--text-soft);margin-top:10px;line-height:1.6">Cotas no ritmo atual — arquivos '+(P.storage_supabase_gb||'—')+' GB: '+quando(sbB,gSb,P.storage_supabase_gb)+' · banco '+(P.db_gb||'—')+' GB: '+quando(dbB,gDb,P.db_gb)+' · R2 '+(P.r2_gb||'—')+' GB grátis: '+quando(r2B,gSb,P.r2_gb)+'</div>');
+  setHTML('saCustoNota','crescimento: arquivos +'+fmtB(gSb)+'/mês · banco +'+fmtB(gDb)+'/mês — '+fonte);
+
+  // ── simulação: arquivos migrados para o R2 (hoje e em 12 meses) ──
+  const sim=m=>{ const u=fut(m); const a=saCusto(P,u.sb,u.db,u.r2);
+    const r2Mig=r2Mod+u.sb*2+dumpB*nDumps;   // arquivos no R2 + cópia de backup deles
+    const livreOk=u.db<=0.5*GB; const b=saCusto({...P,storage_supabase_gb:0},0,u.db,r2Mig,livreOk);
+    if(!livreOk) b.plano=Number(P.plano_supabase_usd??25);
+    return {a,b,livreOk}; };
+  const s0=sim(0), s12=sim(12);
+  setHTML('saSim','<table style="width:100%;font-size:12.5px;border-collapse:collapse"><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 4px">Cenário</th><th '+td+'>hoje</th><th '+td+'>em 12 meses</th></tr>'
+    +'<tr style="border-top:1px solid #F1F5F9"><td style="padding:6px 4px">A · como está — arquivos no Supabase Pro</td><td '+td+'>'+saUsd(s0.a.total,P)+'</td><td '+td+'>'+saUsd(s12.a.total,P)+'</td></tr>'
+    +'<tr style="border-top:1px solid #F1F5F9"><td style="padding:6px 4px">B · arquivos no R2, banco no Supabase '+(s0.livreOk?'<b>Free</b> (banco &lt; 500 MB)':'Pro')+'</td><td '+td+'>'+saUsd(s0.b.total,P)+'</td><td '+td+'>'+saUsd(s12.b.total,P)+(s12.livreOk?'':' <span style="font-size:10.5px;color:var(--text-soft)">(banco passa de 500 MB → Pro)</span>')+'</td></tr>'
+    +'<tr style="border-top:1px solid #F1F5F9;font-weight:800;background:#F8FAFC"><td style="padding:6px 4px">Economia com a migração</td><td '+td+'>'+saUsd(s0.a.total-s0.b.total,P)+'</td><td '+td+'>'+saUsd(s12.a.total-s12.b.total,P)+'</td></tr></table>'
+    +'<div style="font-size:11.5px;color:var(--text-soft);margin-top:8px">No Free o Supabase não faz backup próprio — o backup diário no R2 passa a ser o único. Download pelos usuários: grátis no R2; no Supabase Pro, 250 GB/mês inclusos.</div>');
+
+  // ── histórico ──
+  setHTML('saHist', ops.length?'<table style="width:100%;font-size:12.5px;border-collapse:collapse"><tr style="color:var(--text-soft);font-size:11px;text-transform:uppercase"><th style="text-align:left;padding:6px 4px">Quando</th><th style="text-align:left">Rotina</th><th style="text-align:left">Resultado</th><th style="text-align:left">Detalhe</th></tr>'
+    +ops.slice(0,45).map(o=>{ const d=o.dados||{}; return '<tr style="border-top:1px solid #F1F5F9"><td style="padding:6px 4px;white-space:nowrap">'+new Date(o.criado_em).toLocaleString('pt-BR')+'</td><td>'+(o.tipo==='backup'?'Backup diário':'Teste de restauração')+'</td>'
+      +'<td style="font-weight:700;color:'+(o.ok?'var(--green)':'var(--red)')+'">'+(o.ok?'&#10003; ok':'&#10007; falhou')+'</td><td style="color:var(--text-soft)">'
+      +(o.tipo==='backup'?'banco '+fmtB(d.dump_bytes)+' · '+(d.arquivos??'—')+' arquivos · '+fmtB(d.storage_bytes):(d.linhas??'—')+'/'+(d.linhas_prod??'—')+' linhas · '+esc(d.backup||''))+'</td></tr>'; }).join('')+'</table>'
+    :'<div style="padding:12px;color:var(--text-soft)">Nenhum registro ainda.</div>');
 }
 
 // ── PERGUNTAS AO ASSISTENTE (item 52): banco de dúvidas reais dos usuários ──

@@ -113,3 +113,21 @@ jobs:
             echo "== $B"
             rclone copy "sb:$B" "r2:auria-backup/storage/$B" --transfers 8 --stats-one-line --stats 30s
           done
+
+      - name: Registrar no painel do CEO
+        if: always()
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          OK: ${{ job.status == 'success' }}
+        run: |
+          set +e
+          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed 's/^ *//;s/ *$//')"
+          echo '{}' > tam.json
+          for B in Auria apontamentos logos notas-fiscais cde cotacoes; do
+            rclone size "sb:$B" --json > s.json 2>/dev/null || echo '{"count":0,"bytes":0}' > s.json
+            python3 -c 'import json,sys;t=json.load(open("tam.json"));d=json.load(open("s.json"));t["arquivos"]=t.get("arquivos",0)+d["count"];t["storage_bytes"]=t.get("storage_bytes",0)+d["bytes"];json.dump(t,open("tam.json","w"))'
+          done
+          DUMP=$(stat -c%s banco.dump.gpg 2>/dev/null || echo 0)
+          J=$(python3 -c "import json;t=json.load(open('tam.json'));t['dump_bytes']=$DUMP;print(json.dumps(t))")
+          /usr/lib/postgresql/17/bin/psql "$DB_URL" -q -c "insert into public.ops_status_auria (tipo, ok, dados) values ('backup', $OK, '$J'::jsonb || jsonb_build_object('db_bytes', pg_database_size(current_database())))" \
+            && echo "registrado: ok=$OK $J"

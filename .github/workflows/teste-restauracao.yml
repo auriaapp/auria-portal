@@ -148,3 +148,21 @@ jobs:
           echo "$(TZ=America/Sao_Paulo date '+%F %H:%M') $(cat resultado.txt)" > teste_restauracao.txt
           rclone copyto teste_restauracao.txt r2:auria-backup/teste_restauracao.txt
           grep -q '^.* APROVADO' teste_restauracao.txt
+
+      - name: Registrar no painel do CEO
+        if: always()
+        env:
+          PROD: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set +e
+          # resultado.txt: "APROVADO 2026-09-27.dump.gpg tabelas_ok=107 dif=0 falta=0 linhas=5013/5013"
+          R=$(cat resultado.txt 2>/dev/null || echo "FALHOU ${ULT:-?}")
+          J=$(python3 -c "
+          import json,sys,re
+          s=sys.argv[1].split(); d={'backup':s[1] if len(s)>1 else None}
+          for k,v in re.findall(r'(\w+)=([\d/]+)',sys.argv[1]):
+              if k=='linhas': a,b=v.split('/'); d['linhas']=int(a); d['linhas_prod']=int(b)
+              else: d[k]=int(v)
+          print(json.dumps(d))" "$R")
+          OK=$([ "${R%% *}" = "APROVADO" ] && echo true || echo false)
+          psql "$PROD" -q -c "insert into public.ops_status_auria (tipo, ok, dados) values ('teste', $OK, '$J'::jsonb)" && echo "registrado: $OK $J"
