@@ -114,6 +114,29 @@ jobs:
             rclone copy "sb:$B" "r2:auria-backup/storage/$B" --transfers 8 --stats-one-line --stats 30s
           done
 
+      # Modelos BIM (IFC + .frag convertidos) vivem SÓ no R2 (auria-cde). Este passo
+      # guarda uma cópia no Supabase Storage (bucket privado backup-r2) — outro
+      # fornecedor. Chave própria SÓ DE LEITURA no auria-cde (R2CDE_*); sem ela,
+      # o passo é pulado sem derrubar o backup do resto.
+      - name: Modelos BIM (R2) → Supabase (incremental)
+        id: bim
+        env:
+          RCLONE_CONFIG_R2CDE_TYPE: s3
+          RCLONE_CONFIG_R2CDE_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2CDE_ACCESS_KEY_ID: ${{ secrets.R2CDE_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2CDE_SECRET_ACCESS_KEY: ${{ secrets.R2CDE_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2CDE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2CDE_NO_CHECK_BUCKET: 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "$RCLONE_CONFIG_R2CDE_ACCESS_KEY_ID" ]; then echo "::warning::R2CDE_* não cadastrados — cópia dos modelos BIM pulada"; echo "bim=pulado" >> "$GITHUB_OUTPUT"; exit 0; fi
+          export RCLONE_CONFIG_R2CDE_ENDPOINT="$(printf '%s' "$RCLONE_CONFIG_R2CDE_ENDPOINT" | tr -d '\r\n ')"
+          # arquivos grandes (IFC até ~800 MB): multipart em pedaços de 64 MB
+          rclone copy r2cde:auria-cde sb:backup-r2/auria-cde --transfers 4 --s3-chunk-size 64M --s3-upload-cutoff 64M --stats-one-line --stats 30s
+          rclone size r2cde:auria-cde --json > bim_origem.json
+          rclone size sb:backup-r2/auria-cde --json > bim_copia.json
+          python3 -c 'import json;o=json.load(open("bim_origem.json"));c=json.load(open("bim_copia.json"));print("origem",o,"cópia",c);json.dump({"bim_arquivos":o["count"],"bim_bytes":o["bytes"],"bim_copia_arquivos":c["count"],"bim_copia_bytes":c["bytes"]},open("bim.json","w"))'
+
       - name: Registrar no painel do CEO
         if: always()
         env:
@@ -128,6 +151,6 @@ jobs:
             python3 -c 'import json,sys;t=json.load(open("tam.json"));d=json.load(open("s.json"));t["arquivos"]=t.get("arquivos",0)+d["count"];t["storage_bytes"]=t.get("storage_bytes",0)+d["bytes"];json.dump(t,open("tam.json","w"))'
           done
           DUMP=$(stat -c%s banco.dump.gpg 2>/dev/null || echo 0)
-          J=$(python3 -c "import json;t=json.load(open('tam.json'));t['dump_bytes']=$DUMP;print(json.dumps(t))")
+          J=$(python3 -c "import json,os;t=json.load(open('tam.json'));t['dump_bytes']=$DUMP;t.update(json.load(open('bim.json')) if os.path.exists('bim.json') else {});print(json.dumps(t))")
           /usr/lib/postgresql/17/bin/psql "$DB_URL" -q -c "insert into public.ops_status_auria (tipo, ok, dados) values ('backup', $OK, '$J'::jsonb || jsonb_build_object('db_bytes', pg_database_size(current_database())))" \
             && echo "registrado: ok=$OK $J"
