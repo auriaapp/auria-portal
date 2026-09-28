@@ -1,0 +1,147 @@
+# Teste de restauração do backup do Auria
+#
+# Prova que o backup SERVE: baixa o dump mais recente do R2, decifra com a
+# BACKUP_PASSPHRASE e restaura num Postgres 17 DESCARTÁVEL criado dentro do
+# próprio runner. Depois compara, tabela a tabela, a contagem de linhas
+# restaurada × produção, e o tamanho de cada bucket de arquivos R2 × Supabase.
+#
+# A produção só é LIDA (count(*)); nada é escrito nela. O resultado aparece no
+# resumo da execução e vai para auria-backup/teste_restauracao.txt.
+#
+# Roda sozinho no dia 2 de cada mês e pode ser disparado no botão.
+
+name: Teste de restauração
+
+on:
+  schedule:
+    - cron: '0 9 2 * *'   # dia 2, 06:00 Brasília
+  workflow_dispatch:
+
+jobs:
+  restaurar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      pg:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: teste
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    env:
+      LOCAL: postgresql://postgres:teste@localhost:5432/postgres
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: 'true'
+      RCLONE_CONFIG_SB_TYPE: s3
+      RCLONE_CONFIG_SB_PROVIDER: Other
+      RCLONE_CONFIG_SB_ACCESS_KEY_ID: ${{ secrets.SUPABASE_S3_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_SB_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_S3_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_SB_REGION: ${{ secrets.SUPABASE_S3_REGION }}
+      RCLONE_CONFIG_SB_ENDPOINT: https://sabzccokueowpromwxdg.storage.supabase.co/storage/v1/s3
+      RCLONE_CONFIG_SB_FORCE_PATH_STYLE: 'true'
+    steps:
+      - name: Instalar psql 17 e rclone
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 unzip
+          curl -fsSL https://rclone.org/install.sh | sudo bash >/dev/null
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Baixar e decifrar o backup mais recente
+        env:
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          ULT=$(rclone lsf r2:auria-backup/banco/diario/ | sort | tail -1)
+          [ -n "$ULT" ] || { echo "nenhum backup encontrado"; exit 1; }
+          echo "ULT=$ULT" >> "$GITHUB_ENV"
+          rclone copyto "r2:auria-backup/banco/diario/$ULT" banco.dump.gpg
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" -d -o banco.dump banco.dump.gpg
+          ls -lh banco.dump
+          pg_restore -l banco.dump > /dev/null && echo "arquivo de backup íntegro"
+
+      - name: Restaurar no Postgres descartável
+        run: |
+          set -uo pipefail
+          # Papéis e extensões que o Supabase tem e um Postgres puro não tem;
+          # sem eles as policies/grants falham e poluem o teste.
+          psql "$LOCAL" -q <<'SQL'
+          do $$ declare r text; begin
+            foreach r in array array['anon','authenticated','service_role','authenticator',
+              'supabase_admin','supabase_auth_admin','supabase_storage_admin','dashboard_user',
+              'supabase_realtime_admin','supabase_functions_admin','pgbouncer','pgsodium_keyholder',
+              'pgsodium_keyiduser','pgsodium_keymaker','supabase_replication_admin','supabase_read_only_user']
+            loop
+              if not exists (select 1 from pg_roles where rolname = r) then execute format('create role %I', r); end if;
+            end loop; end $$;
+          create extension if not exists pgcrypto;
+          create extension if not exists "uuid-ossp";
+          SQL
+          pg_restore -d "$LOCAL" --no-owner --no-privileges banco.dump 2> erros.txt
+          echo "avisos/erros do restore: $(grep -c 'error:' erros.txt || true)"
+          # Mostra só os TIPOS de erro (extensões do Supabase ausentes são esperadas)
+          grep 'error:' erros.txt | sed -E 's/.*error: //' | cut -c1-90 | sort | uniq -c | sort -rn | head -15 || true
+
+      - name: Comparar restaurado × produção
+        env:
+          PROD: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          Q="select table_schema||'.'||table_name t,
+               (xpath('/row/c/text()', query_to_xml(format('select count(*) c from %I.%I', table_schema, table_name), false, true, '')))[1]::text::bigint n
+             from information_schema.tables
+             where table_type='BASE TABLE' and table_schema in ('public','auth','storage')
+             order by 1"
+          psql "$LOCAL" -Atc "$Q" -F'|' | sort > rest.txt
+          psql "$PROD"  -Atc "$Q" -F'|' | sort > prod.txt
+          python3 - <<'PY'
+          import os
+          r = dict(l.strip().split('|') for l in open('rest.txt') if '|' in l)
+          p = dict(l.strip().split('|') for l in open('prod.txt') if '|' in l)
+          ok = falta = dif = 0; linhas = []
+          for t in sorted(p):
+              pn = int(p[t]); rn = int(r[t]) if t in r else None
+              if rn is None:
+                  falta += 1; st = "❌ tabela não restaurada"
+              elif rn == pn:
+                  ok += 1; st = "✅"
+              else:
+                  dif += 1; st = "⚠️ diferente (mudou desde o backup?)"
+              if st != "✅" or pn > 0:
+                  linhas.append(f"| `{t}` | {pn} | {'—' if rn is None else rn} | {st} |")
+          tot_p = sum(int(v) for v in p.values()); tot_r = sum(int(r.get(t, 0)) for t in p)
+          res = "APROVADO" if falta == 0 and tot_r >= 0.97 * tot_p else "REPROVADO"
+          s = [f"## Teste de restauração: **{res}**", "",
+               f"Backup testado: `{os.environ['ULT']}`", "",
+               f"- Tabelas idênticas: **{ok}** · diferentes: **{dif}** · não restauradas: **{falta}**",
+               f"- Linhas: produção **{tot_p}** · restauradas **{tot_r}** ({100*tot_r/max(tot_p,1):.1f}%)", "",
+               "| Tabela | Produção | Restaurado | Situação |", "|---|---:|---:|---|", *linhas]
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write("\n".join(s) + "\n")
+          open('resultado.txt', 'w').write(f"{res} {os.environ['ULT']} tabelas_ok={ok} dif={dif} falta={falta} linhas={tot_r}/{tot_p}\n")
+          print("\n".join(s[:6]))
+          PY
+
+      - name: Comparar arquivos R2 × Supabase
+        run: |
+          set -euo pipefail
+          { echo; echo "### Arquivos"; echo; echo "| Bucket | Supabase | Backup R2 |"; echo "|---|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          for B in Auria apontamentos logos notas-fiscais cde cotacoes; do
+            S=$(rclone size "sb:$B" --json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(f"{d[\"count\"]} arq · {d[\"bytes\"]/1e6:.1f} MB")')
+            R=$(rclone size "r2:auria-backup/storage/$B" --json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(f"{d[\"count\"]} arq · {d[\"bytes\"]/1e6:.1f} MB")')
+            echo "| $B | $S | $R |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$B  supabase: $S  |  r2: $R"
+          done
+
+      - name: Registrar resultado no R2
+        run: |
+          echo "$(TZ=America/Sao_Paulo date '+%F %H:%M') $(cat resultado.txt)" > teste_restauracao.txt
+          rclone copyto teste_restauracao.txt r2:auria-backup/teste_restauracao.txt
+          grep -q '^.* APROVADO' teste_restauracao.txt
