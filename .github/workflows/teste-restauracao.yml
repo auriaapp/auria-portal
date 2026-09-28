@@ -70,7 +70,7 @@ jobs:
 
       - name: Restaurar no Postgres descartável
         run: |
-          set -uo pipefail
+          set +e -uo pipefail   # o runner usa bash -e; aqui avisos do restore são esperados
           # Papéis e extensões que o Supabase tem e um Postgres puro não tem;
           # sem eles as policies/grants falham e poluem o teste.
           psql "$LOCAL" -q <<'SQL'
@@ -85,7 +85,7 @@ jobs:
           create extension if not exists pgcrypto;
           create extension if not exists "uuid-ossp";
           SQL
-          pg_restore -d "$LOCAL" --no-owner --no-privileges banco.dump 2> erros.txt
+          pg_restore -d "$LOCAL" --no-owner --no-privileges banco.dump 2> erros.txt; echo "pg_restore terminou (código $?)"
           echo "avisos/erros do restore: $(grep -c 'error:' erros.txt || true)"
           # Mostra só os TIPOS de erro (extensões do Supabase ausentes são esperadas)
           grep 'error:' erros.txt | sed -E 's/.*error: //' | cut -c1-90 | sort | uniq -c | sort -rn | head -15 || true
