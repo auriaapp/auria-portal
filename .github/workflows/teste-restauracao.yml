@@ -82,13 +82,14 @@ jobs:
             loop
               if not exists (select 1 from pg_roles where rolname = r) then execute format('create role %I', r); end if;
             end loop; end $$;
-          create extension if not exists pgcrypto;
-          create extension if not exists "uuid-ossp";
+          create schema if not exists extensions;
+          create extension if not exists pgcrypto schema extensions;
+          create extension if not exists "uuid-ossp" schema extensions;
           SQL
           pg_restore -d "$LOCAL" --no-owner --no-privileges banco.dump 2> erros.txt; echo "pg_restore terminou (código $?)"
           echo "avisos/erros do restore: $(grep -c 'error:' erros.txt || true)"
           # Mostra só os TIPOS de erro (extensões do Supabase ausentes são esperadas)
-          grep 'error:' erros.txt | sed -E 's/.*error: //' | cut -c1-90 | sort | uniq -c | sort -rn | head -15 || true
+          grep 'error:' erros.txt | sed -E 's/.*error: //' | cut -c1-160 | sort | uniq -c | sort -rn | head -40 || true
 
       - name: Comparar restaurado × produção
         env:
@@ -127,6 +128,7 @@ jobs:
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write("\n".join(s) + "\n")
           open('resultado.txt', 'w').write(f"{res} {os.environ['ULT']} tabelas_ok={ok} dif={dif} falta={falta} linhas={tot_r}/{tot_p}\n")
           print("\n".join(s[:6]))
+          print("NAO RESTAURADAS:", [t for t in sorted(p) if t not in r])
           PY
 
       - name: Comparar arquivos R2 × Supabase
@@ -134,8 +136,9 @@ jobs:
           set -euo pipefail
           { echo; echo "### Arquivos"; echo; echo "| Bucket | Supabase | Backup R2 |"; echo "|---|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
           for B in Auria apontamentos logos notas-fiscais cde cotacoes; do
-            S=$(rclone size "sb:$B" --json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(f"{d[\"count\"]} arq · {d[\"bytes\"]/1e6:.1f} MB")')
-            R=$(rclone size "r2:auria-backup/storage/$B" --json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(f"{d[\"count\"]} arq · {d[\"bytes\"]/1e6:.1f} MB")')
+            rclone size "sb:$B" --json > s.json; rclone size "r2:auria-backup/storage/$B" --json > r.json
+            S=$(python3 -c 'import json;d=json.load(open("s.json"));print(d["count"],"arq ·",round(d["bytes"]/1e6,1),"MB")')
+            R=$(python3 -c 'import json;d=json.load(open("r.json"));print(d["count"],"arq ·",round(d["bytes"]/1e6,1),"MB")')
             echo "| $B | $S | $R |" >> "$GITHUB_STEP_SUMMARY"
             echo "$B  supabase: $S  |  r2: $R"
           done
