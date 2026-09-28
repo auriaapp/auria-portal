@@ -365,7 +365,7 @@ tr:hover td{background:var(--gray-light)}
               <button class="btn-primary" onclick="saudeCarregar()">&#8635; Atualizar</button>
             </div>
           </div>
-          <div id="saCards" class="kpi-row" style="grid-template-columns:repeat(4,1fr)"><div class="loading-row"><div class="spinner"></div></div></div>
+          <div id="saCards" class="kpi-row" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))"><div class="loading-row"><div class="spinner"></div></div></div>
           <div class="tbl-wrap" style="margin-top:18px">
             <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px"><div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Custo mensal &mdash; hoje e previsão</div><span style="font-size:11.5px;color:var(--text-soft);margin-left:auto" id="saCustoNota"></span></div>
             <div style="padding:0 22px 18px;overflow-x:auto" id="saCusto"></div>
@@ -1144,10 +1144,12 @@ async function saudeCarregar(){
   catch(e){ setHTML('saCards','<div style="padding:14px;color:var(--red);grid-column:1/-1">Não foi possível ler o status: '+esc(e.message||e)+' (rode supabase_ops_status.sql).</div>'); return; }
   if(!USO){ try{ const r=await sb.rpc('ceo_uso'); if(!r.error) USO=r.data; }catch(_){} }
   try{ const r=await sb.rpc('ceo_crescimento'); if(!r.error) cresc=r.data||[]; }catch(_){}
-  saudeRender(hl, ops, cresc);
+  // e-mails do Resend (Free: 100/dia, 3.000/mês) — consulta ao vivo pela Edge Function
+  let em=null; try{ const r=await sb.functions.invoke('ceo-email-uso',{ body:{} }); if(!r.error && !(r.data&&r.data.error)) em=r.data; }catch(_){}
+  saudeRender(hl, ops, cresc, em);
 }
 
-function saudeRender(hl, ops, cresc){
+function saudeRender(hl, ops, cresc, em){
   const P=(USO&&USO.cotas)||{}; const T=(USO&&USO.totais)||{};
   const bks=ops.filter(o=>o.tipo==='backup'), tst=ops.filter(o=>o.tipo==='teste');
   const ub=bks[0], ubOk=bks.find(o=>o.ok), ut=tst[0];
@@ -1169,7 +1171,12 @@ function saudeRender(hl, ops, cresc){
    +saCard(ut&&ut.ok&&hT<=35?'green':ut&&ut.ok?'yellow':'red','Teste de restauração', ut?(ut.ok?'&#10003; APROVADO':'&#10007; REPROVADO'):'nunca feito',
       ut?saIdade(ut.criado_em)+' · '+(ut.dados.linhas??'—')+' de '+(ut.dados.linhas_prod??'—')+' linhas · '+(ut.dados.tabelas_ok??'—')+' tabelas idênticas'+(hT>35?' · <b>mais de 35 dias — rode o teste</b>':''):'rode "Teste de restauração" no GitHub')
    +saCard(pmax>80||pct(r2B,P.r2_gb)>100?'yellow':'green','Cotas', pmax.toFixed(0)+'% <span style="font-size:12px;color:var(--text-soft);font-weight:500">da maior cota paga</span>',
-      'arquivos '+fmtB(sbB)+' de '+(P.storage_supabase_gb||'—')+' GB · banco '+fmtB(dbB)+' de '+(P.db_gb||'—')+' GB · R2 '+fmtB(r2B)+' de '+(P.r2_gb||'—')+' GB grátis'));
+      'arquivos '+fmtB(sbB)+' de '+(P.storage_supabase_gb||'—')+' GB · banco '+fmtB(dbB)+' de '+(P.db_gb||'—')+' GB · R2 '+fmtB(r2B)+' de '+(P.r2_gb||'—')+' GB grátis')
+   +(em ? saCard((em.hoje>0.9*em.limite_dia||em.mes>0.9*em.limite_mes)?'red':(em.hoje>0.7*em.limite_dia||em.mes>0.7*em.limite_mes||em.falhas_mes)?'yellow':'green',
+        'E-mails (Resend)', em.hoje+' <span style="font-size:12px;color:var(--text-soft);font-weight:500">de '+em.limite_dia+' hoje</span>',
+        em.mes+' de '+em.limite_mes+' no mês · plano Free: acima do limite o e-mail não sai'
+        +(em.falhas_mes?'<br><b style="color:var(--red)">'+em.falhas_mes+' não entregue(s) no mês:</b> '+em.ultimas_falhas.map(f=>esc(f.para)+' ('+esc(f.status)+', '+new Date(f.quando).toLocaleDateString('pt-BR')+')').join('; '):''))
+      : saCard('yellow','E-mails (Resend)','—','não foi possível consultar o Resend')));
 
   // ── ritmo de crescimento (bytes/mês) ──
   const pts=bks.filter(o=>o.ok&&o.dados.storage_bytes!=null).map(o=>[(new Date(o.criado_em)-new Date(bks[bks.length-1].criado_em))/864e5, o.dados]);
