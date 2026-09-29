@@ -983,6 +983,16 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
 <!-- MODAL: Adicionar usuário (item 127) — um caminho só para TODOS os tipos.
      Antes, gestor e analista tinham botão aqui; setor e obra só de dentro do
      empreendimento; e o administrativo financeiro não tinha lugar nenhum. -->
+<!-- MODAL: gerenciar uma pessoa (reenviar acesso, editar, desativar, excluir) — 2026-09-29 -->
+<div class="modal-bg" id="modalUsrAcoes">
+  <div class="modal" style="width:520px">
+    <button class="modal-close" onclick="closeModal('modalUsrAcoes')">&#215;</button>
+    <div class="modal-title" id="uaTitulo">Gerenciar</div>
+    <div class="modal-sub" id="uaSub"></div>
+    <div id="uaCorpo"></div>
+  </div>
+</div>
+
 <div class="modal-bg" id="modalNovoUsr">
   <div class="modal" style="width:560px">
     <button class="modal-close" onclick="closeModal('modalNovoUsr')">&#215;</button>
@@ -3417,12 +3427,19 @@ function _usrCard(u){
   const cores={gestor:'var(--navy,#1E3A5F)',analista:'#3B82F6',financeiro:'#1E8449',setor:'#6C3483',obra:'#B7791F',fornecedor:'#0F766E',convite:'var(--orange,#E8960A)'};
   const corTipo = (u.tipo==='setor' && u.papel) ? 'obra' : u.tipo;
   const eu=u.sujeito_id===USER.id;
-  const acoes = u.tipo==='financeiro'
-    ? `<div class="analista-card-actions"><button class="btn-sm" onclick="finEscopoAbrir('${u.sujeito_id}')">Definir escopo</button></div>`
+  // "Gerenciar" (reenviar acesso, editar, desativar, excluir) para pessoas do grupo;
+  // fornecedor é empresa (gerida em Fornecedores) e super_admin nunca é alvo.
+  const gerenciavel = !eu && ['gestor','analista','financeiro','setor','obra'].includes(corTipo) && u.papel!=='super_admin';
+  const btnGer = gerenciavel ? `<button class="btn-sm" onclick="usrAcoesAbrir('${u.sujeito_id}')" title="Reenviar acesso, editar, desativar ou excluir">&#8943; Gerenciar</button>` : '';
+  const acoes = u.tipo==='convite'
+    ? `<div class="analista-card-actions"><button class="btn-sm" onclick="convAcao('${u.sujeito_id}','reenviar_convite')">Reenviar</button><button class="btn-sm danger" onclick="convAcao('${u.sujeito_id}','cancelar_convite')">Cancelar</button></div>`
+    : u.tipo==='financeiro'
+    ? `<div class="analista-card-actions"><button class="btn-sm" onclick="finEscopoAbrir('${u.sujeito_id}')">Definir escopo</button>${btnGer}</div>`
     : (u.tipo==='analista'
-      ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button><button class="btn-sm" onclick="renomearAnalista('${u.sujeito_id}')">Renomear</button></div>`
+      ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button>${btnGer}</div>`
       : (u.tipo==='fornecedor'
-        ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('fornecedores')">Abrir</button></div>` : ''));
+        ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('fornecedores')">Abrir</button></div>`
+        : (btnGer ? `<div class="analista-card-actions">${btnGer}</div>` : '')));
   return `<div class="analista-card">
     <div class="analista-card-av" style="background:${cores[corTipo]||'#64748B'}">${u.tipo==='convite'?'✉':av}</div>
     <div class="analista-card-info">
@@ -4997,6 +5014,73 @@ async function revogarAnalista(analistaId, nome){
   renderAnalistasPage();
 }
 
+// ═══════════════════════════════════════════════════════
+// GERENCIAR PESSOA (2026-09-29): reenviar acesso · editar nome · desativar/reativar ·
+// excluir (dupla confirmação: digitar o e-mail — conferido também no servidor).
+// Tudo passa pela Edge Function gerenciar-usuario, que trava no MESMO grupo.
+// ═══════════════════════════════════════════════════════
+async function usrInvoke(body){
+  const r = await sb.functions.invoke('gerenciar-usuario', { body });
+  if(r.error){ let m=r.error.message; try{ const jb=await r.error.context.json(); if(jb&&jb.error) m=jb.error; }catch(_){} throw new Error(m); }
+  if(r.data && r.data.error) throw new Error(r.data.error);
+  return r.data||{};
+}
+async function usrRecarregar(){ await loadAnalistas(); renderAnalistasPage(); }
+function usrAcoesAbrir(id, etapa){
+  const u=(USUARIOS||[]).find(x=>x.sujeito_id===id); if(!u) return;
+  const nome=u.nome||u.email||'—', ativo=u.ativo!==false;
+  document.getElementById('uaTitulo').textContent = nome;
+  setHTML('uaSub', esc(u.email||'')+(ativo?'':' · <b style="color:var(--red)">conta desativada</b>'));
+  const linha=(ico,tit,sub,acao,cls)=>`<button class="btn-sm ${cls||''}" style="display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px" onclick="${acao}">
+      <span style="font-size:18px;line-height:1">${ico}</span><span><b style="display:block;font-size:13.5px">${tit}</b><span style="font-size:12px;color:var(--text-soft);font-weight:500">${sub}</span></span></button>`;
+  if(etapa==='excluir'){
+    setHTML('uaCorpo', `<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:10px;padding:14px;font-size:13px;line-height:1.55;color:#7F1D1D;margin-bottom:12px">
+        <b>Excluir apaga a conta de vez.</b> A pessoa perde o acesso, e os registros ligados a ela (apontamentos que criou, liberações que fez) ficam sem autor.
+        Se a ideia é só tirar o acesso, use <b>Desativar</b> — é reversível.</div>
+      <label style="font-size:12.5px;font-weight:600">Para confirmar, digite o e-mail da pessoa:</label>
+      <input id="uaConf" class="form-inp" style="width:100%;margin:6px 0 14px" placeholder="${esc(u.email||'')}" oninput="document.getElementById('uaExcluir').disabled = this.value.trim().toLowerCase()!=='${esc((u.email||'').toLowerCase())}'">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-sm" onclick="usrAcoesAbrir('${id}')">Voltar</button>
+        <button class="btn-sm danger" id="uaExcluir" disabled style="background:var(--red);color:#fff;border-color:var(--red)" onclick="usrAcao('${id}','delete')">Excluir definitivamente</button></div>`);
+  } else if(etapa==='editar'){
+    setHTML('uaCorpo', `<label style="font-size:12.5px;font-weight:600">Nome</label>
+      <input id="uaNome" class="form-inp" style="width:100%;margin:6px 0 14px" value="${esc(u.nome||'')}">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-sm" onclick="usrAcoesAbrir('${id}')">Voltar</button>
+        <button class="btn-sm" style="background:var(--blue);color:#fff;border-color:var(--blue)" onclick="usrAcao('${id}','rename')">Salvar</button></div>`);
+  } else {
+    setHTML('uaCorpo',
+        (ativo ? linha('&#9993;','Reenviar acesso','Sem senha criada: manda um convite novo. Com senha: manda um link para nova senha (a atual continua valendo).',`usrAcao('${id}','reenviar')`) : '')
+      + linha('&#9998;','Editar nome','Como a pessoa aparece no Auria.',`usrAcoesAbrir('${id}','editar')`)
+      + (ativo ? linha('&#9208;','Desativar','Bloqueia o login na hora. Nada é apagado; dá para reativar depois.',`usrAcao('${id}','desativar')`)
+               : linha('&#9654;','Reativar','Devolve o acesso com a mesma senha.',`usrAcao('${id}','reativar')`))
+      + linha('&#128465;','Excluir…','Apaga a conta de vez (pede confirmação).',`usrAcoesAbrir('${id}','excluir')`,'danger'));
+  }
+  document.getElementById('modalUsrAcoes').classList.add('open');
+}
+async function usrAcao(id, action){
+  const u=(USUARIOS||[]).find(x=>x.sujeito_id===id); if(!u) return;
+  const body={ action, user_id:id };
+  if(action==='rename'){ body.nome=(document.getElementById('uaNome').value||'').trim(); if(!body.nome){ showToast('Informe o nome','red'); return; } }
+  if(action==='delete') body.confirmacao=(document.getElementById('uaConf').value||'').trim();
+  if(action==='desativar' && !confirm('Desativar '+(u.nome||u.email)+'?\n\nO login fica bloqueado na hora. Nada é apagado e dá para reativar depois.')) return;
+  showToast('Processando…','');
+  try{
+    const d=await usrInvoke(body);
+    const msg={ reenviar: d.tipo==='nova_senha'?'Link para nova senha enviado a '+u.email:'Convite novo enviado a '+u.email,
+                rename:'Nome atualizado', desativar:'Conta desativada', reativar:'Conta reativada', delete:'Conta excluída' }[action];
+    showToast(msg,'green'); closeModal('modalUsrAcoes'); await usrRecarregar();
+  }catch(e){ showToast('Erro: '+e.message,'red'); }
+}
+async function convAcao(conviteId, action){
+  const c=(USUARIOS||[]).find(x=>x.sujeito_id===conviteId);
+  if(action==='cancelar_convite' && !confirm('Cancelar o convite de '+((c&&c.email)||'')+'? O link enviado deixa de valer.')) return;
+  showToast('Processando…','');
+  try{ await usrInvoke({ action, convite_id:conviteId });
+       showToast(action==='cancelar_convite'?'Convite cancelado':'Convite reenviado','green'); await usrRecarregar(); }
+  catch(e){ showToast('Erro: '+e.message,'red'); }
+}
+
 async function renomearAnalista(id){
   const a = ANALISTAS.find(x=>String(x.id)===String(id)); if(!a) return;
   const novo = prompt('Novo nome para '+(a.nome||a.email)+':', a.nome||'');
@@ -5006,7 +5090,7 @@ async function renomearAnalista(id){
   showToast('Salvando...','');
   const { data:fn, error } = await sb.functions.invoke('gerenciar-usuario',
     { body:{ action:'rename', user_id:id, nome:nm } });
-  if(!error && fn && fn.success){ showToast('Nome atualizado — e-mail enviado ao usuário','green'); }
+  if(!error && fn && fn.success){ showToast('Nome atualizado','green'); }
   else { showToast('Erro: '+((fn&&fn.error)||(error&&error.message)||'falha'),'red'); }
   await loadAnalistas();
   renderAnalistasPage();
@@ -5014,10 +5098,12 @@ async function renomearAnalista(id){
 
 async function excluirAnalista(id){
   const a = ANALISTAS.find(x=>String(x.id)===String(id)); if(!a) return;
-  if(!confirm('Excluir definitivamente '+(a.nome||a.email)+'?\n\nIsto remove a conta e todos os acessos. Esta ação não pode ser desfeita.')) return;
+  const conf = prompt('Excluir definitivamente '+(a.nome||a.email)+'?\n\nIsto remove a conta e todos os acessos e não pode ser desfeito.\nPara confirmar, digite o e-mail da pessoa:', '');
+  if(conf===null) return;
+  if(conf.trim().toLowerCase()!==String(a.email||'').toLowerCase()){ showToast('O e-mail digitado não confere — nada foi excluído','red'); return; }
   showToast('Excluindo...','');
   const { data:fn, error } = await sb.functions.invoke('gerenciar-usuario',
-    { body:{ action:'delete', user_id:id } });
+    { body:{ action:'delete', user_id:id, confirmacao:conf.trim() } });
   if(!error && fn && fn.success){ showToast('Usuário excluído','green'); }
   else { showToast('Erro: '+((fn&&fn.error)||(error&&error.message)||'falha'),'red'); }
   await loadAnalistas();
