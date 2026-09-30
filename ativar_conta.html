@@ -198,8 +198,15 @@ async function ativar(){
       if(d.success && d.token_hash){
         PENDING = { token_hash: d.token_hash, type: d.type || 'invite' };
         IS_RECOVERY = (d.type === 'recovery');
+        // Resgate é de uso único: não tentar de novo se a senha for recusada.
+        PENDING_CONVITE = null;
       }else{
-        const motivo = d.error || (r && r.error && r.error.message) || 'convite_invalido';
+        // Resposta não-2xx: supabase-js põe o corpo em r.error.context.
+        let motivo = d.error;
+        if(!motivo && r && r.error && r.error.context && r.error.context.json){
+          try{ motivo = (await r.error.context.json()).error; }catch(_){}
+        }
+        motivo = motivo || 'convite_invalido';
         const texto = motivo === 'convite_vencido'
             ? 'Este convite passou dos 3 dias. Peça um novo ao administrador.'
           : motivo === 'convite_usado'
@@ -246,7 +253,15 @@ async function ativar(){
   const { error } = await sb.auth.updateUser({ password: pass1 });
 
   if(error){
-    errBox.textContent = 'Erro: ' + error.message;
+    // A sessão do convite JÁ está ativa neste ponto (token consumido acima).
+    // Nova tentativa vai direto ao updateUser — não re-resgata o convite.
+    const m = error.message || '';
+    errBox.textContent =
+        (error.code === 'weak_password' || /weak|easy to guess|pwned|leaked/i.test(m))
+          ? 'Essa senha aparece em listas de senhas vazadas e foi recusada. Escolha outra (evite palavras comuns, nomes e sequências) e tente de novo.'
+        : /should be different|same_password/i.test(m)
+          ? 'A nova senha precisa ser diferente da anterior.'
+        : 'Erro: ' + m;
     errBox.style.display = 'block';
     btn.disabled = false; btn.textContent = txtOk;
     return;
