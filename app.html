@@ -114,6 +114,18 @@
      (split-3dleft), o #bimPane vai pra esquerda e o #stage (2D) pra direita. */
   body.soBim.split.split-3dleft #bimPane{order:1;border-left:none;border-right:2px solid var(--line)}
   body.soBim.split.split-3dleft #stage{order:2}
+  /* Divisória arrastável do split: --spl = largura do painel da ESQUERDA. */
+  #splitBar{display:none;flex:0 0 6px;cursor:col-resize;background:var(--line);position:relative;z-index:5;touch-action:none}
+  #splitBar:hover,#splitBar.drag{background:#E8960A}
+  #splitBar::after{content:'';position:absolute;left:1px;right:1px;top:50%;height:36px;margin-top:-18px;border-radius:3px;
+    background:repeating-linear-gradient(180deg,rgba(255,255,255,.55) 0 2px,transparent 2px 5px)}
+  body.soBim.split #splitBar{display:block}
+  body.soBim.split #stage{order:0;flex:0 0 calc(var(--spl,50%) - 3px)}
+  body.soBim.split #splitBar{order:1}
+  body.soBim.split #bimPane{order:2;flex:1;border-left:none;border-right:none}
+  body.soBim.split.split-3dleft #bimPane{order:0;flex:0 0 calc(var(--spl,50%) - 3px)}
+  body.soBim.split.split-3dleft #stage{order:2;flex:1}
+  body.split-arrastando #stage,body.split-arrastando #bimPane{pointer-events:none;user-select:none}
   /* "Trocar prancha" só aparece no split, sobre o 2D. */
   body.soBim.split #btnTrocarPrancha{display:inline-flex}
   /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
@@ -591,6 +603,7 @@
           </div>
         </div>
       </div>
+      <div id="splitBar" title="Arraste para redimensionar · duplo clique volta a 50/50"></div>
       <div id="bimPane">
         <div class="bim-head" id="bimHead">
           <span class="xkonly" style="font-size:11px;color:#94a3b8">🧊 BIM</span>
@@ -4242,6 +4255,28 @@ async function f3dModo(lig, preSel){
 let SPLIT_PRIM='2d';
 function _splitBtns(on){ const a=$('btnBim'), b=$('f3dBtn2D'); if(a){ a.style.display=''; a.classList.toggle('on',on); } if(b) b.classList.toggle('on',on); }
 function _splitResize(){ setTimeout(()=>{ try{ if(F3D && B3 && B3.redimensionar) B3.redimensionar(F3D); }catch(_){} try{ window.dispatchEvent(new Event('resize')); }catch(_){} }, 80); }
+// Divisória do split: arrasta a fronteira (15%–85%), lembra a proporção e
+// avisa 2D/3D para redimensionar. Duplo clique volta a 50/50.
+(function(){
+  const KEY='auria.splitPct';
+  function aplicar(pct){ const row=$('stageRow'); if(row) row.style.setProperty('--spl', pct+'%'); }
+  let raf=0;
+  function avisa(){ if(raf) return; raf=requestAnimationFrame(()=>{ raf=0; _splitResize(); }); }
+  window.addEventListener('load',()=>{
+    const bar=$('splitBar'); if(!bar) return;
+    try{ const v=+localStorage.getItem(KEY); if(v>=15&&v<=85) aplicar(v); }catch(_){}
+    bar.addEventListener('pointerdown',e=>{
+      e.preventDefault(); bar.setPointerCapture(e.pointerId); bar.classList.add('drag'); document.body.classList.add('split-arrastando');
+      const mover=ev=>{ const r=$('stageRow').getBoundingClientRect(); let pct=(ev.clientX-r.left)/r.width*100;
+        pct=Math.max(15,Math.min(85,pct)); aplicar(pct.toFixed(1)); avisa(); };
+      const soltar=ev=>{ bar.releasePointerCapture(ev.pointerId); bar.classList.remove('drag'); document.body.classList.remove('split-arrastando');
+        bar.removeEventListener('pointermove',mover); bar.removeEventListener('pointerup',soltar);
+        try{ localStorage.setItem(KEY, parseFloat($('stageRow').style.getPropertyValue('--spl'))||50); }catch(_){} _splitResize(); };
+      bar.addEventListener('pointermove',mover); bar.addEventListener('pointerup',soltar);
+    });
+    bar.addEventListener('dblclick',()=>{ aplicar(50); try{ localStorage.setItem(KEY,50); }catch(_){} _splitResize(); });
+  });
+})();
 async function f3dSplitToggle(){
   if(document.body.classList.contains('split')){
     // SAIR do split → volta ao primário em tela cheia
