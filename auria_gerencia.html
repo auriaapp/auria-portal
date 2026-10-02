@@ -5230,6 +5230,7 @@ function abrirFornecedor(){
   FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
   renderFnProjs();
   document.getElementById('fornecedorModal').classList.add('on');
+  fnCarregarDiscGrupo();
 }
 function editarFornecedor(i){
   FN_EDIT=FORNECEDORES_LIST[i]; if(!FN_EDIT)return;
@@ -5243,6 +5244,7 @@ function editarFornecedor(i){
   if(!FN_PROJS_BUF.length) FN_PROJS_BUF=[{nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}];
   renderFnProjs();
   document.getElementById('fornecedorModal').classList.add('on');
+  fnCarregarDiscGrupo();
 }
 function fecharFornecedor(){ document.getElementById('fornecedorModal').classList.remove('on'); }
 function addProjetistaLinha(){ FN_PROJS_BUF.push({nome:'',email:'',telefone:'',disciplinas:'',eh_rt:false,eh_adm_fin:false}); renderFnProjs(); }
@@ -5255,6 +5257,23 @@ const DISCIPLINAS_PADRAO=['Arquitetura','Estrutura Concreto','Estrutura Metálic
   'Sinalização / Comunicação Visual','ETA / ETE','Climatização / Pressurização / Exaustão',
   'Fundação','Contenção'];
 
+// Disciplinas do GRUPO (menu Disciplinas / convenção) — "COD — Nome". Sem convenção do grupo,
+// junta as das construtoras; sem nenhuma, cai na lista fixa antiga.
+let FN_DISC_GRUPO=null;
+async function fnCarregarDiscGrupo(){
+  try{
+    const ids=(CONSTRUTORAS||[]).map(c=>c.id);
+    let q=sb.from('cde_convencao_auria').select('grupo_id,construtora_id,campos');
+    const { data }=await (ids.length ? q.or('grupo_id.eq.'+EMPRESA.id+',construtora_id.in.('+ids.join(',')+')') : q.eq('grupo_id',EMPRESA.id));
+    const rows=data||[]; const g=rows.filter(r=>r.grupo_id===EMPRESA.id); const fonte=g.length?g:rows;
+    const out=[];
+    fonte.forEach(r=>{ const f=(r.campos||[]).find(c=>c.mapeia==='disciplina'); (f&&f.dominio||[]).forEach(d=>{
+      const v=String(typeof d==='object'?d.v||'':d).trim().toUpperCase(), rot=String(typeof d==='object'?d.rotulo||'':'').trim();
+      if(!v) return; const t=rot&&rot.toUpperCase()!==v ? v+' — '+rot : v; if(!out.includes(t)) out.push(t); }); });
+    FN_DISC_GRUPO=out.sort((a,b)=>a.localeCompare(b,'pt'));
+  }catch(e){ console.warn('disciplinas do grupo:',e); FN_DISC_GRUPO=[]; }
+  if(document.getElementById('fornecedorModal').classList.contains('on')) renderFnProjs();
+}
 function _discList(p){ return (p.disciplinas||'').split(',').map(s=>s.trim()).filter(Boolean); }
 function addDisc(sel){
   const i=+sel.getAttribute('data-i'); const d=sel.value; if(!d||!FN_PROJS_BUF[i])return;
@@ -5272,7 +5291,7 @@ function renderFnProjs(){
   tb.innerHTML=FN_PROJS_BUF.map((p,i)=>{
     const discs=_discList(p);
     const chips=discs.map(d=>`<span class="fn-disc-chip">${escF(d)} <a onclick="rmDisc(${i},'${escF(d)}')" style="cursor:pointer;font-weight:800">&times;</a></span>`).join(' ');
-    const opts=DISCIPLINAS_PADRAO.filter(d=>!discs.includes(d)).map(d=>`<option>${escF(d)}</option>`).join('');
+    const opts=(FN_DISC_GRUPO&&FN_DISC_GRUPO.length?FN_DISC_GRUPO:DISCIPLINAS_PADRAO).filter(d=>!discs.includes(d)).map(d=>`<option>${escF(d)}</option>`).join('');
     return `<tr>
     <td><input data-pj="nome" data-i="${i}" value="${escF(p.nome||'')}"></td>
     <td><input data-pj="email" data-i="${i}" value="${escF(p.email||'')}"></td>
