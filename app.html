@@ -7288,7 +7288,8 @@ async function apCobRender(){
   el.style.display='flex';
   const pausa=!!a.cobranca_pausada;
   const bts=APP_RO?'':`<button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobPausar()">${pausa?'▶ Retomar':'⏸ Pausar'}</button>
-    <button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobAgora()" ${pausa?'disabled title="Retome a cobrança para enviar"':''}>📨 Cobrar agora</button>`;
+    <button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobAgora(false)" ${pausa?'disabled title="Retome a cobrança para enviar"':'title="Cobra só este apontamento"'}>📨 Cobrar este</button>
+    <button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobAgora(true)" ${pausa?'disabled title="Retome a cobrança para enviar"':'title="Cobra o conjunto de apontamentos abertos da disciplina, com resumo por criticidade"'}>📨 Cobrar disciplina</button>`;
   el.innerHTML=`<span style="flex:1;min-width:180px">🔔 <b style="color:var(--txt)">Cobrança automática</b> <span id="apCobInfo">${pausa?'· <b style="color:#E8960A">pausada</b> neste apontamento':'· carregando…'}</span></span>${bts}`;
   if(pausa) return;
   try{
@@ -7304,11 +7305,14 @@ function apCobPausar(){
   apCobRender();
   alert('Salve o apontamento para '+(APT_EDIT.cobranca_pausada?'pausar':'retomar')+' a cobrança.');
 }
-async function apCobAgora(){
+async function apCobAgora(conjunto){
   const a=APT_EDIT; if(!a||a._novo) return;
-  if(!confirm('Enviar agora um e-mail de cobrança deste apontamento ('+a.id+') aos participantes pendentes?')) return;
+  const disc=Object.keys(a.participantes||{}).join(', ')||a.disciplina||'';
+  if(!confirm(conjunto
+      ? 'Enviar agora a cobrança de TODOS os apontamentos abertos da disciplina ('+disc+') aos participantes pendentes deste apontamento?'
+      : 'Enviar agora a cobrança SÓ deste apontamento ('+a.id+') aos participantes pendentes?')) return;
   try{
-    const { data, error }=await sb.rpc('cobranca_cobrar_agora',{ p_emp:EMP.id, p_apt:a.id });
+    const { data, error }=await sb.rpc('cobranca_cobrar_agora',{ p_emp:EMP.id, p_apt:a.id, p_conjunto:!!conjunto });
     if(error) throw error;
     alert('Cobrança enviada para '+data+' destinatário(s).');
     apCobRender();
