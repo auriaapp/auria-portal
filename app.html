@@ -1075,6 +1075,9 @@
     <div class="fg">
       <label>Prints (Ctrl+V cola aqui)</label>
       <div class="imgs-stg" id="apImgs"></div>
+      <div id="apAnexos" style="margin-top:6px"></div>
+      <input type="file" id="apAnexoFile" multiple accept=".pdf,.dwg,.jpg,.jpeg,application/pdf,image/jpeg" style="display:none" onchange="anexarArquivos(this)">
+      <button class="btn-sec" id="apAnexoBtn" type="button" onclick="$('apAnexoFile').click()" style="font-size:11px;padding:5px 10px;margin-top:6px">📎 Anexar PDF, DWG ou JPG (até 5 MB cada)</button>
     </div>
     <div class="fg">
       <label>Histórico do apontamento</label>
@@ -7285,7 +7288,52 @@ function rmPartRow(i){
 }
 
 // ── Imagens (Ctrl+V no modal → bucket apontamentos/<uid>/<id>/) ─────────────
+// Anexos: JPG entra nos prints (comprimido); PDF/DWG vão p/ anexos_json (link p/ abrir/baixar).
+const ANX_MAX_MB=5, ANX_MAX_N=5;
+function anexarArquivos(inp){
+  const fs=[...(inp.files||[])]; inp.value=''; if(!APT_EDIT) return;
+  const anx=APT_EDIT.anexos_json=(APT_EDIT.anexos_json||[]); const erros=[];
+  fs.forEach(f=>{
+    const ext=(f.name.split('.').pop()||'').toLowerCase();
+    if(f.size>ANX_MAX_MB*1048576){ erros.push(f.name+' passa de '+ANX_MAX_MB+' MB'); return; }
+    if(ext==='jpg'||ext==='jpeg'){
+      const img=new Image(), url=URL.createObjectURL(f);
+      img.onload=function(){ const sc=Math.min(1,1600/Math.max(img.width,img.height)); const c=document.createElement('canvas');
+        c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc); c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        URL.revokeObjectURL(url); APT_IMGS.push({data:c.toDataURL('image/jpeg',0.8)}); renderImgs(); };
+      img.src=url; return;
+    }
+    if(ext!=='pdf' && ext!=='dwg'){ erros.push(f.name+': só PDF, DWG ou JPG'); return; }
+    if(anx.length>=ANX_MAX_N){ erros.push(f.name+': máximo de '+ANX_MAX_N+' anexos PDF/DWG por apontamento'); return; }
+    anx.push({nome:f.name, tipo:ext, bytes:f.size, _file:f});
+  });
+  if(erros.length) alert('Não anexado:
+• '+erros.join('
+• '));
+  renderAnexos();
+}
+function renderAnexos(){
+  const el=$('apAnexos'); if(!el) return; const anx=(APT_EDIT&&APT_EDIT.anexos_json)||[];
+  el.innerHTML=anx.map((x,i)=>`<div style="display:flex;align-items:center;gap:7px;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;margin-top:4px">
+    <b style="font-family:ui-monospace,Consolas,monospace;font-size:10px;color:var(--accent)">${esc((x.tipo||'').toUpperCase())}</b>
+    ${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener" style="flex:1;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.nome)}</a>`:`<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.nome)} <i style="color:var(--mut)">(sobe ao salvar)</i></span>`}
+    <span style="color:var(--mut);font-size:10px">${(x.bytes/1048576).toFixed(1)} MB</span>
+    ${APP_RO?'':`<button onclick="APT_EDIT.anexos_json.splice(${i},1);renderAnexos()" style="background:none;border:none;color:var(--danger);cursor:pointer">×</button>`}</div>`).join('');
+  const b=$('apAnexoBtn'); if(b) b.style.display=APP_RO?'none':'';
+}
+async function subirAnexosPendentes(aptId){
+  const anx=(APT_EDIT&&APT_EDIT.anexos_json)||[];
+  for(let i=0;i<anx.length;i++){ const x=anx[i]; if(x.url||!x._file) continue;
+    const nome=x.nome.normalize('NFD').replace(/[^\w.\-]+/g,'_');
+    const path=USER.id+'/'+aptId+'/anx_'+Date.now()+'_'+nome;
+    const up=await sb.storage.from('apontamentos').upload(path, x._file, {contentType:x.tipo==='pdf'?'application/pdf':'application/acad',upsert:true});
+    if(up.error) throw new Error('upload de anexo '+x.nome+': '+up.error.message);
+    x.url=sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl; delete x._file;
+  }
+  return anx.map(x=>({url:x.url,nome:x.nome,tipo:x.tipo,bytes:x.bytes}));
+}
 function renderImgs(){
+  renderAnexos();
   $('apImgs').innerHTML=APT_IMGS.map((im,i)=>`<div class="th">
     <img src="${im.url||im.data}" style="cursor:zoom-in" onclick="abrirImg(this.src)">
     <button class="rm" onclick="APT_IMGS.splice(${i},1);renderImgs()">×</button></div>`).join('')
@@ -7402,6 +7450,7 @@ async function salvarApt(){
   const btn=$('apSalvar'); btn.disabled=true; btn.textContent='Salvando…';
   try{
     const imgs=await subirImgsPendentes(a.id);
+    const anexos=await subirAnexosPendentes(a.id);
     const px=calcPrazos(a.participantes);
     const row={
       id:a.id, user_id:USER.id, empreendimento:EMP.nome, empreendimento_id:EMP.id, analista:USER.nome,
@@ -7421,7 +7470,7 @@ async function salvarApt(){
       status:a.status, prioridade:a.prioridade, visibilidade:a.visibilidade||'Projeto',
       etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
       prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
-      participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs,
+      participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs, anexos_json:anexos,
       pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
       prancha_id:a.prancha_id||null,
       // Se a prancha veio do CDE, marca em qual revisão o apontamento nasceu.
