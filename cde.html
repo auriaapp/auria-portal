@@ -315,6 +315,11 @@
     display:none;align-items:center;gap:8px;background:rgba(15,23,42,.9);
     border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:6px 10px;color:#e2e8f0}
   .cdeWin-bim .bimAndar.on{display:flex}
+  .cdeWin-bim .bimPad{position:absolute;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:6;display:none;
+    grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:6px;touch-action:none;user-select:none;-webkit-user-select:none}
+  .cdeWin-bim .bimPad button{border-radius:12px;background:rgba(15,23,42,.72);border:1px solid rgba(255,255,255,.22);
+    color:#e2e8f0;font-size:18px;touch-action:none;-webkit-tap-highlight-color:transparent}
+  .cdeWin-bim .bimPad button:active{background:var(--accent);border-color:var(--accent);color:#231703}
   .cdeWin-bim .bimAndar button{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
     border-radius:6px;color:#e2e8f0;font-size:14px;line-height:1;padding:4px 9px;cursor:pointer}
   .cdeWin-bim .bimAndar button:hover{background:rgba(255,255,255,.2)}
@@ -753,6 +758,20 @@
     .cdeWin-bim.semPainel .bpAba{right:0}
     .cdeWin-bim .bimTools{right:8px;flex-wrap:wrap}
     .cdeWin-bim .bimLogo{display:none}
+    /* elevador de níveis: coluna estreita encostada à direita */
+    .cdeWin-bim .bimAndar{left:auto;right:8px;bottom:auto;top:50%;transform:translateY(-50%);
+      flex-direction:column;gap:4px;padding:5px;border-radius:12px}
+    .cdeWin-bim.semPainel .bimAndar{right:8px}
+    .cdeWin-bim .bimAndar [data-t=sobe]{order:0} .cdeWin-bim .bimAndar .nv{order:1}
+    .cdeWin-bim .bimAndar [data-t=desce]{order:2} .cdeWin-bim .bimAndar .sair{order:3}
+    .cdeWin-bim .bimAndar button{width:38px;height:34px;padding:0;font-size:12px}
+    .cdeWin-bim .bimAndar .sair{font-size:11px}
+    .cdeWin-bim .bimAndar .nv{min-width:0;max-width:52px;font-size:10px;line-height:1.15}
+    .cdeWin-bim .bimAndar .nv b{font-size:10.5px;word-break:break-word}
+    .cdeWin-bim .bimAndar .dica{display:none}
+    /* setas do caminhar: cruz no canto inferior esquerdo */
+    .cdeWin-bim.andando .bimPad{display:grid}
+    .cdeWin-bim.andando .bimDica{display:none}
 
     /* modais e painéis flutuantes: tela cheia */
     .ov{padding:0;align-items:stretch}
@@ -3410,6 +3429,12 @@ class CdeWin {
       +       '<button data-t="sobe" title="Subir um pavimento">▲</button>'
       +       '<button data-t="saiAndar" class="sair" title="Sair do modo caminhar">Sair</button>'
       +     '</div>'
+      +     '<div class="bimPad">'
+      +       '<button data-k="w" style="grid-area:1/2" aria-label="Frente">▲</button>'
+      +       '<button data-k="a" style="grid-area:2/1" aria-label="Esquerda">◀</button>'
+      +       '<button data-k="s" style="grid-area:2/2" aria-label="Trás">▼</button>'
+      +       '<button data-k="d" style="grid-area:2/3" aria-label="Direita">▶</button>'
+      +     '</div>'
       +     '<img class="bimLogo" src="logo_symbol.png" alt="Auria" draggable="false">'
       +     '<div class="bimDica">Arraste para girar · roda para zoom · clique da roda para deslocar</div></div>'
       +   '<div class="cdeWin-marca"></div>'
@@ -3433,6 +3458,21 @@ class CdeWin {
     this.pinsWrap = w.querySelector('.cdeWin-pins');
     this.dxfWrap  = w.querySelector('.cdeWin-dxf');
     this.bimWrap  = w.querySelector('.cdeWin-bim');
+    // Celular: tela pequena começa limpa — painel de propriedades recolhido e
+    // dicas de navegação desligadas (ambos reabrem pelos controles de sempre).
+    if(CDE_MOBILE.matches){
+      this.bimWrap.classList.add('semPainel','semDica');
+      const ab=this.bimWrap.querySelector('.bpAba'); if(ab) ab.textContent='◂';
+    }
+    // Setas do modo caminhar (celular): segurar = mesma tecla W/A/S/D.
+    this.bimWrap.querySelectorAll('.bimPad button').forEach(b=>{
+      const k=b.dataset.k;
+      const on =(e)=>{ e.preventDefault(); const B=this.B3; if(B&&B.andar.ativo) B.andar.teclas.add(k); try{ b.setPointerCapture(e.pointerId); }catch(_){} };
+      const off=()=>{ const B=this.B3; if(B) B.andar.teclas.delete(k); };
+      b.addEventListener('pointerdown',on); b.addEventListener('pointerup',off);
+      b.addEventListener('pointercancel',off); b.addEventListener('lostpointercapture',off);
+      b.addEventListener('contextmenu',e=>e.preventDefault());
+    });
     this.bimLoadEl= w.querySelector('.cdeWin-bim .bimLoad');
     this.bpLista  = w.querySelector('.cdeWin-bim .bpLista');
     this.bpConteudo = w.querySelector('.cdeWin-bim .bpConteudo');
@@ -4051,14 +4091,16 @@ class CdeWin {
       let olhar=null;
       renderer.domElement.addEventListener('pointerdown', (e)=>{
         const B=this.B3;
-        if(e.button!==1 || !B || !B.andar.ativo) return;
+        const toque = e.pointerType==='touch' && e.isPrimary;   // celular: arrastar o dedo olha em volta
+        if((e.button!==1 && !toque) || !B || !B.andar.ativo) return;
         olhar={ x:e.clientX, y:e.clientY };
+        if(toque) return;
         // Sem isto o Windows abre a rolagem automática do browser no meio do
         // gesto e o arrasto se perde.
         e.preventDefault();
         try{ renderer.domElement.setPointerCapture(e.pointerId); }catch(_){}
       });
-      renderer.domElement.addEventListener('pointerup', (e)=>{ if(e.button===1) olhar=null; });
+      renderer.domElement.addEventListener('pointerup', (e)=>{ if(e.button===1 || e.pointerType==='touch') olhar=null; });
       renderer.domElement.addEventListener('pointercancel', ()=>{ olhar=null; });
       renderer.domElement.addEventListener('pointermove', (e)=>{
         const B=this.B3;
@@ -4358,6 +4400,7 @@ class CdeWin {
     const W=B.andar;
     this.bimToolsEl.querySelector('[data-t=andar]').classList.toggle('on', lig);
     this.bimWrap.querySelector('.bimAndar').classList.toggle('on', lig);
+    this.bimWrap.classList.toggle('andando', lig);
     if(!lig){
       W.ativo=false; W.armado=false;
       W.teclas.clear();
@@ -5026,7 +5069,7 @@ class CdeWin {
     B.luzes.sol.intensity = c.sol; B.luzes.fill.intensity = c.sol*0.35;
     B.facesDuplas = c.faces!==false; this.bimAplicarFaces(true);
     B.medida.snapOn = c.snap!==false; if(!B.medida.snapOn) this.bimSnapEsconder();
-    this.bimWrap.classList.toggle('semDica', c.dica===false);
+    this.bimWrap.classList.toggle('semDica', c.dica===false || CDE_MOBILE.matches);
     try{ B.fragments.settings.graphicsQuality = c.gq?1:0; B.fragments.update(true).catch(()=>{}); }catch(_){}
     if(cfg){
       const setV=(n,val,frac)=>{ const el=cfg.querySelector('[data-c='+n+']'); if(!el) return;
@@ -5036,7 +5079,7 @@ class CdeWin {
       setV('expo', c.expo, true); setV('amb', c.amb, true); setV('sol', c.sol, true);
       setV('aoInt', c.aoInt); setV('aoRaio', c.aoRaio); setV('aoAm', c.aoAm);
       setChk('faces', c.faces!==false); setChk('snap', c.snap!==false); setChk('espacos', !!c.espacos);
-      setChk('dica', c.dica!==false);
+      setChk('dica', c.dica!==false && !CDE_MOBILE.matches);
       setChk('gq', !!c.gq); setChk('grade', !!c.grade); setChk('ao', !!c.ao);
       cfg.querySelector('[data-c=aoSub]').classList.toggle('off', !c.ao);
     }
