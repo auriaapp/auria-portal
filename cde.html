@@ -3388,6 +3388,8 @@ class CdeWin {
       +       '</div>'
       +       '<button data-t="cfg" title="Configurações de visualização">⚙</button>'
       +       '<div class="bimCorte">'
+      +         '<button data-t="corteMenos" title="Recuar a seção (segure para contínuo)">−</button>'
+      +         '<button data-t="corteMais" title="Avançar a seção (segure para contínuo)">+</button>'
       +         '<button data-t="inv" title="Inverter o lado cortado">⇄</button>'
       +         '<button data-t="limpaCorte" title="Remover o corte"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.4 5.4h13.2"/><path d="M5.6 5.4V3.8a1.2 1.2 0 0 1 1.2-1.2h6.4a1.2 1.2 0 0 1 1.2 1.2v1.6"/><path d="M5 5.4l.9 11a1.2 1.2 0 0 0 1.2 1.1h5.8a1.2 1.2 0 0 0 1.2-1.1l.9-11"/></svg></button>'
       +       '</div>'
@@ -3598,6 +3600,15 @@ class CdeWin {
     cLimpar.addEventListener('click', ()=> this.bimLimparMedidas());
     tools.querySelector('[data-t=inv]')  .addEventListener('click',  ()=> this.bimCorteInverter());
     tools.querySelector('[data-t=limpaCorte]').addEventListener('click', ()=> this.bimCorteRemover());
+    // − / +: empurra a seção ao longo da própria normal; segurar repete.
+    ['corteMenos','corteMais'].forEach(t=>{
+      const b=tools.querySelector('[data-t='+t+']'); const sinal = t==='corteMais' ? 1 : -1; let rep=null;
+      const passo=()=>this.bimCorteEmpurrar(sinal);
+      const para=()=>{ if(rep){ clearInterval(rep); rep=null; this.bimCorteArestas().catch(()=>{}); } };
+      b.addEventListener('pointerdown',(e)=>{ e.preventDefault(); passo(); para(); rep=setInterval(passo,70); });
+      b.addEventListener('pointerup',para); b.addEventListener('pointerleave',para); b.addEventListener('pointercancel',para);
+      b.addEventListener('contextmenu',e=>e.preventDefault());
+    });
     tools.querySelector('[data-t=xray]').addEventListener('click', ()=> this.bimXrayToggle());
     tools.querySelector('[data-t=xN1]') .addEventListener('click', ()=> this.bimXraySetProf(1));
     tools.querySelector('[data-t=xN2]') .addEventListener('click', ()=> this.bimXraySetProf(2));
@@ -4063,6 +4074,8 @@ class CdeWin {
       let dn=null;
       renderer.domElement.addEventListener('pointerdown', (e)=>{
         if(e.button!==0){ dn=null; return; }
+        // Segundo dedo = gesto de girar/zoom: cancela o arrasto (e o clique) do primeiro.
+        if(e.pointerType==='touch' && !e.isPrimary){ dn=null; return; }
         dn = { x:e.clientX, y:e.clientY, ux:e.clientX, uy:e.clientY, t:Date.now(), arrastou:false };
       });
       // Teclado do modo caminhar. Fica no documento porque o canvas não recebe
@@ -4551,6 +4564,11 @@ class CdeWin {
     B.controls.mouseButtons = lig
       ? { LEFT:null,            MIDDLE:T.MOUSE.PAN, RIGHT:T.MOUSE.ROTATE }
       : { LEFT:T.MOUSE.ROTATE,  MIDDLE:T.MOUSE.PAN, RIGHT:null };
+    // Toque segue a mesma regra: com o corte ligado, UM dedo move a seção e
+    // DOIS dedos giram/aproximam; desligado volta ao padrão (1 gira, 2 zoom/desloca).
+    B.controls.touches = lig
+      ? { ONE:null,            TWO:T.TOUCH.DOLLY_ROTATE }
+      : { ONE:T.TOUCH.ROTATE,  TWO:T.TOUCH.DOLLY_PAN };
   }
   // Cria a seção no ponto clicado, orientada pela superfície.
   bimCortePor(ponto, normal){
@@ -4716,9 +4734,20 @@ class CdeWin {
     const b=C.ancora.clone().addScaledVector(C.normal, u).project(B.camera);
     const ex=(b.x-a.x)*0.5*w, ey=-(b.y-a.y)*0.5*h;    // pixels para u no mundo
     const len2=ex*ex+ey*ey;
-    if(len2 < 1e-6) return;   // normal quase de frente pra câmera: sem direção útil na tela
-    const t=((dxPix*ex + dyPix*ey)/len2)*u;
+    // Normal quase de frente pra câmera (plano "de cara"): a projeção não dá
+    // direção na tela; aí arrastar para CIMA afasta e para BAIXO aproxima.
+    const t = len2 < 4
+      ? -dyPix * B.camera.position.distanceTo(C.ancora) / h * (C.normal.dot(B.camera.getWorldDirection(new B.THREE.Vector3()))>0?1:-1)
+      : ((dxPix*ex + dyPix*ey)/len2)*u;
     C.ancora.addScaledVector(C.normal, t);
+    this.bimCorteAplicar();
+  }
+  // Botões − / +: passo de 1% da distância da câmera ao plano (fino de perto, rápido de longe).
+  bimCorteEmpurrar(sinal){
+    const B=this.B3; if(!B) return;
+    const C=B.corte; if(!C.ancora||!C.normal) return;
+    const passo=Math.max(0.01, B.camera.position.distanceTo(C.ancora)*0.01);
+    C.ancora.addScaledVector(C.normal, sinal*passo);
     this.bimCorteAplicar();
   }
   // ── Medição (cotas) ──────────────────────────────────────────────────────
