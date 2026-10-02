@@ -184,3 +184,17 @@
   };
   window.AuriaErros = { registrar: function(msg, origem){ enviar('manual', msg, origem || '', new Error().stack); } };
 })();
+
+// Modais que fecham ao clicar no fundo (onclick="if(event.target===this)…"):
+// só fecham se o clique COMEÇOU no fundo. Selecionar/colar texto arrastando o
+// mouse para fora da caixa terminava o clique no fundo e fechava o formulário.
+(function(){
+  var ini=null;
+  document.addEventListener('mousedown', function(e){ ini=e.target; }, true);
+  document.addEventListener('click', function(e){
+    var t=e.target;
+    if(ini && t!==ini && t.getAttribute && /event\.target\s*===\s*this/.test(t.getAttribute('onclick')||'')){
+      e.stopPropagation(); e.preventDefault();
+    }
+  }, true);
+})();
