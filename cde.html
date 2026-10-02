@@ -463,8 +463,7 @@
   /* ── Coluna direita: navegação ──────────────────────────── */
   .nav{width:322px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);
        transition:width .16s ease;overflow:hidden;position:relative}
-  /* !important: a largura arrastada (item 106) fica no style inline e venceria a classe */
-  .nav.collapsed{width:0 !important;border-left:none}
+  .nav.collapsed{width:0;border-left:none}
   /* Item 106: divisória arrastável na borda ESQUERDA da coluna (ela fica à direita
      da tela). Durante o arrasto a transição de largura é desligada, senão a coluna
      "persegue" o mouse com atraso. Duplo clique volta à largura padrão. */
@@ -5612,9 +5611,16 @@ class CdeWin {
     // Visibilidade é decidida pela RLS por papel (obra/setor só veem Público +
     // o que abriram; equipe/coordenação veem Coordenação também). Não filtramos
     // Coordenação no cliente — quem pode ver, vê; quem não pode, a RLS barra.
-    const { data: apts, error } = await sb.from('apontamentos')
+    let { data: apts, error } = await sb.from('apontamentos')
       .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json')
-      .eq('prancha_id', pr.id);
+      // Split 2D/2D do App: apontamento de outra prancha pode ter pin NESTA (pin.pid).
+      .or('prancha_id.eq.'+pr.id+',pontos_json.cs.[{"pid":"'+pr.id+'"}]');
+    if(error){   // filtro jsonb recusado → volta ao filtro só por prancha (comportamento anterior)
+      console.warn('apts CDE (pid):', error.message);
+      ({ data: apts, error } = await sb.from('apontamentos')
+        .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json')
+        .eq('prancha_id', pr.id));
+    }
     if(error){ console.warn('apts CDE:', error.message); this.CDE_APTS=[]; }
     else this.CDE_APTS = apts||[];
     this.renderPinsCDE();
@@ -5631,6 +5637,7 @@ class CdeWin {
       if(encerrado && !CDE_HIST_ON) return;
       (a.pontos_json||[]).forEach((pt,idx)=>{
         if(!pt) return; const ptPg = pt.pg || 1; if(ptPg !== pg) return;
+        if(pt.pid && pt.pid!==this.CDE_PRANCHA_ID) return;   // pin de outra prancha (split 2D/2D)
         const q = this._rotOut(pt.nx||0, pt.ny||0);   // item 60: pin acompanha a rotação
         const x = q.nx * pw * this.V.zoom - this.V.panX;
         const y = q.ny * ph * this.V.zoom - this.V.panY;

@@ -125,7 +125,16 @@
   body.soBim.split #bimPane{order:2;flex:1;border-left:none;border-right:none}
   body.soBim.split.split-3dleft #bimPane{order:0;flex:0 0 calc(var(--spl,50%) - 3px)}
   body.soBim.split.split-3dleft #stage{order:2;flex:1}
-  body.split-arrastando #stage,body.split-arrastando #bimPane{pointer-events:none;user-select:none}
+  body.split-arrastando #stage,body.split-arrastando #bimPane,body.split-arrastando #peerWrap{pointer-events:none;user-select:none}
+  /* Split 2D/2D (item 11): outra prancha à direita = o próprio App embutido (?embed=1). */
+  #peerWrap{display:none;position:relative;min-width:0}
+  #peerWrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
+  #peerWrap .peer-bt{position:absolute;top:8px;z-index:6;background:rgba(15,23,42,.88);color:#fff;border:1px solid #334155;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer}
+  #peerWrap .peer-bt:hover{border-color:#E8960A}
+  body.split2d #peerWrap{display:block;order:2;flex:1}
+  body.split2d #splitBar{display:block;order:1}
+  body.split2d #stage{order:0;flex:0 0 calc(var(--spl,50%) - 3px)}
+  body.embed #app>header,body.embed aside.side,body.embed #btnBim,body.embed #btnSplit2d{display:none !important}
   /* "Trocar prancha" só aparece no split, sobre o 2D. */
   body.soBim.split #btnTrocarPrancha{display:inline-flex}
   /* Em análise de modelo, as ferramentas de PDF (zoom, página, cotas 2D) não
@@ -559,6 +568,7 @@
         <button class="tb" id="btnIA" onclick="toggleIA()" title="Assistente de IA (Groq · Llama 4, com visão)">✦ IA</button>
         <button class="tb app-wr" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span class="sep"></span>
+        <button class="tb" id="btnSplit2d" onclick="split2dToggle()" title="Abrir outra prancha ao lado (2D/2D) — um apontamento pode ter pins nas duas">＋2D/2D</button>
         <button class="tb" id="btnBim" onclick="f3dSplitToggle()" title="Dividir a tela: 2D e o modelo 3D (fragments) lado a lado">＋2D/3D</button>
         <button class="tb" id="btnSairBim" onclick="f3dModo(false)" style="display:none" title="Voltar para a análise de pranchas 2D">✕ Sair do 3D</button>
         <span style="font-size:11px;color:var(--mut)" id="modoHint">arraste para navegar</span>
@@ -603,6 +613,9 @@
           </div>
         </div>
       </div>
+      <div id="peerWrap"><iframe id="peerPane" title="Segunda prancha"></iframe>
+        <button class="peer-bt" style="right:92px" onclick="split2dTrocar()" title="Trocar a prancha da direita">⇄ Trocar</button>
+        <button class="peer-bt" style="right:10px" onclick="split2dToggle()" title="Fechar a prancha da direita">✕ Fechar</button></div>
       <div id="splitBar" title="Arraste para redimensionar · duplo clique volta a 50/50"></div>
       <div id="bimPane">
         <div class="bim-head" id="bimHead">
@@ -1390,7 +1403,7 @@ async function abrirSeletorCDE(overlay){
     renderCdePick();
   }catch(e){ $('cdePickList').innerHTML='<div style="padding:20px;color:var(--danger)">Erro: '+esc(e.message||e)+'</div>'; }
 }
-function fecharSeletorCDE(){ $('ovCdePick').classList.remove('on'); }
+function fecharSeletorCDE(){ $('ovCdePick').classList.remove('on'); SPLIT2D_PICK=false; }
 function renderCdePick(){
   const q=($('cdePickBusca').value||'').toLowerCase().trim();
   let lista=CDE_PICK_DOCS;
@@ -1410,6 +1423,7 @@ function renderCdePick(){
   $('cdePickList').innerHTML=html;
 }
 async function selecionarCdePick(docId){
+  if(SPLIT2D_PICK){ SPLIT2D_PICK=false; fecharSeletorCDE(); split2dAbrir(docId); return; }
   fecharSeletorCDE();
   try{ await abrirDoCDE(docId, null, CDE_PICK_OVERLAY); }
   catch(e){ alert('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
@@ -2243,9 +2257,11 @@ async function mudarPagina(delta){
     if(!(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1)) return;
     // 2) Edição de pins do apontamento ABERTO → adiciona pin
     if(PIN_EDIT && APT_EDIT){
-      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum});
-      renderPins(); renderPinsList(); return;
+      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()});
+      renderPins(); renderPinsList(); _peerBroadcast(); return;
     }
+    // Split 2D/2D: apontamento aberto no OUTRO lado em edição de pins → o pin vai pra ele
+    if(PEER_EDIT){ peerCall('__peerAddPin',{nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()}); return; }
     // 3) "Apontar" (barra) → cria novo apontamento (one-shot)
     if(APONTAR){ APONTAR=false; $('btnApontar').classList.remove('on');
       $('stage').classList.toggle('modo-pin', PIN_EDIT);
@@ -2414,6 +2430,57 @@ function pinSvg(px, py, num, cor, destaque){
 // Camada (prancha) carregada e VISÍVEL a que um apontamento pertence — base ou
 // overlay. É null se a prancha do apontamento não está aberta ou está oculta;
 // assim o pin aparece em QUALQUER prancha visível e SOME ao remover/ocultar ela.
+// ── Split 2D/2D (item 11) ─────────────────────────────────────────────────
+// Lado direito = este mesmo App em ?embed=1 dentro de um iframe. Um apontamento
+// pode ter pins nas DUAS pranchas: cada pin leva `pid` (prancha). Pin sem pid
+// pertence à prancha do apontamento (legado). Pins NÃO são espelhados.
+const EMBED=new URLSearchParams(location.search).get('embed')==='1';
+if(EMBED) document.documentElement.classList.add('embed'), document.addEventListener('DOMContentLoaded',()=>document.body.classList.add('embed'));
+if(EMBED && document.body) document.body.classList.add('embed');
+let PEER_EDIT=null;            // apontamento em edição de pins no OUTRO lado
+let SPLIT2D_PICK=false;        // seletor do CDE aberto para escolher a prancha da direita
+function peerWin(){
+  try{
+    if(EMBED) return window.parent!==window ? window.parent : null;
+    const f=$('peerPane'); return (document.body.classList.contains('split2d') && f && f.contentWindow) || null;
+  }catch(_){ return null; }
+}
+function peerCall(fn){ const args=[].slice.call(arguments,1); const w=peerWin();
+  try{ if(w && typeof w[fn]==='function') return w[fn].apply(w,args); }catch(e){ console.warn('split peer',fn,e); } return null; }
+function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
+function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id; return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
+function _aptVisivel(a){ return !!_layerDoApt(a) || (a.pontos_json||[]).some(pt=>pt.pid && _pinVisivel(a,pt)); }
+function _peerBroadcast(){
+  peerCall('__peerEdit', (PIN_EDIT && APT_EDIT) ? { id:APT_EDIT.id, id_num:APT_EDIT.id_num, prioridade:APT_EDIT.prioridade,
+    prancha_id:APT_EDIT.prancha_id, pontos:JSON.parse(JSON.stringify(APT_EDIT.pontos_json||[])) } : null);
+}
+window.__peerEdit=function(st){
+  PEER_EDIT=st||null;
+  const stg=$('stage'); if(stg) stg.classList.toggle('modo-pin', !!PEER_EDIT||PIN_EDIT||APONTAR||!!DRAW_TOOL);
+  const h=$('modoHint'); if(h) h.textContent = PEER_EDIT ? ('clique adiciona pin ao apontamento '+PEER_EDIT.id+' (aberto ao lado)') : 'arraste para navegar';
+  renderPins();
+};
+window.__peerAddPin=function(pt){ if(!(PIN_EDIT && APT_EDIT)) return; (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push(pt); renderPins(); renderPinsList(); _peerBroadcast(); };
+window.__peerRmPin=function(i){ if(!(PIN_EDIT && APT_EDIT) || !APT_EDIT.pontos_json[i]) return; APT_EDIT.pontos_json.splice(i,1); renderPins(); renderPinsList(); _peerBroadcast(); };
+window.__peerDisc=function(){ try{ return discAtiva()||''; }catch(_){ return ''; } };
+window.__peerRecarregar=function(){ try{ carregarApts(); }catch(_){} };
+async function split2dToggle(){
+  if(document.body.classList.contains('split2d')){
+    document.body.classList.remove('split2d'); $('peerPane').src='about:blank'; PEER_EDIT=null;
+    $('btnSplit2d').classList.remove('on'); renderPins(); _splitResize(); return;
+  }
+  if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
+  if(!(LAYERS&&LAYERS.length)){ alert('Abra primeiro a prancha da esquerda.'); return; }
+  if(document.body.classList.contains('split')) await f3dSplitToggle();   // 2D/2D e 2D/3D não convivem
+  if(typeof F3D_MODO!=='undefined' && F3D_MODO) await f3dModo(false);
+  split2dTrocar();
+}
+function split2dTrocar(){ abrirSeletorCDE(false); SPLIT2D_PICK=true; }
+function split2dAbrir(docId){
+  PEER_EDIT=null;
+  $('peerPane').src='app.html?embed=1&emp='+encodeURIComponent(EMP.id)+'&cde_doc='+encodeURIComponent(docId);
+  document.body.classList.add('split2d'); $('btnSplit2d').classList.add('on'); _splitResize();
+}
 function _layerDoApt(a){
   if(!a) return null;
   return LAYERS.find(L=>L&&L.prancha&&L.prancha.id===a.prancha_id&&L.visible!==false)||null;
@@ -2428,11 +2495,13 @@ function renderPins(){
   const editId=(APT_EDIT&&!APT_EDIT._novo)?APT_EDIT.id:null;
   let out='';
   APTS.forEach((a,ai)=>{
-    if(!_layerDoApt(a)) return;   // só mostra se a prancha do apontamento está aberta e visível
+    if(!_aptVisivel(a)) return;   // só mostra se alguma prancha do apontamento está aberta e visível
     if(_aptResolvidoOculto(a)) return;           // resolvido some do desenho (volta com o filtro Resolvido)
     if(a.id===editId) return;                    // o em edição é desenhado do APT_EDIT (ao vivo)
+    if(PEER_EDIT && a.id===PEER_EDIT.id) return; // em edição no outro lado → desenhado abaixo
     (a.pontos_json||[]).forEach((pt,pi)=>{
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
+      if(!_pinVisivel(a,pt)) return;                // pin de outra prancha (split 2D/2D)
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
@@ -2444,9 +2513,18 @@ function renderPins(){
   if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
+      if(pt.pid && !_pinVisivel(APT_EDIT,pt)) return;   // pin na prancha do outro lado
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
+    });
+  }
+  // Apontamento em edição no OUTRO lado do split: os pins dele que caem NESTA prancha
+  if(PEER_EDIT){
+    (PEER_EDIT.pontos||[]).forEach((pt,pi)=>{
+      if(pt.k3d || !pt.pid || !_pinVisivel(PEER_EDIT,pt) || (pt.pg||1)!==V.pageNum) return;
+      const p=pageToScreen(pt.nx,pt.ny);
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="peerCall('__peerRmPin',${pi});event.stopPropagation()">${pinSvg(p.x,p.y, PEER_EDIT.id_num, corPrio(PEER_EDIT.prioridade), true)}</g>`;
     });
   }
   svg.innerHTML=out;
@@ -2479,7 +2557,7 @@ function setPinEdit(on){
   $('modoHint').textContent = PIN_EDIT
     ? 'clique vazio adiciona pin · clique num pin remove'
     : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
-  renderPins();
+  renderPins(); _peerBroadcast();
 }
 // Clique num pin → balão com resumo do apontamento partindo do pin (como no desktop).
 function pinClick(ai, pi){
@@ -2534,7 +2612,7 @@ function fecharPinBalaoOut(e){
 }
 // Clique num pin do apontamento EM EDIÇÃO → no modo edição, remove.
 function pinClickEdit(pi){
-  if(PIN_EDIT && APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPins(); renderPinsList(); }
+  if(PIN_EDIT && APT_EDIT){ APT_EDIT.pontos_json.splice(pi,1); renderPins(); renderPinsList(); _peerBroadcast(); }
 }
 
 // ═══ DESENHOS (W3): ferramentas vetoriais SVG por apontamento ════════════════
@@ -7051,12 +7129,16 @@ function novoApontamento(nx,ny){
     data_criacao:hojeBr(),
     participantes:{ [disc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
-    pontos_json:[{nx:nx,ny:ny,pg:V.pageNum}],
+    pontos_json:[{nx:nx,ny:ny,pg:V.pageNum,pid:pr?pr.id:null}],
     drawings_json:[],
     prancha_id: pr ? pr.id : null,
     cde_revisao_id: (pr && pr._cde_revisao_id) || null,
     _novo:true
   };
+  // Split 2D/2D: a disciplina da prancha do outro lado já entra como participante.
+  const dPeer=peerCall('__peerDisc');
+  if(dPeer && dPeer!==disc && !APT_EDIT.participantes[dPeer])
+    APT_EDIT.participantes[dPeer]={nivel:'Pendência',emails:(FORN_DISC[dPeer]&&FORN_DISC[dPeer].emails.join(', '))||'',prazo:'',conclusao:''};
   APT_IMGS=[];
   const pic=capturarPrintLocal(nx,ny); if(pic) APT_IMGS.push({data:pic});   // print automático do local
   abrirEditor();
@@ -7539,7 +7621,7 @@ async function salvarApt(){
     }
     if(error) throw error;
     fecharApt();
-    await carregarApts();
+    await carregarApts(); peerCall('__peerRecarregar');
   }catch(e){ alert('Erro ao salvar: '+(e.message||e)); }
   finally{ btn.disabled=false; btn.textContent='Salvar'; }
 }
@@ -7576,7 +7658,7 @@ async function excluirApt(){
     const { error }=await sb.from('apontamentos').delete().eq('id',APT_EDIT.id).eq('empreendimento_id',EMP.id);
     if(error) throw error;
     fecharApt();
-    await carregarApts();
+    await carregarApts(); peerCall('__peerRecarregar');
   }catch(e){ alert('Erro ao excluir: '+(e.message||e)); }
 }
 
@@ -7663,7 +7745,7 @@ function renderListaApts(){
   if(!rows.length){ el.innerHTML='<div class="hint">Nenhum apontamento'+(filtrando?' no filtro':'')+'.</div>'; return; }
   const aptCardHtml=(a)=>{
     const i=APTS.indexOf(a);
-    const nesta=(a.pontos_json||[]).length && _layerDoApt(a);   // em alguma prancha aberta e visível
+    const nesta=(a.pontos_json||[]).length && _aptVisivel(a);   // em alguma prancha aberta e visível
     const late=estaAtrasado(a);
     const orig=aptOrigem(a);   // obra/projetista → destaque de origem externa
     // Cores do desktop: atrasado #FADBD8, resolvido #D5F5E3, texto escuro (resolvido vence).
@@ -7706,7 +7788,7 @@ function renderListaApts(){
   const discAberta = PRANCHA ? discFullName(discAtiva()||PRANCHA.disciplina||'') : '';
   let html='';
   if(PRANCHA && !disc){
-    const nestaFn=(a)=>!!_layerDoApt(a)&&(a.pontos_json||[]).length;
+    const nestaFn=(a)=>_aptVisivel(a)&&(a.pontos_json||[]).length;
     const A=ordena(rows.filter(a=>nestaFn(a)));
     const B=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)===discAberta));
     const C=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)!==discAberta));
