@@ -3129,6 +3129,7 @@ var ACC_GRP_AB={contr:true, doc:true, resto:false};
 // A matriz não distingue setor de obra — os dois têm linha em cde_acesso_auria —
 // então a tabela nova é o que permite marcar a diferença na tela.
 var ACC_OBRA={};
+var ACC_DESIG=[];   // projetista_designado_auria do empreendimento aberto
 var ACC_DF=[];   // vínculos disciplina→fornecedor do empreendimento aberto (disciplina_fornecedor_auria)
 var OBRA_NIVEL_ROTULO={ eng_chefe:'Engenheiro chefe', coord_campo:'Coordenação de campo', equipe_campo:'Equipe de campo' };
 function accDiscLabel(cod){
@@ -3164,6 +3165,10 @@ async function loadAcessos(empId){
     ACC_DF=[];
     try{ const df=await sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id,projetista_id').eq('empreendimento_id',empId);
       ACC_DF=df.data||[]; ACC_DF.forEach(x=>{ if(x.disciplina) set.add(x.disciplina); }); }catch(_){}
+    // Projetistas DESIGNADOS por disciplina (vários) — quem vê/recebe cobrança daquela disciplina.
+    ACC_DESIG=[];
+    try{ const dg=await sb.from('projetista_designado_auria').select('id,disciplina,fornecedor_id,projetista_id').eq('empreendimento_id',empId);
+      ACC_DESIG=dg.data||[]; }catch(_){}
     ACC_DISCS=[...set].sort();
     // Lista de fornecedores do grupo (com profissionais) — pode não ter vindo ainda.
     if(!FORNECEDORES.length){
@@ -3527,7 +3532,8 @@ function accAtribuicaoHtml(){
   const lista = vinc.length
     ? vinc.map(v=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:4px 6px 4px 9px;font-size:12px">
           <b style="font-family:var(--mono,ui-monospace,Consolas,monospace);color:var(--txt)">${esc(v.disciplina)}</b>
-          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))}${v.projetista_id?(accProjEhRT(v.fornecedor_id,v.projetista_id)?' <span title="Responsável técnico" style="background:#FEF3C7;color:#92400E;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:8px">RT</span>':'')+' <span style="color:var(--mut)">·</span> '+esc(accProjNome(v.fornecedor_id, v.projetista_id)):' <span style="color:var(--err);font-size:11px" title="Sem projetista responsável — defina abaixo">sem responsável</span>'}
+          <span style="color:var(--mut)">→</span> ${esc(accFornNome(v.fornecedor_id))} <span style="color:var(--mut)">·</span> ${accDesigTxt(v)}
+          <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Projetistas designados nesta disciplina (quem vê no painel e recebe as cobranças)" onclick="accDesignar('${v.id}')">👥</button>
           <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Contrato desta disciplina — abre o que já existe, ou um novo" onclick="accContratoDe('${v.id}')">📄</button>
           <button class="ctr-btn sec" style="font-size:11px;padding:2px 7px" title="Remover atribuição" onclick="accRemoverAtrib('${v.id}')">✕</button></span>`).join(' ')
     : '<span style="font-size:12px;color:var(--mut)">Nenhuma disciplina atribuída a fornecedor nesta obra.</span>';
@@ -3540,12 +3546,71 @@ function accAtribuicaoHtml(){
         <option value="">Disciplina…</option>${optsDisc}</select>
       <select id="accAtribForn" onchange="accAtribProjOpts()" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:240px">
         <option value="">Escolha a disciplina primeiro</option></select>
-      <select id="accAtribProj" title="Projetista responsável por esta disciplina nesta obra" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:220px">
-        <option value="">Responsável…</option></select>
+      <select id="accAtribProj" title="Projetista designado nesta disciplina (depois dá para designar mais pelo 👥)" style="font-family:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);min-width:220px">
+        <option value="">Designado…</option></select>
       <button class="ctr-btn" style="font-size:12px;padding:6px 12px" onclick="accAtribuirForn()">Atribuir</button>
       ${FORNECEDORES.length?'':'<span style="font-size:12px;color:var(--err)">Nenhum fornecedor cadastrado no grupo — cadastre em <b>Fornecedores</b>.</span>'}
     </div>
   </div>`;
+}
+// ── Projetista DESIGNADO (vários por disciplina) ─────────────────────────
+// Designado = vê aquela disciplina no painel/CDE e recebe as cobranças. RT do
+// fornecedor vê tudo. Sem nenhum designado no vínculo = todos do fornecedor veem.
+function accDesigDe(v){ return (ACC_DESIG||[]).filter(d=>d.disciplina===v.disciplina && d.fornecedor_id===v.fornecedor_id); }
+function accDesigTxt(v){
+  const ds=accDesigDe(v);
+  if(!ds.length) return '<span style="color:var(--err);font-size:11px" title="Ninguém designado: todos do fornecedor veem esta disciplina">sem designado</span>';
+  return ds.map(d=>esc(accProjNome(d.fornecedor_id,d.projetista_id))+(accProjEhRT(d.fornecedor_id,d.projetista_id)?' <span title="Responsável técnico" style="background:#FEF3C7;color:#92400E;font-size:9.5px;font-weight:800;padding:1px 5px;border-radius:8px">RT</span>':'')).join(', ');
+}
+async function accDesigAdd(cod, fid, pid){
+  if(!pid) return;
+  const r=await sb.from('projetista_designado_auria').upsert({ empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, projetista_id:pid },
+    { onConflict:'empreendimento_id,disciplina,projetista_id', ignoreDuplicates:true });
+  if(r.error) throw r.error;
+}
+function accDesignar(vid){
+  const v=(ACC_DF||[]).find(x=>x.id===vid); if(!v) return;
+  const f=(FORNECEDORES||[]).find(x=>x.id===v.fornecedor_id); const pessoas=((f&&f.projetistas_auria)||[]).filter(p=>p.ativo!==false);
+  const marc=new Set(accDesigDe(v).map(d=>d.projetista_id));
+  let ov=document.getElementById('accDesigOv'); if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='accDesigOv';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:400;display:flex;align-items:center;justify-content:center';
+  ov.innerHTML=`<div style="background:#fff;border-radius:14px;width:min(460px,94vw);max-height:84vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="padding:16px 20px;border-bottom:1px solid #E5E7EB"><b style="font-size:15px">Projetistas designados</b>
+      <div style="font-size:12px;color:#64748B;margin-top:3px"><b style="font-family:ui-monospace,Consolas,monospace">${esc(v.disciplina)}</b> · ${esc(accFornNome(v.fornecedor_id))}</div></div>
+    <div style="padding:12px 20px;font-size:12px;color:#475569">Os marcados veem esta disciplina no painel do projetista e no CDE e recebem as cobranças dos apontamentos. Quem tem <b>RT</b> vê tudo do escritório mesmo sem ser designado. Sem ninguém marcado, todos do fornecedor veem.</div>
+    <div style="padding:0 20px 8px">${pessoas.map(p=>`<label style="display:flex;align-items:center;gap:9px;padding:8px 4px;border-bottom:1px solid #F1F5F9;cursor:pointer;font-size:13px">
+        <input type="checkbox" class="acc-desig-chk" value="${p.id}" ${marc.has(p.id)?'checked':''}>
+        <span style="flex:1"><b>${esc(p.nome||p.email)}</b><br><span style="font-size:11px;color:#64748B">${esc(p.email||'')}</span></span>
+        ${p.eh_rt?'<span style="background:#FEF3C7;color:#92400E;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">RT</span>':''}
+        ${p.eh_adm_fin?'<span style="background:#DCFCE7;color:#166534;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px">ADM-FIN</span>':''}</label>`).join('')||'<div style="font-size:12px;color:#94A3B8;padding:8px 0">Nenhuma pessoa ativa neste fornecedor.</div>'}</div>
+    <div style="padding:12px 20px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end;gap:8px">
+      <button class="ctr-btn sec" onclick="document.getElementById('accDesigOv').remove()">Cancelar</button>
+      <button class="ctr-btn" id="accDesigSalvar" onclick="accDesigSalvar('${v.id}')">Salvar</button></div></div>`;
+  ov.addEventListener('mousedown',e=>{ ov._ini=e.target; });
+  ov.addEventListener('click',e=>{ if(e.target===ov && ov._ini===ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+async function accDesigSalvar(vid){
+  const v=(ACC_DF||[]).find(x=>x.id===vid); if(!v) return;
+  const novos=new Set([...document.querySelectorAll('#accDesigOv .acc-desig-chk:checked')].map(x=>x.value));
+  const atuais=accDesigDe(v);
+  const b=$('accDesigSalvar'); if(b){ b.disabled=true; b.textContent='Salvando…'; }
+  try{
+    const sair=atuais.filter(d=>!novos.has(d.projetista_id)).map(d=>d.id);
+    if(sair.length){ const r=await sb.from('projetista_designado_auria').delete().in('id',sair); if(r.error) throw r.error; }
+    for(const pid of novos){ if(!atuais.some(d=>d.projetista_id===pid)) await accDesigAdd(v.disciplina, v.fornecedor_id, pid); }
+    // Compatibilidade: o "responsável" antigo (df.projetista_id) acompanha o 1º designado.
+    const primeiro=[...novos][0]||null;
+    if(primeiro!==v.projetista_id){ await sb.from('disciplina_fornecedor_auria').update({ projetista_id:primeiro }).eq('id',v.id); }
+    // Designado sem conta ainda → convite de acesso.
+    const f=(FORNECEDORES||[]).find(x=>x.id===v.fornecedor_id);
+    for(const pid of novos){ if(atuais.some(d=>d.projetista_id===pid)) continue;
+      const p=f&&(f.projetistas_auria||[]).find(x=>x.id===pid);
+      if(p&&p.email){ try{ await sb.functions.invoke('invite-projetista',{ body:{ email:p.email, nome:p.nome||'', empresa_nome:f.nome||'' } }); }catch(_){} } }
+    const ov=document.getElementById('accDesigOv'); if(ov) ov.remove();
+    await loadAcessos(CDE_AC_EMPID);
+  }catch(e){ alert('Não foi possível salvar os designados: '+((e&&e.message)||e)); if(b){ b.disabled=false; b.textContent='Salvar'; } }
 }
 // Popula o seletor de fornecedores conforme a disciplina: primeiro os que têm
 // profissional nela, depois os demais (nada fica escondido).
@@ -3602,13 +3667,14 @@ async function accAtribuirForn(){
   const mesmo=jaNaDisc.find(v=>v.fornecedor_id===fid);
   if(mesmo){
     const pid0=($('accAtribProj')||{}).value||null;
-    if(!pid0){ alert(accFornNome(fid)+' já atende '+cod+'. Escolha o responsável ao lado para definir quem responde por esta disciplina.'); return; }
+    if(!pid0){ alert(accFornNome(fid)+' já atende '+cod+'. Escolha o projetista ao lado para designá-lo, ou use o 👥 no vínculo para marcar vários.'); return; }
     try{
       const r0=await sb.from('disciplina_fornecedor_auria').update({ projetista_id:pid0 }).eq('id',mesmo.id).select('id');
       if(r0.error) throw r0.error;
       if(!r0.data || !r0.data.length) throw new Error('o banco recusou a alteração');
+      await accDesigAdd(cod, fid, pid0);
       await loadAcessos(CDE_AC_EMPID);
-      alert('Responsável de '+cod+' definido: '+accProjNome(fid,pid0)+'.');
+      alert(accProjNome(fid,pid0)+' designado(a) em '+cod+'.');
     }catch(e){ alert('Não foi possível definir o responsável: '+((e&&e.message)||e)); }
     return;
   }
@@ -3622,6 +3688,7 @@ async function accAtribuirForn(){
       { empreendimento_id:CDE_AC_EMPID, disciplina:cod, fornecedor_id:fid, projetista_id:pid, criado_por:USER.id },
       { onConflict:'empreendimento_id,disciplina,fornecedor_id' });
     if(r.error) throw r.error;
+    if(pid) await accDesigAdd(cod, fid, pid);
     await loadAcessos(CDE_AC_EMPID);
     // Responsável sem conta ainda → convite de acesso (a function devolve ja_existia quando já tem).
     if(pid){ const f=(FORNECEDORES||[]).find(x=>x.id===fid); const p=f&&(f.projetistas_auria||[]).find(x=>x.id===pid);
