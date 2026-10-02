@@ -458,6 +458,44 @@
      TODOS os filhos e moveria os botoes junto; e nao no arquivo, usado em 21
      paginas (recorta-lo mudaria o tamanho da marca em todas). Filho direto e
      [src] de proposito: as logos de cliente tambem sao <img> aqui dentro. */
+  .mobTabs{display:none}
+  /* ── Celular (≤760px): 3 colunas → 3 telas (Menu / Prancha / Resumo) ── */
+  @media (max-width:760px){
+    #app{height:100dvh!important}
+    input,select,textarea{font-size:16px!important}
+    header{padding:max(8px,env(safe-area-inset-top)) 12px 8px;gap:10px}
+    header img{height:18px}
+    header h1{font-size:13px}
+    header .who{display:none}
+    header .btn-logout{margin-left:0!important;min-height:34px}
+    .main{position:relative}
+    .side,.viewer-wrap,.side-right,.side-resize{display:none!important}
+    body[data-mob=menu] .side{display:flex!important;width:100%;min-width:0;border-right:none;padding:14px 12px 20px}
+    body[data-mob=prancha] .viewer-wrap{display:flex!important;width:100%}
+    body[data-mob=resumo] .side-right{display:flex!important;width:100%!important;min-width:0!important;border-left:none}
+    .side-right .sr-full{display:flex!important}
+    .side-right .sr-icons,.side-right .sr-full > div:first-child button{display:none!important}
+    .toolbar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:6px 10px;gap:6px}
+    .toolbar::-webkit-scrollbar{display:none}
+    .toolbar > *{flex:none}
+    .tb{min-height:36px;min-width:36px}
+    #stage{touch-action:none}
+    :root{--aj-bottom:calc(68px + env(safe-area-inset-bottom))}   /* ? da ajuda acima da barra */
+    .mobTabs{display:flex;flex-shrink:0;background:var(--bg2);border-top:1px solid var(--line);
+      padding:4px 6px calc(4px + env(safe-area-inset-bottom))}
+    .mobTabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:none;
+      color:var(--mut);font-size:11px;font-weight:700;font-family:inherit;padding:6px 0;border-radius:10px;cursor:pointer}
+    .mobTabs button span{font-size:18px;line-height:1}
+    .mobTabs button.on{color:var(--accent);background:rgba(232,150,10,.10)}
+    #minibar{bottom:calc(64px + env(safe-area-inset-bottom))}
+    /* janelas flutuantes (apontamento, posição…) viram tela cheia */
+    .win{left:0!important;top:0!important;width:100%!important;max-width:none;height:100dvh;max-height:none;border-radius:0;z-index:300}
+    .win-head{cursor:default;padding-top:max(11px,env(safe-area-inset-top))}
+    .win-head .wbtn{width:36px;height:36px}
+    .win .g2,.win .g3{grid-template-columns:minmax(0,1fr)!important}
+    #painelModal{padding:0!important}
+    #painelModal > div{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;border-radius:0!important}
+  }
 </style>
 </head>
 <body>
@@ -1029,6 +1067,12 @@
       </div>
     </aside>
   </div>
+  <!-- Celular: as 3 colunas viram 3 telas, trocadas por esta barra -->
+  <nav class="mobTabs">
+    <button data-t="menu" onclick="mobTab('menu')"><span>&#9776;</span>Menu</button>
+    <button data-t="prancha" onclick="mobTab('prancha')"><span>&#9635;</span>Prancha</button>
+    <button data-t="resumo" onclick="mobTab('resumo')"><span>&#9707;</span>Resumo</button>
+  </nav>
 </div>
 
 <!-- Pop-up de painel (iframe do painel do analista em modo embed) -->
@@ -1514,7 +1558,7 @@ async function restaurarAnalise(an, localFilesByHash){
       if(!baseFeita){
         LAYERS=[L]; setBaseShims();
         F.valido=false;
-        $('pageLbl').textContent='1 / '+L.doc.numPages;
+        $('pageLbl').textContent='1 / '+L.doc.numPages; mobPrancha();
         fitPage();
         $('dropHint').style.display='none';
         $('btnAddCam').disabled=false;
@@ -1582,7 +1626,7 @@ async function abrirPdfLocal(file, overlay){
       // nova prancha BASE (camada 0) — troca de base zera as sobreposições
       LAYERS=[L]; setBaseShims();
       F.valido=false;
-      $('pageLbl').textContent='1 / '+doc.numPages;
+      $('pageLbl').textContent='1 / '+doc.numPages; mobPrancha();
       fitPage();
       $('dropHint').style.display='none';
       $('btnAddCam').disabled=false;
@@ -1717,7 +1761,7 @@ async function abrirDoCDE(cdeDocId, cdeRevId, overlay){
   }else{
     LAYERS=[L]; setBaseShims();
     F.valido=false;
-    $('pageLbl').textContent='1 / '+pdoc.numPages;
+    $('pageLbl').textContent='1 / '+pdoc.numPages; mobPrancha();
     fitPage();
     $('dropHint').style.display='none';
     $('btnAddCam').disabled=false;
@@ -2010,6 +2054,7 @@ function aplicarLinha(){
 // ── Render por viewport ──────────────────────────────────────────────────────
 async function carregarPagina(){
   const b=LAYERS[0]; if(!b) return;
+
   b.pageNum=V.pageNum;
   b.page=await b.doc.getPage(b.pageNum);
   setBaseShims();
@@ -2215,6 +2260,37 @@ async function mudarPagina(delta){
   });
   // Botão DIREITO: conclui o polígono de área (se em construção) OU cria
   // apontamento no local do clique e abre o editor.
+  // Toque (celular): o navegador só sintetiza mouse para TOQUE CURTO (clique em
+  // pin continua funcionando); arrastar e pinçar são tratados aqui. Um dedo =
+  // pan (se nenhuma ferramenta estiver ativa), dois dedos = zoom no ponto médio.
+  let tq=null;
+  const _tqPts=(e)=>{ const r=stage.getBoundingClientRect(); return [...e.touches].map(t=>({x:t.clientX-r.left,y:t.clientY-r.top})); };
+  stage.addEventListener('touchstart', function(e){
+    if(!V.page) return;
+    if(e.target.closest && e.target.closest('#cotaPanel,#iaPanel')) return;
+    const p=_tqPts(e);
+    if(p.length===1 && !cotaActive() && !drawActive() && !IA_REGIAO && COTA_MODE!=='area')
+      tq={ modo:'pan', x:p[0].x, y:p[0].y, px:V.panX, py:V.panY };
+    else if(p.length===2)
+      tq={ modo:'pinch', d:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)||1 };
+  }, { passive:true });
+  stage.addEventListener('touchmove', function(e){
+    if(!tq) return;
+    const p=_tqPts(e);
+    if(tq.modo==='pan' && p.length===1){
+      V.panX=tq.px-(p[0].x-tq.x); V.panY=tq.py-(p[0].y-tq.y); updateCss();
+    }else if(p.length===2){
+      const d=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)||1;
+      if(tq.modo!=='pinch'){ tq={ modo:'pinch', d }; return; }
+      zoomAt(d/tq.d, (p[0].x+p[1].x)/2, (p[0].y+p[1].y)/2); tq.d=d;
+    }
+    e.preventDefault();
+  }, { passive:false });
+  stage.addEventListener('touchend', function(e){
+    if(!tq) return;
+    if(e.touches.length===0){ tq=null; scheduleRender(0); }
+    else if(e.touches.length===1 && tq.modo==='pinch'){ const p=_tqPts(e); tq={ modo:'pan', x:p[0].x, y:p[0].y, px:V.panX, py:V.panY }; }
+  });
   stage.addEventListener('contextmenu', function(e){
     e.preventDefault();
     if(COTA_MODE==='area' && _areaPoly){ areaFinish(); return; }
@@ -2370,12 +2446,21 @@ async function carregarFornecedores(){
     // atribuição explícita do empreendimento tem prioridade
     const { data:atr }=await sb.from('disciplina_fornecedor_auria')
       .select('disciplina, fornecedor_id').eq('empreendimento_id', EMP.id);
+    // Projetistas DESIGNADOS por disciplina: quando há, SÓ eles viram participantes
+    // (recebem o apontamento e as cobranças). Sem designado, regra antiga.
+    let desig=[];
+    try{ const r=await sb.from('projetista_designado_auria').select('disciplina, fornecedor_id, projetista_id').eq('empreendimento_id', EMP.id); desig=r.data||[]; }catch(_){}
+    const visto={};
     (atr||[]).forEach(a=>{
       const f=porId[a.fornecedor_id]; if(!f) return;
-      const emails=[]; (f.projetistas_auria||[]).forEach(p=>{
-        if((p.disciplinas||[]).includes(a.disciplina) && p.email) emails.push(p.email);
-      });
-      if(!emails.length) (f.projetistas_auria||[]).forEach(p=>{ if(p.email) emails.push(p.email); });
+      const ativos=(f.projetistas_auria||[]).filter(p=>p.ativo!==false && p.email);
+      const ids=desig.filter(d=>d.disciplina===a.disciplina && d.fornecedor_id===a.fornecedor_id).map(d=>d.projetista_id);
+      let emails=ids.length ? ativos.filter(p=>ids.includes(p.id)).map(p=>p.email) : [];
+      if(!emails.length) emails=ativos.filter(p=>(p.disciplinas||[]).includes(a.disciplina)).map(p=>p.email);
+      if(!emails.length) emails=ativos.map(p=>p.email);
+      // Mais de um fornecedor na mesma disciplina: soma os e-mails.
+      if(visto[a.disciplina]){ const o=FORN_DISC[a.disciplina]; emails.forEach(e=>{ if(!o.emails.includes(e)) o.emails.push(e); }); o.empresa+=' + '+(f.nome||''); return; }
+      visto[a.disciplina]=true;
       FORN_DISC[a.disciplina]={ empresa:f.nome||'', emails };
     });
   }catch(e){ console.warn('fornecedores:', e.message||e); }
@@ -7142,6 +7227,22 @@ function novoApontamento(nx,ny){
   APT_IMGS=[];
   const pic=capturarPrintLocal(nx,ny); if(pic) APT_IMGS.push({data:pic});   // print automático do local
   abrirEditor();
+}
+// Celular: qual das 3 telas está à mostra (menu | prancha | resumo).
+const APP_MOBILE = window.matchMedia('(max-width:760px)');
+function mobTab(t){
+  document.body.dataset.mob=t;
+  document.querySelectorAll('.mobTabs button').forEach(b=>b.classList.toggle('on', b.dataset.t===t));
+  // o visualizador estava com largura 0 enquanto escondido: recalcula ao aparecer
+  if(t==='prancha') setTimeout(()=>window.dispatchEvent(new Event('resize')), 30);
+}
+mobTab('menu');
+// Abriu uma prancha (local, CDE ou várias) → no celular, mostra a tela da prancha.
+function mobPrancha(){
+  if(!APP_MOBILE.matches) return;
+  if(document.body.dataset.mob!=='prancha') mobTab('prancha');
+  // o enquadramento inicial foi calculado com a tela da prancha escondida (largura 0)
+  setTimeout(()=>{ try{ fitPage(); }catch(_){} }, 80);
 }
 function abrirAptIdx(i){
   const a=APTS[i]; if(!a) return;
