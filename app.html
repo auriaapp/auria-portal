@@ -539,7 +539,7 @@
         <button class="tb" onclick="mudarPagina(1)">▶</button>
         <span class="sep"></span>
         <span style="font-size:11px;color:var(--mut)">Foco</span>
-        <select id="selFoco" onchange="setFoco(this.value)" title="Prancha/disciplina ativa — novos apontamentos herdam a disciplina dela" style="display:none;font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--txt);max-width:170px"></select>
+        <select id="selFoco" onchange="setFoco(this.value)" title="Prancha/disciplina ativa — novos apontamentos herdam a disciplina dela" style="display:none;font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--txt);max-width:300px"></select>
         <span class="sep"></span>
         <button class="tb on" id="btnVerPins" onclick="toggleVerPins()" title="Mostrar/ocultar os pins">👁 Pins</button>
         <button class="tb app-wr" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
@@ -1049,7 +1049,7 @@
       </select></div>
     </div>
     <div class="g2">
-      <div class="fg"><label>Local / Pavimento</label><select id="apLocal"></select></div>
+      <div class="fg"><label>Local / Pavimento</label><details id="apLocalDd" style="position:relative"><summary id="apLocalSum" style="list-style:none;cursor:pointer;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">— selecione —</summary><div id="apLocal" style="position:absolute;z-index:30;left:0;right:0;top:100%;margin-top:3px;max-height:230px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px;box-shadow:0 8px 24px rgba(0,0,0,.35)"></div></details></div>
       <div class="fg"><label>Visibilidade</label><select id="apVisib">
         <option value="Coordenação">Coordenação — interno (só a coordenação vê)</option>
         <option value="Projeto">Projeto — compartilhado (coordenação + projetistas)</option>
@@ -2402,6 +2402,8 @@ function _layerDoApt(a){
   if(!a) return null;
   return LAYERS.find(L=>L&&L.prancha&&L.prancha.id===a.prancha_id&&L.visible!==false)||null;
 }
+// Resolvido não polui a prancha: pin e desenho só aparecem com o filtro "Resolvido" ligado.
+function _aptResolvidoOculto(a){ return a.status==='Resolvido' && !(typeof APT_FILT!=='undefined' && APT_FILT.has('Resolvido')); }
 function renderPins(){
   const svg=$('pinsSvg'); if(!svg) return;
   if(!V.page || !PRANCHA){ svg.innerHTML=''; return; }
@@ -2411,6 +2413,7 @@ function renderPins(){
   let out='';
   APTS.forEach((a,ai)=>{
     if(!_layerDoApt(a)) return;   // só mostra se a prancha do apontamento está aberta e visível
+    if(_aptResolvidoOculto(a)) return;           // resolvido some do desenho (volta com o filtro Resolvido)
     if(a.id===editId) return;                    // o em edição é desenhado do APT_EDIT (ao vivo)
     (a.pontos_json||[]).forEach((pt,pi)=>{
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
@@ -2573,14 +2576,53 @@ function renderDrawTools(){
 }
 function delDraw(i){ if(APT_EDIT&&APT_EDIT.drawings_json&&i>=0&&i<APT_EDIT.drawings_json.length){ APT_EDIT.drawings_json.splice(i,1); _hiliteIdx=-1; renderDrawings(); renderDrawTools(); } }
 function hiliteDraw(i){ _hiliteIdx=i; renderDrawings(); }
+let _drawN0=null;   // nº de desenhos quando a ferramenta foi ligada (p/ oferecer o print ao desligar)
 function setDrawTool(t){
+  const antes=DRAW_TOOL;
   DRAW_TOOL=(DRAW_TOOL===t?null:t);
+  if(!antes && DRAW_TOOL && APT_EDIT) _drawN0=(APT_EDIT.drawings_json||[]).length;
   if(DRAW_TOOL!=='polygon' && _poly){ _poly=null; _polyCur=null; }   // cancela polígono pendente ao trocar
   $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
   $('modoHint').textContent = DRAW_TOOL
     ? (DRAW_TOOL==='polygon'?'clique para marcar os pontos do polígono':'arraste sobre a prancha para desenhar')
     : (APONTAR?'clique na prancha para criar o apontamento':'arraste para navegar');
   renderDrawTools(); renderDrawings();
+  if(antes && !DRAW_TOOL) _oferecerPrintDesenho();
+}
+// Ao terminar de desenhar: pergunta se o print (prancha + desenhos novos) entra nos anexos.
+function _oferecerPrintDesenho(){
+  const ds=(APT_EDIT&&APT_EDIT.drawings_json)||[]; const n0=_drawN0; _drawN0=null;
+  if(n0==null || ds.length<=n0) return;
+  if(!confirm('Incluir um print do desenho no apontamento?')) return;
+  _printDesenhos(ds.slice(n0)).then(function(url){ if(url){ APT_IMGS.push({data:url}); renderImgs(); } })
+    .catch(function(e){ console.warn('print do desenho',e); });
+}
+async function _printDesenhos(novos){
+  const cv=$('pdfCanvas'), svg=$('drawSvg'), st=$('stage'); if(!cv||!cv.width||!svg) return null;
+  // caixa dos desenhos novos em coords da tela do stage (+ margem de contexto)
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  novos.forEach(function(sh){ [sh.a,sh.b].concat(sh.pts||[]).forEach(function(q){ if(!q) return; const p=pageToScreen(q.nx,q.ny);
+    x0=Math.min(x0,p.x); y0=Math.min(y0,p.y); x1=Math.max(x1,p.x); y1=Math.max(y1,p.y); }); });
+  if(x0>x1) return null;
+  const mg=Math.max(60,0.25*Math.max(x1-x0,y1-y0)), W=st.clientWidth, H=st.clientHeight;
+  x0=Math.max(0,x0-mg); y0=Math.max(0,y0-mg); x1=Math.min(W,x1+mg); y1=Math.min(H,y1+mg);
+  const w=x1-x0, h=y1-y0; if(w<8||h<8) return null;
+  const sc=Math.max(1,Math.min(3,1400/Math.max(w,h)));
+  const out=document.createElement('canvas'); out.width=Math.round(w*sc); out.height=Math.round(h*sc);
+  const c=out.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,out.width,out.height);
+  // prancha: recorta do canvas composto pela posição real dele na tela
+  const sr=st.getBoundingClientRect(), cr=cv.getBoundingClientRect();
+  const kx=cv.width/cr.width, ky=cv.height/cr.height;
+  c.drawImage(cv,(sr.left+x0-cr.left)*kx,(sr.top+y0-cr.top)*ky,w*kx,h*ky,0,0,out.width,out.height);
+  // desenhos: rasteriza o SVG da camada de desenho
+  const cl=svg.cloneNode(true); cl.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  cl.setAttribute('width',W); cl.setAttribute('height',H); cl.setAttribute('viewBox','0 0 '+W+' '+H); cl.removeAttribute('style');
+  const url=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)],{type:'image/svg+xml'}));
+  try{
+    const img=await new Promise(function(res,rej){ const i=new Image(); i.onload=function(){res(i);}; i.onerror=rej; i.src=url; });
+    c.drawImage(img,x0,y0,w,h,0,0,out.width,out.height);
+  }finally{ URL.revokeObjectURL(url); }
+  return out.toDataURL('image/jpeg',0.85);
 }
 function setDrawColor(c){ DRAW_COLOR=c; renderDrawTools(); }
 function setDrawW(v){ DRAW_W=v; renderDrawTools(); }
@@ -2712,6 +2754,7 @@ function renderDrawings(){
   APTS.forEach(a=>{
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
     if(!_layerDoApt(a)) return;   // desenhos de qualquer prancha aberta e visível (base ou overlay)
+    if(_aptResolvidoOculto(a)) return;
     (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
   });
   // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
@@ -2725,10 +2768,10 @@ function renderDrawings(){
     out+=polyPreviewSvg();
   }
   // Cotas — nível de prancha (independem de apontamento aberto)
-  (TRENA.cotas||[]).filter(naPagina).forEach(c=>{ out+=cotaToSvg(c, false); });
+  (TRENA.cotas||[]).filter(naPagina).filter(_medVisivel).forEach(c=>{ out+=cotaToSvg(c, false); });
   if(_cota){ const m=TRENA.m_por_pt?_ptLen(_cota.a,_cota.b)*TRENA.m_por_pt:null; out+=cotaToSvg({a:_cota.a,b:_cota.b,metros:m,color:COTA_COLOR}, true); }
   // Áreas por polígono — nível de prancha
-  (TRENA.areas||[]).filter(naPagina).forEach(a=>{ out+=areaToSvg(a); });
+  (TRENA.areas||[]).filter(naPagina).filter(_medVisivel).forEach(a=>{ out+=areaToSvg(a); });
   out+=areaPreviewSvg();
   let defs=''; _patNeeded.forEach(k=>{ const i=k.indexOf('|'); defs+=patDef(k.slice(0,i), k.slice(i+1)); });
   svg.innerHTML=(defs?`<defs>${defs}</defs>`:'')+out;
@@ -2764,6 +2807,10 @@ function _polyAreaM2(pts){
   return Math.abs(a)/2 * TRENA.m_por_pt * TRENA.m_por_pt;
 }
 
+// Medidas (cota/área) pertencem à prancha em FOCO onde foram feitas (pid), como o
+// apontamento: só aparecem com essa prancha aberta e visível. Sem pid = da base (legado).
+function _medPid(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
+function _medVisivel(m){ const pid=m.pid||(PRANCHA&&PRANCHA.id); return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
 async function carregarTrena(){
   TRENA={ m_por_pt:null, cotas:[], areas:[] };
   if(!(EMP&&PRANCHA)) return;
@@ -2796,15 +2843,15 @@ function toggleCota(){
 function renderCotaPanel(){
   const el=$('cotaPanel'); if(!el||el.style.display==='none') return;
   const calOk=!!TRENA.m_por_pt;
-  const listaCotas=(TRENA.cotas||[]).map((c,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
+  const listaCotas=(TRENA.cotas||[]).map((c,i)=>_medVisivel(c)?`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
       <span style="width:9px;height:9px;border-radius:2px;background:${c.color||COTA_COLOR}"></span>
       <span style="flex:1">${c.metros!=null?c.metros.toFixed(2).replace('.',',')+' m':'—'}</span>
-      <button onclick="delCota(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`).join('')
+      <button onclick="delCota(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`:'').join('')
       || '<div style="font-size:10.5px;color:var(--mut);margin-top:4px">Nenhuma cota.</div>';
-  const listaAreas=(TRENA.areas||[]).map((a,i)=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
+  const listaAreas=(TRENA.areas||[]).map((a,i)=>_medVisivel(a)?`<div style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:3px">
       <span style="width:9px;height:9px;border-radius:2px;background:${a.color||AREA_COLOR}"></span>
       <span style="flex:1">${a.m2!=null?a.m2.toFixed(2).replace('.',',')+' m²':'—'}</span>
-      <button onclick="delArea(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`).join('')
+      <button onclick="delArea(${i})" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:12px">✕</button></div>`:'').join('')
       || '<div style="font-size:10.5px;color:var(--mut);margin-top:4px">Nenhuma área.</div>';
   el.innerHTML=`<div style="display:flex;align-items:center;margin-bottom:6px">
       <b style="flex:1;font-size:12px">📏 Cotas</b>
@@ -2851,7 +2898,7 @@ function areaFinish(){
   if(!_areaPoly || _areaPoly.pts.length<3){ _areaPoly=null; _areaCur=null; renderDrawings(); return; }
   const m2=_polyAreaM2(_areaPoly.pts);
   TRENA.areas=TRENA.areas||[];
-  TRENA.areas.push({ pts:_areaPoly.pts, pg:V.pageNum, m2, color:AREA_COLOR });
+  TRENA.areas.push({ pts:_areaPoly.pts, pg:V.pageNum, m2, color:AREA_COLOR, pid:_medPid() });
   salvarTrena();
   _areaPoly=null; _areaCur=null;
   COTA_MODE=null;   // concluiu o polígono → sai da função de área (não começa outro)
@@ -2877,7 +2924,7 @@ function cotaEnd(e){
         }
       }else if(COTA_MODE==='cota'){                            // Medir: NUNCA pergunta (usa a escala)
         if(!TRENA.m_por_pt){ alert('Calibre a escala primeiro no botão 🎯 Calibrar.'); }
-        else{ TRENA.cotas.push({a:s.a,b:s.b,pg:V.pageNum,metros:Lpt*TRENA.m_por_pt,color:COTA_COLOR}); salvarTrena(); }
+        else{ TRENA.cotas.push({a:s.a,b:s.b,pg:V.pageNum,metros:Lpt*TRENA.m_por_pt,color:COTA_COLOR,pid:_medPid()}); salvarTrena(); }
       }
     }
   }
@@ -6919,7 +6966,9 @@ function updateFoco(){
   if(FOCO_LI>=LAYERS.length) FOCO_LI=0;
   sel.style.display='';
   sel.innerHTML=LAYERS.map((L,i)=>{ const d=(L.prancha.disciplina||deduzDisc(L.nome)||'Sem disciplina');
-    return `<option value="${i}"${i===FOCO_LI?' selected':''}>${esc(d)}${i===0?' (base)':''}</option>`; }).join('');
+    const cod=(L.prancha.codigo||L.nome||L.prancha.arquivo_nome||'');   // disciplina + código/numeração da prancha
+    return `<option value="${i}"${i===FOCO_LI?' selected':''} title="${esc(cod)}">${esc(d)}${cod?' · '+esc(cod):''}${i===0?' (base)':''}</option>`; }).join('');
+  const Lf=LAYERS[FOCO_LI]; sel.title='Prancha em foco: '+((Lf&&(Lf.prancha.codigo||Lf.nome))||'')+' — novos apontamentos herdam a disciplina dela';
   updateIaPranchaSel();
   if(BIM_ON) bimEnsure();   // 3D acompanha a disciplina/prancha em foco
 }
@@ -6990,6 +7039,24 @@ function abrirAptIdx(i){
     if(!BIM_ON){ bimToggle().then(()=>bimEnsure(p3.model)).catch(()=>{}); } else { bimEnsure(p3.model); }
   }
 }
+function _locLista(t){ return String(t||'').split(';').map(x=>x.trim()).filter(Boolean); }
+function _apLocalLer(){ return [...document.querySelectorAll('#apLocal input:checked')].map(i=>i.value); }
+function _apLocalSum(){ const v=_apLocalLer(); $('apLocalSum').textContent=v.length?v.join('; '):'— selecione —'; $('apLocalSum').title=v.join('; '); }
+function _apLocalRender(locais, sel){
+  $('apLocal').innerHTML=locais.map(l=>`<label style="display:flex;gap:7px;align-items:center;padding:4px 6px;font-size:12px;cursor:pointer;border-radius:5px"><input type="checkbox" value="${esc(l)}"${sel.includes(l)?' checked':''}${APP_RO?' disabled':''} onchange="_apLocalSum()">${esc(l)}</label>`).join('')||'<div style="padding:6px;font-size:11px;color:var(--mut)">Sem pavimentos cadastrados.</div>';
+  _apLocalSum();
+}
+// Novo apontamento: pré-marca o pavimento da prancha (campo "local" do código no CDE).
+async function _apLocalDaPrancha(locais){
+  try{
+    const L=_layerDoApt(APT_EDIT)||LAYERS[FOCO_LI]||LAYERS[0]; const docId=L&&L.prancha&&L.prancha.cde_documento_id; if(!docId) return;
+    const { data }=await sb.from('cde_documento_auria').select('local_txt').eq('id',docId).maybeSingle();
+    const cod=String((data&&data.local_txt)||'').trim().toUpperCase(); if(!cod) return;
+    const p=(CDE_PAVS||[]).find(x=>String(x.codigo||'').trim().toUpperCase()===cod); if(!p) return;
+    const lab=cdePavLabel(p), box=[...document.querySelectorAll('#apLocal input')].find(i=>i.value===lab);
+    if(box && !_apLocalLer().length){ box.checked=true; _apLocalSum(); }
+  }catch(_){}
+}
 function abrirEditor(){
   const a=APT_EDIT;
   $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id)+(APP_RO?' · consulta':'');
@@ -7005,9 +7072,11 @@ function abrirEditor(){
   // Local/Pavimento = pavimentos CADASTRADOS do empreendimento (cde_pavimento_auria).
   // Só cai na lista genérica antiga (locaisDoEmp) se o empreendimento não tiver cadastro.
   const locais=(CDE_PAVS && CDE_PAVS.length) ? CDE_PAVS.map(cdePavLabel) : locaisDoEmp();
-  if(a.local_txt && !locais.includes(a.local_txt)) locais.unshift(a.local_txt);
-  $('apLocal').innerHTML='<option value="">— selecione —</option>'+
-    locais.map(l=>`<option${l===a.local_txt?' selected':''}>${esc(l)}</option>`).join('');
+  // Várias localizações: gravadas em local_txt separadas por "; " (texto continua legível no desktop/exportações).
+  const selLoc=_locLista(a.local_txt);
+  selLoc.slice().reverse().forEach(l=>{ if(!locais.includes(l)) locais.unshift(l); });
+  _apLocalRender(locais, selLoc);
+  if(a._novo && !selLoc.length) _apLocalDaPrancha(locais);
   $('apVisib').value=a.visibilidade||'Projeto';
   if(!Array.isArray(a.drawings_json)) a.drawings_json=[];
   // Origem externa (obra/projetista): o núcleo é a DECLARAÇÃO do autor e não é
@@ -7304,7 +7373,7 @@ async function salvarApt(){
   a.descricao=$('apDesc').value.trim();
   a.tipo=$('apTipo').value; a.prioridade=$('apPrio').value;
   a.status=$('apStatus').value; a.disciplina=$('apDisc').value;
-  a.local_txt=$('apLocal').value.trim();
+  a.local_txt=_apLocalLer().join('; ');
   a.visibilidade=$('apVisib').value;
   a.participantes=lerParts();
   // Data de conclusão informada → apontamento passa a Resolvido automaticamente.
@@ -7451,7 +7520,7 @@ function renderFiltroChips(){
     return `<button onclick="toggleFiltro('${t}')" style="font-size:11px;padding:4px 9px;border-radius:14px;cursor:pointer;border:1.5px solid ${on?col:'var(--line)'};background:${on?col:'transparent'};color:${on?'#fff':'var(--txt)'};font-weight:600">${t}</button>`;
   }).join('');
 }
-function toggleFiltro(t){ if(APT_FILT.has(t)) APT_FILT.delete(t); else APT_FILT.add(t); renderFiltroChips(); renderListaApts(); }
+function toggleFiltro(t){ if(APT_FILT.has(t)) APT_FILT.delete(t); else APT_FILT.add(t); renderFiltroChips(); renderListaApts();  if(t==='Resolvido'){ renderPins(); renderDrawings(); } }
 function toggleFiltros(){ const p=$('fApPanel'); if(!p) return; const open=(p.style.display==='none'||!p.style.display); p.style.display=open?'block':'none'; const b=$('fApFiltBtn'); if(b){ b.textContent=(open?'⏷':'⏵')+' Filtros'+_nFiltrosTxt(); } }
 function _nFiltros(){ return APT_FILT.size + (($('fApPrio')&&$('fApPrio').value)?1:0) + (($('fApDisc')&&$('fApDisc').value)?1:0); }
 function _nFiltrosTxt(){ const n=_nFiltros(); return n?(' ('+n+')'):''; }
