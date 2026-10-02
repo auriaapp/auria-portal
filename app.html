@@ -1118,6 +1118,7 @@
         <option>Em aberto</option><option>Em análise</option><option>Resolvido</option><option>Reprovado</option>
       </select></div>
     </div>
+    <div id="apCob" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--mut);background:rgba(232,150,10,.07);border:1px solid rgba(232,150,10,.25);border-radius:8px;padding:6px 10px;margin:-2px 0 8px"></div>
     <div class="g2">
       <div class="fg"><label>Local / Pavimento</label><details id="apLocalDd" style="position:relative"><summary id="apLocalSum" style="list-style:none;cursor:pointer;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">— selecione —</summary><div id="apLocal" style="position:absolute;z-index:30;left:0;right:0;top:100%;margin-top:3px;max-height:230px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px;box-shadow:0 8px 24px rgba(0,0,0,.35)"></div></details></div>
       <div class="fg"><label>Visibilidade</label><select id="apVisib">
@@ -7278,6 +7279,41 @@ async function _apLocalDaPrancha(locais){
     if(box && !_apLocalLer().length){ box.checked=true; _apLocalSum(); }
   }catch(_){}
 }
+// ── Cobrança automática (item 12): status, Pausar e Cobrar agora ─────────
+// A régua roda no banco (cobranca_rodar, dias úteis 8h). Aqui só mostra quantas
+// já foram, pausa este apontamento (salvo junto) e dispara uma cobrança na hora.
+async function apCobRender(){
+  const el=$('apCob'); if(!el) return; const a=APT_EDIT;
+  if(!a || a._novo || (a.visibilidade||'')==='Coordenação' || ['Resolvido','Reprovado'].includes(a.status)){ el.style.display='none'; return; }
+  el.style.display='flex';
+  const pausa=!!a.cobranca_pausada;
+  const bts=APP_RO?'':`<button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobPausar()">${pausa?'▶ Retomar':'⏸ Pausar'}</button>
+    <button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="apCobAgora()" ${pausa?'disabled title="Retome a cobrança para enviar"':''}>📨 Cobrar agora</button>`;
+  el.innerHTML=`<span style="flex:1;min-width:180px">🔔 <b style="color:var(--txt)">Cobrança automática</b> <span id="apCobInfo">${pausa?'· <b style="color:#E8960A">pausada</b> neste apontamento':'· carregando…'}</span></span>${bts}`;
+  if(pausa) return;
+  try{
+    const { data }=await sb.rpc('cobranca_status',{ p_emp:EMP.id, p_apt:a.id });
+    const r=(data&&data[0])||{}; const inf=$('apCobInfo'); if(!inf || APT_EDIT!==a) return;
+    inf.textContent = r.enviadas ? ('· '+r.enviadas+' enviada(s), última em '+new Date(r.ultima).toLocaleDateString('pt-BR')) : '· nenhuma enviada ainda (dias úteis, 8h)';
+  }catch(_){}
+}
+function apCobPausar(){
+  if(!APT_EDIT) return;
+  APT_EDIT.cobranca_pausada=!APT_EDIT.cobranca_pausada;
+  logAdd(APT_EDIT.cobranca_pausada?'Cobrança automática pausada.':'Cobrança automática retomada.');
+  apCobRender();
+  alert('Salve o apontamento para '+(APT_EDIT.cobranca_pausada?'pausar':'retomar')+' a cobrança.');
+}
+async function apCobAgora(){
+  const a=APT_EDIT; if(!a||a._novo) return;
+  if(!confirm('Enviar agora um e-mail de cobrança deste apontamento ('+a.id+') aos participantes pendentes?')) return;
+  try{
+    const { data, error }=await sb.rpc('cobranca_cobrar_agora',{ p_emp:EMP.id, p_apt:a.id });
+    if(error) throw error;
+    alert('Cobrança enviada para '+data+' destinatário(s).');
+    apCobRender();
+  }catch(e){ alert('Não foi possível cobrar: '+((e&&e.message)||e)); }
+}
 function abrirEditor(){
   const a=APT_EDIT;
   $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id)+(APP_RO?' · consulta':'');
@@ -7299,6 +7335,7 @@ function abrirEditor(){
   _apLocalRender(locais, selLoc);
   if(a._novo && !selLoc.length) _apLocalDaPrancha(locais);
   $('apVisib').value=a.visibilidade||'Projeto';
+  apCobRender();
   if(!Array.isArray(a.drawings_json)) a.drawings_json=[];
   // Origem externa (obra/projetista): o núcleo é a DECLARAÇÃO do autor e não é
   // editável no App. O analista RESPONDE (mensagens/prints), negocia prazo e
@@ -7683,7 +7720,7 @@ async function salvarApt(){
         ? (a._modeloNome||'')
         : ((PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||''),
       obs_coord:(a.log_json||[]).filter(e=>e.tipo!=='sistema'),
-      status:a.status, prioridade:a.prioridade, visibilidade:a.visibilidade||'Projeto',
+      status:a.status, prioridade:a.prioridade, visibilidade:a.visibilidade||'Projeto', cobranca_pausada:!!a.cobranca_pausada,
       etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
       prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
       participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs, anexos_json:anexos,
