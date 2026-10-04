@@ -613,6 +613,34 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .seg-leit div{padding:3px 0}.seg-leit .ok{color:#1E8449}.seg-leit .falta{color:#8A5A04}
 .seg-leit small{color:#64748B}
 
+/* ── Segurança parte 2: zonas, camada, desenho ── */
+#btnSegCamada.on{background:#FEF0D9!important;border-color:#E8960A!important;color:#7A4E05!important}
+#segBarra{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9050;display:none;align-items:center;gap:8px;flex-wrap:wrap;
+  background:#1E3A5F;color:#fff;border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:600;box-shadow:0 0 0 2px #E8960A,0 8px 24px rgba(0,0,0,.3);max-width:calc(100vw - 24px)}
+#segBarra.on{display:flex}
+#segBarra button{font-family:inherit;font-size:12px;font-weight:700;border-radius:7px;padding:5px 10px;cursor:pointer;border:1px solid rgba(255,255,255,.3);background:transparent;color:#fff}
+#segBarra button.ok{background:#E8960A;border-color:#E8960A;color:#231703}
+#segBarra button:disabled{opacity:.45;cursor:default}
+#segBarra input{padding:3px 6px;border-radius:6px;border:none;font-family:inherit}
+.seg-tabs{display:flex;gap:4px;align-items:center;padding:6px 14px 0;border-bottom:1px solid #E2E8F0;flex-wrap:wrap}
+.seg-tabs button{background:none!important;border:none!important;border-bottom:2px solid transparent!important;border-radius:0!important;color:#64748B!important;padding:8px 10px!important}
+.seg-tabs button.on{color:#1E3A5F!important;border-bottom-color:#1E3A5F!important}
+.seg-tabs button b{font-family:var(--mono);font-size:10.5px;background:#F1F5F9;border-radius:9px;padding:0 6px;margin-left:4px}
+.seg-camada{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#334155}
+.seg-dia{font-size:12px;color:#334155;padding:6px 4px}
+.seg-dia input{padding:4px 6px;border:1px solid #E2E8F0;border-radius:6px;font-family:inherit}
+.seg-geom{border:1px dashed #CBD5E1;border-radius:8px;padding:8px 10px;font-size:12px;color:#334155}
+.seg-geom > div{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.seg-geom small{display:block;color:#8A5A04;margin-top:4px}
+#segOv .b2.mini,#segOv .b2[disabled]{padding:4px 9px;font-size:11.5px}
+#segOv button[disabled]{opacity:.45;cursor:default}
+.seg-epi{display:flex;flex-wrap:wrap;gap:4px 10px}
+.seg-epi label{margin:0!important;font-weight:600!important;display:flex;align-items:center;gap:5px;font-size:12px!important}
+.seg-epi input{width:auto!important}
+.seg-epi-chip{background:#DCEBFA;color:#1D4ED8;margin:0 2px 2px 0}
+.seg-fotos{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.seg-fotos img,.seg-fotos .ph{width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid #E2E8F0;display:grid;place-items:center;color:#94A3B8}
+
 </style>
 </head>
 <body>
@@ -8507,88 +8535,112 @@ function segOv(html){
 }
 function segFechar(){ const ov = $('segOv'); if (ov) ov.classList.remove('on'); }
 
-// Painel do módulo: lista + (técnico) botão de novo alerta.
-function segPainel(){
-  const at = segAtivos();
-  segOv('<div class="hd"><b>Segurança do Trabalho</b><p>Alertas da obra. '
-    + (segSouTecnico() ? 'Você é o técnico de segurança: só você emite, edita e encerra.' : 'Somente o técnico de segurança emite alertas.') + '</p></div>'
-    + '<div class="ls">' + (at.length ? at.map(x => '<div class="it seg-it seg-' + x.nivel + '" style="cursor:pointer" onclick="segDetalhe(\'' + x.id + '\')">'
-        + '<div class="cod">' + esc(x.codigo) + ' ' + segChip(x.nivel) + '</div><div class="t">' + esc(x.titulo) + '</div>'
-        + '<div class="m">' + esc(segOnde(x)) + ' · desde ' + esc(new Date(x.emitido_em).toLocaleDateString('pt-BR')) + '</div></div>').join('')
-      : '<div class="hint" style="padding:12px">Nenhum alerta de segurança ativo.</div>') + '</div>'
-    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>'
-    + (segSouTecnico() ? '<button class="b1" onclick="segNovo()">＋ Alerta de segurança</button>' : '') + '</div>');
-}
+// Painel do módulo: ver segPainel em app_obra_seg2.js (abas Alertas | Zonas).
 
-function segNovo(editId){
+// ── Alerta: formulário (rascunho em SEG_ARASC sobrevive à marcação no ponto) ──
+function segAlertaLerForm(){
+  if (!$('segTit') || !SEG_ARASC) return;
+  const r = SEG_ARASC;
+  if (!r._editId) r.nivel = (document.querySelector('input[name=segNiv]:checked') || {}).value || r.nivel;
+  r.titulo = $('segTit').value; r.texto = $('segTxt').value; r.pavimento_id = $('segPav').value;
+  r.valido_ate = $('segAte').value; r.local_txt = $('segLoc').value; r.zona_id = $('segZona') ? $('segZona').value : r.zona_id;
+  const f = $('segFotos'); if (f && f.files && f.files.length) r._fotos = [...f.files];
+}
+function segNovo(editId, voltando){
   if (!segSouTecnico()) return;
-  const x = editId ? SEG.find(s => s.id === editId) : null;
+  if (!voltando){
+    const x = editId ? SEG.find(s => s.id === editId) : null;
+    SEG_ARASC = x ? Object.assign({}, x, { _editId:editId, _fotos:[], pavimento_id:x.pavimento_id || '', zona_id:x.zona_id || '', valido_ate:x.valido_ate || '' })
+                  : { nivel:'atencao', titulo:'', texto:'', pavimento_id:'', local_txt:'', valido_ate:'', zona_id:'', pin:null, fotos:[], _fotos:[] };
+  }
+  const r = SEG_ARASC, x = r._editId;
   const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
-  const nv = x ? x.nivel : 'atencao';
-  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(x.codigo) : 'Novo alerta de segurança') + '</b>'
-    + '<p>Todos da obra recebem em destaque e confirmam a leitura.' + ' Interdição avisa também a coordenação de projetos por e-mail.</p></div>'
+  const zonas = (typeof ZONAS !== 'undefined' ? ZONAS : []).filter(z => z.situacao === 'ativa');
+  const tem2D = !!(V.page && PRANCHA), tem3D = !!(F3D && F3D.vivo && F3D.modelos.length);
+  const pinTxt = r.pin ? (r.pin.d2 ? 'marcado na prancha' : 'marcado no modelo') : 'sem ponto';
+  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(r.codigo) : 'Novo alerta de segurança') + '</b>'
+    + '<p>Todos da obra recebem em destaque e confirmam a leitura. Interdição avisa também a coordenação de projetos por e-mail.</p></div>'
     + '<div class="seg-form">'
     + '<label>Nível</label><div class="seg-niv">' + Object.keys(SEG_NIVEL).map(k =>
-        '<label class="seg-' + k + '"><input type="radio" name="segNiv" value="' + k + '"' + (k === nv ? ' checked' : '') + (x ? ' disabled' : '') + '> ' + SEG_NIVEL[k].rot + '</label>').join('') + '</div>'
-    + '<label>Título</label><input id="segTit" maxlength="140" value="' + esc(x ? x.titulo : '') + '" placeholder="Ex.: Periferia da laje sem guarda-corpo">'
-    + '<label>Descrição</label><textarea id="segTxt" rows="3" placeholder="O que foi visto, o que fazer, EPI obrigatório…">' + esc(x ? (x.texto || '') : '') + '</textarea>'
+        '<label class="seg-' + k + '"><input type="radio" name="segNiv" value="' + k + '"' + (k === r.nivel ? ' checked' : '') + (x ? ' disabled' : '') + '> ' + SEG_NIVEL[k].rot + '</label>').join('') + '</div>'
+    + '<label>Título</label><input id="segTit" maxlength="140" value="' + esc(r.titulo || '') + '" placeholder="Ex.: Periferia da laje sem guarda-corpo">'
+    + '<label>Descrição</label><textarea id="segTxt" rows="3" placeholder="O que foi visto, o que fazer, EPI obrigatório…">' + esc(r.texto || '') + '</textarea>'
     + '<div class="seg-g2"><div><label>Pavimento</label><select id="segPav"><option value="">—</option>' + pavs.map(p =>
-        '<option value="' + p.id + '"' + (x && x.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
-    + '<div><label>Válido até</label><input id="segAte" type="date" value="' + esc(x && x.valido_ate ? x.valido_ate : '') + '"></div></div>'
-    + '<label>Local</label><input id="segLoc" maxlength="140" value="' + esc(x ? (x.local_txt || '') : '') + '" placeholder="Ex.: fachada norte, shaft S2, poço do elevador">'
+        '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Válido até</label><input id="segAte" type="date" value="' + esc(r.valido_ate || '') + '"></div></div>'
+    + '<label>Local</label><input id="segLoc" maxlength="140" value="' + esc(r.local_txt || '') + '" placeholder="Ex.: fachada norte, shaft S2, poço do elevador">'
+    + (zonas.length ? '<label>Zona de risco ligada</label><select id="segZona"><option value="">—</option>' + zonas.map(z => '<option value="' + z.id + '"' + (r.zona_id === z.id ? ' selected' : '') + '>' + esc(z.codigo + ' — ' + z.titulo) + '</option>').join('') + '</select>' : '')
+    + '<label>Ponto exato</label><div class="seg-geom"><b>' + pinTxt + '</b><div>'
+    + '<button class="b2" ' + (tem2D ? '' : 'disabled title="Abra a prancha"') + ' onclick="segAlertaMarcar(\'pin2d\')">📍 Na prancha</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="segAlertaMarcar(\'pin3d\')">📍 No modelo</button>'
+    + (r.pin ? '<button class="b2" onclick="segAlertaLerForm();SEG_ARASC.pin=null;segNovo(null,true)">Tirar</button>' : '') + '</div></div>'
+    + '<label>Fotos</label><input id="segFotos" type="file" accept="image/*" capture="environment" multiple>'
+    + ((r.fotos || []).length ? '<small>' + r.fotos.length + ' foto(s) já anexada(s)</small>' : '')
     + '<div id="segMsg" class="seg-msg"></div></div>'
-    + '<div class="ft"><button class="b2" onclick="' + (x ? 'segDetalhe(\'' + x.id + '\')' : 'segPainel()') + '">Voltar</button>'
-    + '<button class="b1" id="segOk" onclick="segSalvar(' + (x ? '\'' + x.id + '\'' : '') + ')">' + (x ? 'Salvar' : 'Emitir alerta') + '</button></div>');
+    + '<div class="ft"><button class="b2" onclick="' + (x ? 'segDetalhe(\'' + x + '\')' : 'segPainel()') + '">Voltar</button>'
+    + '<button class="b1" id="segOk" onclick="segSalvar()">' + (x ? 'Salvar' : 'Emitir alerta') + '</button></div>');
 }
 
-async function segSalvar(editId){
-  const tit = ($('segTit').value || '').trim();
+async function segSalvar(){
+  segAlertaLerForm();
+  const r = SEG_ARASC, editId = r._editId;
+  const tit = (r.titulo || '').trim();
   if (tit.length < 4){ $('segMsg').textContent = 'Escreva um título.'; return; }
-  const nivel = (document.querySelector('input[name=segNiv]:checked') || {}).value || 'atencao';
-  const row = { titulo: tit, texto: ($('segTxt').value || '').trim() || null,
-                pavimento_id: $('segPav').value || null, local_txt: ($('segLoc').value || '').trim() || null,
-                valido_ate: $('segAte').value || null };
-  const b = $('segOk'); b.disabled = true;
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
   try {
+    if (!editId && r.nivel === 'interdicao' && !confirm('Emitir uma INTERDIÇÃO? A coordenação de projetos recebe e-mail e só você poderá liberar.')){ b.disabled = false; b.textContent = 'Emitir alerta'; return; }
+    const id = editId || crypto.randomUUID();
+    const fotos = (r.fotos || []).concat((r._fotos || []).length ? await segSubirFotos(r._fotos, 'alertas/' + id) : []);
+    const row = { titulo: tit, texto: (r.texto || '').trim() || null, pavimento_id: r.pavimento_id || null,
+                  local_txt: (r.local_txt || '').trim() || null, valido_ate: r.valido_ate || null,
+                  zona_id: r.zona_id || null, pin: r.pin || null, fotos };
     if (editId){
       const { error } = await sb.from('seg_alerta_auria').update(row).eq('id', editId);
       if (error) throw error;
     } else {
-      if (nivel === 'interdicao' && !confirm('Emitir uma INTERDIÇÃO? A coordenação de projetos recebe e-mail e só você poderá liberar.')){ b.disabled = false; return; }
-      const r = await sb.rpc('seg_proximo_codigo', { p_emp: EMP.id });
-      if (r.error) throw r.error;
+      const c = await sb.rpc('seg_proximo_codigo', { p_emp: EMP.id });
+      if (c.error) throw c.error;
       const { error } = await sb.from('seg_alerta_auria').insert(Object.assign(row,
-        { empreendimento_id: EMP.id, codigo: r.data, nivel, emitido_por: USER.id }));
+        { id, empreendimento_id: EMP.id, codigo: c.data, nivel: r.nivel, emitido_por: USER.id }));
       if (error) throw error;
     }
+    SEG_ARASC = null;
     await segCarregar(); obraContagens(); renderListaApts(); try { renderSideRight(); } catch (_) {}
-    segPainel();
-  } catch (e){ $('segMsg').textContent = 'Não foi possível salvar: ' + (e.message || e); b.disabled = false; }
+    segDetalhe(id);
+  } catch (e){ $('segMsg').textContent = 'Não foi possível salvar: ' + (e.message || e); b.disabled = false; b.textContent = editId ? 'Salvar' : 'Emitir alerta'; }
 }
 
 async function segDetalhe(id){
   const x = SEG.find(s => s.id === id); if (!x) return;
   const lido = OBRA_LIDOS.has('seg:' + x.id), ativo = x.situacao === 'ativo';
   const pedidos = (x.eventos || []).filter(e => e.tipo === 'pedido_liberacao');
+  const zona = x.zona_id && typeof ZONAS !== 'undefined' ? ZONAS.find(z => z.id === x.zona_id) : null;
   let acoes = '';
   if (ativo && !lido) acoes += '<button class="b1" onclick="segLer(\'' + x.id + '\')">Li e estou ciente</button>';
-  if (ativo && segSouTecnico()) acoes += '<button class="b2" onclick="segNovo(\'' + x.id + '\')">Editar</button>'
-    + '<button class="b1" onclick="segEncerrarForm(\'' + x.id + '\')">' + (x.nivel === 'interdicao' ? 'Liberar interdição' : 'Encerrar') + '</button>';
+  if (ativo && segSouTecnico()){
+    acoes += '<button class="b2" onclick="segNovo(\'' + x.id + '\')">Editar</button>';
+    // alerta de zona interditada: quem libera é a ZONA (que encerra o alerta)
+    acoes += zona && zona.alerta_id === x.id
+      ? '<button class="b1" onclick="segZonaLiberarForm(\'' + zona.id + '\')">Liberar zona ' + esc(zona.codigo) + '</button>'
+      : '<button class="b1" onclick="segEncerrarForm(\'' + x.id + '\')">' + (x.nivel === 'interdicao' ? 'Liberar interdição' : 'Encerrar') + '</button>';
+  }
   if (ativo && x.nivel === 'interdicao' && segMeuNivel() === 'eng_chefe') acoes += '<button class="b2" onclick="segPedirForm(\'' + x.id + '\')">Pedir liberação</button>';
   segOv('<div class="hd"><b>' + esc(x.codigo) + ' — ' + esc(x.titulo) + '</b><p>' + segChip(x.nivel)
     + (ativo ? '' : ' <span class="seg-chip" style="background:#E6F4EC;color:#1E8449">Encerrado</span>') + '</p></div>'
     + '<div class="ls"><div class="seg-det">'
     + (x.texto ? '<p>' + esc(x.texto) + '</p>' : '')
-    + '<div class="seg-kv"><span>Local</span><b>' + esc(segOnde(x) || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Local</span><b>' + esc(segOnde(x) || '—')
+      + (x.pin ? ' <button class="b2 mini" onclick="segAlertaVer(\'' + x.id + '\')">📍 Ver no ponto</button>' : '') + '</b></div>'
+    + (zona ? '<div class="seg-kv"><span>Zona</span><b><a href="#" onclick="segZonaDetalhe(\'' + zona.id + '\');return false">' + esc(zona.codigo + ' — ' + zona.titulo) + '</a></b></div>' : '')
     + '<div class="seg-kv"><span>Válido até</span><b>' + esc(x.valido_ate ? _dispData(x.valido_ate) : '—') + '</b></div>'
     + '<div class="seg-kv"><span>Emitido</span><b>' + esc((x.emitido_nome || '') + ' · ' + new Date(x.emitido_em).toLocaleString('pt-BR')) + '</b></div>'
     + (!ativo ? '<div class="seg-kv"><span>' + (x.nivel === 'interdicao' ? 'Liberado' : 'Encerrado') + '</span><b>' + esc((x.encerrado_nome || '') + ' · '
         + new Date(x.encerrado_em).toLocaleString('pt-BR')) + '</b></div><div class="seg-kv"><span>Motivo</span><b>' + esc(x.encerrado_motivo || '') + '</b></div>' : '')
     + (pedidos.length ? '<div class="seg-kv"><span>Pedidos de liberação</span><b>' + pedidos.map(p => esc((p.nome || '') + ' · '
         + new Date(p.em).toLocaleString('pt-BR') + (p.texto ? ' — ' + p.texto : ''))).join('<br>') + '</b></div>' : '')
-    + '<div id="segLeit"></div></div></div>'
+    + '<div id="segAFotosVer"></div><div id="segLeit"></div></div></div>'
     + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>' + acoes + '</div>');
-  // Quem leu / quem falta: só o técnico e a coordenação recebem dados.
+  if (typeof segFotosHtml === 'function') segFotosHtml(x.fotos, 'segAFotosVer');
   if (segSouTecnico()){
     const { data } = await sb.rpc('seg_leitores', { p_id: x.id });
     const el = $('segLeit'); if (!el || !data) return;
@@ -8625,6 +8677,537 @@ async function segPedirOk(id){
   if (error){ $('segMsg').textContent = error.message || String(error); return; }
   await segCarregar(); segDetalhe(id);
 }
+
+// ── App Obra · Segurança — parte 2: ZONAS DE RISCO, pin e fotos (backlog 182) ──
+//  Zona = área de risco com período, desenhada:
+//    • 2D: polígono na prancha (coords normalizadas da prancha BASE, iguais às dos pins);
+//    • 3D: elementos do IFC (localIds por arquivo) e/ou CAIXA livre (proteções e
+//      raio da grua costumam não existir no modelo).
+//  Cores pelo SIGNIFICADO da NR-26 / ABNT NBR 7195 (a cor diz o que fazer, não o
+//  tipo): interdição = vermelho (proibição); atenção = amarelo com faixas pretas
+//  (cuidado); máquinas/partes móveis = laranja; combate a incêndio = vermelho.
+//  O tipo de risco vai no rótulo. EPI obrigatório = azul (obrigação).
+//  Fotos no Cloudflare R2 (função cde-r2, caminho <emp>/_seguranca/…).
+var ZONAS = [], SEG_CAMADA = false, SEG_DATA = '', SEG_MODO = null, SEG_RASC = null, SEG_ARASC = null;
+var _segPinHits = [], _seg3dGrupo = null, _seg3dAssin = '';
+
+const SEG_TIPOS = {
+  queda:             'Queda de altura',
+  icamento:          'Içamento / raio da grua',
+  escavacao:         'Escavação',
+  eletrico:          'Risco elétrico',
+  maquinas:          'Máquinas e partes móveis',
+  material_suspenso: 'Material suspenso',
+  confinado:         'Espaço confinado',
+  incendio:          'Incêndio / inflamáveis',
+  outro:             'Outro'
+};
+const SEG_EPIS = ['Capacete','Cinto paraquedista','Talabarte duplo','Óculos','Protetor auricular','Luva','Máscara / respirador','Botina','Vestimenta antichama','Colete refletivo'];
+// NR-26 / NBR 7195 — cor pelo significado
+function segCorZona(z){
+  if (z.nivel === 'interdicao' || z.tipo_risco === 'incendio') return { cor:'#C0392B', faixa:'#7B1E14', rot:'Interdição' };
+  if (z.tipo_risco === 'maquinas') return { cor:'#E8730A', faixa:'#1F1F1F', rot:'Atenção' };
+  return { cor:'#F2C200', faixa:'#1F1F1F', rot:'Atenção' };
+}
+function segHoje(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function segZonaAtivaEm(z, dia){ return z.situacao === 'ativa' && (!z.inicio || z.inicio <= dia) && (!z.fim || z.fim >= dia); }
+function segZonasVisiveis(){ const dia = SEG_DATA || segHoje(); return ZONAS.filter(z => segZonaAtivaEm(z, dia)); }
+
+async function segCarregarZonas(){
+  ZONAS = [];
+  if (!EMP || !SEG_OK) return;
+  const { data, error } = await sb.from('seg_zona_auria').select('*').eq('empreendimento_id', EMP.id).order('emitido_em', { ascending:false });
+  if (error){ console.warn('seg_zona_auria indisponível:', error.message || error); return; }
+  ZONAS = data || [];
+}
+// a carga dos alertas passa a trazer as zonas junto
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); await segCarregarZonas(); segRedesenhar(); }; })();
+
+// ── R2: fotos ───────────────────────────────────────────────────────────────
+async function segR2Url(action, path, contentType){
+  const r = await sb.functions.invoke('cde-r2', { body:{ action, path, contentType } });
+  if (r.error) throw r.error;
+  if (!r.data || !r.data.url) throw new Error((r.data && r.data.error) || 'sem URL do R2');
+  return r.data.url;
+}
+async function segReduzir(file){
+  if (!/^image\//.test(file.type)) return file;
+  const img = await createImageBitmap(file);
+  const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width*k); c.height = Math.round(img.height*k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return await new Promise(res => c.toBlob(b => res(b || file), 'image/jpeg', 0.82));
+}
+async function segSubirFotos(files, pasta){
+  const out = [];
+  for (const f of files){
+    const blob = await segReduzir(f);
+    const nome = (f.name || 'foto').replace(/[^\w.\-]+/g,'_').replace(/\.(heic|png|webp|jpeg)$/i,'.jpg');
+    const path = EMP.id + '/_seguranca/' + pasta + '/' + Date.now() + '_' + nome;
+    const url = await segR2Url('upload', path, 'image/jpeg');
+    const r = await fetch(url, { method:'PUT', headers:{ 'content-type':'image/jpeg' }, body: blob });
+    if (!r.ok) throw new Error('Falha ao enviar a foto (' + r.status + ').');
+    out.push({ path, nome: f.name || nome });
+  }
+  return out;
+}
+async function segFotosHtml(fotos, alvoId){
+  const el = $(alvoId); if (!el || !fotos || !fotos.length) return;
+  el.innerHTML = '<div class="seg-fotos">' + fotos.map((_,i) => '<span class="ph" id="' + alvoId + '_' + i + '">…</span>').join('') + '</div>';
+  fotos.forEach(async (f, i) => {
+    try { const u = await segR2Url('download', f.path);
+      const s = $(alvoId + '_' + i); if (s) s.outerHTML = '<a href="' + esc(u) + '" target="_blank"><img src="' + esc(u) + '" alt=""></a>';
+    } catch (e){ const s = $(alvoId + '_' + i); if (s) s.textContent = '⚠'; }
+  });
+}
+
+// ── Camada (2D e 3D) ────────────────────────────────────────────────────────
+function segCamada(on){
+  SEG_CAMADA = (on == null) ? !SEG_CAMADA : !!on;
+  const b = $('btnSegCamada'); if (b) b.classList.toggle('on', SEG_CAMADA);
+  segRedesenhar();
+}
+function segRedesenhar(){
+  try { renderPins(); } catch (_){}
+  try { segSync3D(); } catch (_){}
+}
+// botão "⛑ Segurança" ao lado do "Pins" da barra do visualizador
+function segBotaoCamada(){
+  if ($('btnSegCamada')) return;
+  const ref = $('btnVerPins'); if (!ref || !ref.parentElement) return;
+  const b = document.createElement('button');
+  b.id = 'btnSegCamada'; b.className = ref.className.replace(/\bon\b/,'').trim(); b.title = 'Camada de segurança: zonas de risco e alertas';
+  b.innerHTML = '⛑<br><span style="font-size:10px">Segurança</span>';
+  b.onclick = () => segCamada();
+  ref.parentElement.insertBefore(b, ref.nextSibling);
+}
+
+function segSvg(id, irmaoId){
+  let s = $(id); if (s) return s;
+  const irmao = $(irmaoId); if (!irmao || !irmao.parentElement) return null;
+  s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.id = id; s.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none');
+  irmao.parentElement.insertBefore(s, irmao);     // abaixo dos pins dos apontamentos
+  return s;
+}
+const SEG_DEFS = '<defs>'
+  + '<pattern id="segHatchA" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="#F2C200" fill-opacity=".32"/><rect width="5" height="12" fill="#1F1F1F" fill-opacity=".35"/></pattern>'
+  + '<pattern id="segHatchM" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="#E8730A" fill-opacity=".30"/><rect width="5" height="12" fill="#1F1F1F" fill-opacity=".30"/></pattern>'
+  + '<pattern id="segHatchI" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="10" height="10" fill="#C0392B" fill-opacity=".28"/><rect width="3" height="10" fill="#7B1E14" fill-opacity=".45"/></pattern>'
+  + '</defs>';
+function segFill(z){ return (z.nivel === 'interdicao' || z.tipo_risco === 'incendio') ? 'url(#segHatchI)' : (z.tipo_risco === 'maquinas' ? 'url(#segHatchM)' : 'url(#segHatchA)'); }
+function segPinSvg(x, y, nivel, rot){
+  const c = nivel === 'interdicao' ? '#C0392B' : (nivel === 'atencao' ? '#E8960A' : '#1E3A5F');
+  return '<path d="M' + x + ' ' + y + ' l-7 -14 h14 z" fill="' + c + '"/>'
+    + '<circle cx="' + x + '" cy="' + (y-24) + '" r="12" fill="' + c + '" stroke="#fff" stroke-width="2"/>'
+    + '<text x="' + x + '" y="' + (y-20) + '" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">⛑</text>'
+    + (rot ? '<text x="' + (x+15) + '" y="' + (y-20) + '" font-size="11" font-weight="700" fill="' + c + '" stroke="#fff" stroke-width="3" paint-order="stroke">' + esc(rot) + '</text>' : '');
+}
+
+// 2D: desenha depois dos pins do App (renderPins é chamado a cada mudança de vista)
+function segRender2D(){
+  const svg = segSvg('segSvg2d', 'pinsSvg'); if (!svg) return;
+  if ((!SEG_CAMADA && !SEG_MODO) || !V.page || !PRANCHA){ svg.innerHTML = ''; return; }
+  let out = SEG_DEFS;
+  const poli = (pts, attrs) => '<polygon points="' + pts.map(p => { const s = pageToScreen(p.nx, p.ny); return s.x.toFixed(1) + ',' + s.y.toFixed(1); }).join(' ') + '" ' + attrs + '/>';
+  if (SEG_CAMADA){
+    segZonasVisiveis().forEach(z => {
+      (z.geom && z.geom.d2 || []).forEach(g => {
+        if (g.prancha_id !== PRANCHA.id || (g.pg || 1) !== V.pageNum || !g.pts || g.pts.length < 3) return;
+        const c = segCorZona(z);
+        out += '<g style="pointer-events:auto;cursor:pointer" onclick="segZonaDetalhe(\'' + z.id + '\');event.stopPropagation()">'
+          + poli(g.pts, 'fill="' + segFill(z) + '" stroke="' + c.cor + '" stroke-width="2.5"');
+        const cx = g.pts.reduce((s,p) => s + p.nx, 0) / g.pts.length, cy = g.pts.reduce((s,p) => s + p.ny, 0) / g.pts.length;
+        const p = pageToScreen(cx, cy);
+        out += '<text x="' + p.x + '" y="' + p.y + '" text-anchor="middle" font-size="12" font-weight="800" fill="' + c.faixa + '" stroke="#fff" stroke-width="3.5" paint-order="stroke">'
+          + esc(z.codigo + ' · ' + (SEG_TIPOS[z.tipo_risco] || '')) + '</text></g>';
+      });
+    });
+    segAtivos().forEach(a => {
+      const g = a.pin && a.pin.d2; if (!g || g.prancha_id !== PRANCHA.id || (g.pg || 1) !== V.pageNum) return;
+      const p = pageToScreen(g.nx, g.ny);
+      out += '<g style="pointer-events:auto;cursor:pointer" onclick="segDetalhe(\'' + a.id + '\');event.stopPropagation()">' + segPinSvg(p.x, p.y, a.nivel, a.codigo) + '</g>';
+    });
+  }
+  // rascunho do polígono / pin em construção
+  if (SEG_MODO === 'z2d' && SEG_RASC && SEG_RASC._pts && SEG_RASC._pts.length){
+    const pts = SEG_RASC._pts;
+    out += pts.length >= 3 ? poli(pts, 'fill="url(#segHatchA)" stroke="#E8960A" stroke-width="2" stroke-dasharray="6 4"')
+      : '<polyline points="' + pts.map(p => { const s = pageToScreen(p.nx,p.ny); return s.x + ',' + s.y; }).join(' ') + '" fill="none" stroke="#E8960A" stroke-width="2" stroke-dasharray="6 4"/>';
+    pts.forEach(p => { const s = pageToScreen(p.nx, p.ny); out += '<circle cx="' + s.x + '" cy="' + s.y + '" r="4" fill="#E8960A" stroke="#fff" stroke-width="1.5"/>'; });
+  }
+  svg.innerHTML = out;
+}
+(function(){ const _r = renderPins; renderPins = function(){ _r(); try { segRender2D(); } catch (e){ console.warn('seg 2D:', e); } }; })();
+
+// 3D: cores dos elementos + caixas na cena + pins/rótulos no overlay a cada quadro
+function segPorModZonas(lista){
+  const porMod = {};
+  (lista || []).forEach(z => (z.geom && z.geom.d3 || []).forEach(g => {
+    const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi < 0) return;
+    (porMod[mi] = porMod[mi] || []).push(...(g.ids || []));
+  }));
+  return porMod;
+}
+function segLocalToWorld(cde_arquivo_id, xyz){
+  const m = F3D.modelos.find(x => x.arquivoId === cde_arquivo_id), o = m && m.model && m.model.object;
+  if (!o) return null;
+  o.updateMatrixWorld(); return o.localToWorld(new F3D.THREE.Vector3(xyz[0], xyz[1], xyz[2]));
+}
+async function segSync3D(){
+  if (!F3D || !F3D.vivo || !B3) return;
+  const T = F3D.THREE;
+  const zonas = SEG_CAMADA ? segZonasVisiveis() : [];
+  const rasc = (SEG_MODO === 'z3d-el' || SEG_MODO === 'z3d-caixa') && SEG_RASC ? [SEG_RASC] : [];
+  const assin = JSON.stringify([zonas.map(z => z.id + z.atualizado_em), rasc.map(r => JSON.stringify(r.geom)), F3D.modelos.length]);
+  if (assin === _seg3dAssin) return;
+  _seg3dAssin = assin;
+  // cores: refaz do zero só o que é nosso (o App Obra não usa cores próprias fora daqui)
+  F3D._cores = [];
+  const grupos = {};
+  zonas.forEach(z => { const k = segCorZona(z).cor; (grupos[k] = grupos[k] || []).push(z); });
+  if (rasc.length) (grupos['#E8960A'] = grupos['#E8960A'] || []).push(...rasc);
+  const ks = Object.keys(grupos);
+  if (!ks.length) await B3.colorirGrupo(F3D, {}, '#ffffff');
+  for (const k of ks) await B3.colorirGrupo(F3D, segPorModZonas(grupos[k]), k);
+  // caixas
+  if (_seg3dGrupo){ F3D.scene.remove(_seg3dGrupo); _seg3dGrupo.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
+  _seg3dGrupo = new T.Group(); _seg3dGrupo.name = 'segZonas';
+  zonas.concat(rasc).forEach(z => (z.geom && z.geom.caixas || []).forEach(cx => {
+    const a = segLocalToWorld(cx.cde_arquivo_id, cx.min), b = segLocalToWorld(cx.cde_arquivo_id, cx.max); if (!a || !b) return;
+    const min = a.clone().min(b), max = a.clone().max(b), tam = max.clone().sub(min), cen = min.clone().add(tam.clone().multiplyScalar(.5));
+    const cor = new T.Color(z === SEG_RASC ? '#E8960A' : segCorZona(z).cor);
+    const geo = new T.BoxGeometry(Math.max(tam.x,.05), Math.max(tam.y,.05), Math.max(tam.z,.05));
+    const mesh = new T.Mesh(geo, new T.MeshBasicMaterial({ color:cor, transparent:true, opacity:.22, depthWrite:false }));
+    mesh.position.copy(cen); mesh.renderOrder = 999;
+    const ar = new T.LineSegments(new T.EdgesGeometry(geo), new T.LineBasicMaterial({ color:cor }));
+    ar.position.copy(cen);
+    _seg3dGrupo.add(mesh); _seg3dGrupo.add(ar);
+  }));
+  F3D.scene.add(_seg3dGrupo);
+}
+function segRender3D(E){
+  // modelo carregado/trocado depois de ligar a camada: a assinatura muda e as cores/caixas se refazem
+  if (SEG_CAMADA || SEG_MODO) segSync3D().catch(() => {});
+  const svg = segSvg('segSvg3d', 'bimPinsSvg'); _segPinHits = [];
+  if (!svg) return;
+  if (!E || !E.vivo || (!SEG_CAMADA && !SEG_MODO)){ svg.innerHTML = ''; return; }
+  let out = '';
+  const arqs = new Set(E.modelos.map(m => m.arquivoId));
+  if (SEG_CAMADA){
+    segZonasVisiveis().forEach(z => (z.geom && z.geom.caixas || []).forEach(cx => {
+      if (!arqs.has(cx.cde_arquivo_id)) return;
+      const a = segLocalToWorld(cx.cde_arquivo_id, cx.max); if (!a) return;
+      const p = f3dWorldToScreen(E, a.x, a.y, a.z); if (!p) return;
+      const c = segCorZona(z);
+      out += '<text x="' + p.x + '" y="' + p.y + '" font-size="12" font-weight="800" fill="' + c.faixa + '" stroke="#fff" stroke-width="3.5" paint-order="stroke">' + esc(z.codigo + ' · ' + (SEG_TIPOS[z.tipo_risco] || '')) + '</text>';
+    }));
+    segAtivos().forEach(a => {
+      const pt = a.pin && a.pin.d3; if (!pt || !arqs.has(pt.cde_arquivo_id)) return;
+      const w = f3dPinWorld(E, pt), p = f3dWorldToScreen(E, w.x, w.y, w.z); if (!p) return;
+      _segPinHits.push({ id:a.id, cx:p.x, cy:p.y - 24 });
+      out += segPinSvg(p.x, p.y, a.nivel, a.codigo);
+    });
+  }
+  if (SEG_MODO === 'z3d-caixa' && SEG_RASC && SEG_RASC._p1){
+    const w = SEG_RASC._p1, p = f3dWorldToScreen(E, w.x, w.y, w.z);
+    if (p) out += '<circle cx="' + p.x + '" cy="' + p.y + '" r="6" fill="#E8960A" stroke="#fff" stroke-width="2"/>';
+  }
+  svg.innerHTML = out;
+}
+(function(){ const _r = f3dRenderPins; f3dRenderPins = function(E, svg){ _r(E, svg); try { segRender3D(E); } catch (e){} }; })();
+
+// ── Modo de desenho / marcação ───────────────────────────────────────────────
+function segBarra(txt, botoes){
+  let b = $('segBarra');
+  if (!b){ b = document.createElement('div'); b.id = 'segBarra'; document.body.appendChild(b); }
+  b.innerHTML = '<span>' + txt + '</span>' + (botoes || '');
+  b.classList.add('on');
+}
+function segSairModo(){ SEG_MODO = null; const b = $('segBarra'); if (b) b.classList.remove('on'); _seg3dAssin = ''; segRedesenhar(); }
+
+// 2D — clique na prancha: interceptado ANTES do App (captura na janela) só
+// enquanto o modo está ligado e o clique cai na área da prancha. Arrastar
+// (pan) continua do App: só conta como clique se o mouse quase não andou.
+var _segDown = null;
+function _segNaPrancha(ev){ const s = $('stage'); return s && s.contains(ev.target); }
+window.addEventListener('pointerdown', ev => { if (SEG_MODO === 'z2d' || SEG_MODO === 'pin2d') _segDown = { x:ev.clientX, y:ev.clientY }; }, true);
+['pointerup','mouseup','click'].forEach(tp => window.addEventListener(tp, ev => {
+  if ((SEG_MODO !== 'z2d' && SEG_MODO !== 'pin2d') || !_segNaPrancha(ev)) return;
+  ev.stopImmediatePropagation(); ev.preventDefault();
+  if (tp !== 'pointerup') return;
+  if (_segDown && Math.hypot(ev.clientX - _segDown.x, ev.clientY - _segDown.y) > 5) return;   // foi arrasto
+  // mesma referência do App (_drawPt): a área #stage
+  const r = $('stage').getBoundingClientRect(), q = screenToPage(ev.clientX - r.left, ev.clientY - r.top);
+  if (q.nx < 0 || q.ny < 0 || q.nx > 1 || q.ny > 1) return;
+  if (SEG_MODO === 'z2d'){ SEG_RASC._pts.push({ nx:+q.nx.toFixed(5), ny:+q.ny.toFixed(5) }); segBarraZ2D(); renderPins(); }
+  else { SEG_ARASC.pin = { d2:{ prancha_id:PRANCHA.id, cde_documento_id:PRANCHA.cde_documento_id || null, pg:V.pageNum, nx:+q.nx.toFixed(5), ny:+q.ny.toFixed(5) } }; segSairModo(); segNovo(SEG_ARASC._editId || null, true); }
+}, true));
+window.addEventListener('keydown', ev => { if (SEG_MODO && ev.key === 'Escape'){ segCancelarDesenho(); } if (SEG_MODO === 'z2d' && ev.key === 'Enter') segConcluirZ2D(); });
+
+function segBarraZ2D(){
+  const n = SEG_RASC._pts.length;
+  segBarra('Zona na prancha: clique os cantos (' + n + ' ponto' + (n === 1 ? '' : 's') + ')',
+    '<button onclick="segDesfazerZ2D()">Desfazer</button><button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segConcluirZ2D()"' + (n < 3 ? ' disabled' : '') + '>Concluir</button>');
+}
+function segDesfazerZ2D(){ SEG_RASC._pts.pop(); segBarraZ2D(); renderPins(); }
+function segConcluirZ2D(){
+  if (SEG_RASC._pts.length < 3) return;
+  const d2 = (SEG_RASC.geom.d2 = SEG_RASC.geom.d2 || []);
+  d2.push({ prancha_id:PRANCHA.id, cde_documento_id:PRANCHA.cde_documento_id || null, pg:V.pageNum, pts:SEG_RASC._pts });
+  SEG_RASC._pts = []; segSairModo(); segZonaForm();
+}
+function segCancelarDesenho(){
+  const eraAlerta = SEG_MODO === 'pin2d' || SEG_MODO === 'pin3d';
+  if (SEG_RASC) SEG_RASC._pts = [], SEG_RASC._p1 = null;
+  segSairModo();
+  if (eraAlerta) segNovo(SEG_ARASC && SEG_ARASC._editId || null, true); else segZonaForm();
+}
+
+// 3D — f3dClique é global: o modo de segurança intercepta antes do App.
+(function(){
+  const _c = f3dClique;
+  f3dClique = async function(ev){
+    if (!SEG_MODO || SEG_MODO.indexOf('3d') < 0){
+      // clique num pin de alerta de segurança?
+      if (SEG_CAMADA && _segPinHits.length && F3D){
+        const r = F3D.renderer.domElement.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+        const h = _segPinHits.find(h => (mx-h.cx)*(mx-h.cx) + (my-h.cy)*(my-h.cy) < 18*18);
+        if (h){ segDetalhe(h.id); return; }
+      }
+      return _c(ev);
+    }
+    const hit = await B3.raycast(F3D, ev); if (!hit) return;
+    const m = hit.__modelo;
+    if (SEG_MODO === 'pin3d'){ SEG_ARASC.pin = { d3:f3dPonto(hit, m) }; segSairModo(); segNovo(SEG_ARASC._editId || null, true); return; }
+    if (SEG_MODO === 'z3d-el'){
+      const d3 = (SEG_RASC.geom.d3 = SEG_RASC.geom.d3 || []);
+      let g = d3.find(x => x.cde_arquivo_id === m.arquivoId);
+      if (!g){ g = { cde_arquivo_id:m.arquivoId, modelo:m.nome || '', ids:[] }; d3.push(g); }
+      const i = g.ids.indexOf(hit.localId); if (i >= 0) g.ids.splice(i, 1); else g.ids.push(hit.localId);
+      segBarraZ3DEl(); _seg3dAssin = ''; segSync3D(); return;
+    }
+    if (SEG_MODO === 'z3d-caixa'){
+      const o = m.model && m.model.object; o.updateMatrixWorld();
+      if (!SEG_RASC._p1){ SEG_RASC._p1 = hit.point.clone ? hit.point.clone() : new F3D.THREE.Vector3(hit.point.x, hit.point.y, hit.point.z); SEG_RASC._m = m; segBarraZ3DCaixa(); return; }
+      const alt = Math.max(0.2, parseFloat(($('segAlt') && $('segAlt').value) || '3') || 3);
+      const p1 = SEG_RASC._p1, p2 = hit.point;
+      const base = Math.min(p1.y, p2.y);
+      const wMin = new F3D.THREE.Vector3(Math.min(p1.x,p2.x), base, Math.min(p1.z,p2.z));
+      const wMax = new F3D.THREE.Vector3(Math.max(p1.x,p2.x), base + alt, Math.max(p1.z,p2.z));
+      const o1 = SEG_RASC._m.model.object; o1.updateMatrixWorld();
+      const lMin = o1.worldToLocal(wMin.clone()), lMax = o1.worldToLocal(wMax.clone());
+      (SEG_RASC.geom.caixas = SEG_RASC.geom.caixas || []).push({ cde_arquivo_id:SEG_RASC._m.arquivoId, modelo:SEG_RASC._m.nome || '',
+        min:[lMin.x,lMin.y,lMin.z].map(v => +v.toFixed(3)), max:[lMax.x,lMax.y,lMax.z].map(v => +v.toFixed(3)) });
+      SEG_RASC._p1 = null; SEG_RASC._m = null; _seg3dAssin = ''; segSync3D(); segBarraZ3DCaixa(); return;
+    }
+  };
+})();
+function segBarraZ3DEl(){
+  const n = (SEG_RASC.geom.d3 || []).reduce((s,g) => s + g.ids.length, 0);
+  segBarra('Zona no modelo: clique os elementos (' + n + ' selecionado' + (n === 1 ? '' : 's') + ') — clique de novo para tirar',
+    '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segZonaForm()">Concluir</button>');
+}
+function segBarraZ3DCaixa(){
+  const n = (SEG_RASC.geom.caixas || []).length;
+  segBarra(SEG_RASC._p1 ? 'Caixa: clique o canto OPOSTO no piso' : 'Caixa: clique um canto no piso (' + n + ' caixa' + (n === 1 ? '' : 's') + ' feita' + (n === 1 ? '' : 's') + ')',
+    'altura <input id="segAlt" type="number" min="0.2" step="0.1" value="' + (($('segAlt') && $('segAlt').value) || 3) + '" style="width:58px"> m'
+    + '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segZonaForm()">Concluir</button>');
+}
+
+// ── Formulário da zona ──────────────────────────────────────────────────────
+function segZonaNova(){
+  if (!segSouTecnico()) return;
+  SEG_RASC = { tipo_risco:'queda', nivel:'atencao', titulo:'', descricao:'', epis:['Capacete'], pavimento_id:'', inicio:segHoje(), fim:'', responsavel:'', geom:{}, _fotos:[], _pts:[] };
+  segZonaForm();
+}
+function segZonaEditar(id){
+  const z = ZONAS.find(x => x.id === id); if (!z || !segSouTecnico()) return;
+  SEG_RASC = Object.assign({}, z, { geom: JSON.parse(JSON.stringify(z.geom || {})), _fotos:[], _pts:[], _editId:id, pavimento_id:z.pavimento_id || '', fim:z.fim || '' });
+  segZonaForm();
+}
+function segZonaLerForm(){
+  if (!$('segZTit')) return;
+  const r = SEG_RASC;
+  r.tipo_risco = $('segZTipo').value; r.titulo = $('segZTit').value; r.descricao = $('segZTxt').value;
+  if (!r._editId) r.nivel = (document.querySelector('input[name=segZNiv]:checked') || {}).value || 'atencao';
+  r.epis = [...document.querySelectorAll('.seg-epi input:checked')].map(i => i.value);
+  const outro = ($('segZEpiOutro').value || '').trim(); if (outro) r.epis.push(outro);
+  r.pavimento_id = $('segZPav').value; r.inicio = $('segZIni').value; r.fim = $('segZFim').value; r.responsavel = $('segZResp').value;
+  const f = $('segZFotos'); if (f && f.files && f.files.length) r._fotos = [...f.files];
+}
+function segGeomResumo(g){
+  const n2 = (g.d2 || []).length, ne = (g.d3 || []).reduce((s,x) => s + (x.ids || []).length, 0), nc = (g.caixas || []).length;
+  const p = []; if (n2) p.push(n2 + ' polígono(s) na prancha'); if (ne) p.push(ne + ' elemento(s) no modelo'); if (nc) p.push(nc + ' caixa(s) no modelo');
+  return p.length ? p.join(' · ') : 'nenhuma — desenhe ao menos uma';
+}
+function segZonaForm(){
+  const r = SEG_RASC, pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const tem2D = !!(V.page && PRANCHA), tem3D = !!(F3D && F3D.vivo && F3D.modelos.length);
+  const outros = (r.epis || []).filter(e => SEG_EPIS.indexOf(e) < 0).join(', ');
+  segOv('<div class="hd"><b>' + (r._editId ? 'Editar ' + esc(r.codigo) : 'Nova zona de risco') + '</b>'
+    + '<p>Cores pela NR-26 / NBR 7195: vermelho = interdição (proibido entrar); amarelo e preto = atenção; laranja = máquinas e partes móveis.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Tipo de risco</label><select id="segZTipo">' + Object.keys(SEG_TIPOS).map(k => '<option value="' + k + '"' + (k === r.tipo_risco ? ' selected' : '') + '>' + SEG_TIPOS[k] + '</option>').join('') + '</select></div>'
+    + '<div><label>Nível</label><div class="seg-niv">' + ['atencao','interdicao'].map(k => '<label class="seg-' + k + '"><input type="radio" name="segZNiv" value="' + k + '"' + (k === r.nivel ? ' checked' : '') + (r._editId ? ' disabled' : '') + '> ' + SEG_NIVEL[k].rot + '</label>').join('') + '</div></div></div>'
+    + '<label>Título</label><input id="segZTit" maxlength="140" value="' + esc(r.titulo) + '" placeholder="Ex.: Periferia da laje do 12º — sem guarda-corpo">'
+    + '<label>Descrição / medidas</label><textarea id="segZTxt" rows="2">' + esc(r.descricao || '') + '</textarea>'
+    + '<label>EPI obrigatório</label><div class="seg-epi">' + SEG_EPIS.map(e => '<label><input type="checkbox" value="' + esc(e) + '"' + ((r.epis || []).indexOf(e) >= 0 ? ' checked' : '') + '> ' + esc(e) + '</label>').join('') + '</div>'
+    + '<input id="segZEpiOutro" placeholder="Outro EPI (opcional)" value="' + esc(outros) + '">'
+    + '<div class="seg-g2"><div><label>Pavimento</label><select id="segZPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Responsável no local</label><input id="segZResp" value="' + esc(r.responsavel || '') + '"></div></div>'
+    + '<div class="seg-g2"><div><label>Início</label><input id="segZIni" type="date" value="' + esc(r.inicio || segHoje()) + '"></div><div><label>Fim (vazio = até liberar)</label><input id="segZFim" type="date" value="' + esc(r.fim || '') + '"></div></div>'
+    + '<label>Onde</label><div class="seg-geom"><b>' + esc(segGeomResumo(r.geom)) + '</b><div>'
+    + '<button class="b2" ' + (tem2D ? '' : 'disabled title="Abra a prancha do pavimento"') + ' onclick="segZonaDesenhar(\'z2d\')">✎ Polígono na prancha</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="segZonaDesenhar(\'z3d-el\')">▣ Elementos do modelo</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="segZonaDesenhar(\'z3d-caixa\')">⬚ Caixa no modelo</button>'
+    + ((r.geom.d2 || r.geom.d3 || r.geom.caixas) ? '<button class="b2" onclick="SEG_RASC.geom={};segZonaForm()">Limpar</button>' : '') + '</div>'
+    + (!tem2D && !tem3D ? '<small>Abra a prancha ou o modelo do pavimento para desenhar a zona.</small>' : '') + '</div>'
+    + '<label>Fotos</label><input id="segZFotos" type="file" accept="image/*" capture="environment" multiple>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'zonas\')">Voltar</button>'
+    + '<button class="b1" id="segOk" onclick="segZonaSalvar()">' + (r._editId ? 'Salvar' : 'Criar zona') + '</button></div>');
+}
+function segZonaDesenhar(modo){
+  segZonaLerForm(); segFechar();
+  SEG_MODO = modo; SEG_CAMADA = true; const b = $('btnSegCamada'); if (b) b.classList.add('on');
+  if (modo === 'z2d'){ SEG_RASC._pts = []; segBarraZ2D(); renderPins(); }
+  else if (modo === 'z3d-el'){ segBarraZ3DEl(); _seg3dAssin = ''; segSync3D(); }
+  else { SEG_RASC._p1 = null; segBarraZ3DCaixa(); _seg3dAssin = ''; segSync3D(); }
+}
+async function segZonaSalvar(){
+  segZonaLerForm();
+  const r = SEG_RASC, g = r.geom || {};
+  const msg = t => { $('segMsg').textContent = t; };
+  if ((r.titulo || '').trim().length < 4) return msg('Escreva um título.');
+  if (!(g.d2 || []).length && !(g.d3 || []).some(x => x.ids.length) && !(g.caixas || []).length) return msg('Desenhe a zona na prancha ou no modelo.');
+  if (r.fim && r.inicio && r.fim < r.inicio) return msg('O fim é antes do início.');
+  if (!r._editId && r.nivel === 'interdicao' && !confirm('Criar uma zona de INTERDIÇÃO? Sai um alerta de interdição para a obra e e-mail para a coordenação de projetos.')) return;
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
+  try {
+    const id = r._editId || crypto.randomUUID();
+    const fotos = (r.fotos || []).concat(r._fotos.length ? await segSubirFotos(r._fotos, 'zonas/' + id) : []);
+    (g.d3 || []).forEach(x => x.ids = [...new Set(x.ids)]); g.d3 = (g.d3 || []).filter(x => x.ids.length);
+    const row = { tipo_risco:r.tipo_risco, titulo:r.titulo.trim(), descricao:(r.descricao || '').trim() || null, epis:r.epis || [],
+                  pavimento_id:r.pavimento_id || null, inicio:r.inicio || segHoje(), fim:r.fim || null,
+                  responsavel:(r.responsavel || '').trim() || null, geom:g, fotos };
+    if (r._editId){
+      const { error } = await sb.from('seg_zona_auria').update(row).eq('id', id); if (error) throw error;
+    } else {
+      const c = await sb.rpc('seg_zona_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+      const { error } = await sb.from('seg_zona_auria').insert(Object.assign(row, { id, empreendimento_id:EMP.id, codigo:c.data, nivel:r.nivel, emitido_por:USER.id }));
+      if (error) throw error;
+    }
+    SEG_RASC = null; _seg3dAssin = '';
+    await segCarregar(); obraContagens(); renderListaApts(); try { renderSideRight(); } catch (_){}
+    segZonaDetalhe(id);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; b.textContent = r._editId ? 'Salvar' : 'Criar zona'; }
+}
+
+// ── Detalhe da zona ─────────────────────────────────────────────────────────
+function segZonaDetalhe(id){
+  const z = ZONAS.find(x => x.id === id); if (!z) return;
+  const c = segCorZona(z), ativa = z.situacao === 'ativa', al = SEG.find(a => a.id === z.alerta_id);
+  let acoes = '';
+  if (ativa && segSouTecnico()) acoes += '<button class="b2" onclick="segZonaEditar(\'' + z.id + '\')">Editar</button><button class="b1" onclick="segZonaLiberarForm(\'' + z.id + '\')">Liberar zona</button>';
+  if (ativa && z.nivel === 'interdicao' && al && segMeuNivel() === 'eng_chefe') acoes += '<button class="b2" onclick="segPedirForm(\'' + al.id + '\')">Pedir liberação</button>';
+  const g = z.geom || {};
+  segOv('<div class="hd"><b>' + esc(z.codigo) + ' — ' + esc(z.titulo) + '</b><p><span class="seg-chip" style="background:' + c.cor + ';color:' + (c.cor === '#F2C200' ? '#1F1F1F' : '#fff') + '">' + (z.nivel === 'interdicao' ? 'Interdição' : 'Atenção') + '</span> '
+    + esc(SEG_TIPOS[z.tipo_risco] || '') + (ativa ? '' : ' <span class="seg-chip" style="background:#E6F4EC;color:#1E8449">Liberada</span>') + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + (z.descricao ? '<p>' + esc(z.descricao) + '</p>' : '')
+    + ((z.epis || []).length ? '<div class="seg-kv"><span>EPI obrigatório</span><b>' + z.epis.map(e => '<span class="seg-chip seg-epi-chip">' + esc(e) + '</span>').join(' ') + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Pavimento</span><b>' + esc(segPavNome(z.pavimento_id) || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Período</span><b>' + esc(_dispData(z.inicio)) + ' a ' + esc(z.fim ? _dispData(z.fim) : 'liberação') + '</b></div>'
+    + '<div class="seg-kv"><span>Responsável</span><b>' + esc(z.responsavel || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Onde</span><b>' + esc(segGeomResumo(g)) + '<br>'
+      + ((g.d2 || []).length ? '<button class="b2 mini" onclick="segZonaVer(\'' + z.id + '\',\'2d\')">Ver na prancha</button> ' : '')
+      + (((g.d3 || []).length || (g.caixas || []).length) ? '<button class="b2 mini" onclick="segZonaVer(\'' + z.id + '\',\'3d\')">Ver no modelo</button>' : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Emitida</span><b>' + esc((z.emitido_nome || '') + ' · ' + new Date(z.emitido_em).toLocaleString('pt-BR')) + '</b></div>'
+    + (al ? '<div class="seg-kv"><span>Alerta ligado</span><b><a href="#" onclick="segDetalhe(\'' + al.id + '\');return false">' + esc(al.codigo) + '</a></b></div>' : '')
+    + (!ativa ? '<div class="seg-kv"><span>Liberada</span><b>' + esc((z.liberado_nome || '') + ' · ' + new Date(z.liberado_em).toLocaleString('pt-BR') + ' — ' + (z.liberado_motivo || '')) + '</b></div>' : '')
+    + '<div id="segZFotosVer"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'zonas\')">Voltar</button>' + acoes + '</div>');
+  segFotosHtml(z.fotos, 'segZFotosVer');
+}
+async function segZonaVer(id, onde){
+  const z = ZONAS.find(x => x.id === id); if (!z) return;
+  segFechar(); segCamada(true);
+  try {
+    if (onde === '2d'){
+      const g = z.geom.d2[0];
+      if (g.cde_documento_id && (!PRANCHA || PRANCHA.id !== g.prancha_id)) await abrirDoCDE(g.cde_documento_id, null, false);
+      if (V.pageNum !== (g.pg || 1) && typeof mudarPagina === 'function') mudarPagina((g.pg || 1) - V.pageNum);
+      renderPins();
+    } else {
+      if (!F3D || !F3D.vivo) await f3dModo(true);
+      _seg3dAssin = ''; await segSync3D();
+      const pm = segPorModZonas([z]); if (Object.keys(pm).length) await B3.enquadrarIds(F3D, pm);
+    }
+  } catch (e){ console.warn('ver zona:', e); }
+}
+function segZonaLiberarForm(id){ const z = ZONAS.find(x => x.id === id);
+  segMotivoForm(id, 'Liberar ' + esc(z.codigo), 'A zona sai do mapa' + (z.alerta_id ? ' e o alerta de interdição ligado é encerrado' : '') + '. Fica registrado quem liberou, quando e por quê.', 'Liberar', 'segZonaLiberarOk');
+  const v = document.querySelector('#segOv .ft .b2'); if (v) v.setAttribute('onclick', 'segZonaDetalhe(\'' + id + '\')');
+}
+async function segZonaLiberarOk(id){
+  const mot = ($('segMot').value || '').trim();
+  if (mot.length < 5){ $('segMsg').textContent = 'Escreva o motivo (mínimo 5 caracteres).'; return; }
+  const { error } = await sb.rpc('seg_zona_liberar', { p_id: id, p_motivo: mot });
+  if (error){ $('segMsg').textContent = error.message || String(error); return; }
+  _seg3dAssin = ''; await segCarregar(); obraContagens(); renderListaApts(); try { renderSideRight(); } catch (_){}
+  segZonaDetalhe(id);
+}
+
+// ── Painel com abas Alertas | Zonas (substitui o da parte 1) ────────────────
+function segPainel(aba){
+  aba = aba || 'alertas';
+  const dia = SEG_DATA || segHoje();
+  const at = segAtivos();
+  const zs = ZONAS.filter(z => z.situacao === 'ativa').filter(z => !OBRA_PAV || segPavNome(z.pavimento_id).toUpperCase() === OBRA_PAV.toUpperCase())
+    .sort((a,b) => (a.nivel === 'interdicao' ? 0 : 1) - (b.nivel === 'interdicao' ? 0 : 1));
+  const tabs = '<div class="seg-tabs"><button class="' + (aba === 'alertas' ? 'on' : '') + '" onclick="segPainel(\'alertas\')">Alertas <b>' + at.length + '</b></button>'
+    + '<button class="' + (aba === 'zonas' ? 'on' : '') + '" onclick="segPainel(\'zonas\')">Zonas de risco <b>' + zs.length + '</b></button>'
+    + '<label class="seg-camada"><input type="checkbox" ' + (SEG_CAMADA ? 'checked' : '') + ' onchange="segCamada(this.checked)"> mostrar no visualizador</label></div>';
+  let corpo;
+  if (aba === 'zonas'){
+    corpo = '<div class="seg-dia">Zonas ativas em <input type="date" value="' + dia + '" onchange="SEG_DATA=this.value;_seg3dAssin=\'\';segRedesenhar();segPainel(\'zonas\')">'
+      + (OBRA_PAV ? ' · pavimento ' + esc(OBRA_PAV) : '') + '</div>'
+      + (zs.length ? zs.map(z => { const c = segCorZona(z), ativaHoje = segZonaAtivaEm(z, dia);
+          return '<div class="it seg-it seg-zona" style="cursor:pointer;border-left-color:' + c.cor + '!important' + (ativaHoje ? '' : ';opacity:.55') + '" onclick="segZonaDetalhe(\'' + z.id + '\')">'
+            + '<div class="cod">' + esc(z.codigo) + ' <span class="seg-chip" style="background:' + c.cor + ';color:' + (c.cor === '#F2C200' ? '#1F1F1F' : '#fff') + '">' + (z.nivel === 'interdicao' ? 'Interdição' : 'Atenção') + '</span> ' + esc(SEG_TIPOS[z.tipo_risco] || '') + '</div>'
+            + '<div class="t">' + esc(z.titulo) + '</div><div class="m">' + esc(segPavNome(z.pavimento_id) || '—') + ' · ' + esc(_dispData(z.inicio)) + ' a ' + esc(z.fim ? _dispData(z.fim) : 'liberação')
+            + (ativaHoje ? '' : ' · fora da data escolhida') + ((z.epis || []).length ? ' · EPI: ' + esc(z.epis.join(', ')) : '') + '</div></div>'; }).join('')
+        : '<div class="hint" style="padding:12px">Nenhuma zona de risco ativa' + (OBRA_PAV ? ' neste pavimento' : '') + '.</div>');
+  } else {
+    corpo = at.length ? at.map(x => '<div class="it seg-it seg-' + x.nivel + '" style="cursor:pointer" onclick="segDetalhe(\'' + x.id + '\')">'
+        + '<div class="cod">' + esc(x.codigo) + ' ' + segChip(x.nivel) + (x.pin ? ' 📍' : '') + '</div><div class="t">' + esc(x.titulo) + '</div>'
+        + '<div class="m">' + esc(segOnde(x)) + ' · desde ' + esc(new Date(x.emitido_em).toLocaleDateString('pt-BR')) + '</div></div>').join('')
+      : '<div class="hint" style="padding:12px">Nenhum alerta de segurança ativo.</div>';
+  }
+  segOv('<div class="hd"><b>Segurança do Trabalho</b><p>' + (segSouTecnico() ? 'Você é o técnico de segurança: só você emite, edita e libera.' : 'Somente o técnico de segurança emite alertas e zonas.') + '</p></div>'
+    + tabs + '<div class="ls">' + corpo + '</div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>'
+    + (segSouTecnico() ? (aba === 'zonas' ? '<button class="b1" onclick="segZonaNova()">＋ Zona de risco</button>' : '<button class="b1" onclick="segNovo()">＋ Alerta de segurança</button>') : '') + '</div>');
+}
+
+// ── Alerta: marcar no ponto (2D/3D) ─────────────────────────────────────────
+function segAlertaMarcar(modo){
+  segAlertaLerForm(); segFechar();
+  SEG_MODO = modo; SEG_CAMADA = true; const b = $('btnSegCamada'); if (b) b.classList.add('on');
+  segBarra(modo === 'pin2d' ? 'Alerta: clique o ponto na prancha' : 'Alerta: clique o ponto no modelo', '<button onclick="segCancelarDesenho()">Cancelar</button>');
+}
+async function segAlertaVer(id){
+  const a = SEG.find(x => x.id === id); if (!a || !a.pin) return;
+  segFechar(); segCamada(true);
+  try {
+    if (a.pin.d2){ const g = a.pin.d2; if (g.cde_documento_id && (!PRANCHA || PRANCHA.id !== g.prancha_id)) await abrirDoCDE(g.cde_documento_id, null, false); renderPins(); }
+    else if (a.pin.d3){ if (!F3D || !F3D.vivo) await f3dModo(true); }
+  } catch (e){ console.warn('ver alerta:', e); }
+}
+
+// liga o botão da camada quando o App terminar de montar a barra
+setTimeout(segBotaoCamada, 800); setTimeout(segBotaoCamada, 3000);
 
 </script>
 <script src="auria_ajuda.js"></script>
