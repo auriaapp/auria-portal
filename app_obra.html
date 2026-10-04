@@ -570,6 +570,49 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 
 .obra-ret{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--mut);text-transform:none;letter-spacing:0;margin:0 0 6px}
 
+/* ── Segurança (backlog 182) ── */
+.seg-chip{display:inline-block;font-size:10px;font-weight:800;border-radius:999px;padding:1px 7px;white-space:nowrap}
+.obra-tabs button b.interd{background:#A32D2D!important;border-color:#A32D2D!important;color:#fff!important}
+.ap-card.seg-card{border-left-width:4px}
+.ap-card.seg-interdicao{border-left-color:#A32D2D;background:#FDF3F3}
+.ap-card.seg-atencao{border-left-color:#E8960A}
+.ap-card.seg-informativo{border-left-color:#1E3A5F}
+.ap-card.seg-enc{opacity:.6}
+.ap-card.seg-card .m{margin-top:3px;font-size:11px;color:var(--mut)}
+#segOv{position:fixed;inset:0;background:rgba(11,18,32,.55);z-index:9100;display:none;align-items:center;justify-content:center;padding:16px}
+#segOv.on{display:flex}
+#segOv .box{background:#fff;color:#0F172A;border-radius:14px;width:580px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 0 0 2px #E8960A,0 20px 60px rgba(0,0,0,.35)}
+#segOv .hd{padding:14px 18px;border-bottom:1px solid #E2E8F0}
+#segOv .hd b{font-size:15px;color:#1E3A5F}
+#segOv .hd p{margin:4px 0 0;font-size:12px;color:#64748B}
+#segOv .ls{overflow:auto;padding:8px 12px}
+#segOv .ft{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid #E2E8F0;flex-wrap:wrap}
+#segOv button{font-family:inherit;font-size:12px;font-weight:700;border-radius:8px;padding:7px 12px;cursor:pointer}
+#segOv .b1{background:#1E3A5F;color:#fff;border:none}
+#segOv .b2{background:#fff;color:#1E3A5F;border:1px solid #E2E8F0}
+#obraAvisos .it.seg-it,#segOv .it.seg-it{border:1px solid #E2E8F0;border-left:4px solid #1E3A5F;border-radius:10px;padding:10px 12px;margin:6px 0}
+.it.seg-interdicao{border-left-color:#A32D2D!important;background:#FDF3F3}
+.it.seg-atencao{border-left-color:#E8960A!important}
+#segOv .it .cod{font-family:var(--mono);font-weight:700;color:#1E3A5F;font-size:12px}
+#segOv .it .t{font-weight:600;margin:3px 0}
+#segOv .it .m{font-size:11px;color:#64748B}
+.seg-form{padding:12px 18px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.seg-form label{font-size:11.5px;font-weight:700;color:#334155;margin-top:6px}
+.seg-form input,.seg-form textarea,.seg-form select{width:100%;padding:8px 10px;border:1px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:13px;background:#fff;color:#0F172A}
+.seg-niv{display:flex;gap:6px;flex-wrap:wrap}
+.seg-niv label{margin:0;display:flex;align-items:center;gap:6px;border:1px solid #E2E8F0;border-radius:8px;padding:7px 10px;font-weight:700;cursor:pointer}
+.seg-niv label.seg-interdicao{color:#A32D2D}.seg-niv label.seg-atencao{color:#8A5A04}.seg-niv label.seg-informativo{color:#1E3A5F}
+.seg-niv input{width:auto}
+.seg-g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.seg-msg{font-size:12px;color:#A32D2D;min-height:16px;margin-top:4px}
+.seg-det{padding:4px 6px;font-size:13px;color:#334155}
+.seg-det p{margin:4px 0 10px;line-height:1.5}
+.seg-kv{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid #F1F5F9;font-size:12.5px}
+.seg-kv span{width:150px;flex-shrink:0;color:#64748B}
+.seg-leit{margin-top:6px;font-size:12.5px}
+.seg-leit div{padding:3px 0}.seg-leit .ok{color:#1E8449}.seg-leit .falta{color:#8A5A04}
+.seg-leit small{color:#64748B}
+
 </style>
 </head>
 <body>
@@ -8229,7 +8272,8 @@ function obraContagens(){
   const set = (id, n) => { const e = $(id); if (e) e.textContent = n; };
   set('obraNNov',  APTS.filter(obraNovo).length);
   set('obraNObra', APTS.filter(obraDaObra).length);
-  set('obraNProj', APTS.filter(obraDeProjeto).length);
+  set('obraNProj', APTS.filter(obraDeProjeto).length + segAtivos().length);
+  const b = $('obraNProj'); if (b) b.classList.toggle('interd', segAtivos().some(x => x.nivel === 'interdicao'));
 }
 
 function obraRenderPavs(){
@@ -8252,8 +8296,9 @@ async function obraPosCarga(){
     _obraVisitaFeita[EMP.id] = true;
     if (!OBRA_PREV) OBRA_TAB = 'obra';
   }
-  obraContagens();
   await obraCarregarLidos();
+  await segCarregar();
+  obraContagens();
   obraMostrarAvisos(false);
   try { renderSideRight(); } catch (_) {}
 }
@@ -8272,15 +8317,17 @@ async function obraCarregarLidos(){
 function obraPendentes(){ return APTS.filter(a => obraDeProjeto(a) && a.status !== 'Resolvido' && !OBRA_LIDOS.has(a.id)); }
 
 function obraMostrarAvisos(forcar){
-  const pend = obraPendentes();
+  const pend = obraPendentes(), pseg = segPendentes();
   let ov = $('obraAvisos');
-  if (!pend.length){ if (ov) ov.classList.remove('on'); return; }
+  if (!pend.length && !pseg.length){ if (ov) ov.classList.remove('on'); return; }
   if (!ov){ ov = document.createElement('div'); ov.id = 'obraAvisos'; document.body.appendChild(ov); }
   if (!forcar && ov.dataset.visto === EMP.id) return;
   ov.dataset.visto = EMP.id;
   ov.innerHTML = '<div class="box"><div class="hd"><b>Alertas para a obra</b>'
-    + '<p>' + pend.length + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.</p></div>'
-    + '<div class="ls"><div class="grp">Projetos</div>' + pend.map(a => {
+    + '<p>' + (pend.length + pseg.length) + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.</p></div>'
+    + '<div class="ls">'
+    + (pseg.length ? '<div class="grp">Segurança</div>' + pseg.map(segAvisoHtml).join('') : '')
+    + (pend.length ? '<div class="grp">Projetos</div>' : '') + pend.map(a => {
         const i = APTS.indexOf(a);
         return '<div class="it"><div class="cod">' + esc(a.id) + '</div>'
           + '<div class="t">' + esc(a.titulo || 'Sem título') + '</div>'
@@ -8297,7 +8344,7 @@ function obraFecharAvisos(){ const ov = $('obraAvisos'); if (ov) ov.classList.re
 function obraAbrirAviso(i){ obraFecharAvisos(); obraTab('alertas'); clicarAptLista(i); }
 
 async function obraConfirmar(ids){
-  const lista = ids || obraPendentes().map(a => a.id);
+  const lista = ids || obraPendentes().map(a => a.id).concat(segPendentes().map(x => 'seg:' + x.id));
   if (!lista.length) return;
   if (OBRA_LEIT_DB){
     const { error } = await sb.from('apt_leitura_auria')
@@ -8309,23 +8356,26 @@ async function obraConfirmar(ids){
   try { localStorage.setItem('auria_obra_lidos_' + EMP.id, JSON.stringify([...OBRA_LIDOS])); } catch (_) {}
   obraMostrarAvisos(true);
   try { renderSideRight(); } catch (_) {}
+  try { renderListaApts(); } catch (_) {}
 }
 
 // Barra direita: módulos da obra (abaixo dos contadores/calendário/prazos do App).
 function obraModulosHtml(){
-  const nAv = obraPendentes().length;
+  const nAv = obraPendentes().length + segPendentes().length;
   const mod = (k, ic, cor, tit, sub, n, cinza) =>
     '<button class="obra-mod" onclick="obraModulo(\'' + k + '\')"><span class="ic" style="background:' + cor + '">' + ic + '</span>'
     + '<span class="tx"><b>' + tit + '</b><span>' + sub + '</span></span>'
     + (n !== '' ? '<span class="n' + (cinza ? ' cinza' : '') + '">' + n + '</span>' : '') + '</button>';
   return '<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.03em;margin-top:10px">OBRA</div>'
     + mod('avisos', '!', '#E8960A', 'Alertas', nAv ? 'aguardando sua leitura' : 'tudo lido', nAv, !nAv)
+    + segModuloHtml(mod)
     + mod('qualidade', '✓', '#1E3A5F', 'Qualidade (FVS)', 'em construção', '', false)
     + mod('concretagem', '▣', '#5D6D7E', 'Concretagem', 'em construção', '', false)
     + mod('diario', '✎', '#7D6608', 'Diário de Obra', 'abre no CDE', '', false);
 }
 function obraModulo(k){
-  if (k === 'avisos'){ obraMostrarAvisos(true); if (!obraPendentes().length) obraTab('alertas'); return; }
+  if (k === 'avisos'){ obraMostrarAvisos(true); if (!obraPendentes().length && !segPendentes().length) obraTab('alertas'); return; }
+  if (k === 'seguranca'){ segPainel(); return; }
   if (k === 'diario'){ if (EMP) window.open('cde.html?emp=' + encodeURIComponent(EMP.id), '_blank'); return; }
   alert((k === 'qualidade' ? 'Qualidade (FVS)' : 'Concretagem') + ' entra na próxima fase do App Obra.');
 }
@@ -8337,8 +8387,11 @@ function obraModulo(k){
   renderListaApts = function(){
     _orig();
     if (OBRA_TAB !== 'alertas') return;
-    const el = $('aptLista'); if (!el || !el.querySelector('.ap-card')) return;
-    el.insertAdjacentHTML('afterbegin', '<div class="ap-sec obra-grp">Projetos</div>');
+    const el = $('aptLista'); if (!el) return;
+    const temProj = !!el.querySelector('.ap-card');
+    if (temProj) el.insertAdjacentHTML('afterbegin', '<div class="ap-sec obra-grp">Projetos</div>');
+    const segHtml = segListaHtml();
+    if (segHtml){ if (!temProj) el.innerHTML = ''; el.insertAdjacentHTML('afterbegin', segHtml); }
     el.querySelectorAll('.ap-card .t').forEach(t => {
       if (!t.querySelector('.obra-orig')) t.insertAdjacentHTML('afterbegin', '<span class="obra-orig">Projetos:</span> ');
     });
@@ -8376,6 +8429,201 @@ async function obraRetirarOk(){
   $('obraRetOv').classList.remove('on');
   fecharApt();
   await carregarApts();
+}
+
+// ── App Obra · Segurança do Trabalho — parte 1 (backlog 182) ──────────────
+//  Alertas de segurança: informativo / atenção / interdição.
+//   • Todos da obra veem e confirmam a leitura (apt_leitura_auria, chave 'seg:<id>').
+//   • Só o técnico (nível 'seguranca') emite, edita e encerra/libera.
+//   • Interdição: só o técnico libera; o eng. chefe pode PEDIR a liberação.
+//   • Ninguém exclui. Tabela seg_alerta_auria (supabase_seguranca_p1.sql).
+var SEG = [], SEG_OK = true;
+const SEG_NIVEL = {
+  informativo: { rot:'Informativo', cor:'#1E3A5F', bg:'#E8F0F8' },
+  atencao:     { rot:'Atenção',     cor:'#8A5A04', bg:'#FEF0D9' },
+  interdicao:  { rot:'Interdição',  cor:'#A32D2D', bg:'#FBEAEA' }
+};
+function segMeuNivel(){ return (EMP && (OBRA_NIVEL || {})[EMP.id]) || ''; }
+function segSouTecnico(){ return segMeuNivel() === 'seguranca'; }
+function segAtivos(){ return SEG.filter(x => x.situacao === 'ativo'); }
+function segPendentes(){ return segAtivos().filter(x => !OBRA_LIDOS.has('seg:' + x.id)); }
+
+async function segCarregar(){
+  SEG = [];
+  if (!EMP || !SEG_OK) return;
+  const { data, error } = await sb.from('seg_alerta_auria').select('*')
+    .eq('empreendimento_id', EMP.id).order('emitido_em', { ascending: false });
+  if (error){ SEG_OK = false; console.warn('seg_alerta_auria indisponível:', error.message || error); return; }
+  SEG = data || [];
+}
+
+function segPavNome(id){ const p = (CDE_PAVS || []).find(x => x.id === id); return p ? (p.codigo || p.nome) : ''; }
+function segChip(n){ const c = SEG_NIVEL[n] || SEG_NIVEL.informativo;
+  return '<span class="seg-chip" style="background:' + c.bg + ';color:' + c.cor + '">' + c.rot + '</span>'; }
+function segOnde(x){ return [segPavNome(x.pavimento_id), x.local_txt].filter(Boolean).join(' › '); }
+
+// Item na janela de entrada (destaque com confirmação de leitura).
+function segAvisoHtml(x){
+  return '<div class="it seg-it seg-' + x.nivel + '"><div class="cod">' + esc(x.codigo) + ' ' + segChip(x.nivel) + '</div>'
+    + '<div class="t">' + esc(x.titulo) + '</div>'
+    + (x.texto ? '<div class="d">' + esc(x.texto) + '</div>' : '')
+    + '<div class="m">' + esc(segOnde(x)) + (x.valido_ate ? ' · até ' + esc(_dispData(x.valido_ate)) : '') + ' · ' + esc(x.emitido_nome || '') + '</div>'
+    + '<div class="bt"><button class="b1" onclick="obraConfirmar([\'seg:' + x.id + '\'])">Li e estou ciente</button></div></div>';
+}
+
+// Seção "Segurança" no topo da aba Alertas.
+function segListaHtml(){
+  const verEnc = $('obraVerRet') && $('obraVerRet').checked;
+  const lista = SEG.filter(x => x.situacao === 'ativo' || verEnc)
+    .filter(x => !OBRA_PAV || segPavNome(x.pavimento_id).toUpperCase() === OBRA_PAV.toUpperCase());
+  if (!lista.length) return '';
+  const ord = { interdicao:0, atencao:1, informativo:2 };
+  lista.sort((a, b) => (a.situacao === 'ativo' ? 0 : 1) - (b.situacao === 'ativo' ? 0 : 1) || ord[a.nivel] - ord[b.nivel]);
+  return '<div class="ap-sec obra-grp">Segurança</div>' + lista.map(x => {
+    const lido = OBRA_LIDOS.has('seg:' + x.id);
+    return '<div class="ap-card seg-card seg-' + x.nivel + (x.situacao !== 'ativo' ? ' seg-enc' : '') + '" onclick="segDetalhe(\'' + x.id + '\')">'
+      + '<div class="t"><span class="obra-orig">Segurança:</span> ' + esc(x.codigo) + ' — ' + esc(x.titulo) + '</div>'
+      + '<div class="m">' + segChip(x.nivel) + (x.situacao !== 'ativo' ? ' <span class="seg-chip" style="background:#E6F4EC;color:#1E8449">Encerrado</span>' : '')
+      + (!lido && x.situacao === 'ativo' ? ' <span class="seg-chip" style="background:#E8960A;color:#231703">não lido</span>' : '')
+      + ' ' + esc(segOnde(x)) + '</div></div>';
+  }).join('');
+}
+
+// Barra direita: módulo Segurança.
+function segModuloHtml(mod){
+  if (!SEG_OK) return '';
+  const at = segAtivos(), ni = at.filter(x => x.nivel === 'interdicao').length;
+  const sub = ni ? ni + ' interdição(ões) ativa(s)' : (at.length ? at.length + ' alerta(s) ativo(s)' : (segSouTecnico() ? 'emitir alerta' : 'sem alertas ativos'));
+  return mod('seguranca', '⛑', ni ? '#A32D2D' : '#B7791F', 'Segurança', sub, at.length || '', !at.length);
+}
+
+// ── Janelas ───────────────────────────────────────────────────────────────
+function segOv(html){
+  let ov = $('segOv');
+  if (!ov){ ov = document.createElement('div'); ov.id = 'segOv'; document.body.appendChild(ov);
+    ov.addEventListener('click', e => { if (e.target === ov) segFechar(); }); }
+  ov.innerHTML = '<div class="box">' + html + '</div>';
+  ov.classList.add('on');
+}
+function segFechar(){ const ov = $('segOv'); if (ov) ov.classList.remove('on'); }
+
+// Painel do módulo: lista + (técnico) botão de novo alerta.
+function segPainel(){
+  const at = segAtivos();
+  segOv('<div class="hd"><b>Segurança do Trabalho</b><p>Alertas da obra. '
+    + (segSouTecnico() ? 'Você é o técnico de segurança: só você emite, edita e encerra.' : 'Somente o técnico de segurança emite alertas.') + '</p></div>'
+    + '<div class="ls">' + (at.length ? at.map(x => '<div class="it seg-it seg-' + x.nivel + '" style="cursor:pointer" onclick="segDetalhe(\'' + x.id + '\')">'
+        + '<div class="cod">' + esc(x.codigo) + ' ' + segChip(x.nivel) + '</div><div class="t">' + esc(x.titulo) + '</div>'
+        + '<div class="m">' + esc(segOnde(x)) + ' · desde ' + esc(new Date(x.emitido_em).toLocaleDateString('pt-BR')) + '</div></div>').join('')
+      : '<div class="hint" style="padding:12px">Nenhum alerta de segurança ativo.</div>') + '</div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>'
+    + (segSouTecnico() ? '<button class="b1" onclick="segNovo()">＋ Alerta de segurança</button>' : '') + '</div>');
+}
+
+function segNovo(editId){
+  if (!segSouTecnico()) return;
+  const x = editId ? SEG.find(s => s.id === editId) : null;
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const nv = x ? x.nivel : 'atencao';
+  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(x.codigo) : 'Novo alerta de segurança') + '</b>'
+    + '<p>Todos da obra recebem em destaque e confirmam a leitura.' + ' Interdição avisa também a coordenação de projetos por e-mail.</p></div>'
+    + '<div class="seg-form">'
+    + '<label>Nível</label><div class="seg-niv">' + Object.keys(SEG_NIVEL).map(k =>
+        '<label class="seg-' + k + '"><input type="radio" name="segNiv" value="' + k + '"' + (k === nv ? ' checked' : '') + (x ? ' disabled' : '') + '> ' + SEG_NIVEL[k].rot + '</label>').join('') + '</div>'
+    + '<label>Título</label><input id="segTit" maxlength="140" value="' + esc(x ? x.titulo : '') + '" placeholder="Ex.: Periferia da laje sem guarda-corpo">'
+    + '<label>Descrição</label><textarea id="segTxt" rows="3" placeholder="O que foi visto, o que fazer, EPI obrigatório…">' + esc(x ? (x.texto || '') : '') + '</textarea>'
+    + '<div class="seg-g2"><div><label>Pavimento</label><select id="segPav"><option value="">—</option>' + pavs.map(p =>
+        '<option value="' + p.id + '"' + (x && x.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Válido até</label><input id="segAte" type="date" value="' + esc(x && x.valido_ate ? x.valido_ate : '') + '"></div></div>'
+    + '<label>Local</label><input id="segLoc" maxlength="140" value="' + esc(x ? (x.local_txt || '') : '') + '" placeholder="Ex.: fachada norte, shaft S2, poço do elevador">'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="' + (x ? 'segDetalhe(\'' + x.id + '\')' : 'segPainel()') + '">Voltar</button>'
+    + '<button class="b1" id="segOk" onclick="segSalvar(' + (x ? '\'' + x.id + '\'' : '') + ')">' + (x ? 'Salvar' : 'Emitir alerta') + '</button></div>');
+}
+
+async function segSalvar(editId){
+  const tit = ($('segTit').value || '').trim();
+  if (tit.length < 4){ $('segMsg').textContent = 'Escreva um título.'; return; }
+  const nivel = (document.querySelector('input[name=segNiv]:checked') || {}).value || 'atencao';
+  const row = { titulo: tit, texto: ($('segTxt').value || '').trim() || null,
+                pavimento_id: $('segPav').value || null, local_txt: ($('segLoc').value || '').trim() || null,
+                valido_ate: $('segAte').value || null };
+  const b = $('segOk'); b.disabled = true;
+  try {
+    if (editId){
+      const { error } = await sb.from('seg_alerta_auria').update(row).eq('id', editId);
+      if (error) throw error;
+    } else {
+      if (nivel === 'interdicao' && !confirm('Emitir uma INTERDIÇÃO? A coordenação de projetos recebe e-mail e só você poderá liberar.')){ b.disabled = false; return; }
+      const r = await sb.rpc('seg_proximo_codigo', { p_emp: EMP.id });
+      if (r.error) throw r.error;
+      const { error } = await sb.from('seg_alerta_auria').insert(Object.assign(row,
+        { empreendimento_id: EMP.id, codigo: r.data, nivel, emitido_por: USER.id }));
+      if (error) throw error;
+    }
+    await segCarregar(); obraContagens(); renderListaApts(); try { renderSideRight(); } catch (_) {}
+    segPainel();
+  } catch (e){ $('segMsg').textContent = 'Não foi possível salvar: ' + (e.message || e); b.disabled = false; }
+}
+
+async function segDetalhe(id){
+  const x = SEG.find(s => s.id === id); if (!x) return;
+  const lido = OBRA_LIDOS.has('seg:' + x.id), ativo = x.situacao === 'ativo';
+  const pedidos = (x.eventos || []).filter(e => e.tipo === 'pedido_liberacao');
+  let acoes = '';
+  if (ativo && !lido) acoes += '<button class="b1" onclick="segLer(\'' + x.id + '\')">Li e estou ciente</button>';
+  if (ativo && segSouTecnico()) acoes += '<button class="b2" onclick="segNovo(\'' + x.id + '\')">Editar</button>'
+    + '<button class="b1" onclick="segEncerrarForm(\'' + x.id + '\')">' + (x.nivel === 'interdicao' ? 'Liberar interdição' : 'Encerrar') + '</button>';
+  if (ativo && x.nivel === 'interdicao' && segMeuNivel() === 'eng_chefe') acoes += '<button class="b2" onclick="segPedirForm(\'' + x.id + '\')">Pedir liberação</button>';
+  segOv('<div class="hd"><b>' + esc(x.codigo) + ' — ' + esc(x.titulo) + '</b><p>' + segChip(x.nivel)
+    + (ativo ? '' : ' <span class="seg-chip" style="background:#E6F4EC;color:#1E8449">Encerrado</span>') + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + (x.texto ? '<p>' + esc(x.texto) + '</p>' : '')
+    + '<div class="seg-kv"><span>Local</span><b>' + esc(segOnde(x) || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Válido até</span><b>' + esc(x.valido_ate ? _dispData(x.valido_ate) : '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Emitido</span><b>' + esc((x.emitido_nome || '') + ' · ' + new Date(x.emitido_em).toLocaleString('pt-BR')) + '</b></div>'
+    + (!ativo ? '<div class="seg-kv"><span>' + (x.nivel === 'interdicao' ? 'Liberado' : 'Encerrado') + '</span><b>' + esc((x.encerrado_nome || '') + ' · '
+        + new Date(x.encerrado_em).toLocaleString('pt-BR')) + '</b></div><div class="seg-kv"><span>Motivo</span><b>' + esc(x.encerrado_motivo || '') + '</b></div>' : '')
+    + (pedidos.length ? '<div class="seg-kv"><span>Pedidos de liberação</span><b>' + pedidos.map(p => esc((p.nome || '') + ' · '
+        + new Date(p.em).toLocaleString('pt-BR') + (p.texto ? ' — ' + p.texto : ''))).join('<br>') + '</b></div>' : '')
+    + '<div id="segLeit"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>' + acoes + '</div>');
+  // Quem leu / quem falta: só o técnico e a coordenação recebem dados.
+  if (segSouTecnico()){
+    const { data } = await sb.rpc('seg_leitores', { p_id: x.id });
+    const el = $('segLeit'); if (!el || !data) return;
+    const rot = { eng_chefe:'Eng. chefe', coord_campo:'Coord. de campo', equipe_campo:'Equipe de campo', seguranca:'Segurança' };
+    const lidos = data.filter(r => r.lido_em).length;
+    el.innerHTML = '<div class="seg-kv"><span>Leitura</span><b>' + lidos + ' de ' + data.length + '</b></div>'
+      + '<div class="seg-leit">' + data.map(r => '<div class="' + (r.lido_em ? 'ok' : 'falta') + '">' + (r.lido_em ? '✓' : '•') + ' '
+        + esc(r.nome) + ' <small>' + esc(rot[r.nivel] || r.nivel) + (r.lido_em ? ' · ' + new Date(r.lido_em).toLocaleString('pt-BR') : ' · ainda não leu') + '</small></div>').join('') + '</div>';
+  }
+}
+async function segLer(id){ await obraConfirmar(['seg:' + id]); segDetalhe(id); }
+
+function segMotivoForm(id, titulo, ajuda, rotBtn, fn){
+  segOv('<div class="hd"><b>' + titulo + '</b><p>' + ajuda + '</p></div>'
+    + '<div class="seg-form"><label>Motivo</label><textarea id="segMot" rows="3"></textarea><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segDetalhe(\'' + id + '\')">Voltar</button>'
+    + '<button class="b1" id="segOk" onclick="' + fn + '(\'' + id + '\')">' + rotBtn + '</button></div>');
+}
+function segEncerrarForm(id){ const x = SEG.find(s => s.id === id);
+  segMotivoForm(id, (x.nivel === 'interdicao' ? 'Liberar interdição ' : 'Encerrar ') + esc(x.codigo),
+    'Fica registrado quem ' + (x.nivel === 'interdicao' ? 'liberou' : 'encerrou') + ', quando e por quê.', 'Confirmar', 'segEncerrarOk'); }
+async function segEncerrarOk(id){
+  const mot = ($('segMot').value || '').trim();
+  if (mot.length < 5){ $('segMsg').textContent = 'Escreva o motivo (mínimo 5 caracteres).'; return; }
+  const { error } = await sb.rpc('seg_alerta_encerrar', { p_id: id, p_motivo: mot });
+  if (error){ $('segMsg').textContent = error.message || String(error); return; }
+  await segCarregar(); obraContagens(); renderListaApts(); try { renderSideRight(); } catch (_) {}
+  segDetalhe(id);
+}
+function segPedirForm(id){ const x = SEG.find(s => s.id === id);
+  segMotivoForm(id, 'Pedir liberação de ' + esc(x.codigo), 'O técnico de segurança vê o pedido no alerta e decide se libera.', 'Enviar pedido', 'segPedirOk'); }
+async function segPedirOk(id){
+  const { error } = await sb.rpc('seg_pedir_liberacao', { p_id: id, p_texto: ($('segMot').value || '').trim() });
+  if (error){ $('segMsg').textContent = error.message || String(error); return; }
+  await segCarregar(); segDetalhe(id);
 }
 
 </script>
