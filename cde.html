@@ -1476,7 +1476,7 @@ async function carregarPavimentos(){
       if(p.tipo==='grupo') GRP_MEMBROS[cod]=new Set((p.membros||[]).map(x=>String(x).trim().toUpperCase())); });
     const ids=(DOCS||[]).map(d=>d.id);
     if(ids.length){
-      const { data:dp } = await sb.from('cde_documento_pavimento_auria').select('documento_id,pavimento_id').in('documento_id',ids);
+      const { data:dp } = await _inLotes(l=>sb.from('cde_documento_pavimento_auria').select('documento_id,pavimento_id').in('documento_id',l), ids);
       (dp||[]).forEach(r=>{ (DOCPAV[r.documento_id]=DOCPAV[r.documento_id]||new Set()).add(r.pavimento_id); });
     }
   }catch(e){ /* tabelas podem não existir ainda — organizador cai no fallback */ }
@@ -1498,6 +1498,17 @@ function pavExpand(codUpper){
   return exp;
 }
 
+// .in() com muitos ids estoura o tamanho da URL (o servidor recusa acima de ~500
+// uuids). Busca em lotes de 150 e junta; se algum lote falhar, devolve o erro.
+async function _inLotes(montar, ids, lote){
+  lote=lote||150; const out=[];
+  for(let i=0;i<ids.length;i+=lote){
+    const r=await montar(ids.slice(i,i+lote));
+    if(r.error) return { data:null, error:r.error };
+    (r.data||[]).forEach(x=>out.push(x));
+  }
+  return { data:out, error:null };
+}
 async function carregarDocs(){
   // Colunas explícitas: 'texto_busca' (o texto indexado do PDF inteiro) NÃO vem aqui — com
   // select('*') cada recarga da lista baixava megabytes de texto que ninguém lia. A busca por
@@ -1513,15 +1524,15 @@ async function carregarDocs(){
   if(ids.length){
     // 'motivo' (item 110) é coluna nova: sem o SQL rodado, cai para a lista sem ela.
     const RCOLS='id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas';
-    let rq = await sb.from('cde_revisao_auria').select(RCOLS+',motivo').in('documento_id',ids);
-    if(rq.error) rq = await sb.from('cde_revisao_auria').select(RCOLS).in('documento_id',ids);
+    let rq = await _inLotes(l=>sb.from('cde_revisao_auria').select(RCOLS+',motivo').in('documento_id',l), ids);
+    if(rq.error) rq = await _inLotes(l=>sb.from('cde_revisao_auria').select(RCOLS).in('documento_id',l), ids);
     revs=rq.data||[];
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       // 'rotacao' (item 60) é coluna nova: se o SQL ainda não rodou, cai para a lista sem ela.
       const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress,frag_inicio,frag_heartbeat,frag_tentativas';
-      let q = await sb.from('cde_arquivo_auria').select(COLS+',rotacao').in('revisao_id',revIds);
-      if(q.error) q = await sb.from('cde_arquivo_auria').select(COLS).in('revisao_id',revIds);
+      let q = await _inLotes(l=>sb.from('cde_arquivo_auria').select(COLS+',rotacao').in('revisao_id',l), revIds);
+      if(q.error) q = await _inLotes(l=>sb.from('cde_arquivo_auria').select(COLS).in('revisao_id',l), revIds);
       arqs=q.data||[];
     }
   }
@@ -1855,10 +1866,8 @@ function navBuscaResultados(){
     ondeTxt = ' no <b>conteúdo</b>'
       + (_falta ? ' <span style="color:var(--accent)">(ainda indexando '+_falta+' prancha'+(_falta>1?'s':'')+'…)</span>' : '');
   }else{
-    const bate = d => (d.codigo||'').toLowerCase().includes(q)
-      || (d.titulo||'').toLowerCase().includes(q)
-      || (d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
-    achados = DOCS.filter(d=> bate(d) && docPassaFiltro(d));
+    const termos=buscaTermos(BUSCA);
+    achados = DOCS.filter(d=> docBateBusca(d,termos) && docPassaFiltro(d));
     ondeTxt = '';
   }
   if(!achados.length) return '<div class="nav-hint">Nenhum arquivo encontrado'+ondeTxt+' para <b>“'+esc(BUSCA)+'”</b>.'+(BUSCA_CONTEUDO?'<br><span style="font-size:11px">Só encontra PDFs já <b>indexados</b> (e com texto — escaneados não contam).</span>':'')+'</div>';
@@ -1878,6 +1887,16 @@ function navBuscaResultados(){
 // PUBLICADO (A1/B1). As-built é ETAPA (AB), não status. Filtros: E entre dimensões, OU dentro.
 function docFormatos(d){ return new Set(((d.atual&&d.atual.arqs)||[]).map(a=>(a.extensao||'').toLowerCase()).filter(Boolean)); }
 function temFiltro(){ return !!(FILTROS.disc.size||FILTROS.etapa.size||FILTROS.status.size||FILTROS.formato.size); }
+// Busca por nome com VÁRIAS palavras: "fretagem SS2" acha o documento em que
+// TODAS as palavras aparecem (código, título ou nome de algum arquivo), em
+// qualquer ordem, ignorando acento e maiúscula.
+function _semAcento(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function buscaTermos(q){ return _semAcento(q).split(/\s+/).filter(Boolean); }
+function docBateBusca(d, termos){
+  if(!termos.length) return true;
+  const hay=_semAcento((d.codigo||'')+' '+(d.titulo||'')+' '+(d.revs||[]).map(r=>(r.arqs||[]).map(a=>a.nome||'').join(' ')).join(' '));
+  return termos.every(t=>hay.includes(t));
+}
 function docPassaFiltro(d){
   if(FILTROS.disc.size && !FILTROS.disc.has(d.disciplina)) return false;
   if(FILTROS.etapa.size && !FILTROS.etapa.has(d.etapa||'—')) return false;
@@ -3023,7 +3042,7 @@ function orgDocsFiltrados(){
   const q=QRORG.busca, pav=QRORG.pav;
   return orgDocsElegiveis().filter(d=>{
     if(!orgDocMatchPav(d,pav)) return false;
-    if(q){ const hay=((d.codigo||'')+' '+discLabel(d.disciplina)+' '+(d.titulo||'')).toLowerCase(); if(!hay.includes(q)) return false; }
+    if(q){ const hay=_semAcento((d.codigo||'')+' '+discLabel(d.disciplina)+' '+(d.titulo||'')); if(!buscaTermos(q).every(t=>hay.includes(t))) return false; }
     return true;
   });
 }
@@ -6427,8 +6446,8 @@ function docsNaVista(){
   if(BUSCA){
     const q=BUSCA.toLowerCase();
     if(BUSCA_CONTEUDO) return BUSCA_IDS ? DOCS.filter(d=>BUSCA_IDS.has(d.id)&&docPassaFiltro(d)) : [];
-    const bate=d=>(d.codigo||'').toLowerCase().includes(q)||(d.titulo||'').toLowerCase().includes(q)||(d.revs||[]).some(r=>(r.arqs||[]).some(a=>String(a.nome||'').toLowerCase().includes(q)));
-    return DOCS.filter(d=>bate(d)&&docPassaFiltro(d));
+    const termos=buscaTermos(BUSCA);
+    return DOCS.filter(d=>docBateBusca(d,termos)&&docPassaFiltro(d));
   }
   if(SEL_DISC==='__BIM__') return DOCS.filter(docEhBim);
   if(NAV_MODE==='grupo'){
@@ -7021,7 +7040,7 @@ async function _cdeIndexarBytes(docId, bytes){
   const n=Math.min(doc.numPages,80); const parts=[];
   for(let i=1;i<=n;i++){ try{ const pg=await doc.getPage(i); const tc=await pg.getTextContent(); parts.push(tc.items.map(function(it){return it.str;}).join(' ')); }catch(_){} }
   try{ doc.destroy&&doc.destroy(); }catch(_){}
-  const txt=parts.join(' ').replace(/\s+/g,' ').trim().slice(0,20000);
+  const txt=parts.join(' ').replace(/\s+/g,' ').trim().slice(0,300000);
   await sb.rpc('cde_texto_set',{ p_doc:docId, p_texto:(txt||' ') });
 }
 function _cdeIndexarPdf(docId, file){
