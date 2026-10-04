@@ -749,6 +749,7 @@
     <div class="cmodal-b">
       <div id="nf-janela" style="display:none;font-size:12.5px;padding:8px 10px;border-radius:9px;margin-bottom:10px"></div>
       <div id="nf-info" style="font-size:13px;color:#475569;margin-bottom:10px;line-height:1.5"></div>
+      <div id="nf-outras" style="display:none;font-size:12.5px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:9px;padding:8px 10px;margin-bottom:10px"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 12px">
         <div><label>Número da NF</label><input id="nf-numero" type="text" placeholder="Ex.: 12345"></div>
         <div><label>Data de emissão</label><input id="nf-emitida" type="date"></div>
@@ -1285,6 +1286,14 @@ async function abrirEnviarNF(parcId, ctrIdx){
     : '';
   document.getElementById('nf-numero').value='';
   document.getElementById('nf-valor').value = (p&&p.valor)?p.valor:'';
+  // NF única para várias parcelas: outras AUTORIZADAS do mesmo contrato, ainda sem NF.
+  const outras=(c.parcelas_auria||[]).filter(x=>x.id!==parcId && x.status==='autorizada' && !(NF_POR_PARCELA&&NF_POR_PARCELA[x.id]));
+  const no=document.getElementById('nf-outras');
+  if(outras.length){
+    no.style.display='block';
+    no.innerHTML='<b>Esta NF cobre mais de uma parcela?</b> Marque as outras parcelas autorizadas incluídas nela:'+
+      outras.map(x=>`<label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer"><input type="checkbox" class="nf-outra" value="${x.id}" data-valor="${x.valor||0}" onchange="nfSomarParcelas()"> Parcela <b>${x.numero}</b> — ${escH(x.descricao||'')} — ${pBRL(x.valor)}</label>`).join('');
+  } else { no.style.display='none'; no.innerHTML=''; }
   document.getElementById('nf-emitida').value = new Date().toISOString().slice(0,10);
   document.getElementById('nf-cnpj').value = (typeof PJ_FORN!=='undefined' && PJ_FORN && PJ_FORN.cnpj) ? PJ_FORN.cnpj : '';
   document.getElementById('nf-conteudo').value='';
@@ -1309,6 +1318,14 @@ async function abrirEnviarNF(parcId, ctrIdx){
       jn.innerHTML='<b>Recebimento de NF fechado.</b> '+(st.proxima_abre?('Próxima janela: '+dt(st.proxima_abre)+' a '+dt(st.proxima_fecha)+'.'):'Aguarde o financeiro abrir a próxima janela.');
     }
   }catch(e){ console.warn('nf_janela_status_parcela', e.message||e); }
+}
+// Ao marcar parcelas extras, o valor sugerido vira a soma (o projetista ainda pode editar).
+function nfSomarParcelas(){
+  if(!NF_PARC) return;
+  const c=P_CONTRATOS[NF_PARC.ctrIdx]; const p=(c.parcelas_auria||[]).find(x=>x.id===NF_PARC.parcId);
+  let t=Number((p&&p.valor)||0);
+  document.querySelectorAll('#nf-outras .nf-outra:checked').forEach(el=>{ t+=Number(el.dataset.valor||0); });
+  document.getElementById('nf-valor').value=t.toFixed(2);
 }
 function fecharEnviarNF(){ document.getElementById('nfModal').classList.remove('on'); NF_PARC=null; }
 
@@ -1337,8 +1354,12 @@ async function enviarNF(){
     const up=await sb.storage.from('notas-fiscais').upload(path, file, {contentType:'application/pdf', upsert:false});
     if(up.error) throw up.error;
     if(window.AuriaValida){ const vs=await AuriaValida.verificarServidor(sb,{ provider:'supabase', bucket:'notas-fiscais', path, nome:file.name, contexto:'nf' }); if(!vs.ok) throw new Error(vs.motivo); }
-    const { error }=await sb.rpc('nf_enviar', { p_parcela_id:NF_PARC.parcId, p_valor:valor, p_nf_numero:numero, p_pdf_path:path,
-                                                 p_conteudo:conteudo, p_emitida_em:emitida, p_cnpj:cnpj||null });
+    const extras=[...document.querySelectorAll('#nf-outras .nf-outra:checked')].map(el=>el.value);
+    const { error }= extras.length
+      ? await sb.rpc('nf_enviar_multi', { p_parcelas:[NF_PARC.parcId].concat(extras), p_valor:valor, p_nf_numero:numero, p_pdf_path:path,
+                                          p_conteudo:conteudo, p_emitida_em:emitida, p_cnpj:cnpj||null })
+      : await sb.rpc('nf_enviar', { p_parcela_id:NF_PARC.parcId, p_valor:valor, p_nf_numero:numero, p_pdf_path:path,
+                                    p_conteudo:conteudo, p_emitida_em:emitida, p_cnpj:cnpj||null });
     if(error) throw error;
     fecharEnviarNF();
     await showContratos();
