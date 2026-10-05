@@ -9367,11 +9367,16 @@ async function segAbrirZona(id){
       if (!ok){ segBarraInfo('Não foi possível abrir o modelo desta zona — ' + info, bts); return; }
       _seg3dAssin = ''; await segSync3D();
       const pm = segPorModZonas([z]);
-      if (Object.keys(pm).length) await B3.enquadrarIds(F3D, pm);
+      if (Object.keys(pm).length){
+        await B3.enquadrarIds(F3D, pm);
+        segAproximar(0.55);                       // peça pequena num prédio alto: chega mais perto
+        segPiscar(pm, segCorZona(z).cor);
+      }
       else if ((g.caixas || []).length){
         const cx = g.caixas[0], a = segLocalToWorld(cx.cde_arquivo_id, cx.min), b = segLocalToWorld(cx.cde_arquivo_id, cx.max);
         if (a && b){ const T = F3D.THREE, bx = new T.Box3(a.clone().min(b), a.clone().max(b)), c = bx.getCenter(new T.Vector3()), s = bx.getSize(new T.Vector3());
-          const d = Math.max(s.x, s.z, 8); F3D.controls.target.copy(c); F3D.camera.position.set(c.x + d*1.2, c.y + d*0.8, c.z + d*1.2); F3D.controls.update(); }
+          const d = Math.max(s.x, s.z, 6) * 0.8; F3D.controls.target.copy(c); F3D.camera.position.set(c.x + d*1.2, c.y + d*0.8, c.z + d*1.2); F3D.controls.update();
+          segPiscarCaixas(); }
       }
     }
     segBarraInfo(info, bts);
@@ -9423,6 +9428,35 @@ segAlertaVer = async function(id){
     return mod('seguranca', '⛑', ni ? '#A32D2D' : '#B7791F', 'Segurança', sub, n || '', !n);
   };
 })();
+
+// Chega a câmera mais perto do alvo (fração da distância atual que sobra).
+function segAproximar(fracao){
+  if (!F3D || !F3D.controls) return;
+  const t = F3D.controls.target, p = F3D.camera.position;
+  p.copy(t.clone().add(p.clone().sub(t).multiplyScalar(fracao)));
+  F3D.controls.update();
+  try { F3D.fragments.update(true); } catch (_){}
+}
+// Pisca os elementos da zona (vermelho-vivo ⇄ branco) por ~2 s e volta à cor da zona.
+async function segPiscar(porMod, corFinal){
+  if (!F3D || !B3) return;
+  for (let i = 0; i < 6; i++){
+    F3D._cores = [];
+    await B3.colorirGrupo(F3D, porMod, i % 2 ? '#FFFFFF' : '#FF2D2D');
+    await new Promise(r => setTimeout(r, 320));
+  }
+  _seg3dAssin = ''; await segSync3D();          // devolve as cores de todas as zonas
+}
+// Caixas: pulsa a opacidade por ~2 s.
+async function segPiscarCaixas(){
+  if (!_seg3dGrupo) return;
+  const ms = _seg3dGrupo.children.filter(o => o.isMesh);
+  for (let i = 0; i < 8; i++){
+    ms.forEach(m => { m.material.opacity = i % 2 ? .28 : .65; });
+    await new Promise(r => setTimeout(r, 260));
+  }
+  ms.forEach(m => { m.material.opacity = .28; });
+}
 
 </script>
 <script src="auria_ajuda.js"></script>
