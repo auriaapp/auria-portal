@@ -8764,6 +8764,12 @@ async function segFotosHtml(fotos, alvoId){
 }
 
 // ── Camada (2D e 3D) ────────────────────────────────────────────────────────
+// Botão ⛑: com zona ou alerta ativo, liga/desliga a camada; sem nada ativo,
+// abre o painel (ligar uma camada vazia parecia "não fazer nada").
+function segBotao(){
+  if (!SEG_CAMADA && !segZonasVisiveis().length && !segAtivos().some(a => a.pin)){ segPainel(segSouTecnico() ? 'zonas' : 'alertas'); return; }
+  segCamada();
+}
 function segCamada(on){
   SEG_CAMADA = (on == null) ? !SEG_CAMADA : !!on;
   ['btnSegCamada','btnSegCamada3d'].forEach(id => { const b = $(id); if (b) b.classList.toggle('on', SEG_CAMADA); });
@@ -8780,7 +8786,7 @@ function segBotaoCamada(){
   const b = document.createElement('button');
   b.id = 'btnSegCamada'; b.className = ref.className.replace(/\bon\b/,'').trim(); b.title = 'Camada de segurança: zonas de risco e alertas';
   b.innerHTML = '⛑<br><span style="font-size:10px">Segurança</span>';
-  b.onclick = () => segCamada();
+  b.onclick = () => segBotao();
   ref.parentElement.insertBefore(b, ref.nextSibling);
 }
 // No 3D o App desliga os botões da barra do 2D: a camada ganha botão próprio
@@ -8791,7 +8797,7 @@ function segBotaoCamada3D(){
   const b = document.createElement('button');
   b.id = 'btnSegCamada3d'; b.className = 'bim-tb ico f3donly'; b.title = 'Segurança: zonas de risco e alertas no modelo';
   b.textContent = '⛑';
-  b.onclick = () => segCamada();
+  b.onclick = () => segBotao();
   ref.parentElement.insertBefore(b, ref.nextSibling);
 }
 
@@ -8851,7 +8857,7 @@ function segRender2D(){
   }
   svg.innerHTML = out;
 }
-(function(){ const _r = renderPins; renderPins = function(){ _r(); try { segRender2D(); } catch (e){ console.warn('seg 2D:', e); } }; })();
+(function(){ const _r = renderPins; renderPins = function(){ _r(); try { segBotoesModo(); segRender2D(); } catch (e){ console.warn('seg 2D:', e); } }; })();
 
 // 3D: cores dos elementos + caixas na cena + pins/rótulos no overlay a cada quadro
 function segPorModZonas(lista){
@@ -8900,7 +8906,15 @@ async function segSync3D(){
   }));
   F3D.scene.add(_seg3dGrupo);
 }
+// O ⛑ da barra de cima é do 2D: no 3D o App desliga essa barra, então ele some
+// (o 3D tem o seu na barra do visualizador).
+function segBotoesModo(){
+  const b = $('btnSegCamada'); if (!b) return;
+  const em3d = typeof F3D_MODO !== 'undefined' && !!F3D_MODO;
+  if (b.style.display !== (em3d ? 'none' : '')) b.style.display = em3d ? 'none' : '';
+}
 function segRender3D(E){
+  segBotoesModo();
   // modelo carregado/trocado depois de ligar a camada: a assinatura muda e as cores/caixas se refazem
   if (SEG_CAMADA || SEG_MODO) segSync3D().catch(() => {});
   const svg = segSvg('segSvg3d', 'bimPinsSvg'); _segPinHits = [];
