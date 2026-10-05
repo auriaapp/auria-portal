@@ -8395,7 +8395,7 @@ async function obraConfirmar(ids){
 
 // Barra direita: módulos da obra (abaixo dos contadores/calendário/prazos do App).
 function obraModulosHtml(){
-  const nAv = obraPendentes().length + segPendentes().length;
+  const nAv = obraPendentes().length + segPendentes().length + (typeof segZonasPend === 'function' ? segZonasPend().length : 0);
   const mod = (k, ic, cor, tit, sub, n, cinza) =>
     '<button class="obra-mod" onclick="obraModulo(\'' + k + '\')"><span class="ic" style="background:' + cor + '">' + ic + '</span>'
     + '<span class="tx"><b>' + tit + '</b><span>' + sub + '</span></span>'
@@ -9242,6 +9242,187 @@ async function segAlertaVer(id){
 [800, 3000].forEach(t => setTimeout(() => { segBotaoCamada(); segBotaoCamada3D(); }, t));
 // entrar/sair do 3D também acerta o ⛑ da barra de cima (mesmo sem modelo carregado)
 (function(){ const _m = f3dModo; f3dModo = async function(){ const r = await _m.apply(this, arguments); try { segBotoesModo(); } catch (_){} return r; }; })();
+
+// ── App Obra · Segurança — o AVISO vem primeiro (pedido do usuário 2026-10-04) ──
+//  Toda zona de risco ativa (atenção ou interdição) aparece em Alertas →
+//  Segurança e no destaque da entrada, com confirmação de leitura (chave
+//  'zona:<id>'); a zona de interdição já tem o alerta ligado, então não duplica.
+//  Clicar num aviso ABRE o visualizador certo (carrega o modelo IFC da zona ou a
+//  prancha), liga a camada e enquadra — ninguém precisa abrir o modelo antes.
+
+function segZonasAviso(){ const dia = segHoje(); return ZONAS.filter(z => segZonaAtivaEm(z, dia) && !z.alerta_id); }
+function segZonasPend(){ return segZonasAviso().filter(z => !OBRA_LIDOS.has('zona:' + z.id)); }
+
+// contagem da aba Alertas e do módulo passam a incluir as zonas
+(function(){
+  const _c = obraContagens;
+  obraContagens = function(){
+    _c();
+    const e = $('obraNProj'); if (!e) return;
+    e.textContent = APTS.filter(obraDeProjeto).length + segAtivos().length + segZonasAviso().length;
+  };
+  const _p = segPendentes;
+  segPendentes = function(){ return _p(); };       // alertas; zonas contam à parte (segZonasPend)
+})();
+
+// ── Destaque da entrada: alertas + zonas de segurança, depois Projetos ──────
+(function(){
+  const _m = obraMostrarAvisos;
+  obraMostrarAvisos = function(forcar){
+    _m(forcar);
+    const zp = segZonasPend(); if (!zp.length) return;
+    let ov = $('obraAvisos');
+    if (!ov || !ov.classList.contains('on')){
+      // não havia alerta nem projeto pendente: abre só com as zonas
+      if (!ov){ ov = document.createElement('div'); ov.id = 'obraAvisos'; document.body.appendChild(ov); }
+      if (!forcar && ov.dataset.vistoZ === EMP.id) return;
+      ov.innerHTML = '<div class="box"><div class="hd"><b>Alertas para a obra</b><p></p></div><div class="ls"></div>'
+        + '<div class="ft"><button class="b2" onclick="obraFecharAvisos()">Lembrar depois</button>'
+        + '<button class="b1" onclick="obraConfirmar(null)">Confirmar todos</button></div></div>';
+      ov.classList.add('on');
+    }
+    ov.dataset.vistoZ = EMP.id;
+    const ls = ov.querySelector('.ls');
+    const html = zp.map(segZonaAvisoHtml).join('');
+    const grp = ls.querySelector('.grp');
+    if (grp && grp.textContent === 'Segurança'){
+      // depois dos alertas de segurança, antes de Projetos
+      const proj = [...ls.querySelectorAll('.grp')].find(g => g.textContent === 'Projetos');
+      if (proj) proj.insertAdjacentHTML('beforebegin', html); else ls.insertAdjacentHTML('beforeend', html);
+    } else ls.insertAdjacentHTML('afterbegin', '<div class="grp">Segurança</div>' + html);
+    const p = ov.querySelector('.hd p');
+    if (p){ const n = ov.querySelectorAll('.ls .it').length; p.textContent = n + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.'; }
+  };
+  const _conf = obraConfirmar;
+  obraConfirmar = function(ids){
+    return _conf(ids || obraPendentes().map(a => a.id).concat(segPendentes().map(x => 'seg:' + x.id)).concat(segZonasPend().map(z => 'zona:' + z.id)));
+  };
+})();
+function segZonaChip(z){ const c = segCorZona(z);
+  return '<span class="seg-chip" style="background:' + c.cor + ';color:' + (c.cor === '#F2C200' ? '#1F1F1F' : '#fff') + '">' + (z.nivel === 'interdicao' ? 'Interdição' : 'Atenção') + '</span>'; }
+function segZonaAvisoHtml(z){
+  return '<div class="it seg-it seg-' + (z.nivel === 'interdicao' ? 'interdicao' : 'atencao') + '"><div class="cod">' + esc(z.codigo) + ' ' + segZonaChip(z) + ' <span style="font-weight:600;color:#334155">zona de risco · ' + esc(SEG_TIPOS[z.tipo_risco] || '') + '</span></div>'
+    + '<div class="t">' + esc(z.titulo) + '</div>'
+    + (z.descricao ? '<div class="d">' + esc(z.descricao) + '</div>' : '')
+    + '<div class="m">' + esc(segPavNome(z.pavimento_id) || '') + ((z.epis || []).length ? ' · EPI: ' + esc(z.epis.join(', ')) : '') + ' · ' + esc(z.emitido_nome || '') + '</div>'
+    + '<div class="bt"><button class="b2" onclick="obraFecharAvisos();segAbrirZona(\'' + z.id + '\')">Ver no ' + (((z.geom || {}).d2 || []).length ? 'projeto' : 'modelo') + '</button>'
+    + '<button class="b1" onclick="obraConfirmar([\'zona:' + z.id + '\'])">Li e estou ciente</button></div></div>';
+}
+
+// ── Lista da aba Alertas: zonas junto dos alertas de segurança ──────────────
+(function(){
+  const _l = segListaHtml;
+  segListaHtml = function(){
+    let h = _l();
+    const zs = segZonasAviso().filter(z => !OBRA_PAV || segPavNome(z.pavimento_id).toUpperCase() === OBRA_PAV.toUpperCase());
+    if (!zs.length) return h;
+    const cards = zs.map(z => {
+      const lido = OBRA_LIDOS.has('zona:' + z.id);
+      return '<div class="ap-card seg-card seg-' + (z.nivel === 'interdicao' ? 'interdicao' : 'atencao') + '" onclick="segAbrirZona(\'' + z.id + '\')">'
+        + '<div class="t"><span class="obra-orig">Segurança:</span> ' + esc(z.codigo) + ' — ' + esc(z.titulo) + '</div>'
+        + '<div class="m">' + segZonaChip(z) + ' zona · ' + esc(SEG_TIPOS[z.tipo_risco] || '')
+        + (!lido ? ' <span class="seg-chip" style="background:#E8960A;color:#231703">não lido</span>' : '')
+        + ' ' + esc(segPavNome(z.pavimento_id) || '') + '</div></div>';
+    }).join('');
+    return h ? h + cards : '<div class="ap-sec obra-grp">Segurança</div>' + cards;
+  };
+})();
+
+// ── Abrir no visualizador certo (o aviso leva ao modelo, não o contrário) ───
+async function segAbrir3D(arquivoIds){
+  const ids = [...new Set(arquivoIds.filter(Boolean))]; if (!ids.length) return false;
+  const carregados = () => F3D && F3D.vivo && ids.every(a => F3D.modelos.some(m => m.arquivoId === a));
+  if (carregados()) return true;
+  if (typeof F3D_MODO !== 'undefined' && F3D_MODO && F3D_LISTA && F3D_LISTA.length){
+    ids.forEach(a => { const i = F3D_LISTA.findIndex(m => m.arquivoId === a); if (i >= 0 && !F3D_SEL.has(i)) f3dTogglSel(i, true); });
+    if (typeof f3dAbrirSelecionados === 'function' && !(F3D && F3D.vivo)) f3dAbrirSelecionados().catch(() => {});
+  } else {
+    await f3dModo(true, ids);
+  }
+  for (let k = 0; k < 120 && !carregados(); k++) await new Promise(r => setTimeout(r, 250));   // até 30 s
+  return carregados();
+}
+function segBarraInfo(html, botoes){
+  segBarra(html, (botoes || '') + '<button onclick="segSairModo()">Fechar</button>');
+}
+async function segAbrirZona(id){
+  const z = ZONAS.find(x => x.id === id); if (!z) return;
+  segFechar(); SEG_CAMADA = true; ['btnSegCamada','btnSegCamada3d'].forEach(k => { const b = $(k); if (b) b.classList.add('on'); });
+  const g = z.geom || {}, lido = OBRA_LIDOS.has('zona:' + z.id);
+  const info = esc(z.codigo) + ' · ' + (z.nivel === 'interdicao' ? 'INTERDIÇÃO' : 'Atenção') + ' · ' + esc(SEG_TIPOS[z.tipo_risco] || '') + ' — ' + esc(z.titulo)
+    + ((z.epis || []).length ? ' · EPI: ' + esc(z.epis.join(', ')) : '');
+  const bts = '<button onclick="segZonaDetalhe(\'' + z.id + '\')">Detalhes</button>'
+    + (!lido ? '<button class="ok" onclick="obraConfirmar([\'zona:' + z.id + '\']).then(()=>segAbrirZona(\'' + z.id + '\'))">Li e estou ciente</button>' : '');
+  segBarraInfo('Abrindo ' + info + '…', '');
+  try {
+    if ((g.d2 || []).length){
+      const d = g.d2[0];
+      if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
+      if (d.cde_documento_id && (!PRANCHA || PRANCHA.id !== d.prancha_id)) await abrirDoCDE(d.cde_documento_id, null, false);
+      if (V.pageNum !== (d.pg || 1) && typeof mudarPagina === 'function') mudarPagina((d.pg || 1) - V.pageNum);
+      renderPins();
+    } else {
+      const arqs = (g.d3 || []).map(x => x.cde_arquivo_id).concat((g.caixas || []).map(x => x.cde_arquivo_id));
+      const ok = await segAbrir3D(arqs);
+      if (!ok){ segBarraInfo('Não foi possível abrir o modelo desta zona — ' + info, bts); return; }
+      _seg3dAssin = ''; await segSync3D();
+      const pm = segPorModZonas([z]);
+      if (Object.keys(pm).length) await B3.enquadrarIds(F3D, pm);
+      else if ((g.caixas || []).length){
+        const cx = g.caixas[0], a = segLocalToWorld(cx.cde_arquivo_id, cx.min), b = segLocalToWorld(cx.cde_arquivo_id, cx.max);
+        if (a && b){ const T = F3D.THREE, bx = new T.Box3(a.clone().min(b), a.clone().max(b)), c = bx.getCenter(new T.Vector3()), s = bx.getSize(new T.Vector3());
+          const d = Math.max(s.x, s.z, 8); F3D.controls.target.copy(c); F3D.camera.position.set(c.x + d*1.2, c.y + d*0.8, c.z + d*1.2); F3D.controls.update(); }
+      }
+    }
+    segBarraInfo(info, bts);
+  } catch (e){ console.warn('abrir zona:', e); segBarraInfo('Não foi possível abrir — ' + info, bts); }
+}
+// alerta com pin: o mesmo — abre a prancha/modelo do pin
+segAlertaVer = async function(id){
+  const a = SEG.find(x => x.id === id); if (!a || !a.pin) return;
+  segFechar(); SEG_CAMADA = true; ['btnSegCamada','btnSegCamada3d'].forEach(k => { const b = $(k); if (b) b.classList.add('on'); });
+  const info = esc(a.codigo) + ' · ' + (SEG_NIVEL[a.nivel] || {}).rot + ' — ' + esc(a.titulo);
+  const bts = '<button onclick="segDetalhe(\'' + a.id + '\')">Detalhes</button>';
+  segBarraInfo('Abrindo ' + info + '…', '');
+  try {
+    if (a.pin.d2){
+      const g = a.pin.d2;
+      if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
+      if (g.cde_documento_id && (!PRANCHA || PRANCHA.id !== g.prancha_id)) await abrirDoCDE(g.cde_documento_id, null, false);
+      renderPins();
+    } else if (a.pin.d3){
+      const ok = await segAbrir3D([a.pin.d3.cde_arquivo_id]);
+      if (ok){
+        const w = f3dPinWorld(F3D, a.pin.d3), T = F3D.THREE;
+        F3D.controls.target.set(w.x, w.y, w.z);
+        const dir = F3D.camera.position.clone().sub(F3D.controls.target).normalize().multiplyScalar(18);
+        F3D.camera.position.copy(new T.Vector3(w.x, w.y, w.z).add(dir)); F3D.controls.update();
+      }
+    }
+    segBarraInfo(info, bts);
+  } catch (e){ console.warn('abrir alerta:', e); segBarraInfo('Não foi possível abrir — ' + info, bts); }
+};
+// cartão de alerta na lista: com pin abre o visualizador; sem pin, o detalhe
+(function(){
+  const _l = segListaHtml;
+  segListaHtml = function(){
+    return _l().replace(/onclick="segDetalhe\('([0-9a-f-]{36})'\)"/g, (m, id) => {
+      const a = SEG.find(x => x.id === id);
+      return a && a.pin ? 'onclick="segAlertaVer(\'' + id + '\')"' : m;
+    });
+  };
+})();
+// módulo da barra direita: conta zonas também
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    if (!SEG_OK) return '';
+    const at = segAtivos(), zs = segZonasAviso(), ni = at.filter(x => x.nivel === 'interdicao').length;
+    const n = at.length + zs.length;
+    const sub = ni ? ni + ' interdição(ões) ativa(s)' : (n ? at.length + ' alerta(s) · ' + zs.length + ' zona(s)' : (segSouTecnico() ? 'emitir alerta ou zona' : 'nada ativo'));
+    return mod('seguranca', '⛑', ni ? '#A32D2D' : '#B7791F', 'Segurança', sub, n || '', !n);
+  };
+})();
 
 </script>
 <script src="auria_ajuda.js"></script>
