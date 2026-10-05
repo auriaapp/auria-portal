@@ -9868,7 +9868,7 @@ var SUGS = [];
 async function sugAbrir(){
   if (!segSouTecnico()) return;
   if (!(F3D && F3D.vivo && F3D.modelos.length)){
-    segOv('<div class="hd"><b>Sugerir pelo modelo</b><p>Abra antes o modelo (arquitetura e/ou estrutura) no 3D — o Auria lê o IFC carregado.</p></div><div class="ft"><button class="b2" onclick="protPainel()">Voltar</button><button class="b1" onclick="segFechar();f3dModo(true)">Abrir o 3D</button></div>');
+    segOv('<div class="hd"><b>Sugerir pelo modelo</b><p>Abra antes o modelo de <b>estrutura</b> no 3D (é o mais leve e tem lajes, escadas e aberturas) — o Auria lê o IFC carregado.</p></div><div class="ft"><button class="b2" onclick="protPainel()">Voltar</button><button class="b1" onclick="segFechar();f3dModo(true)">Abrir o 3D</button></div>');
     return;
   }
   segOv('<div class="hd"><b>Lendo o modelo…</b><p>Procurando escadas, poços, shafts e a periferia das lajes por pavimento. Pode levar alguns segundos.</p></div><div class="ls"><div class="hint" id="sugProg" style="padding:12px">Começando…</div></div>');
@@ -9878,56 +9878,79 @@ async function sugAbrir(){
 }
 function _sugTem(chave){ return SUG_DESC.has(chave) || PROTS.some(p => p.regra === chave); }
 async function sugCalcular(prog){
-  const out = [], pavsModelo = await B3.listaPavimentos(F3D) || [];
-  const pavCde = nome => { const n = String(nome || '').toUpperCase(); return (CDE_PAVS || []).find(p => p.codigo && (n.includes(p.codigo.toUpperCase()) || p.nome && n.includes(p.nome.toUpperCase()))) || null; };
+  // Uma leitura por modelo (não por pavimento): a estrutura espacial diz em que
+  // pavimento IFC está cada elemento; cada categoria é buscada UMA vez.
+  // Pensado para o modelo de ESTRUTURA (leve, tem lajes, escadas e aberturas).
+  const out = [], T = F3D.THREE, ESP = new Set(['IFCPROJECT','IFCSITE','IFCBUILDING','IFCBUILDINGSTOREY','IFCSPACE']);
+  const pavCde = nome => { const n = String(nome || '').toUpperCase(); return (CDE_PAVS || []).find(p => p.codigo && (n.includes(p.codigo.toUpperCase()) || (p.nome && n.includes(p.nome.toUpperCase())))) || null; };
+  const porPav = {};
+  const pp = nome => (porPav[nome] = porPav[nome] || { nome, pc:pavCde(nome), escadas:{}, elev:{}, shafts:{}, lajeBox:{}, y:Infinity });
+  const add = (o, mi, id) => (o[mi] = o[mi] || []).push(id);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const m = F3D.modelos[mi], md = m.model; if (!md) continue;
+    prog('Lendo a estrutura de ' + (m.nome || 'modelo') + '…');
+    let raw = null; try { raw = await md.getSpatialStructure(); } catch (_){}
+    if (!raw) continue;
+    const storeys = [], dono = new Map();
+    const folhas = (inst, acc, esp) => { for (const cn of (inst.children || [])){ const c = String(cn.category || '').toUpperCase();
+      for (const ch of (cn.children || [])){ if (ESP.has(c)){ if (c === 'IFCSPACE' && ch.localId != null) esp.push(ch.localId); folhas(ch, acc, esp); } else if (ch.localId != null) acc.push(ch.localId); } } };
+    const walk = (inst, tipoPai) => {
+      if (String(tipoPai).toUpperCase() === 'IFCBUILDINGSTOREY' && inst.localId != null){ const acc = [], esp = []; folhas(inst, acc, esp); storeys.push({ id:inst.localId, ids:acc.concat(esp) }); return; }
+      for (const cn of (inst.children || [])) for (const ch of (cn.children || [])) walk(ch, cn.category);
+    };
+    for (const inst of (raw.children || [])) walk(inst, raw.category);
+    if (!storeys.length) continue;
+    const nm = {}, sids = storeys.map(s => s.id);
+    for (let p = 0; p < sids.length; p += 400){
+      let da = []; try { da = await md.getItemsData(sids.slice(p, p + 400), { attributesDefault:true, relationsDefault:{ attributes:false, relations:false } }); } catch (_){}
+      (da || []).forEach(d => { const lid = d && d._localId && d._localId.value; if (lid != null) nm[lid] = String((d.Name && d.Name.value) || (d.LongName && d.LongName.value) || ('Pavimento ' + lid)); });
+    }
+    storeys.forEach(s => s.ids.forEach(id => dono.set(id, nm[s.id] || ('Pavimento ' + s.id))));
+    const cat = async re => { try { return Object.values(await md.getItemsOfCategories([re]) || {}).flat(); } catch (_){ return []; } };
+    prog('Procurando escadas, elevadores, aberturas e lajes…');
+    (await cat(/^IFCSTAIR/i)).forEach(id => { const n = dono.get(id); if (n) add(pp(n).escadas, mi, id); });
+    (await cat(/^IFCTRANSPORTELEMENT/i)).forEach(id => { const n = dono.get(id); if (n) add(pp(n).elev, mi, id); });
+    const esp = (await cat(/^IFCSPACE$/i)).concat(await cat(/^IFCOPENINGELEMENT$/i));
+    for (let p = 0; p < esp.length; p += 400){
+      let da = []; try { da = await md.getItemsData(esp.slice(p, p + 400), { attributesDefault:true, relationsDefault:{ attributes:false, relations:false } }); } catch (_){}
+      (da || []).forEach(d => { const lid = d && d._localId && d._localId.value; if (lid == null) return;
+        const txt = ((d.Name && d.Name.value) || '') + ' ' + ((d.LongName && d.LongName.value) || '');
+        if (/shaft|elevador|po[cç]o/i.test(txt)){ const n = dono.get(lid); if (n) add(pp(n).shafts, mi, lid); } });
+    }
+    prog('Medindo as lajes de cada pavimento…');
+    const lajes = await cat(/^IFCSLAB$/i);
+    let bxs = []; try { bxs = await md.getBoxes(lajes); } catch (_){}
+    lajes.forEach((id, k) => { const b = (bxs || [])[k], n = dono.get(id); if (!n || !b || !b.min || !isFinite(b.min.x)) return;
+      const P = pp(n); P.lajeBox[mi] = (P.lajeBox[mi] || new T.Box3()).union(b); P.y = Math.min(P.y, b.max.y); });
+  }
   const ids = pm => Object.keys(pm).map(mi => ({ cde_arquivo_id:F3D.modelos[mi].arquivoId, modelo:F3D.modelos[mi].nome || '', ids:pm[mi] }));
   const conta = pm => Object.values(pm).reduce((s,a) => s + a.length, 0);
-  const lajesPorPav = [];
-  for (let i = 0; i < pavsModelo.length; i++){
-    const pv = pavsModelo[i].nome; prog('Pavimento ' + (i+1) + ' de ' + pavsModelo.length + ': ' + pv);
-    const pc = pavCde(pv);
-    const escadas = await B3.acharElementos(F3D, [/^IFCSTAIR/i], [], pv);
-    if (conta(escadas)){
-      const gc = await B3.acharElementos(F3D, [/^IFCRAILING/i], [], pv);
-      const chave = 'escada|' + pv;
-      if (!conta(gc) && !_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo_escada', pav:pv, pavimento_id:pc && pc.id, titulo:'Guarda-corpo da escada — ' + pv, motivo:'Escada sem guarda-corpo (IfcRailing) no modelo deste pavimento.', geom:{ d3:ids(escadas) } });
-    }
-    const elev = await B3.acharElementos(F3D, [/^IFCTRANSPORTELEMENT/i], [], pv);
-    if (conta(elev)){ const chave = 'elevador|' + pv; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:pv, pavimento_id:pc && pc.id, titulo:'Fechamento do poço do elevador — ' + pv, motivo:'Elevador no modelo: o poço precisa de fechamento até a instalação.', geom:{ d3:ids(elev) } }); }
-    const shafts = await B3.acharElementos(F3D, [/^IFCSPACE/i, /^IFCOPENINGELEMENT/i], ['shaft'], pv);
-    if (conta(shafts)){ const chave = 'shaft|' + pv; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:pv, pavimento_id:pc && pc.id, titulo:'Fechamento de shafts — ' + pv, motivo:'Shaft/abertura identificado pelo nome no modelo.', geom:{ d3:ids(shafts) } }); }
-    // periferia: caixa das lajes do pavimento
-    const lajes = await B3.acharElementos(F3D, [/^IFCSLAB/i], [], pv);
-    for (const mi of Object.keys(lajes)){
-      const m = F3D.modelos[mi]; let bxs = []; try { bxs = await m.model.getBoxes(lajes[mi]); } catch (_){}
-      const T = F3D.THREE, u = new T.Box3(); (bxs || []).forEach(b => { if (b && b.min && isFinite(b.min.x)) u.union(b); });
-      if (u.isEmpty()) continue;
-      lajesPorPav.push({ pv, pc, m, u, ordem:i });
-    }
-  }
-  // guarda-corpo periférico (anel de 1,20 m sobre a laje) e bandejas pela regra do grupo
-  const T = F3D.THREE, anel = (m, u, y0, alt, afast) => {
-    const o = m.model.object; o.updateMatrixWorld();
+  const anel = (mi, u, y0, alt, afast) => {
+    const m = F3D.modelos[mi], o = m.model.object; o.updateMatrixWorld();
     const mn = new T.Vector3(u.min.x - afast, y0, u.min.z - afast), mx = new T.Vector3(u.max.x + afast, y0 + alt, u.max.z + afast), e = 0.15;
-    const lados = [[mn.x, mn.z, mx.x, mn.z + e], [mn.x, mx.z - e, mx.x, mx.z], [mn.x, mn.z, mn.x + e, mx.z], [mx.x - e, mn.z, mx.x, mx.z]];
-    return lados.map(([x0, z0, x1, z1]) => { const a = o.worldToLocal(new T.Vector3(x0, mn.y, z0)), b = o.worldToLocal(new T.Vector3(x1, mx.y, z1));
+    return [[mn.x, mn.z, mx.x, mn.z + e], [mn.x, mx.z - e, mx.x, mx.z], [mn.x, mn.z, mn.x + e, mx.z], [mx.x - e, mn.z, mx.x, mx.z]].map(([x0, z0, x1, z1]) => {
+      const a = o.worldToLocal(new T.Vector3(x0, mn.y, z0)), b = o.worldToLocal(new T.Vector3(x1, mx.y, z1));
       return { cde_arquivo_id:m.arquivoId, modelo:m.nome || '', min:[a.x,a.y,a.z].map(v => +v.toFixed(3)), max:[b.x,b.y,b.z].map(v => +v.toFixed(3)) }; });
   };
-  const porPav = {}; lajesPorPav.forEach(l => { if (!porPav[l.pv] || porPav[l.pv].u.max.y < l.u.max.y) porPav[l.pv] = l; });
-  const ordenados = Object.values(porPav).sort((a,b) => a.u.max.y - b.u.max.y);
-  ordenados.forEach(l => {
-    const chave = 'periferia|' + l.pv;
-    if (!_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo', pav:l.pv, pavimento_id:l.pc && l.pc.id, titulo:'Guarda-corpo periférico — ' + l.pv, motivo:'Contorno das lajes do pavimento (retângulo das lajes — confira o contorno real).', geom:{ caixas: anel(l.m, l.u, l.u.max.y, 1.2, 0) } });
+  const pavs = Object.values(porPav);
+  pavs.forEach(P => {
+    // Durante a obra TODA escada precisa de guarda-corpo provisório (o definitivo
+    // nem existe no modelo de estrutura) — então a regra vale para toda escada.
+    if (conta(P.escadas)){ const chave = 'escada|' + P.nome; if (!_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo_escada', pav:P.nome, pavimento_id:P.pc && P.pc.id, titulo:'Guarda-corpo provisório da escada — ' + P.nome, motivo:'Escada no modelo: precisa de guarda-corpo provisório até o definitivo.', geom:{ d3:ids(P.escadas) } }); }
+    if (conta(P.elev)){ const chave = 'elevador|' + P.nome; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:P.nome, pavimento_id:P.pc && P.pc.id, titulo:'Fechamento do poço do elevador — ' + P.nome, motivo:'Elevador no modelo: o poço precisa de fechamento até a instalação.', geom:{ d3:ids(P.elev) } }); }
+    if (conta(P.shafts)){ const chave = 'shaft|' + P.nome; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:P.nome, pavimento_id:P.pc && P.pc.id, titulo:'Fechamento de aberturas (shaft / poço) — ' + P.nome, motivo:'Abertura identificada pelo nome no modelo (shaft, poço, elevador).', geom:{ d3:ids(P.shafts) } }); }
   });
+  const comLaje = pavs.map(P => { let mi = null, area = 0; Object.keys(P.lajeBox).forEach(k => { const b = P.lajeBox[k], a = (b.max.x - b.min.x) * (b.max.z - b.min.z); if (a > area){ area = a; mi = k; } }); return { P, mi, area }; })
+    .filter(x => x.mi != null && x.area > 30).sort((a,b) => a.P.y - b.P.y);
+  comLaje.forEach(x => { const chave = 'periferia|' + x.P.nome; const u = x.P.lajeBox[x.mi];
+    if (!_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo', pav:x.P.nome, pavimento_id:x.P.pc && x.P.pc.id, titulo:'Guarda-corpo periférico — ' + x.P.nome, motivo:'Contorno das lajes do pavimento (retângulo das lajes — confira o contorno real).', geom:{ caixas: anel(x.mi, u, u.max.y, 1.2, 0) } }); });
   const bj = SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.bandeja;
-  if (bj && bj.ativa && ordenados.length){
+  if (bj && bj.ativa && comLaje.length){
     const ini = Math.max(1, bj.a_partir || 2), cada = Math.max(1, bj.a_cada || 3);
-    ordenados.forEach((l, i) => {
-      const n = i + 1; if (n < ini || (n - ini) % cada !== 0) return;
-      const chave = 'bandeja|' + l.pv;
-      if (!_sugTem(chave)) out.push({ chave, tipo:'bandeja', pav:l.pv, pavimento_id:l.pc && l.pc.id, titulo:'Bandeja de proteção — ' + l.pv,
-        motivo:'Regra do grupo: 1ª bandeja no ' + ini + 'º pavimento e depois a cada ' + cada + ' lajes' + (bj.obs ? ' (' + bj.obs + ')' : '') + '.', geom:{ caixas: anel(l.m, l.u, l.u.max.y, 0.3, 2.5) } });
-    });
+    comLaje.forEach((x, i) => { const n = i + 1; if (n < ini || (n - ini) % cada !== 0) return;
+      const chave = 'bandeja|' + x.P.nome, u = x.P.lajeBox[x.mi];
+      if (!_sugTem(chave)) out.push({ chave, tipo:'bandeja', pav:x.P.nome, pavimento_id:x.P.pc && x.P.pc.id, titulo:'Bandeja de proteção — ' + x.P.nome,
+        motivo:'Regra do grupo: primeira bandeja no pavimento ' + ini + ' e depois a cada ' + cada + ' lajes' + (bj.obs ? ' (' + bj.obs + ')' : '') + '.', geom:{ caixas: anel(x.mi, u, u.max.y, 0.3, 2.5) } }); });
   }
   prog('Pronto.');
   return out;
