@@ -117,6 +117,7 @@ const SEG_PADRAO = {
   tipos_extra: [],
   alerta_vencida: { tecnico:true, eng_chefe:true }
 };
+const PT_ROT = { altura:'Trabalho em altura (NR-35)', quente:'Trabalho a quente', confinado:'Espaço confinado (NR-33)', eletrico:'Serviço elétrico (NR-10)', icamento:'Içamento de cargas', escavacao:'Escavação', outro:'Outro serviço de risco' };
 const PROT_ROT = { guarda_corpo:'Guarda-corpo periférico', guarda_corpo_escada:'Guarda-corpo de escada', bandeja:'Bandeja de proteção', linha_vida:'Linha de vida', tela:'Tela / rede', fechamento:'Fechamento de abertura / shaft / poço', outro:'Outras proteções' };
 
 async function boot(){
@@ -175,6 +176,8 @@ function telaSeguranca(){
     + (PODE.seguranca ? '<div class="row" style="margin-top:10px"><input type="text" id="epiNovo" placeholder="Novo EPI" style="max-width:280px"><button class="btn sec" onclick="addTag(\'_EPIS\',\'epiNovo\',\'epiTags\')">Adicionar</button></div>' : '') + '</div>'
     + '<div class="card"><h3>Tipos de risco adicionais</h3><p class="h">Somam-se aos tipos da NR (queda, içamento, escavação, elétrico, máquinas, material suspenso, espaço confinado, incêndio).</p><div class="lista-tags" id="tipoTags"></div>'
     + (PODE.seguranca ? '<div class="row" style="margin-top:10px"><input type="text" id="tipoNovo" placeholder="Ex.: Trabalho em fachada (balancim)" style="max-width:320px"><button class="btn sec" onclick="addTag(\'_TIPOS\',\'tipoNovo\',\'tipoTags\')">Adicionar</button></div>' : '') + '</div>'
+    + '<div class="card"><h3>Checklists das Permissões de Trabalho</h3><p class="h">Um item por linha. É o que o técnico confere em campo para <b>liberar</b> a PT no App Obra. Em branco = checklist padrão do Auria.</p>'
+    + '<div class="g2">' + Object.keys(PT_ROT).map(k => '<div><label class="l">' + PT_ROT[k] + '</label><textarea rows="5" data-ptck="' + k + '"' + dis + ' placeholder="(padrão do Auria)">' + esc(((d.pt_checklists || {})[k] || []).join('\n')) + '</textarea></div>').join('') + '</div></div>'
     + (PODE.seguranca ? '<div class="row"><button class="btn" id="segSalvar" onclick="salvarSeguranca()">Salvar padrões de segurança</button><span class="msg" id="segMsg"></span></div>' : '')
     + carimbo(PADRAO.seguranca);
   renderTags('_EPIS','epiTags'); renderTags('_TIPOS','tipoTags');
@@ -189,7 +192,8 @@ async function salvarSeguranca(){
   const dados = {
     bandeja: { ativa: $('bjAtiva').checked, a_partir: num('bjIni', 2), a_cada: num('bjCada', 3), obs: ($('bjObs').value || '').trim() },
     inspecao_dias: insp, epis: window._EPIS, tipos_extra: window._TIPOS,
-    alerta_vencida: { tecnico: $('avTec').checked, eng_chefe: $('avEng').checked }
+    alerta_vencida: { tecnico: $('avTec').checked, eng_chefe: $('avEng').checked },
+    pt_checklists: (() => { const o = {}; document.querySelectorAll('[data-ptck]').forEach(t => { const l = (t.value || '').split('\n').map(s => s.trim()).filter(Boolean); if (l.length) o[t.dataset.ptck] = l; }); return o; })()
   };
   const b = $('segSalvar'); b.disabled = true;
   const { error } = await sb.from('grupo_padrao_auria').upsert({ grupo_id: GRUPO, secao: 'seguranca', dados }, { onConflict: 'grupo_id,secao' });

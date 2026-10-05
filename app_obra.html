@@ -662,6 +662,16 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 #segOv .sug-grp label{font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:#334155;display:flex;gap:5px;align-items:center}
 #segOv .sug-grp input{width:auto}
 
+/* ── Segurança parte 4: permissões de trabalho ── */
+.pt-ck{display:flex;flex-direction:column;gap:5px}
+.pt-ck > div{display:flex;gap:6px;align-items:center}
+.pt-ck input{flex:1}
+.pt-ckv{display:flex;flex-direction:column;gap:2px;margin:2px 0 8px 4px}
+.pt-ckv label{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#334155;padding:4px 0;border-bottom:1px solid #F1F5F9}
+.pt-ckv input{width:auto;margin-top:2px}
+.pt-fotolab{display:block;font-size:11.5px;font-weight:700;color:#334155;margin:8px 0}
+.pt-fotolab input{display:block;margin-top:4px}
+
 </style>
 </head>
 <body>
@@ -10022,6 +10032,286 @@ async function sugDescartarOk(){
     let h = _m(mod);
     const at = PROTS.filter(p => p.situacao !== 'retirada'), venc = at.filter(p => protEstado(p) === 'vencida').length, exig = at.filter(p => p.situacao === 'exigida').length;
     if (at.length) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (venc ? venc + ' inspeção(ões) vencida(s)' : exig ? exig + ' proteção(ões) a instalar' : at.length + ' proteção(ões) em dia') + '</span></span>');
+    return h;
+  };
+})();
+
+// ── App Obra · Segurança — parte 4: PERMISSÕES DE TRABALHO (backlog 182) ─────
+//  PT = autorização para um serviço de risco num local e num horário.
+//  Ciclo: emitida → liberada (técnico confere o checklist em campo) →
+//  encerrada | cancelada. "Vencida" = passou do fim sem encerrar.
+//  Só o técnico libera (decisão 2026-10-05); executante e equipe entram como
+//  nome/empresa. Interdição ativa na mesma zona bloqueia a liberação (banco).
+//  Checklist por tipo vem dos Padrões do Grupo (sem padrão: o do Auria abaixo).
+var PTS = [];
+const PT_TIPOS = {
+  altura:    'Trabalho em altura (NR-35)',
+  quente:    'Trabalho a quente',
+  confinado: 'Espaço confinado (NR-33)',
+  eletrico:  'Serviço elétrico (NR-10)',
+  icamento:  'Içamento de cargas',
+  escavacao: 'Escavação',
+  outro:     'Outro serviço de risco'
+};
+const PT_CHECK_PADRAO = {
+  altura:    ['Trabalhadores com treinamento NR-35 válido','ASO com aptidão para trabalho em altura','Cinto paraquedista e talabarte inspecionados','Ponto de ancoragem / linha de vida definido e conferido','Área abaixo isolada e sinalizada','Condições climáticas adequadas (sem chuva/vento forte)'],
+  quente:    ['Material combustível removido ou protegido num raio de 10 m','Extintor adequado no local','Observador de incêndio designado','Equipamento (maçarico/solda) inspecionado','EPIs de solda (máscara, avental, luvas)','Ronda pós-trabalho de 30 min prevista'],
+  confinado: ['Trabalhadores e vigia com treinamento NR-33','Atmosfera medida (O₂, inflamáveis, tóxicos) e registrada','Ventilação/exaustão funcionando','Vigia posicionado na entrada','Equipamento de resgate disponível','Bloqueio de energias e fluxos'],
+  eletrico:  ['Trabalhadores autorizados NR-10','Circuito desenergizado, bloqueado e etiquetado (LOTO)','Ausência de tensão testada','Aterramento temporário instalado','Ferramentas e EPIs isolantes inspecionados'],
+  icamento:  ['Plano de rigging / carga dentro da capacidade','Operador habilitado','Acessórios (cintas, manilhas) inspecionados','Área de içamento isolada','Sinaleiro designado e comunicação definida','Vento dentro do limite do equipamento'],
+  escavacao: ['Interferências subterrâneas verificadas','Taludes/escoramento conforme projeto','Escada de acesso a cada 15 m','Material escavado afastado da borda','Borda sinalizada e isolada'],
+  outro:     ['Riscos do serviço identificados e comunicados à equipe','EPIs adequados conferidos','Área isolada e sinalizada']
+};
+function ptChecklistPadrao(tipo){
+  const g = SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.pt_checklists && SEG_PADRAO_GRUPO.pt_checklists[tipo];
+  return (Array.isArray(g) && g.length ? g : (PT_CHECK_PADRAO[tipo] || PT_CHECK_PADRAO.outro)).slice();
+}
+function ptEstado(p){
+  if (p.situacao === 'encerrada' || p.situacao === 'cancelada') return p.situacao;
+  if (new Date(p.fim) < new Date()) return 'vencida';
+  if (p.situacao === 'liberada') return new Date(p.inicio) > new Date() ? 'agendada' : 'liberada';
+  return 'emitida';
+}
+const PT_SIT = {
+  emitida:   { rot:'Emitida — falta liberar', cor:'#64748B' },
+  agendada:  { rot:'Liberada — começa depois', cor:'#1E3A5F' },
+  liberada:  { rot:'Liberada — em andamento', cor:'#1E8449' },
+  vencida:   { rot:'Vencida (passou do fim)', cor:'#C0392B' },
+  encerrada: { rot:'Encerrada', cor:'#94A3B8' },
+  cancelada: { rot:'Cancelada', cor:'#94A3B8' }
+};
+function ptHora(t){ return new Date(t).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+async function ptCarregar(){
+  PTS = [];
+  if (!EMP || !SEG_OK) return;
+  const desde = new Date(Date.now() - 15*86400000).toISOString();
+  const { data, error } = await sb.from('seg_pt_auria').select('*').eq('empreendimento_id', EMP.id).gte('fim', desde).order('inicio', { ascending:false });
+  if (error){ console.warn('seg_pt_auria indisponível:', error.message || error); return; }
+  PTS = data || [];
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await ptCarregar(); } catch (_){} segRedesenhar(); }; })();
+
+// ── Painel: aba PTs ─────────────────────────────────────────────────────────
+(function(){
+  const _p = segPainel;
+  segPainel = function(aba){
+    if (aba === 'pts'){ ptPainel(); return; }
+    _p(aba);
+    const tabs = document.querySelector('#segOv .seg-tabs');
+    if (tabs && !tabs.querySelector('[data-pt]')){
+      const ativas = PTS.filter(p => ['emitida','liberada','agendada'].includes(ptEstado(p))).length;
+      const b = document.createElement('button'); b.dataset.pt = '1';
+      b.innerHTML = 'Permissões <b>' + ativas + '</b>';
+      b.onclick = () => segPainel('pts');
+      tabs.insertBefore(b, tabs.querySelector('.seg-camada'));
+    }
+  };
+})();
+var _ptVerTodas = false;
+function ptPainel(){
+  segPainel('alertas');
+  document.querySelectorAll('#segOv .seg-tabs button').forEach(b => b.classList.toggle('on', !!b.dataset.pt));
+  const ordem = ['vencida','liberada','emitida','agendada','encerrada','cancelada'];
+  const lista = PTS.filter(p => _ptVerTodas || !['encerrada','cancelada'].includes(ptEstado(p)))
+    .sort((a,b) => ordem.indexOf(ptEstado(a)) - ordem.indexOf(ptEstado(b)) || new Date(a.inicio) - new Date(b.inicio));
+  document.querySelector('#segOv .ls').innerHTML = '<div class="seg-dia"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox"' + (_ptVerTodas ? ' checked' : '') + ' onchange="_ptVerTodas=this.checked;ptPainel()" style="width:auto"> mostrar encerradas e canceladas (últimos 15 dias)</label></div>'
+    + (lista.length ? lista.map(p => { const e = ptEstado(p);
+        return '<div class="it seg-it" style="cursor:pointer;border-left-color:' + PT_SIT[e].cor + '!important" onclick="ptDetalhe(\'' + p.id + '\')">'
+          + '<div class="cod">' + esc(p.codigo) + ' <span class="seg-chip" style="background:' + PT_SIT[e].cor + ';color:#fff">' + PT_SIT[e].rot + '</span> ' + esc(PT_TIPOS[p.tipo] || p.tipo) + '</div>'
+          + '<div class="t">' + esc(p.servico) + '</div>'
+          + '<div class="m">' + esc(p.executante) + (p.empresa ? ' · ' + esc(p.empresa) : '') + ' · ' + ptHora(p.inicio) + ' → ' + ptHora(p.fim) + ' · ' + esc(ptLocal(p)) + '</div></div>'; }).join('')
+      : '<div class="hint" style="padding:12px">Nenhuma permissão de trabalho ' + (_ptVerTodas ? 'nos últimos 15 dias' : 'em aberto') + '.</div>');
+  document.querySelector('#segOv .ft').innerHTML = '<button class="b2" onclick="segFechar()">Fechar</button>'
+    + (segSouTecnico() ? '<button class="b1" onclick="ptNova()">＋ Permissão de trabalho</button>' : '');
+}
+function ptLocal(p){
+  const z = p.zona_id && ZONAS.find(x => x.id === p.zona_id);
+  return [segPavNome(p.pavimento_id), z ? z.codigo : '', p.local_txt].filter(Boolean).join(' › ') || '—';
+}
+
+// ── Formulário (rascunho em SEG_ARASC com _kind 'pt' — reaproveita "marcar no ponto") ─
+function _dtLocal(d){ const p = n => String(n).padStart(2,'0'); return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+function ptNova(){
+  if (!segSouTecnico()) return;
+  const ini = new Date(), fim = new Date(); fim.setHours(17, 0, 0, 0); if (fim <= ini) fim.setTime(ini.getTime() + 4*3600000);
+  SEG_ARASC = { _kind:'pt', tipo:'altura', servico:'', zona_id:'', pavimento_id:'', local_txt:'', pin:null, executante:'', empresa:'', equipe:[],
+                inicio:_dtLocal(ini), fim:_dtLocal(fim), epis:['Capacete','Cinto paraquedista'], checklist:ptChecklistPadrao('altura').map(item => ({ item, ok:false })) };
+  ptForm();
+}
+function ptEditar(id){
+  const p = PTS.find(x => x.id === id); if (!p || !segSouTecnico() || p.situacao !== 'emitida') return;
+  SEG_ARASC = Object.assign({}, p, { _kind:'pt', _editId:id, zona_id:p.zona_id || '', pavimento_id:p.pavimento_id || '', inicio:_dtLocal(new Date(p.inicio)), fim:_dtLocal(new Date(p.fim)), checklist:JSON.parse(JSON.stringify(p.checklist || [])) });
+  ptForm();
+}
+function ptLerForm(){
+  if (!$('ptTipo') || !SEG_ARASC) return;
+  const r = SEG_ARASC;
+  r.tipo = $('ptTipo').value; r.servico = $('ptServ').value; r.zona_id = $('ptZona').value; r.pavimento_id = $('ptPav').value; r.local_txt = $('ptLoc').value;
+  r.executante = $('ptExe').value; r.empresa = $('ptEmp').value; r.equipe = ($('ptEq').value || '').split('\n').map(s => s.trim()).filter(Boolean);
+  r.inicio = $('ptIni').value; r.fim = $('ptFim').value;
+  r.epis = [...document.querySelectorAll('.pt-epi input:checked')].map(i => i.value);
+  r.checklist = [...document.querySelectorAll('[data-ptck]')].map(i => ({ item:i.value.trim(), ok:false })).filter(c => c.item);
+}
+function ptTrocarTipo(){
+  const novo = $('ptTipo').value; ptLerForm();
+  SEG_ARASC.checklist = ptChecklistPadrao(novo).map(item => ({ item, ok:false }));
+  ptForm();
+}
+function ptForm(){
+  const r = SEG_ARASC, x = r._editId;
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const zonas = ZONAS.filter(z => z.situacao === 'ativa');
+  const tem2D = !!(V.page && PRANCHA && !PRANCHA._it), tem3D = !!(F3D && F3D.vivo && F3D.modelos.length);
+  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(r.codigo) : 'Nova permissão de trabalho') + '</b><p>Emitida agora; o técnico <b>libera</b> em campo, conferindo o checklist. Interdição ativa na zona impede a liberação.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Tipo</label><select id="ptTipo" onchange="ptTrocarTipo()">' + Object.keys(PT_TIPOS).map(k => '<option value="' + k + '"' + (k === r.tipo ? ' selected' : '') + '>' + PT_TIPOS[k] + '</option>').join('') + '</select></div>'
+    + '<div><label>Zona de risco</label><select id="ptZona"><option value="">—</option>' + zonas.map(z => '<option value="' + z.id + '"' + (r.zona_id === z.id ? ' selected' : '') + '>' + esc(z.codigo + ' — ' + z.titulo) + '</option>').join('') + '</select></div></div>'
+    + '<label>Serviço</label><input id="ptServ" maxlength="160" value="' + esc(r.servico || '') + '" placeholder="Ex.: montagem de bandeja na fachada norte do 12º">'
+    + '<div class="seg-g2"><div><label>Pavimento</label><select id="ptPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Local</label><input id="ptLoc" maxlength="140" value="' + esc(r.local_txt || '') + '" placeholder="Ex.: fachada norte"></div></div>'
+    + '<div class="seg-geom"><b>' + (r.pin ? (r.pin.d2 ? 'Ponto marcado na prancha' : 'Ponto marcado no modelo') : 'Sem ponto marcado') + '</b><div>'
+    + '<button class="b2" ' + (tem2D ? '' : 'disabled title="Abra a prancha"') + ' onclick="ptLerForm();segAlertaMarcar(\'pin2d\')">📍 Na prancha</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="ptLerForm();segAlertaMarcar(\'pin3d\')">📍 No modelo</button>'
+    + (r.pin ? '<button class="b2" onclick="ptLerForm();SEG_ARASC.pin=null;ptForm()">Tirar</button>' : '') + '</div></div>'
+    + '<div class="seg-g2"><div><label>Executante responsável</label><input id="ptExe" value="' + esc(r.executante || '') + '" placeholder="Nome"></div>'
+    + '<div><label>Empresa</label><input id="ptEmp" value="' + esc(r.empresa || '') + '" placeholder="Ex.: Fachadas Nordeste"></div></div>'
+    + '<label>Equipe (um nome por linha)</label><textarea id="ptEq" rows="3">' + esc((r.equipe || []).join('\n')) + '</textarea>'
+    + '<div class="seg-g2"><div><label>Início</label><input id="ptIni" type="datetime-local" value="' + esc(r.inicio) + '"></div><div><label>Fim</label><input id="ptFim" type="datetime-local" value="' + esc(r.fim) + '"></div></div>'
+    + '<label>EPI obrigatório</label><div class="seg-epi pt-epi">' + SEG_EPIS.map(e => '<label><input type="checkbox" value="' + esc(e) + '"' + ((r.epis || []).indexOf(e) >= 0 ? ' checked' : '') + '> ' + esc(e) + '</label>').join('') + '</div>'
+    + '<label>Checklist de liberação</label><div class="pt-ck">' + (r.checklist || []).map((c, i) => '<div><input data-ptck value="' + esc(c.item) + '"><button class="b2 mini" onclick="ptLerForm();SEG_ARASC.checklist.splice(' + i + ',1);ptForm()">×</button></div>').join('')
+    + '<button class="b2 mini" onclick="ptLerForm();SEG_ARASC.checklist.push({item:\'\',ok:false});ptForm()">＋ item</button></div>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="' + (x ? 'ptDetalhe(\'' + x + '\')' : 'segPainel(\'pts\')') + '">Voltar</button><button class="b1" id="segOk" onclick="ptSalvar()">' + (x ? 'Salvar' : 'Emitir PT') + '</button></div>');
+}
+// voltar de "marcar no ponto" para o formulário da PT (o fluxo do alerta chama segNovo)
+(function(){ const _n = segNovo; segNovo = function(editId, voltando){ if (voltando && SEG_ARASC && SEG_ARASC._kind === 'pt') { ptForm(); return; } return _n(editId, voltando); }; })();
+async function ptSalvar(){
+  ptLerForm();
+  const r = SEG_ARASC, msg = t => { $('segMsg').textContent = t; };
+  if ((r.servico || '').trim().length < 4) return msg('Descreva o serviço.');
+  if ((r.executante || '').trim().length < 3) return msg('Informe o executante responsável.');
+  if (!r.inicio || !r.fim || new Date(r.fim) <= new Date(r.inicio)) return msg('O fim precisa ser depois do início.');
+  if (!r.checklist.length) return msg('O checklist não pode ficar vazio.');
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
+  try {
+    const row = { tipo:r.tipo, servico:r.servico.trim(), zona_id:r.zona_id || null, pavimento_id:r.pavimento_id || null, local_txt:(r.local_txt || '').trim() || null,
+                  pin:r.pin || null, executante:r.executante.trim(), empresa:(r.empresa || '').trim() || null, equipe:r.equipe,
+                  inicio:new Date(r.inicio).toISOString(), fim:new Date(r.fim).toISOString(), epis:r.epis, checklist:r.checklist };
+    let id = r._editId;
+    if (id){ const { error } = await sb.from('seg_pt_auria').update(row).eq('id', id); if (error) throw error; }
+    else {
+      id = crypto.randomUUID();
+      const c = await sb.rpc('seg_pt_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+      const { error } = await sb.from('seg_pt_auria').insert(Object.assign(row, { id, empreendimento_id:EMP.id, codigo:c.data, emitido_por:USER.id })); if (error) throw error;
+    }
+    SEG_ARASC = null;
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    ptDetalhe(id);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; b.textContent = r._editId ? 'Salvar' : 'Emitir PT'; }
+}
+
+// ── Detalhe + liberar / encerrar / cancelar ─────────────────────────────────
+async function ptDetalhe(id){
+  const p = PTS.find(x => x.id === id); if (!p) return;
+  const e = ptEstado(p), tec = segSouTecnico(), podeLib = tec && p.situacao === 'emitida' && e !== 'vencida';
+  const { data:evs } = await sb.from('seg_pt_evento_auria').select('*').eq('pt_id', id).order('em', { ascending:false });
+  const EV = { emitida:'Emitida', liberada:'Liberada', encerrada:'Encerrada', cancelada:'Cancelada' };
+  let acoes = '';
+  if (tec && p.situacao === 'emitida'){ acoes += '<button class="b2" onclick="ptEditar(\'' + id + '\')">Editar</button>'; if (podeLib) acoes += '<button class="b1" onclick="ptLiberar(\'' + id + '\')">Liberar</button>'; }
+  if (tec && p.situacao === 'liberada') acoes += '<button class="b1" onclick="ptPassoForm(\'' + id + '\',\'encerrada\')">Encerrar</button>';
+  if (tec && ['emitida','liberada'].includes(p.situacao)) acoes += '<button class="b2" onclick="ptPassoForm(\'' + id + '\',\'cancelada\')">Cancelar</button>';
+  segOv('<div class="hd"><b>' + esc(p.codigo) + ' — ' + esc(p.servico) + '</b><p><span class="seg-chip" style="background:' + PT_SIT[e].cor + ';color:#fff">' + PT_SIT[e].rot + '</span> ' + esc(PT_TIPOS[p.tipo] || p.tipo) + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Horário</span><b>' + ptHora(p.inicio) + ' → ' + ptHora(p.fim) + '</b></div>'
+    + '<div class="seg-kv"><span>Local</span><b>' + esc(ptLocal(p)) + (p.pin ? ' <button class="b2 mini" onclick="ptVerPonto(\'' + id + '\')">📍 Ver no ponto</button>' : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Executante</span><b>' + esc(p.executante) + (p.empresa ? ' · ' + esc(p.empresa) : '') + '</b></div>'
+    + ((p.equipe || []).length ? '<div class="seg-kv"><span>Equipe</span><b>' + p.equipe.map(esc).join('<br>') + '</b></div>' : '')
+    + ((p.epis || []).length ? '<div class="seg-kv"><span>EPI obrigatório</span><b>' + p.epis.map(x => '<span class="seg-chip seg-epi-chip">' + esc(x) + '</span>').join(' ') + '</b></div>' : '')
+    + '<div class="seg-kv" style="border:none"><span>Checklist</span><b>' + (podeLib ? 'confira em campo e marque' : '') + '</b></div>'
+    + '<div class="pt-ckv">' + (p.checklist || []).map((c, i) => '<label><input type="checkbox" data-ptok="' + i + '"' + (c.ok ? ' checked' : '') + (podeLib ? '' : ' disabled') + '> ' + esc(c.item) + '</label>').join('') + '</div>'
+    + (podeLib ? '<label class="pt-fotolab">Foto da liberação (opcional)<input id="ptFotos" type="file" accept="image/*" capture="environment" multiple></label>' : '')
+    + '<div class="seg-kv" style="border:none;margin-top:6px"><span>Histórico</span><b></b></div><div class="prot-hist">' + (evs || []).map((ev, i) => '<div class="ev"><div><b>' + (EV[ev.tipo] || ev.tipo) + '</b> · ' + new Date(ev.em).toLocaleString('pt-BR') + ' · ' + esc(ev.por_nome || '') + '</div>'
+        + (ev.observacao ? '<div>' + esc(ev.observacao) + '</div>' : '') + '<div id="ptEvF' + i + '"></div></div>').join('') + '</div>'
+    + '<div id="segMsg" class="seg-msg"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'pts\')">Voltar</button>' + acoes + '</div>');
+  (evs || []).forEach((ev, i) => { if ((ev.fotos || []).length) segFotosHtml(ev.fotos, 'ptEvF' + i); });
+}
+async function ptLiberar(id){
+  const p = PTS.find(x => x.id === id);
+  const ck = (p.checklist || []).map((c, i) => ({ item:c.item, ok: !!(document.querySelector('[data-ptok="' + i + '"]') || {}).checked }));
+  if (ck.some(c => !c.ok)){ $('segMsg').textContent = 'Marque todos os itens do checklist depois de conferir em campo.'; return; }
+  try {
+    const f = $('ptFotos'), fotos = f && f.files && f.files.length ? await segSubirFotos([...f.files], 'pts/' + id) : [];
+    const { error } = await sb.rpc('seg_pt_passo', { p_id:id, p_tipo:'liberada', p_obs:null, p_fotos:fotos, p_checklist:ck });
+    if (error) throw error;
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    ptDetalhe(id);
+  } catch (e){ $('segMsg').textContent = 'Não foi possível liberar: ' + (e.message || e); }
+}
+function ptPassoForm(id, passo){
+  const p = PTS.find(x => x.id === id);
+  segOv('<div class="hd"><b>' + (passo === 'encerrada' ? 'Encerrar ' : 'Cancelar ') + esc(p.codigo) + '</b><p>' + esc(p.servico) + '</p></div>'
+    + '<div class="seg-form"><label>' + (passo === 'encerrada' ? 'Observação (opcional)' : 'Motivo do cancelamento') + '</label><textarea id="segMot" rows="3"></textarea>'
+    + '<label>Fotos</label><input id="ptFotos2" type="file" accept="image/*" capture="environment" multiple><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="ptDetalhe(\'' + id + '\')">Voltar</button><button class="b1" id="segOk" onclick="ptPassoOk(\'' + id + '\',\'' + passo + '\')">' + (passo === 'encerrada' ? 'Encerrar' : 'Cancelar PT') + '</button></div>');
+}
+async function ptPassoOk(id, passo){
+  const obs = ($('segMot').value || '').trim();
+  if (passo === 'cancelada' && obs.length < 5){ $('segMsg').textContent = 'Informe o motivo (mínimo 5 caracteres).'; return; }
+  const b = $('segOk'); b.disabled = true;
+  try {
+    const f = $('ptFotos2'), fotos = f && f.files && f.files.length ? await segSubirFotos([...f.files], 'pts/' + id) : [];
+    const { error } = await sb.rpc('seg_pt_passo', { p_id:id, p_tipo:passo, p_obs:obs || null, p_fotos:fotos, p_checklist:null });
+    if (error) throw error;
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    ptDetalhe(id);
+  } catch (e){ $('segMsg').textContent = (e.message || e); b.disabled = false; }
+}
+async function ptVerPonto(id){
+  const p = PTS.find(x => x.id === id); if (!p || !p.pin) return;
+  // reaproveita a abertura do alerta (mesmo formato de pin)
+  SEG.push(Object.assign({ _ptTemp:true, situacao:'ativo', nivel:'informativo', titulo:p.servico }, { id:'pt-' + p.id, codigo:p.codigo, pin:p.pin }));
+  try { await segAlertaVer('pt-' + p.id); } finally { SEG = SEG.filter(a => !a._ptTemp); }
+}
+
+// ── Camada: PTs ativas aparecem no ponto ────────────────────────────────────
+function ptAtivasCamada(){ return PTS.filter(p => p.pin && ['emitida','liberada','agendada'].includes(ptEstado(p))); }
+function ptPinSvg(x, y, p){
+  const c = PT_SIT[ptEstado(p)].cor;
+  return '<g style="pointer-events:auto;cursor:pointer" onclick="ptDetalhe(\'' + p.id + '\');event.stopPropagation()"><path d="M' + x + ' ' + y + ' l-7 -14 h14 z" fill="' + c + '"/>'
+    + '<rect x="' + (x-15) + '" y="' + (y-36) + '" width="30" height="22" rx="5" fill="' + c + '" stroke="#fff" stroke-width="2"/>'
+    + '<text x="' + x + '" y="' + (y-20) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">PT</text>'
+    + '<text x="' + (x+18) + '" y="' + (y-20) + '" font-size="11" font-weight="700" fill="' + c + '" stroke="#fff" stroke-width="3" paint-order="stroke">' + esc(p.codigo + ' · até ' + new Date(p.fim).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' })) + '</text></g>';
+}
+(function(){
+  const _r = segRender2D;
+  segRender2D = function(){
+    _r();
+    const svg = $('segSvg2d'); if (!svg || !SEG_CAMADA || !V.page || !PRANCHA) return;
+    let out = '';
+    ptAtivasCamada().forEach(p => { const g = p.pin.d2; if (!g || g.prancha_id !== PRANCHA.id || (g.pg || 1) !== V.pageNum) return;
+      const s = pageToScreen(g.nx, g.ny); out += ptPinSvg(s.x, s.y, p); });
+    if (out) svg.insertAdjacentHTML('beforeend', out);
+  };
+  const _r3 = segRender3D;
+  segRender3D = function(E){
+    _r3(E);
+    const svg = $('segSvg3d'); if (!svg || !E || !E.vivo || !SEG_CAMADA) return;
+    const arqs = new Set(E.modelos.map(m => m.arquivoId)); let out = '';
+    ptAtivasCamada().forEach(p => { const pt = p.pin.d3; if (!pt || !arqs.has(pt.cde_arquivo_id)) return;
+      const w = f3dPinWorld(E, pt), s = f3dWorldToScreen(E, w.x, w.y, w.z); if (!s) return;
+      out += ptPinSvg(s.x, s.y, p); });
+    if (out) svg.insertAdjacentHTML('beforeend', out);
+  };
+})();
+
+// ── Módulo da barra direita: PTs liberadas agora ─────────────────────────────
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    let h = _m(mod);
+    const lib = PTS.filter(p => ptEstado(p) === 'liberada').length, venc = PTS.filter(p => ptEstado(p) === 'vencida').length;
+    if (lib || venc) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (venc ? venc + ' PT vencida(s)' : lib + ' PT liberada(s)') + '</span></span>');
     return h;
   };
 })();
