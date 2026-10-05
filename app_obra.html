@@ -9458,6 +9458,77 @@ async function segPiscarCaixas(){
   ms.forEach(m => { m.material.opacity = .28; });
 }
 
+// ── App Obra · ITs do grupo e padrões de segurança (backlog 187) ─────────────
+//  A obra PESQUISA e ABRE as ITs vigentes do grupo (Biblioteca de ITs mantida
+//  pelos setores de Segurança e Qualidade em padroes_grupo.html). PDF no R2 —
+//  só por link temporário (cde-r2 confere se a pessoa é do grupo).
+//  Também lê os padrões de Segurança do grupo: lista de EPIs e tipos de risco
+//  extras passam a valer nas zonas (sem o grupo salvar, fica o padrão Auria).
+var ITS_OBRA = null, SEG_PADRAO_GRUPO = null;
+
+async function itsCarregar(){
+  if (!EMP) return [];
+  const { data, error } = await sb.from('grupo_it_auria').select('id,codigo,titulo,tema,palavras,ativo,grupo_it_revisao_auria(revisao,arquivo_path,publicado_em,vigente)')
+    .eq('grupo_id', EMP.empresa_id).eq('ativo', true).order('codigo');
+  if (error){ console.warn('ITs:', error.message || error); ITS_OBRA = []; return ITS_OBRA; }
+  ITS_OBRA = (data || []).map(i => Object.assign(i, { vig: (i.grupo_it_revisao_auria || []).find(r => r.vigente) || null }));
+  return ITS_OBRA;
+}
+const IT_TEMA = { seguranca:'Segurança', qualidade:'Qualidade', execucao:'Execução', meio_ambiente:'Meio ambiente', outro:'Outro' };
+async function itsPainel(busca){
+  if (!ITS_OBRA) await itsCarregar();
+  const q = (busca || '').toLowerCase();
+  const lista = ITS_OBRA.filter(i => !q || (i.codigo + ' ' + i.titulo + ' ' + (i.palavras || '') + ' ' + (IT_TEMA[i.tema] || '')).toLowerCase().includes(q));
+  segOv('<div class="hd"><b>Instruções Técnicas do grupo</b><p>Sempre na revisão vigente. Mantidas pelos setores de Segurança e Qualidade.</p></div>'
+    + '<div style="padding:10px 14px 0"><input id="itsBusca" type="search" placeholder="Buscar por código, título, tema ou palavra" value="' + esc(busca || '') + '" '
+    + 'oninput="clearTimeout(window._itsT);window._itsT=setTimeout(()=>{itsPainel(this.value);setTimeout(()=>{const b=$(\'itsBusca\');if(b){b.focus();b.setSelectionRange(b.value.length,b.value.length)}},0)},200)" '
+    + 'style="width:100%;padding:9px 11px;border:1px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:13px"></div>'
+    + '<div class="ls">' + (lista.length ? lista.map(i => '<div class="it seg-it" style="border-left-color:#1E3A5F!important;' + (i.vig && i.vig.arquivo_path ? 'cursor:pointer' : 'opacity:.6') + '"'
+        + (i.vig && i.vig.arquivo_path ? ' onclick="itsAbrir(\'' + esc(i.vig.arquivo_path) + '\')"' : '') + '>'
+        + '<div class="cod">' + esc(i.codigo) + (i.vig ? ' · rev. ' + esc(i.vig.revisao) : '') + ' <span class="seg-chip" style="background:#E8F0F8;color:#1E3A5F">' + esc(IT_TEMA[i.tema] || '') + '</span></div>'
+        + '<div class="t">' + esc(i.titulo) + '</div>'
+        + '<div class="m">' + (i.vig && i.vig.arquivo_path ? 'Toque para abrir o PDF' : 'Sem arquivo publicado') + '</div></div>').join('')
+      : '<div class="hint" style="padding:12px">' + (ITS_OBRA.length ? 'Nenhuma IT encontrada.' : 'O grupo ainda não cadastrou ITs.') + '</div>') + '</div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
+}
+async function itsAbrir(path){
+  const w = window.open('', '_blank');
+  try { const u = await segR2Url('download', path); if (w) w.location = u; else location.href = u; }
+  catch (e){ if (w) w.close(); alert('Não foi possível abrir a IT: ' + (e.message || e)); }
+}
+
+// Padrões de segurança do grupo → EPIs e tipos de risco extras nas zonas
+async function segPadroesCarregar(){
+  if (!EMP) return;
+  const { data } = await sb.from('grupo_padrao_auria').select('dados').eq('grupo_id', EMP.empresa_id).eq('secao', 'seguranca').maybeSingle();
+  SEG_PADRAO_GRUPO = data && data.dados || null;
+  if (!SEG_PADRAO_GRUPO) return;
+  if (Array.isArray(SEG_PADRAO_GRUPO.epis) && SEG_PADRAO_GRUPO.epis.length){ SEG_EPIS.length = 0; SEG_PADRAO_GRUPO.epis.forEach(e => SEG_EPIS.push(e)); }
+  (SEG_PADRAO_GRUPO.tipos_extra || []).forEach(t => {
+    const k = 'x_' + String(t).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0, 30);
+    if (!SEG_TIPOS[k]) SEG_TIPOS[k] = t;
+  });
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await segPadroesCarregar(); } catch (_){} }; })();
+
+// Módulo "ITs" na barra direita (aberta e recolhida)
+(function(){
+  const _m = obraModulosHtml;
+  obraModulosHtml = function(){
+    const mod = (k, ic, cor, tit, sub) => '<button class="obra-mod" onclick="obraModulo(\'' + k + '\')"><span class="ic" style="background:' + cor + '">' + ic + '</span><span class="tx"><b>' + tit + '</b><span>' + sub + '</span></span></button>';
+    return _m() + mod('its', '📘', '#334155', 'Instruções Técnicas', 'pesquisar as ITs do grupo');
+  };
+  const _o = obraModulo;
+  obraModulo = function(k){ if (k === 'its'){ itsPainel(''); return; } return _o(k); };
+})();
+setTimeout(() => {
+  const ref = document.querySelector('.sr-icons .sr-ic[title="Diário de Obra"]');
+  if (ref && !document.querySelector('.sr-icons .sr-ic[title="Instruções Técnicas"]')){
+    const b = document.createElement('button'); b.className = 'sr-ic'; b.style.background = '#334155'; b.title = 'Instruções Técnicas'; b.textContent = '📘';
+    b.onclick = () => itsPainel(''); ref.parentElement.insertBefore(b, ref.nextSibling);
+  }
+}, 800);
+
 </script>
 <script src="auria_ajuda.js"></script>
 </body>
