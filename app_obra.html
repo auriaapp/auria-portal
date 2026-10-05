@@ -658,6 +658,9 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .prot-hist .ev b{color:#1E3A5F}
 .prot-hist .ev-nao_conforme b{color:#A32D2D}.prot-hist .ev-inspecionada b{color:#1E8449}.prot-hist .ev-retirada b{color:#64748B}
 #segOv label.sug .cod input{width:auto;margin-right:4px}
+#segOv .sug-grp{display:flex;justify-content:space-between;align-items:center;margin:12px 2px 2px;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#1E3A5F}
+#segOv .sug-grp label{font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;color:#334155;display:flex;gap:5px;align-items:center}
+#segOv .sug-grp input{width:auto}
 
 </style>
 </head>
@@ -9944,7 +9947,8 @@ async function sugCalcular(prog){
     .filter(x => x.mi != null && x.area > 30).sort((a,b) => a.P.y - b.P.y);
   comLaje.forEach(x => { const chave = 'periferia|' + x.P.nome; const u = x.P.lajeBox[x.mi];
     if (!_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo', pav:x.P.nome, pavimento_id:x.P.pc && x.P.pc.id, titulo:'Guarda-corpo periférico — ' + x.P.nome, motivo:'Contorno das lajes do pavimento (retângulo das lajes — confira o contorno real).', geom:{ caixas: anel(x.mi, u, u.max.y, 1.2, 0) } }); });
-  const bj = SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.bandeja;
+  // sem padrão salvo pelo grupo vale o padrão Auria (o mesmo da página Padrões do Grupo)
+  const bj = (SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.bandeja) || { ativa:true, a_partir:2, a_cada:3, obs:'padrão Auria' };
   if (bj && bj.ativa && comLaje.length){
     const ini = Math.max(1, bj.a_partir || 2), cada = Math.max(1, bj.a_cada || 3);
     comLaje.forEach((x, i) => { const n = i + 1; if (n < ini || (n - ini) % cada !== 0) return;
@@ -9956,12 +9960,18 @@ async function sugCalcular(prog){
   return out;
 }
 function sugLista(){
+  // Desmarcadas por padrão e agrupadas por tipo: 100+ sugestões marcadas viravam
+  // 100+ proteções num clique distraído.
+  const grupos = {}; SUGS.forEach((s, i) => (grupos[s.tipo] = grupos[s.tipo] || []).push(i));
   segOv('<div class="hd"><b>Sugestões do modelo</b><p>' + (SUGS.length ? SUGS.length + ' sugestão(ões). Marque as que valem — viram proteções <b>exigidas</b>. As que não valem, descarte com o motivo (não voltam a aparecer).' : 'Nenhuma sugestão nova: tudo o que o modelo indica já foi cadastrado ou descartado.') + '</p></div>'
-    + '<div class="ls">' + SUGS.map((s, i) => '<label class="it seg-it sug" style="display:block;cursor:pointer"><div class="cod"><input type="checkbox" data-sug="' + i + '" checked> ' + esc(PROT_TIPOS[s.tipo]) + ' · ' + esc(s.pav) + '</div>'
-        + '<div class="t">' + esc(s.titulo) + '</div><div class="m">' + esc(s.motivo) + ' · ' + esc(segGeomResumo(s.geom)) + '</div></label>').join('') + '</div>'
+    + '<div class="ls">' + Object.keys(grupos).map(t => '<div class="grp sug-grp"><span>' + esc(PROT_TIPOS[t] || t) + ' · ' + grupos[t].length + '</span>'
+        + '<label><input type="checkbox" onchange="sugMarcarTipo(this.dataset.t, this.checked)" data-t="' + t + '"> marcar todas</label></div>'
+        + grupos[t].map(i => { const s = SUGS[i]; return '<label class="it seg-it sug" style="display:block;cursor:pointer"><div class="cod"><input type="checkbox" data-sug="' + i + '" data-sugt="' + t + '"> ' + esc(s.pav) + '</div>'
+          + '<div class="t">' + esc(s.titulo) + '</div><div class="m">' + esc(s.motivo) + ' · ' + esc(segGeomResumo(s.geom)) + '</div></label>'; }).join('')).join('') + '</div>'
     + '<div class="ft"><button class="b2" onclick="protPainel()">Voltar</button>'
     + (SUGS.length ? '<button class="b2" onclick="sugDescartarForm()">Descartar marcadas</button><button class="b1" id="segOk" onclick="sugAceitar()">Aceitar marcadas</button>' : '') + '</div>');
 }
+function sugMarcarTipo(t, on){ document.querySelectorAll('[data-sugt="' + t + '"]').forEach(c => c.checked = on); }
 function _sugMarcadas(){ return [...document.querySelectorAll('[data-sug]:checked')].map(c => SUGS[+c.dataset.sug]); }
 async function sugAceitar(){
   const ms = _sugMarcadas(); if (!ms.length) return;
