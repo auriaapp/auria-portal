@@ -5100,6 +5100,22 @@ function usrAcoesAbrir(id, etapa){
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="btn-sm" onclick="usrAcoesAbrir('${id}')">Voltar</button>
         <button class="btn-sm danger" id="uaExcluir" disabled style="background:var(--red);color:#fff;border-color:var(--red)" onclick="usrAcao('${id}','delete')">Excluir definitivamente</button></div>`);
+  } else if(etapa==='area'){
+    // Área do setor (backlog 179/187): decide quem edita os Padrões do Grupo e as ITs.
+    // Quem grava é a função grupo_definir_area_setor (só gestão); a trava do cadastro
+    // impede o próprio setor de se promover.
+    setHTML('uaCorpo','<div style="font-size:12.5px;color:var(--text-soft)">Carregando…</div>');
+    sb.from('usuarios_auria').select('setor_area,pode_aprovar_fvs').eq('id',id).maybeSingle().then(({data})=>{
+      const ar=(data&&data.setor_area)||'', fv=!!(data&&data.pode_aprovar_fvs);
+      const AR={seguranca:'Segurança do Trabalho',qualidade:'Qualidade',suprimentos:'Suprimentos',orcamento:'Orçamento',planejamento:'Planejamento',outro:'Outro'};
+      setHTML('uaCorpo', `<div style="font-size:12.5px;color:var(--text-soft);line-height:1.5;margin-bottom:10px"><b>Segurança</b> edita os padrões de segurança e as ITs; <b>Qualidade</b> edita os padrões de qualidade e as ITs (Padrões do Grupo).</div>
+        <label style="font-size:12.5px;font-weight:600">Área</label>
+        <select id="uaArea" class="form-inp" style="width:100%;margin:6px 0 12px"><option value="">— sem área —</option>${Object.keys(AR).map(k=>`<option value="${k}"${k===ar?' selected':''}>${AR[k]}</option>`).join('')}</select>
+        <label style="display:flex;gap:8px;align-items:center;font-size:12.5px;font-weight:600;margin-bottom:14px"><input type="checkbox" id="uaFvs"${fv?' checked':''}> Pode aprovar FVS (vale quando o módulo de FVS entrar)</label>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-sm" onclick="usrAcoesAbrir('${id}')">Voltar</button>
+          <button class="btn-sm" style="background:var(--blue);color:#fff;border-color:var(--blue)" onclick="usrSalvarArea('${id}')">Salvar</button></div>`);
+    });
   } else if(etapa==='editar'){
     setHTML('uaCorpo', `<label style="font-size:12.5px;font-weight:600">Nome</label>
       <input id="uaNome" class="form-inp" style="width:100%;margin:6px 0 14px" value="${esc(u.nome||'')}">
@@ -5110,11 +5126,17 @@ function usrAcoesAbrir(id, etapa){
     setHTML('uaCorpo',
         (ativo ? linha('&#9993;','Reenviar acesso','Sem senha criada: manda um convite novo. Com senha: manda um link para nova senha (a atual continua valendo).',`usrAcao('${id}','reenviar')`) : '')
       + linha('&#9998;','Editar nome','Como a pessoa aparece no Auria.',`usrAcoesAbrir('${id}','editar')`)
+      + ((u.tipo==='setor' && !u.papel) ? linha('&#127991;','Área e permissões','Segurança, Qualidade, Suprimentos… — define quem edita os Padrões do Grupo e as ITs.',`usrAcoesAbrir('${id}','area')`) : '')
       + (ativo ? linha('&#9208;','Desativar','Bloqueia o login na hora. Nada é apagado; dá para reativar depois.',`usrAcao('${id}','desativar')`)
                : linha('&#9654;','Reativar','Devolve o acesso com a mesma senha.',`usrAcao('${id}','reativar')`))
       + linha('&#128465;','Excluir…','Apaga a conta de vez (pede confirmação).',`usrAcoesAbrir('${id}','excluir')`,'danger'));
   }
   document.getElementById('modalUsrAcoes').classList.add('open');
+}
+async function usrSalvarArea(id){
+  const { error } = await sb.rpc('grupo_definir_area_setor', { p_usuario:id, p_area:document.getElementById('uaArea').value, p_aprova_fvs:document.getElementById('uaFvs').checked });
+  if(error){ showToast('Erro: '+error.message,'red'); return; }
+  showToast('Área salva','green'); closeModal('modalUsrAcoes');
 }
 async function usrAcao(id, action){
   const u=(USUARIOS||[]).find(x=>x.sujeito_id===id); if(!u) return;
