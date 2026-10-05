@@ -9514,13 +9514,40 @@ async function itsPainel(busca){
       : '<div class="hint" style="padding:12px">' + (ITS_OBRA.length ? 'Nenhuma IT encontrada.' : 'O grupo ainda não cadastrou ITs.') + '</div>') + '</div>'
     + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
 }
-// Abre a IT no visualizador do próprio Auria (auria_pdfview.js), estilo CDE.
-function itsAbrirIt(id){
+// Abre a IT NO QUADRO do App Obra — o mesmo das pranchas (zoom, arrastar,
+// páginas) —, como camada base em modo leitura. A IT não é prancha do
+// projeto: não tem registro em pranchas_auria, nem apontamento, nem trena.
+async function itsAbrirIt(id){
   const i = (ITS_OBRA || []).find(x => x.id === id); if (!i || !i.vig) return;
   segFechar();
-  AuriaPDF.abrir({ url: () => segR2Url('download', i.vig.arquivo_path), codigo: i.codigo + ' · rev. ' + i.vig.revisao,
-                   titulo: i.titulo, sub: (IT_TEMA[i.tema] || '') + ' · Instrução Técnica do grupo · revisão vigente' });
+  const info = esc(i.codigo) + ' · rev. ' + esc(i.vig.revisao) + ' — ' + esc(i.titulo);
+  segBarraInfo('Abrindo ' + info + '…', '');
+  try {
+    if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
+    const url = await segR2Url('download', i.vig.arquivo_path);
+    const resp = await fetch(url); if (!resp.ok) throw new Error('falha ao baixar (' + resp.status + ')');
+    const pdoc = await pdfjsLib.getDocument({ data: await resp.arrayBuffer() }).promise;
+    const page = await pdoc.getPage(1);
+    const pr = { id:null, _it:true, _ro:true, codigo:i.codigo, arquivo_nome:i.codigo + ' — ' + i.titulo, disciplina:'IT' };
+    const L = { prancha:pr, doc:pdoc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:i.codigo + ' · rev. ' + i.vig.revisao };
+    LAYERS = [L]; setBaseShims(); F.valido = false;
+    $('pageLbl').textContent = '1 / ' + pdoc.numPages;
+    try { mobPrancha(); } catch (_){}
+    fitPage();
+    $('dropHint').style.display = 'none';
+    TRENA = { m_por_pt:null, cotas:[], areas:[] };
+    renderCamadas(); renderPins(); renderListaApts();
+    segBarraInfo('📘 ' + info + ' · Instrução Técnica — leitura (sem apontamentos)', '<button onclick="itsPainel(\'\')">Outras ITs</button>');
+  } catch (e){ console.warn('abrir IT:', e); segBarraInfo('Não foi possível abrir a IT — ' + (e.message || e), ''); }
 }
+// IT aberta no quadro é só leitura: apontar e medir ficam para as pranchas do projeto.
+(function(){
+  const _n = novoApontamento;
+  novoApontamento = function(nx, ny){
+    if (PRANCHA && PRANCHA._it){ alert('Isto é uma Instrução Técnica (leitura). Para abrir um apontamento, abra a prancha do projeto.'); return; }
+    return _n(nx, ny);
+  };
+})();
 async function itsAbrir(path){
   const w = window.open('', '_blank');
   try { const u = await segR2Url('download', path); if (w) w.location = u; else location.href = u; }
