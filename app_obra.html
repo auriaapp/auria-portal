@@ -645,6 +645,20 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .seg-form textarea{min-height:84px;resize:vertical;line-height:1.45}
 .seg-form input:focus,.seg-form textarea:focus,.seg-form select:focus{outline:none;border-color:#E8960A;box-shadow:0 0 0 3px #FBE7C4}
 
+/* ── Segurança parte 3: proteções coletivas ── */
+.prot-grade{overflow:auto;margin:4px 2px 10px;border:1px solid #E2E8F0;border-radius:10px;padding:6px}
+.prot-grade table{border-collapse:separate;border-spacing:3px;font-size:11px}
+.prot-grade th{font-weight:700;color:#64748B;padding:2px 4px;white-space:nowrap}
+.prot-grade td.pv{font-family:var(--mono);font-weight:700;color:#1E3A5F;text-align:right;padding-right:6px;white-space:nowrap}
+.prot-grade .pc{display:inline-grid;place-items:center;min-width:26px;height:20px;border-radius:5px;color:#fff;font-weight:800;cursor:pointer;font-family:var(--mono);font-size:11px;text-shadow:0 0 2px rgba(0,0,0,.35)}
+.prot-leg{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#64748B;margin-top:6px}
+.prot-leg i{display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.prot-hist{border-left:2px solid #E2E8F0;margin:4px 0 0 6px;padding-left:12px}
+.prot-hist .ev{font-size:12px;color:#334155;padding:6px 0;border-bottom:1px solid #F1F5F9}
+.prot-hist .ev b{color:#1E3A5F}
+.prot-hist .ev-nao_conforme b{color:#A32D2D}.prot-hist .ev-inspecionada b{color:#1E8449}.prot-hist .ev-retirada b{color:#64748B}
+#segOv label.sug .cod input{width:auto;margin-right:4px}
+
 </style>
 </head>
 <body>
@@ -8834,16 +8848,16 @@ function segRender2D(){
   let out = SEG_DEFS;
   const poli = (pts, attrs) => '<polygon points="' + pts.map(p => { const s = pageToScreen(p.nx, p.ny); return s.x.toFixed(1) + ',' + s.y.toFixed(1); }).join(' ') + '" ' + attrs + '/>';
   if (SEG_CAMADA){
-    segZonasVisiveis().forEach(z => {
+    segItensCamada().forEach(z => {
       (z.geom && z.geom.d2 || []).forEach(g => {
         if (g.prancha_id !== PRANCHA.id || (g.pg || 1) !== V.pageNum || !g.pts || g.pts.length < 3) return;
         const c = segCorZona(z);
-        out += '<g style="pointer-events:auto;cursor:pointer" onclick="segZonaDetalhe(\'' + z.id + '\');event.stopPropagation()">'
+        out += '<g style="pointer-events:auto;cursor:pointer" onclick="segItemDetalhe(\'' + z.id + '\');event.stopPropagation()">'
           + poli(g.pts, 'fill="' + segFill(z) + '" stroke="' + c.cor + '" stroke-width="2.5"');
         const cx = g.pts.reduce((s,p) => s + p.nx, 0) / g.pts.length, cy = g.pts.reduce((s,p) => s + p.ny, 0) / g.pts.length;
         const p = pageToScreen(cx, cy);
         out += '<text x="' + p.x + '" y="' + p.y + '" text-anchor="middle" font-size="12" font-weight="800" fill="' + c.faixa + '" stroke="#fff" stroke-width="3.5" paint-order="stroke">'
-          + esc(z.codigo + ' · ' + (SEG_TIPOS[z.tipo_risco] || '')) + '</text></g>';
+          + esc(z.codigo + ' · ' + segRotulo(z)) + '</text></g>';
       });
     });
     segAtivos().forEach(a => {
@@ -8880,7 +8894,7 @@ function segLocalToWorld(cde_arquivo_id, xyz){
 async function segSync3D(){
   if (!F3D || !F3D.vivo || !B3) return;
   const T = F3D.THREE;
-  const zonas = SEG_CAMADA ? segZonasVisiveis() : [];
+  const zonas = SEG_CAMADA ? segItensCamada() : [];
   const rasc = (SEG_MODO === 'z3d-el' || SEG_MODO === 'z3d-caixa') && SEG_RASC ? [SEG_RASC] : [];
   const assin = JSON.stringify([zonas.map(z => z.id + z.atualizado_em), rasc.map(r => JSON.stringify(r.geom)), F3D.modelos.length]);
   if (assin === _seg3dAssin) return;
@@ -8927,12 +8941,12 @@ function segRender3D(E){
   let out = '';
   const arqs = new Set(E.modelos.map(m => m.arquivoId));
   if (SEG_CAMADA){
-    segZonasVisiveis().forEach(z => (z.geom && z.geom.caixas || []).forEach(cx => {
+    segItensCamada().forEach(z => (z.geom && z.geom.caixas || []).forEach(cx => {
       if (!arqs.has(cx.cde_arquivo_id)) return;
       const a = segLocalToWorld(cx.cde_arquivo_id, cx.max); if (!a) return;
       const p = f3dWorldToScreen(E, a.x, a.y, a.z); if (!p) return;
       const c = segCorZona(z);
-      out += '<text x="' + p.x + '" y="' + p.y + '" font-size="12" font-weight="800" fill="' + c.faixa + '" stroke="#fff" stroke-width="3.5" paint-order="stroke">' + esc(z.codigo + ' · ' + (SEG_TIPOS[z.tipo_risco] || '')) + '</text>';
+      out += '<text x="' + p.x + '" y="' + p.y + '" font-size="12" font-weight="800" fill="' + c.faixa + '" stroke="#fff" stroke-width="3.5" paint-order="stroke">' + esc(z.codigo + ' · ' + segRotulo(z)) + '</text>';
     }));
     segAtivos().forEach(a => {
       const pt = a.pin && a.pin.d3; if (!pt || !arqs.has(pt.cde_arquivo_id)) return;
@@ -8987,13 +9001,13 @@ function segConcluirZ2D(){
   if (SEG_RASC._pts.length < 3) return;
   const d2 = (SEG_RASC.geom.d2 = SEG_RASC.geom.d2 || []);
   d2.push({ prancha_id:PRANCHA.id, cde_documento_id:PRANCHA.cde_documento_id || null, pg:V.pageNum, pts:SEG_RASC._pts });
-  SEG_RASC._pts = []; segSairModo(); segZonaForm();
+  SEG_RASC._pts = []; segSairModo(); segVoltarForm();
 }
 function segCancelarDesenho(){
   const eraAlerta = SEG_MODO === 'pin2d' || SEG_MODO === 'pin3d';
   if (SEG_RASC) SEG_RASC._pts = [], SEG_RASC._p1 = null;
   segSairModo();
-  if (eraAlerta) segNovo(SEG_ARASC && SEG_ARASC._editId || null, true); else segZonaForm();
+  if (eraAlerta) segNovo(SEG_ARASC && SEG_ARASC._editId || null, true); else segVoltarForm();
 }
 
 // 3D — f3dClique é global: o modo de segurança intercepta antes do App.
@@ -9038,13 +9052,13 @@ function segCancelarDesenho(){
 function segBarraZ3DEl(){
   const n = (SEG_RASC.geom.d3 || []).reduce((s,g) => s + g.ids.length, 0);
   segBarra('Zona no modelo: clique os elementos (' + n + ' selecionado' + (n === 1 ? '' : 's') + ') — clique de novo para tirar',
-    '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segZonaForm()">Concluir</button>');
+    '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segVoltarForm()">Concluir</button>');
 }
 function segBarraZ3DCaixa(){
   const n = (SEG_RASC.geom.caixas || []).length;
   segBarra(SEG_RASC._p1 ? 'Caixa: clique o canto OPOSTO no piso' : 'Caixa: clique um canto no piso (' + n + ' caixa' + (n === 1 ? '' : 's') + ' feita' + (n === 1 ? '' : 's') + ')',
     'altura <input id="segAlt" type="number" min="0.2" step="0.1" value="' + (($('segAlt') && $('segAlt').value) || 3) + '" style="width:58px"> m'
-    + '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segZonaForm()">Concluir</button>');
+    + '<button onclick="segCancelarDesenho()">Cancelar</button><button class="ok" onclick="segSairModo();segVoltarForm()">Concluir</button>');
 }
 
 // ── Formulário da zona ──────────────────────────────────────────────────────
@@ -9242,6 +9256,14 @@ async function segAlertaVer(id){
 [800, 3000].forEach(t => setTimeout(() => { segBotaoCamada(); segBotaoCamada3D(); }, t));
 // entrar/sair do 3D também acerta o ⛑ da barra de cima (mesmo sem modelo carregado)
 (function(){ const _m = f3dModo; f3dModo = async function(){ const r = await _m.apply(this, arguments); try { segBotoesModo(); } catch (_){} return r; }; })();
+
+// Pontos de extensão da camada (a parte 3 soma as proteções coletivas):
+//  segItensCamada → o que a camada desenha; segRotulo/segItemDetalhe → texto e clique;
+//  segVoltarForm → para qual formulário o desenho volta.
+function segItensCamada(){ return segZonasVisiveis(); }
+function segRotulo(z){ return SEG_TIPOS[z.tipo_risco] || ''; }
+function segItemDetalhe(id){ segZonaDetalhe(id); }
+function segVoltarForm(){ segZonaForm(); }
 
 // ── App Obra · Segurança — o AVISO vem primeiro (pedido do usuário 2026-10-04) ──
 //  Toda zona de risco ativa (atenção ou interdição) aparece em Alertas →
@@ -9528,6 +9550,408 @@ setTimeout(() => {
     b.onclick = () => itsPainel(''); ref.parentElement.insertBefore(b, ref.nextSibling);
   }
 }, 800);
+
+// ── App Obra · Segurança — parte 3: PROTEÇÕES COLETIVAS (backlog 182/186) ────
+//  Proteção = objeto do projeto (mesmo desenho das zonas: prancha, elementos,
+//  caixa) com ciclo exigida → instalada → inspecionada → retirada. Cada passo
+//  é registrado no banco (seg_protecao_passo) com fotos no R2.
+//  Cor na camada pela SITUAÇÃO: cinza = exigida (falta instalar), amarelo =
+//  instalada (falta inspecionar), verde = inspecionada em dia, vermelho =
+//  inspeção vencida. Periodicidade padrão vem dos Padrões do Grupo (7 dias).
+//  Sugestão pelo modelo: o Auria lê o IFC e propõe; o técnico aceita ou
+//  descarta com motivo (não reaparece). Não é laudo — a decisão é do técnico.
+var PROTS = [], SUG_DESC = new Set();
+
+const PROT_TIPOS = {
+  guarda_corpo:        'Guarda-corpo periférico',
+  guarda_corpo_escada: 'Guarda-corpo de escada',
+  bandeja:             'Bandeja de proteção',
+  linha_vida:          'Linha de vida',
+  tela:                'Tela / rede de proteção',
+  fechamento:          'Fechamento de abertura / shaft / poço',
+  rodape:              'Rodapé',
+  outro:               'Outra proteção'
+};
+const PROT_SIT = {
+  exigida:      { rot:'Exigida — falta instalar',     cor:'#94A3B8', fill:'rgba(148,163,184,.30)' },
+  instalada:    { rot:'Instalada — falta inspecionar', cor:'#E8C200', fill:'rgba(242,194,0,.28)' },
+  inspecionada: { rot:'Inspecionada em dia',          cor:'#1E8449', fill:'rgba(30,132,73,.25)' },
+  vencida:      { rot:'Inspeção vencida',             cor:'#C0392B', fill:'rgba(192,57,43,.28)' },
+  retirada:     { rot:'Retirada',                     cor:'#CBD5E1', fill:'rgba(203,213,225,.18)' }
+};
+function protEstado(p){
+  if (p.situacao === 'retirada') return 'retirada';
+  if (p.situacao !== 'exigida' && p.proxima_inspecao && p.proxima_inspecao < segHoje()) return 'vencida';
+  return p.situacao;
+}
+function protDiasPadrao(tipo){
+  const d = SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.inspecao_dias;
+  const n = d && (d[tipo] || d.outro);
+  return n > 0 ? n : 7;
+}
+async function protCarregar(){
+  PROTS = []; SUG_DESC = new Set();
+  if (!EMP || !SEG_OK) return;
+  const { data, error } = await sb.from('seg_protecao_auria').select('*').eq('empreendimento_id', EMP.id).order('codigo');
+  if (error){ console.warn('seg_protecao_auria indisponível:', error.message || error); return; }
+  PROTS = data || [];
+  const s = await sb.from('seg_sugestao_auria').select('chave').eq('empreendimento_id', EMP.id);
+  (s.data || []).forEach(r => SUG_DESC.add(r.chave));
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await protCarregar(); } catch (_){} segRedesenhar(); }; })();
+
+// ── Camada: proteções entram junto das zonas ────────────────────────────────
+function protComoItem(p){
+  return Object.assign({}, p, { _prot:true, nivel:'atencao', tipo_risco:p.tipo });
+}
+(function(){
+  const _i = segItensCamada;
+  segItensCamada = function(){ return _i().concat(PROTS.filter(p => p.situacao !== 'retirada').map(protComoItem)); };
+  const _r = segRotulo;
+  segRotulo = function(z){ return z._prot ? (PROT_TIPOS[z.tipo] || 'Proteção') + ' · ' + PROT_SIT[protEstado(z)].rot.split(' —')[0] : _r(z); };
+  const _d = segItemDetalhe;
+  segItemDetalhe = function(id){ if (PROTS.some(p => p.id === id)) protDetalhe(id); else _d(id); };
+  const _cor = segCorZona;
+  segCorZona = function(z){ if (!z._prot) return _cor(z); const s = PROT_SIT[protEstado(z)]; return { cor:s.cor, faixa:'#1F2937', rot:s.rot }; };
+  const _f = segFill;
+  segFill = function(z){ return z._prot ? PROT_SIT[protEstado(z)].fill : _f(z); };
+  const _v = segVoltarForm;
+  segVoltarForm = function(){ if (SEG_RASC && SEG_RASC._kind === 'prot') protForm(); else _v(); };
+})();
+
+// ── Painel: aba Proteções (mapa pavimento × tipo + lista) ───────────────────
+(function(){
+  const _p = segPainel;
+  segPainel = function(aba){
+    if (aba !== 'protecoes'){
+      _p(aba);
+      const tabs = document.querySelector('#segOv .seg-tabs');
+      if (tabs && !tabs.querySelector('[data-p]')){
+        const b = document.createElement('button'); b.dataset.p = '1';
+        const at = PROTS.filter(p => p.situacao !== 'retirada'), venc = at.filter(p => protEstado(p) === 'vencida').length;
+        b.innerHTML = 'Proteções <b' + (venc ? ' style="background:#C0392B;color:#fff"' : '') + '>' + at.length + '</b>';
+        b.onclick = () => segPainel('protecoes');
+        tabs.insertBefore(b, tabs.querySelector('.seg-camada'));
+      }
+      return;
+    }
+    protPainel();
+  };
+})();
+function protPainel(){
+  _protFiltro = _protFiltro || '';
+  const ativos = PROTS.filter(p => p.situacao !== 'retirada');
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const tipos = Object.keys(PROT_TIPOS).filter(t => ativos.some(p => p.tipo === t));
+  // grade: só pavimentos que têm proteção (+ "sem pavimento")
+  const linhas = pavs.filter(pv => ativos.some(p => p.pavimento_id === pv.id));
+  if (ativos.some(p => !p.pavimento_id)) linhas.push({ id:'', codigo:'—', nome:'Sem pavimento' });
+  const pior = arr => ['vencida','exigida','instalada','inspecionada'].find(e => arr.some(p => protEstado(p) === e));
+  const grade = (tipos.length && linhas.length) ? '<div class="prot-grade"><table><tr><th></th>' + tipos.map(t => '<th title="' + esc(PROT_TIPOS[t]) + '">' + esc(PROT_TIPOS[t].split(' ')[0] + (t === 'guarda_corpo_escada' ? ' escada' : '')) + '</th>').join('') + '</tr>'
+      + linhas.map(pv => '<tr><td class="pv">' + esc(pv.codigo || pv.nome) + '</td>' + tipos.map(t => {
+          const arr = ativos.filter(p => (p.pavimento_id || '') === pv.id && p.tipo === t);
+          if (!arr.length) return '<td></td>';
+          const e = pior(arr);
+          return '<td><span class="pc" style="background:' + PROT_SIT[e].cor + '" title="' + esc(PROT_SIT[e].rot) + '" onclick="_protFiltro=\'' + pv.id + '|' + t + '\';protPainel()">' + arr.length + '</span></td>';
+        }).join('') + '</tr>').join('') + '</table>'
+      + '<div class="prot-leg">' + ['exigida','instalada','inspecionada','vencida'].map(e => '<span><i style="background:' + PROT_SIT[e].cor + '"></i>' + PROT_SIT[e].rot + '</span>').join('') + '</div></div>' : '';
+  const [fpv, ft] = (_protFiltro || '|').split('|');
+  const lista = ativos.filter(p => !_protFiltro || ((p.pavimento_id || '') === fpv && p.tipo === ft))
+    .sort((a,b) => ['vencida','exigida','instalada','inspecionada'].indexOf(protEstado(a)) - ['vencida','exigida','instalada','inspecionada'].indexOf(protEstado(b)));
+  segPainel('alertas');   // monta a casca com as abas
+  const tabs = document.querySelectorAll('#segOv .seg-tabs button');
+  tabs.forEach(b => b.classList.toggle('on', !!b.dataset.p));
+  document.querySelector('#segOv .ls').innerHTML = grade
+    + (_protFiltro ? '<div class="seg-dia">Filtro: ' + esc((pavs.find(p => p.id === fpv) || {}).codigo || 'sem pavimento') + ' · ' + esc(PROT_TIPOS[ft]) + ' <a href="#" onclick="_protFiltro=\'\';protPainel();return false">limpar</a></div>' : '')
+    + (lista.length ? lista.map(p => { const e = protEstado(p);
+        return '<div class="it seg-it" style="cursor:pointer;border-left-color:' + PROT_SIT[e].cor + '!important" onclick="protDetalhe(\'' + p.id + '\')">'
+          + '<div class="cod">' + esc(p.codigo) + ' <span class="seg-chip" style="background:' + PROT_SIT[e].cor + ';color:' + (e === 'exigida' || e === 'instalada' ? '#1F2937' : '#fff') + '">' + PROT_SIT[e].rot + '</span></div>'
+          + '<div class="t">' + esc(p.titulo) + '</div><div class="m">' + esc(PROT_TIPOS[p.tipo] || p.tipo) + ' · ' + esc(segPavNome(p.pavimento_id) || '—')
+          + (p.proxima_inspecao && p.situacao !== 'exigida' ? ' · próxima inspeção ' + esc(_dispData(p.proxima_inspecao)) : '') + (p.origem === 'sugerida' ? ' · sugerida pelo modelo' : '') + '</div></div>'; }).join('')
+      : '<div class="hint" style="padding:12px">Nenhuma proteção cadastrada' + (_protFiltro ? ' no filtro' : '') + '.</div>');
+  const ft2 = document.querySelector('#segOv .ft');
+  ft2.innerHTML = '<button class="b2" onclick="segFechar()">Fechar</button>'
+    + (segSouTecnico() ? '<button class="b2" onclick="sugAbrir()">✨ Sugerir pelo modelo</button><button class="b1" onclick="protNova()">＋ Proteção</button>' : '');
+}
+var _protFiltro = '';
+
+// ── Formulário ──────────────────────────────────────────────────────────────
+function protNova(pre){
+  if (!segSouTecnico()) return;
+  SEG_RASC = Object.assign({ _kind:'prot', tipo:'guarda_corpo', titulo:'', descricao:'', pavimento_id:'', geom:{}, _fotos:[], _pts:[], periodicidade_dias:null }, pre || {});
+  protForm();
+}
+function protEditar(id){
+  const p = PROTS.find(x => x.id === id); if (!p || !segSouTecnico()) return;
+  SEG_RASC = Object.assign({}, p, { _kind:'prot', geom: JSON.parse(JSON.stringify(p.geom || {})), _fotos:[], _pts:[], _editId:id, pavimento_id:p.pavimento_id || '' });
+  protForm();
+}
+function protLerForm(){
+  if (!$('pcTipo')) return;
+  const r = SEG_RASC;
+  r.tipo = $('pcTipo').value; r.titulo = $('pcTit').value; r.descricao = $('pcTxt').value; r.pavimento_id = $('pcPav').value;
+  if (!r._editId) r.periodicidade_dias = parseInt($('pcDias').value, 10) || protDiasPadrao(r.tipo);
+}
+function protForm(){
+  const r = SEG_RASC, pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const tem2D = !!(V.page && PRANCHA), tem3D = !!(F3D && F3D.vivo && F3D.modelos.length);
+  const dias = r._editId ? r.periodicidade_dias : (r.periodicidade_dias || protDiasPadrao(r.tipo));
+  segOv('<div class="hd"><b>' + (r._editId ? 'Editar ' + esc(r.codigo) : 'Nova proteção coletiva') + '</b>'
+    + '<p>Nasce como <b>exigida</b>. Depois: registrar instalação → inspeções periódicas → retirada.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Tipo</label><select id="pcTipo" onchange="if(!SEG_RASC._editId){$(\'pcDias\').value=protDiasPadrao(this.value)}">' + Object.keys(PROT_TIPOS).map(k => '<option value="' + k + '"' + (k === r.tipo ? ' selected' : '') + '>' + PROT_TIPOS[k] + '</option>').join('') + '</select></div>'
+    + '<div><label>Inspecionar a cada (dias)</label><input id="pcDias" type="number" min="1" max="90" value="' + esc(dias) + '"' + (r._editId ? ' disabled title="Mude pelo botão Periodicidade no detalhe (fica registrado)"' : '') + '></div></div>'
+    + '<label>Título</label><input id="pcTit" maxlength="140" value="' + esc(r.titulo || '') + '" placeholder="Ex.: Guarda-corpo da periferia — 12º pavimento">'
+    + '<label>Descrição</label><textarea id="pcTxt" rows="2">' + esc(r.descricao || '') + '</textarea>'
+    + '<label>Pavimento</label><select id="pcPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select>'
+    + '<label>Onde</label><div class="seg-geom"><b>' + esc(segGeomResumo(r.geom || {})) + '</b><div>'
+    + '<button class="b2" ' + (tem2D ? '' : 'disabled title="Abra a prancha do pavimento"') + ' onclick="protDesenhar(\'z2d\')">✎ Na prancha</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="protDesenhar(\'z3d-el\')">▣ Elementos do modelo</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="protDesenhar(\'z3d-caixa\')">⬚ Caixa no modelo</button>'
+    + ((r.geom && (r.geom.d2 || r.geom.d3 || r.geom.caixas)) ? '<button class="b2" onclick="SEG_RASC.geom={};protForm()">Limpar</button>' : '') + '</div></div>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'protecoes\')">Voltar</button><button class="b1" id="segOk" onclick="protSalvar()">' + (r._editId ? 'Salvar' : 'Criar proteção') + '</button></div>');
+}
+function protDesenhar(modo){ protLerForm(); segZonaDesenhar(modo); }
+// segZonaDesenhar chama segZonaLerForm (do formulário de zona) — aqui não há esse form, então é inofensivo.
+async function protSalvar(){
+  protLerForm();
+  const r = SEG_RASC, g = r.geom || {}, msg = t => { $('segMsg').textContent = t; };
+  if ((r.titulo || '').trim().length < 4) return msg('Escreva um título.');
+  if (!(g.d2 || []).length && !(g.d3 || []).some(x => x.ids && x.ids.length) && !(g.caixas || []).length) return msg('Marque onde fica a proteção (prancha ou modelo).');
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
+  try {
+    (g.d3 || []).forEach(x => x.ids = [...new Set(x.ids)]); g.d3 = (g.d3 || []).filter(x => x.ids.length);
+    const row = { tipo:r.tipo, titulo:r.titulo.trim(), descricao:(r.descricao || '').trim() || null, pavimento_id:r.pavimento_id || null, geom:g };
+    let id = r._editId;
+    if (id){ const { error } = await sb.from('seg_protecao_auria').update(row).eq('id', id); if (error) throw error; }
+    else {
+      id = crypto.randomUUID();
+      const c = await sb.rpc('seg_protecao_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+      const { error } = await sb.from('seg_protecao_auria').insert(Object.assign(row, { id, empreendimento_id:EMP.id, codigo:c.data, emitido_por:USER.id,
+        periodicidade_dias: Math.min(90, Math.max(1, r.periodicidade_dias || protDiasPadrao(r.tipo))), origem: r.origem || 'manual', regra: r.regra || null }));
+      if (error) throw error;
+    }
+    SEG_RASC = null; _seg3dAssin = '';
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    protDetalhe(id);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; b.textContent = r._editId ? 'Salvar' : 'Criar proteção'; }
+}
+
+// ── Detalhe + ciclo ─────────────────────────────────────────────────────────
+async function protDetalhe(id){
+  const p = PROTS.find(x => x.id === id); if (!p) return;
+  const e = protEstado(p), tec = segSouTecnico();
+  const { data:evs } = await sb.from('seg_protecao_evento_auria').select('*').eq('protecao_id', id).order('em', { ascending:false });
+  const EVROT = { exigida:'Exigida', instalada:'Instalada', inspecionada:'Inspecionada — conforme', nao_conforme:'Inspecionada — NÃO conforme', retirada:'Retirada', periodicidade:'Periodicidade alterada' };
+  let acoes = '';
+  if (tec && p.situacao !== 'retirada'){
+    if (p.situacao === 'exigida') acoes += '<button class="b1" onclick="protPassoForm(\'' + id + '\',\'instalada\')">Registrar instalação</button>';
+    else acoes += '<button class="b1" onclick="protPassoForm(\'' + id + '\',\'inspecao\')">Registrar inspeção</button>';
+    acoes += '<button class="b2" onclick="protEditar(\'' + id + '\')">Editar</button><button class="b2" onclick="protPassoForm(\'' + id + '\',\'periodicidade\')">Periodicidade</button>'
+      + (p.situacao !== 'exigida' ? '<button class="b2" onclick="protPassoForm(\'' + id + '\',\'retirada\')">Retirar</button>' : '');
+  }
+  const g = p.geom || {};
+  segOv('<div class="hd"><b>' + esc(p.codigo) + ' — ' + esc(p.titulo) + '</b><p><span class="seg-chip" style="background:' + PROT_SIT[e].cor + ';color:' + (e === 'exigida' || e === 'instalada' ? '#1F2937' : '#fff') + '">' + PROT_SIT[e].rot + '</span> ' + esc(PROT_TIPOS[p.tipo] || p.tipo) + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + (p.descricao ? '<p>' + esc(p.descricao) + '</p>' : '')
+    + '<div class="seg-kv"><span>Pavimento</span><b>' + esc(segPavNome(p.pavimento_id) || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Inspeção</span><b>a cada ' + p.periodicidade_dias + ' dia(s)' + (p.ultima_inspecao ? ' · última ' + new Date(p.ultima_inspecao).toLocaleDateString('pt-BR') : '') + (p.proxima_inspecao && p.situacao !== 'retirada' ? ' · próxima ' + esc(_dispData(p.proxima_inspecao)) : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Onde</span><b>' + esc(segGeomResumo(g)) + '<br><button class="b2 mini" onclick="protAbrir(\'' + id + '\')">Ver no ' + ((g.d2 || []).length ? 'projeto' : 'modelo') + '</button></b></div>'
+    + '<div class="seg-kv"><span>Origem</span><b>' + (p.origem === 'sugerida' ? 'Sugerida pelo modelo' : 'Cadastrada') + ' · ' + esc(p.emitido_nome || '') + '</b></div>'
+    + '<div class="seg-kv" style="border:none"><span>Histórico</span><b></b></div><div class="prot-hist">' + (evs || []).map((ev, i) => '<div class="ev ev-' + ev.tipo + '"><div><b>' + (EVROT[ev.tipo] || ev.tipo) + '</b> · ' + new Date(ev.em).toLocaleString('pt-BR') + ' · ' + esc(ev.por_nome || '') + '</div>'
+        + (ev.observacao ? '<div>' + esc(ev.observacao) + '</div>' : '') + '<div id="pcEvF' + i + '"></div></div>').join('') + '</div>'
+    + '</div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'protecoes\')">Voltar</button>' + acoes + '</div>');
+  (evs || []).forEach((ev, i) => { if ((ev.fotos || []).length) segFotosHtml(ev.fotos, 'pcEvF' + i); });
+}
+function protPassoForm(id, passo){
+  const p = PROTS.find(x => x.id === id);
+  const T = { instalada:'Registrar instalação', inspecao:'Registrar inspeção', retirada:'Retirar proteção', periodicidade:'Periodicidade da inspeção' }[passo];
+  let campos = '';
+  if (passo === 'inspecao') campos = '<label>Resultado</label><div class="seg-niv"><label class="seg-informativo"><input type="radio" name="pcOk" value="1" checked> Conforme</label><label class="seg-interdicao"><input type="radio" name="pcOk" value="0"> Não conforme</label></div>';
+  if (passo === 'periodicidade') campos = '<label>Inspecionar a cada (dias)</label><input id="pcNovosDias" type="number" min="1" max="90" value="' + p.periodicidade_dias + '">';
+  segOv('<div class="hd"><b>' + T + ' — ' + esc(p.codigo) + '</b><p>' + esc(p.titulo) + '</p></div>'
+    + '<div class="seg-form">' + campos
+    + '<label>' + (passo === 'retirada' ? 'Motivo da retirada' : 'Observação') + '</label><textarea id="pcObs" rows="3" placeholder="' + (passo === 'retirada' ? 'Ex.: alvenaria da periferia concluída no pavimento' : '') + '"></textarea>'
+    + (passo !== 'periodicidade' ? '<label>Fotos</label><input id="pcFotos" type="file" accept="image/*" capture="environment" multiple>' : '')
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="protDetalhe(\'' + id + '\')">Voltar</button><button class="b1" id="segOk" onclick="protPassoOk(\'' + id + '\',\'' + passo + '\')">Registrar</button></div>');
+}
+async function protPassoOk(id, passo){
+  const obs = ($('pcObs').value || '').trim();
+  let tipo = passo, dias = null;
+  if (passo === 'inspecao') tipo = (document.querySelector('input[name=pcOk]:checked') || {}).value === '0' ? 'nao_conforme' : 'inspecionada';
+  if (tipo === 'nao_conforme' && !obs){ $('segMsg').textContent = 'Descreva o que está fora do padrão.'; return; }
+  if (passo === 'retirada' && obs.length < 5){ $('segMsg').textContent = 'Informe o motivo da retirada.'; return; }
+  if (passo === 'periodicidade') dias = parseInt($('pcNovosDias').value, 10);
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Registrando…';
+  try {
+    const f = $('pcFotos'), fotos = f && f.files && f.files.length ? await segSubirFotos([...f.files], 'protecoes/' + id) : [];
+    const { error } = await sb.rpc('seg_protecao_passo', { p_id:id, p_tipo:tipo, p_obs:obs || null, p_fotos:fotos, p_dias:dias });
+    if (error) throw error;
+    _seg3dAssin = ''; await segCarregar(); try { renderSideRight(); } catch (_){}
+    protDetalhe(id);
+  } catch (e){ $('segMsg').textContent = 'Não foi possível registrar: ' + (e.message || e); b.disabled = false; b.textContent = 'Registrar'; }
+}
+async function protAbrir(id){
+  const p = PROTS.find(x => x.id === id); if (!p) return;
+  segFechar(); SEG_CAMADA = true; ['btnSegCamada','btnSegCamada3d'].forEach(k => { const b = $(k); if (b) b.classList.add('on'); });
+  const g = p.geom || {}, info = esc(p.codigo) + ' · ' + esc(PROT_TIPOS[p.tipo] || '') + ' — ' + esc(p.titulo) + ' · ' + PROT_SIT[protEstado(p)].rot;
+  const bts = '<button onclick="protDetalhe(\'' + id + '\')">Detalhes</button>';
+  segBarraInfo('Abrindo ' + info + '…', '');
+  try {
+    if ((g.d2 || []).length){
+      const d = g.d2[0];
+      if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
+      if (d.cde_documento_id && (!PRANCHA || PRANCHA.id !== d.prancha_id)) await abrirDoCDE(d.cde_documento_id, null, false);
+      renderPins();
+    } else {
+      const ok = await segAbrir3D((g.d3 || []).map(x => x.cde_arquivo_id).concat((g.caixas || []).map(x => x.cde_arquivo_id)));
+      if (!ok){ segBarraInfo('Não foi possível abrir o modelo — ' + info, bts); return; }
+      _seg3dAssin = ''; await segSync3D();
+      const pm = segPorModZonas([p]);
+      if (Object.keys(pm).length){ await B3.enquadrarIds(F3D, pm); segAproximar(0.55); segPiscar(pm, PROT_SIT[protEstado(p)].cor); }
+      else if ((g.caixas || []).length){
+        const cx = g.caixas[0], a = segLocalToWorld(cx.cde_arquivo_id, cx.min), b = segLocalToWorld(cx.cde_arquivo_id, cx.max);
+        if (a && b){ const T = F3D.THREE, bx = new T.Box3(a.clone().min(b), a.clone().max(b)), c = bx.getCenter(new T.Vector3()), s = bx.getSize(new T.Vector3());
+          const d = Math.max(s.x, s.z, 6) * 0.8; F3D.controls.target.copy(c); F3D.camera.position.set(c.x + d*1.2, c.y + d*0.8, c.z + d*1.2); F3D.controls.update(); segPiscarCaixas(); }
+      }
+    }
+    segBarraInfo(info, bts);
+  } catch (e){ console.warn('abrir proteção:', e); segBarraInfo('Não foi possível abrir — ' + info, bts); }
+}
+
+// ── Sugestão automática pelo modelo ─────────────────────────────────────────
+//  Regras (o técnico confirma cada uma):
+//   1. escada sem guarda-corpo (IfcRailing) no mesmo pavimento → guarda-corpo de escada
+//   2. elemento de transporte / espaço "elevador|poço" → fechamento do poço
+//   3. espaço/abertura "shaft" → fechamento de abertura
+//   4. periferia das lajes de cada pavimento → guarda-corpo periférico (caixa de 1,20 m)
+//   5. bandeja pela regra dos Padrões do Grupo (1ª no pavimento N, depois a cada M lajes)
+var SUGS = [];
+async function sugAbrir(){
+  if (!segSouTecnico()) return;
+  if (!(F3D && F3D.vivo && F3D.modelos.length)){
+    segOv('<div class="hd"><b>Sugerir pelo modelo</b><p>Abra antes o modelo (arquitetura e/ou estrutura) no 3D — o Auria lê o IFC carregado.</p></div><div class="ft"><button class="b2" onclick="protPainel()">Voltar</button><button class="b1" onclick="segFechar();f3dModo(true)">Abrir o 3D</button></div>');
+    return;
+  }
+  segOv('<div class="hd"><b>Lendo o modelo…</b><p>Procurando escadas, poços, shafts e a periferia das lajes por pavimento. Pode levar alguns segundos.</p></div><div class="ls"><div class="hint" id="sugProg" style="padding:12px">Começando…</div></div>');
+  try { SUGS = await sugCalcular(t => { const e = $('sugProg'); if (e) e.textContent = t; }); }
+  catch (e){ SUGS = []; console.warn('sugestões:', e); }
+  sugLista();
+}
+function _sugTem(chave){ return SUG_DESC.has(chave) || PROTS.some(p => p.regra === chave); }
+async function sugCalcular(prog){
+  const out = [], pavsModelo = await B3.listaPavimentos(F3D) || [];
+  const pavCde = nome => { const n = String(nome || '').toUpperCase(); return (CDE_PAVS || []).find(p => p.codigo && (n.includes(p.codigo.toUpperCase()) || p.nome && n.includes(p.nome.toUpperCase()))) || null; };
+  const ids = pm => Object.keys(pm).map(mi => ({ cde_arquivo_id:F3D.modelos[mi].arquivoId, modelo:F3D.modelos[mi].nome || '', ids:pm[mi] }));
+  const conta = pm => Object.values(pm).reduce((s,a) => s + a.length, 0);
+  const lajesPorPav = [];
+  for (let i = 0; i < pavsModelo.length; i++){
+    const pv = pavsModelo[i].nome; prog('Pavimento ' + (i+1) + ' de ' + pavsModelo.length + ': ' + pv);
+    const pc = pavCde(pv);
+    const escadas = await B3.acharElementos(F3D, [/^IFCSTAIR/i], [], pv);
+    if (conta(escadas)){
+      const gc = await B3.acharElementos(F3D, [/^IFCRAILING/i], [], pv);
+      const chave = 'escada|' + pv;
+      if (!conta(gc) && !_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo_escada', pav:pv, pavimento_id:pc && pc.id, titulo:'Guarda-corpo da escada — ' + pv, motivo:'Escada sem guarda-corpo (IfcRailing) no modelo deste pavimento.', geom:{ d3:ids(escadas) } });
+    }
+    const elev = await B3.acharElementos(F3D, [/^IFCTRANSPORTELEMENT/i], [], pv);
+    if (conta(elev)){ const chave = 'elevador|' + pv; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:pv, pavimento_id:pc && pc.id, titulo:'Fechamento do poço do elevador — ' + pv, motivo:'Elevador no modelo: o poço precisa de fechamento até a instalação.', geom:{ d3:ids(elev) } }); }
+    const shafts = await B3.acharElementos(F3D, [/^IFCSPACE/i, /^IFCOPENINGELEMENT/i], ['shaft'], pv);
+    if (conta(shafts)){ const chave = 'shaft|' + pv; if (!_sugTem(chave)) out.push({ chave, tipo:'fechamento', pav:pv, pavimento_id:pc && pc.id, titulo:'Fechamento de shafts — ' + pv, motivo:'Shaft/abertura identificado pelo nome no modelo.', geom:{ d3:ids(shafts) } }); }
+    // periferia: caixa das lajes do pavimento
+    const lajes = await B3.acharElementos(F3D, [/^IFCSLAB/i], [], pv);
+    for (const mi of Object.keys(lajes)){
+      const m = F3D.modelos[mi]; let bxs = []; try { bxs = await m.model.getBoxes(lajes[mi]); } catch (_){}
+      const T = F3D.THREE, u = new T.Box3(); (bxs || []).forEach(b => { if (b && b.min && isFinite(b.min.x)) u.union(b); });
+      if (u.isEmpty()) continue;
+      lajesPorPav.push({ pv, pc, m, u, ordem:i });
+    }
+  }
+  // guarda-corpo periférico (anel de 1,20 m sobre a laje) e bandejas pela regra do grupo
+  const T = F3D.THREE, anel = (m, u, y0, alt, afast) => {
+    const o = m.model.object; o.updateMatrixWorld();
+    const mn = new T.Vector3(u.min.x - afast, y0, u.min.z - afast), mx = new T.Vector3(u.max.x + afast, y0 + alt, u.max.z + afast), e = 0.15;
+    const lados = [[mn.x, mn.z, mx.x, mn.z + e], [mn.x, mx.z - e, mx.x, mx.z], [mn.x, mn.z, mn.x + e, mx.z], [mx.x - e, mn.z, mx.x, mx.z]];
+    return lados.map(([x0, z0, x1, z1]) => { const a = o.worldToLocal(new T.Vector3(x0, mn.y, z0)), b = o.worldToLocal(new T.Vector3(x1, mx.y, z1));
+      return { cde_arquivo_id:m.arquivoId, modelo:m.nome || '', min:[a.x,a.y,a.z].map(v => +v.toFixed(3)), max:[b.x,b.y,b.z].map(v => +v.toFixed(3)) }; });
+  };
+  const porPav = {}; lajesPorPav.forEach(l => { if (!porPav[l.pv] || porPav[l.pv].u.max.y < l.u.max.y) porPav[l.pv] = l; });
+  const ordenados = Object.values(porPav).sort((a,b) => a.u.max.y - b.u.max.y);
+  ordenados.forEach(l => {
+    const chave = 'periferia|' + l.pv;
+    if (!_sugTem(chave)) out.push({ chave, tipo:'guarda_corpo', pav:l.pv, pavimento_id:l.pc && l.pc.id, titulo:'Guarda-corpo periférico — ' + l.pv, motivo:'Contorno das lajes do pavimento (retângulo das lajes — confira o contorno real).', geom:{ caixas: anel(l.m, l.u, l.u.max.y, 1.2, 0) } });
+  });
+  const bj = SEG_PADRAO_GRUPO && SEG_PADRAO_GRUPO.bandeja;
+  if (bj && bj.ativa && ordenados.length){
+    const ini = Math.max(1, bj.a_partir || 2), cada = Math.max(1, bj.a_cada || 3);
+    ordenados.forEach((l, i) => {
+      const n = i + 1; if (n < ini || (n - ini) % cada !== 0) return;
+      const chave = 'bandeja|' + l.pv;
+      if (!_sugTem(chave)) out.push({ chave, tipo:'bandeja', pav:l.pv, pavimento_id:l.pc && l.pc.id, titulo:'Bandeja de proteção — ' + l.pv,
+        motivo:'Regra do grupo: 1ª bandeja no ' + ini + 'º pavimento e depois a cada ' + cada + ' lajes' + (bj.obs ? ' (' + bj.obs + ')' : '') + '.', geom:{ caixas: anel(l.m, l.u, l.u.max.y, 0.3, 2.5) } });
+    });
+  }
+  prog('Pronto.');
+  return out;
+}
+function sugLista(){
+  segOv('<div class="hd"><b>Sugestões do modelo</b><p>' + (SUGS.length ? SUGS.length + ' sugestão(ões). Marque as que valem — viram proteções <b>exigidas</b>. As que não valem, descarte com o motivo (não voltam a aparecer).' : 'Nenhuma sugestão nova: tudo o que o modelo indica já foi cadastrado ou descartado.') + '</p></div>'
+    + '<div class="ls">' + SUGS.map((s, i) => '<label class="it seg-it sug" style="display:block;cursor:pointer"><div class="cod"><input type="checkbox" data-sug="' + i + '" checked> ' + esc(PROT_TIPOS[s.tipo]) + ' · ' + esc(s.pav) + '</div>'
+        + '<div class="t">' + esc(s.titulo) + '</div><div class="m">' + esc(s.motivo) + ' · ' + esc(segGeomResumo(s.geom)) + '</div></label>').join('') + '</div>'
+    + '<div class="ft"><button class="b2" onclick="protPainel()">Voltar</button>'
+    + (SUGS.length ? '<button class="b2" onclick="sugDescartarForm()">Descartar marcadas</button><button class="b1" id="segOk" onclick="sugAceitar()">Aceitar marcadas</button>' : '') + '</div>');
+}
+function _sugMarcadas(){ return [...document.querySelectorAll('[data-sug]:checked')].map(c => SUGS[+c.dataset.sug]); }
+async function sugAceitar(){
+  const ms = _sugMarcadas(); if (!ms.length) return;
+  const b = $('segOk'); b.disabled = true;
+  let ok = 0, err = '';
+  for (const s of ms){
+    b.textContent = 'Criando ' + (ok + 1) + ' de ' + ms.length + '…';
+    try {
+      const c = await sb.rpc('seg_protecao_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+      const { error } = await sb.from('seg_protecao_auria').insert({ empreendimento_id:EMP.id, codigo:c.data, tipo:s.tipo, titulo:s.titulo, descricao:s.motivo,
+        pavimento_id:s.pavimento_id || null, geom:s.geom, periodicidade_dias:protDiasPadrao(s.tipo), origem:'sugerida', regra:s.chave, emitido_por:USER.id });
+      if (error) throw error; ok++;
+    } catch (e){ err = e.message || String(e); }
+  }
+  _seg3dAssin = ''; await segCarregar();
+  SUGS = SUGS.filter(s => !ms.includes(s));
+  if (err) alert(ok + ' criada(s). Erro em alguma: ' + err);
+  protPainel();
+}
+function sugDescartarForm(){
+  const ms = _sugMarcadas(); if (!ms.length) return;
+  window._sugDesc = ms;
+  segOv('<div class="hd"><b>Descartar ' + ms.length + ' sugestão(ões)</b><p>O motivo fica registrado e a sugestão não volta a aparecer.</p></div>'
+    + '<div class="seg-form"><label>Motivo</label><textarea id="segMot" rows="3" placeholder="Ex.: periferia já fechada com alvenaria; escada com guarda-corpo definitivo"></textarea><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="sugLista()">Voltar</button><button class="b1" onclick="sugDescartarOk()">Descartar</button></div>');
+}
+async function sugDescartarOk(){
+  const mot = ($('segMot').value || '').trim();
+  if (mot.length < 5){ $('segMsg').textContent = 'Escreva o motivo (mínimo 5 caracteres).'; return; }
+  for (const s of window._sugDesc){
+    const { error } = await sb.rpc('seg_sugestao_descartar', { p_emp:EMP.id, p_chave:s.chave, p_desc:s.titulo, p_motivo:mot });
+    if (error){ $('segMsg').textContent = error.message; return; }
+    SUG_DESC.add(s.chave);
+  }
+  SUGS = SUGS.filter(s => !window._sugDesc.includes(s));
+  sugLista();
+}
+
+// ── Módulo da barra direita: mostra proteções vencidas / a instalar ─────────
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    let h = _m(mod);
+    const at = PROTS.filter(p => p.situacao !== 'retirada'), venc = at.filter(p => protEstado(p) === 'vencida').length, exig = at.filter(p => p.situacao === 'exigida').length;
+    if (at.length) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (venc ? venc + ' inspeção(ões) vencida(s)' : exig ? exig + ' proteção(ões) a instalar' : at.length + ' proteção(ões) em dia') + '</span></span>');
+    return h;
+  };
+})();
 
 </script>
 <script src="auria_ajuda.js"></script>
