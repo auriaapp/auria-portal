@@ -728,6 +728,12 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .fvs-card{border-left:4px solid #C0392B!important}
 @media (max-width:640px){ .fvs-item .ex{flex-direction:column;align-items:stretch} #segOv .box.fvs-larga{width:100%} }
 
+/* FVS B3 — 3D colorido */
+.fvs3d-bt{display:block;margin:4px auto 0;border:1px solid #CBD5E1;background:#fff;border-radius:5px;font-size:10px;padding:1px 6px;cursor:pointer;color:#1E3A5F;font-weight:700}
+.fvs3d-bt:hover{border-color:#E8960A;color:#E8960A}
+.fvs3d-leg{display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px}
+.fvs3d-leg i{width:10px;height:10px;border-radius:2px;display:inline-block}
+
 </style>
 </head>
 <body>
@@ -11024,6 +11030,145 @@ function fvsInjetarAviso(forcar){
 })();
 // as FVS chegam depois do destaque da entrada: mostra uma vez quando carregarem
 (function(){ let primeira = true; const _c = fvsCarregar; fvsCarregar = async function(){ await _c(); if (primeira && EMP){ primeira = false; try { fvsInjetarAviso(false); } catch (_){} } }; })();
+
+// ── App Obra · Qualidade (FVS) — B3: 3D COLORIDO PELA SITUAÇÃO ─────────────
+//  Escolhe um serviço (coluna da matriz) → o modelo pinta, pavimento a
+//  pavimento, as peças daquele serviço com a cor da situação da ficha
+//  (mesma regra da célula: a mais crítica manda). Sem ficha = fica como está.
+//  Pavimento do CDE ↔ IfcBuildingStorey pelo nome/código/número; serviço →
+//  classes IFC pelo nome do serviço (e, na falta, pela etapa).
+//  Leitura da estrutura espacial: UMA por modelo (cacheada), como na sugestão
+//  de proteções (app_obra_seg4.js).
+const FVS3D_CLS_ETAPA = {
+  estrutura:         [/^IFCSLAB$/, /^IFCBEAM/, /^IFCCOLUMN/, /^IFCFOOTING/, /^IFCMEMBER/, /^IFCPILE/],
+  vedacao:           [/^IFCWALL/],
+  revestimento:      [/^IFCWALL/, /^IFCCOVERING/],
+  instalacoes:       [/^IFCFLOW/, /^IFCPIPE/, /^IFCDUCT/, /^IFCCABLE/, /^IFCSANITARY/, /^IFCDISTRIBUTION/],
+  impermeabilizacao: [/^IFCSLAB$/, /^IFCCOVERING/, /^IFCROOF/],
+  acabamento:        [/^IFCCOVERING/, /^IFCDOOR/, /^IFCWINDOW/, /^IFCRAILING/],
+  fachada:           [/^IFCWALL/, /^IFCCURTAINWALL/, /^IFCPLATE/, /^IFCWINDOW/],
+  outro:             [/^IFCWALL/, /^IFCSLAB$/, /^IFCBEAM/, /^IFCCOLUMN/, /^IFCCOVERING/]
+};
+// palavras do serviço que valem mais que a etapa
+const FVS3D_CLS_SERV = [
+  [/f[oô]rma|arma[cç][aã]o|concret|estrutur/i, FVS3D_CLS_ETAPA.estrutura],
+  [/alvenaria|bloco|veda[cç]/i,               [/^IFCWALL/]],
+  [/reboco|emboço|chapisco|reves/i,           [/^IFCWALL/, /^IFCCOVERING/]],
+  [/contrapiso|regulariza/i,                  [/^IFCSLAB$/, /^IFCCOVERING/]],
+  [/imperme/i,                                FVS3D_CLS_ETAPA.impermeabilizacao],
+  [/esquadria|janela|porta/i,                 [/^IFCDOOR/, /^IFCWINDOW/]],
+  [/forro|gesso/i,                            [/^IFCCOVERING/]],
+  [/piso|cer[aâ]mic|porcelanat/i,             [/^IFCCOVERING/, /^IFCSLAB$/]],
+  [/fachada|pele de vidro|curtain/i,          FVS3D_CLS_ETAPA.fachada],
+  [/hidr|el[eé]tric|instala|esgoto|g[aá]s/i,  FVS3D_CLS_ETAPA.instalacoes]
+];
+function fvs3dClasses(m){
+  for (const [re, cls] of FVS3D_CLS_SERV) if (re.test(m.servico || '')) return cls;
+  return FVS3D_CLS_ETAPA[m.etapa] || FVS3D_CLS_ETAPA.outro;
+}
+const _fvsNorm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[º°ª]/g, '').replace(/\s+/g, ' ').trim();
+// storey do modelo → pavimento do CDE (código, nome ou mesmo número + mesma palavra)
+function fvs3dPavDoStorey(nome){
+  const n = _fvsNorm(nome), num = (n.match(/\d+/) || [])[0];
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista');
+  let p = pavs.find(p => p.nome && _fvsNorm(p.nome) === n) || pavs.find(p => p.codigo && _fvsNorm(p.codigo) === n);
+  if (p) return p;
+  p = pavs.find(p => p.nome && n.includes(_fvsNorm(p.nome))) || pavs.find(p => p.codigo && p.codigo.length >= 3 && n.includes(_fvsNorm(p.codigo)));
+  if (p) return p;
+  if (num){
+    const pal = n.replace(/\d+/g, '').replace(/PAVIMENTO|PAV\.?|ANDAR/g, '').trim().split(' ')[0] || '';
+    const cand = pavs.filter(p => { const pn = _fvsNorm(p.nome), pc = _fvsNorm(p.codigo);
+      return ((pn.match(/\d+/) || [])[0] === num || (pc.match(/\d+/) || [])[0] === num) && (!pal || pn.includes(pal) || pc.includes(pal[0])); });
+    if (cand.length === 1) return cand[0];
+  }
+  return null;
+}
+var FVS3D_MAPA = null;   // { chave, dono: [Map(id → pavId)], semPar: [nomes] }
+async function fvs3dMapa(){
+  const chave = F3D.modelos.map(m => m.arquivoId).join('|') + '#' + (CDE_PAVS || []).length;
+  if (FVS3D_MAPA && FVS3D_MAPA.chave === chave) return FVS3D_MAPA;
+  const ESP = new Set(['IFCPROJECT','IFCSITE','IFCBUILDING','IFCBUILDINGSTOREY','IFCSPACE']);
+  const dono = [], semPar = new Set();
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const md = F3D.modelos[mi].model, mapa = new Map(); dono[mi] = mapa; if (!md) continue;
+    let raw = null; try { raw = await md.getSpatialStructure(); } catch (_){}
+    if (!raw) continue;
+    const storeys = [];
+    const folhas = (inst, acc) => { for (const cn of (inst.children || [])){ const c = String(cn.category || '').toUpperCase();
+      for (const ch of (cn.children || [])){ if (ESP.has(c)) folhas(ch, acc); else if (ch.localId != null) acc.push(ch.localId); } } };
+    const walk = (inst, tipoPai) => {
+      if (String(tipoPai).toUpperCase() === 'IFCBUILDINGSTOREY' && inst.localId != null){ const acc = []; folhas(inst, acc); storeys.push({ id:inst.localId, ids:acc }); return; }
+      for (const cn of (inst.children || [])) for (const ch of (cn.children || [])) walk(ch, cn.category);
+    };
+    for (const inst of (raw.children || [])) walk(inst, raw.category);
+    const nm = {}, sids = storeys.map(s => s.id);
+    for (let p = 0; p < sids.length; p += 400){
+      let da = []; try { da = await md.getItemsData(sids.slice(p, p + 400), { attributesDefault:true, relationsDefault:{ attributes:false, relations:false } }); } catch (_){}
+      (da || []).forEach(d => { const lid = d && d._localId && d._localId.value; if (lid != null) nm[lid] = String((d.Name && d.Name.value) || (d.LongName && d.LongName.value) || ''); });
+    }
+    storeys.forEach(s => { const pc = fvs3dPavDoStorey(nm[s.id]); if (!pc){ if (nm[s.id]) semPar.add(nm[s.id]); return; } s.ids.forEach(id => mapa.set(id, pc.id)); });
+  }
+  FVS3D_MAPA = { chave, dono, semPar:[...semPar] };
+  return FVS3D_MAPA;
+}
+async function fvs3dGarantir(){
+  if (F3D && F3D.vivo && F3D.modelos.length) return true;
+  segBarraInfo('Abrindo o modelo 3D…', '');
+  try { await f3dModo(true); } catch (_){}
+  for (let k = 0; k < 120 && !(F3D && F3D.vivo && F3D.modelos.length); k++) await new Promise(r => setTimeout(r, 250));
+  return !!(F3D && F3D.vivo && F3D.modelos.length);
+}
+var FVS3D_ATIVO = null;   // modelo de FVS pintado agora
+async function fvs3dColorir(modId, soInspId){
+  const m = FVS_MODELOS.find(x => x.id === modId); if (!m) return;
+  segFechar();
+  if (!(await fvs3dGarantir())){ segBarraInfo('Não foi possível abrir o modelo 3D — abra um modelo pelo menu e tente de novo.', ''); return; }
+  segBarraInfo('Pintando ' + esc(m.servico) + ' no modelo…', '');
+  const mp = await fvs3dMapa();
+  // situação por pavimento (a mais crítica)
+  const sitPav = {};
+  FVS_INSP.filter(x => x.modelo_id === modId && x.pavimento_id && (!soInspId || x.id === soInspId)).forEach(x => {
+    const a = sitPav[x.pavimento_id]; if (!a || FVS_SIT[x.situacao].ord > FVS_SIT[a].ord) sitPav[x.pavimento_id] = x.situacao; });
+  const grupos = {};   // situação → porMod
+  const cls = fvs3dClasses(m);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const md = F3D.modelos[mi].model; if (!md) continue;
+    let ids = []; try { ids = Object.values(await md.getItemsOfCategories(cls) || {}).flat(); } catch (_){}
+    ids.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv]; if (!s) return;
+      const g = (grupos[s] = grupos[s] || {}); (g[mi] = g[mi] || []).push(id); });
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  let total = 0;
+  for (const s of Object.keys(grupos)) total += await B3.colorirGrupo(F3D, grupos[s], parseInt(FVS_SIT[s].cor.slice(1), 16));
+  FVS3D_ATIVO = modId;
+  const semMapa = Object.keys(sitPav).filter(pid => !Object.values(grupos).some(g => Object.keys(g).some(mi => g[mi].some(id => mp.dono[mi].get(id) === pid))));
+  const leg = Object.keys(FVS_SIT).filter(s => grupos[s]).map(s => '<span class="fvs3d-leg"><i style="background:' + FVS_SIT[s].cor + '"></i>' + FVS_SIT[s].rot + '</span>').join('');
+  const info = '<b>' + esc(m.servico) + '</b> · ' + (total ? total + ' peça(s) ' + leg : 'nenhuma peça deste serviço nos pavimentos com ficha')
+    + (semMapa.length ? ' · <span title="' + esc(semMapa.map(segPavNome).join(', ')) + '">⚠ ' + semMapa.length + ' pavimento(s) sem par no modelo</span>' : '');
+  segBarraInfo(info, '<button onclick="fvsPainel()">Matriz</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
+  if (soInspId && total){ const pm = Object.assign({}, ...Object.values(grupos)); try { await B3.enquadrarIds(F3D, pm); } catch (_){} }
+}
+async function fvs3dLimpar(){ FVS3D_ATIVO = null; try { await B3.limparFiltro(F3D); } catch (_){} try { segSairModo(); } catch (_){} }
+
+// ── Ganchos na matriz e na ficha ─────────────────────────────────────────────
+(function(){
+  const _mz = fvsMatriz;
+  fvsMatriz = function(){
+    _mz();
+    document.querySelectorAll('.fvs-mtz thead th:not(.pv)').forEach((th, k) => {
+      const usados = new Set(FVS_INSP.map(x => x.modelo_id));
+      const mods = FVS_MODELOS.filter(m => (m.ativo || usados.has(m.id)) && (!_fvsFiltro.etapa || m.etapa === _fvsFiltro.etapa));
+      const m = mods[k]; if (!m) return;
+      th.insertAdjacentHTML('beforeend', '<button class="fvs3d-bt" title="Pintar ' + esc(m.servico) + ' no modelo 3D" onclick="fvs3dColorir(\'' + m.id + '\')">🧊 3D</button>');
+    });
+  };
+  const _f = fvsFicha;
+  fvsFicha = function(id){
+    _f(id);
+    const x = FVS_INSP.find(i => i.id === id), ft = document.querySelector('#segOv .ft');
+    if (x && x.pavimento_id && ft) ft.firstElementChild.insertAdjacentHTML('afterend', '<button class="b2" onclick="fvs3dColorir(\'' + x.modelo_id + '\',\'' + id + '\')">🧊 Ver no 3D</button>');
+  };
+})();
 
 </script>
 <script src="auria_ajuda.js"></script>
