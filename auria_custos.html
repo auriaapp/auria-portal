@@ -108,6 +108,7 @@
   .st-enviada{background:var(--accent);color:#231703}.st-recebida{background:rgba(183,121,31,.15);color:var(--warn)}
   .st-encaminhada{background:rgba(26,90,150,.13);color:var(--navy)}.st-paga{background:rgba(30,132,73,.13);color:var(--ok)}
   .st-cancelada{background:var(--panel2);color:var(--mut)}
+  .st-devolvida{background:rgba(232,150,10,.16);color:#7C3E06}.st-recusada{background:rgba(192,57,43,.12);color:#A93226}
   .mini{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:4px 9px;font-size:11.5px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;font-family:inherit;line-height:1.3}
   .mini:hover{border-color:var(--accent)}
   .mini.go{background:var(--navy);color:#fff;border-color:var(--navy)}.mini.go:hover{background:#16304f}
@@ -242,7 +243,7 @@
       <select id="fSt" hidden onchange="render()">
         <option value="">Todos</option><option value="enviada">Enviada</option>
         <option value="recebida">Recebida</option><option value="encaminhada">Encaminhada</option>
-        <option value="paga">Paga</option><option value="cancelada">Cancelada</option>
+        <option value="paga">Paga</option><option value="devolvida">Devolvida</option><option value="recusada">Recusada</option><option value="cancelada">Cancelada</option>
       </select>
       <input class="cd-busca" id="fBusca" placeholder="&#128269; NF, projetista, empreendimento&hellip;" oninput="render()">
     </div>
@@ -446,7 +447,7 @@ function logoGrupoRender(el, g, escf){
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function brl(v){ return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function dbr(s){ if(!s)return '—'; var p=String(s).slice(0,10).split('-'); return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s; }
-function stLbl(s){ return {enviada:'Enviada',recebida:'Recebida',encaminhada:'Encaminhada',paga:'Paga',cancelada:'Cancelada'}[s]||s; }
+function stLbl(s){ return {enviada:'Enviada',recebida:'Recebida',encaminhada:'Encaminhada',paga:'Paga',devolvida:'Devolvida',recusada:'Recusada',cancelada:'Cancelada'}[s]||s; }
 
 
 // Item 126: marca o último acesso deste usuário (usuarios_auria.ultimo_acesso).
@@ -548,7 +549,7 @@ function barras(el, mapa){
 }
 
 // ── faixa: contadores por status (o filtro de status é o clique no chip) ──
-const ST_ORD={enviada:0,recebida:1,encaminhada:2,paga:3,cancelada:4};
+const ST_ORD={enviada:0,recebida:1,encaminhada:2,paga:3,devolvida:4,recusada:5,cancelada:6};
 function finChip(st){ $('fSt').value = ($('fSt').value===st) ? '' : st; render(); }
 function finEmpresa(nome){ $('fEmpc').value=nome; popEmpOptions(); render(); }
 let SIGLAS={};   // nome da construtora → sigla cadastrada (item 44)
@@ -571,7 +572,7 @@ function renderStrip(rows){
   const chip=(k,cls,lbl)=>{ const g=grp[k]||{n:0,v:0}; if(!g.n && k!=='enviada') return '';
     return `<span class="cd-chip ${cls}${st===k?' on':''}" onclick="finChip('${k}')" title="Clique para filtrar por este status">${g.n} ${lbl} · ${brl(g.v)}</span>`; };
   $('fChips').innerHTML = chip('enviada','acc-sol','enviada'+((grp.enviada||{}).n===1?'':'s'))+chip('recebida','warn','recebida'+((grp.recebida||{}).n===1?'':'s'))
-    +chip('encaminhada','navy','encaminhada'+((grp.encaminhada||{}).n===1?'':'s'))+chip('paga','ok','paga'+((grp.paga||{}).n===1?'':'s'))+chip('cancelada','mut','cancelada'+((grp.cancelada||{}).n===1?'':'s'));
+    +chip('encaminhada','navy','encaminhada'+((grp.encaminhada||{}).n===1?'':'s'))+chip('paga','ok','paga'+((grp.paga||{}).n===1?'':'s'))+chip('devolvida','mut','devolvida'+((grp.devolvida||{}).n===1?'':'s'))+chip('recusada','mut','recusada'+((grp.recusada||{}).n===1?'':'s'))+chip('cancelada','mut','cancelada'+((grp.cancelada||{}).n===1?'':'s'));
   const empc=$('fEmpc').value;
   $('fCod').textContent = base.length+' NF'+(base.length!==1?'S':'')+(empc?' · '+empc.toUpperCase():'');
   renderRail();
@@ -581,7 +582,9 @@ function render(){
   const stSel=$('fSt').value;
   $('fSt').value=''; const todas=filtradas(); $('fSt').value=stSel;
   renderStrip(todas);
-  const rows=filtradas().sort((a,b)=>(ST_ORD[a.status]??9)-(ST_ORD[b.status]??9) || String(b.criado_em||'').localeCompare(String(a.criado_em||'')));
+  // fora do fluxo (devolvida/recusada/cancelada) não entra em KPI nem BI — só aparecem quando o chip do status é clicado
+  const FORA=['devolvida','recusada','cancelada'];
+  const rows=filtradas().filter(n=>stSel||!FORA.includes(n.status)).sort((a,b)=>(ST_ORD[a.status]??9)-(ST_ORD[b.status]??9) || String(b.criado_em||'').localeCompare(String(a.criado_em||'')));
   // KPIs
   $('kNotas').textContent=rows.length;
   $('kValor').textContent=brl(rows.reduce((s,n)=>s+Number(n.valor||0),0));
@@ -611,6 +614,10 @@ function render(){
     } else if(n.status==='paga'){
       acoes.push(`<button class="mini" title="Desfazer (voltar para Encaminhada)" onclick="mudar('${n.id}','encaminhada')">↩ Voltar</button>`);
     }
+    if(['enviada','recebida'].includes(n.status)){
+      acoes.push(`<button class="mini" title="Devolver ao projetista para corrigir e reenviar (a parcela continua autorizada)" onclick="nfAcao('${n.id}','devolver')">↩ Devolver</button>`);
+      acoes.push(`<button class="mini" title="Recusar a NF (a parcela volta para a faturar)" onclick="nfAcao('${n.id}','recusar')">✕ Recusar</button>`);
+    }
     if(n.contrato_id) acoes.push(`<button class="mini" title="Resumo do contrato (todas as parcelas)" onclick="abrirResumoContrato('${n.contrato_id}')">📋</button>`);
     // Item 40 fase 2: NF que chegou pelo link público → vincular a uma parcela do contrato (ou desfazer)
     if(!n.parcela_id&&!n.contrato_id&&n.status!=='cancelada') acoes.push(`<button class="mini" title="Vincular esta NF a uma parcela de contrato" onclick="vincAbrir('${n.id}')">🔗 Vincular</button>`);
@@ -619,7 +626,7 @@ function render(){
       <td class="emp" title="${esc(n.construtora||'')}">${esc(n.empreendimento)}${n.origem==='externa'&&!n.parcela_id?' <span class="st" style="background:rgba(232,150,10,.16);color:#7C3E06" title="Enviada pelo link público, sem contrato/parcela vinculada">sem contrato</span>':(n.origem==='externa'?' <span class="st" style="background:rgba(59,130,246,.14);color:#1E40AF" title="Enviada pelo link público e vinculada a uma parcela pelo financeiro">vinculada</span>':'')}</td><td class="mono">${esc(n.disciplina||'—')}</td><td title="${esc(n.fornecedor_cnpj?('CNPJ '+n.fornecedor_cnpj):'')}">${esc(n.projetista||'—')}</td>
       <td class="mono" title="${esc(n.parcela_txt||'')}">${nfParcLbl(n)}</td><td class="num" title="${esc(n.conteudo||'')}">${n.nf_numero?('NF '+esc(n.nf_numero)):'—'}</td>
       <td class="num">${brl(n.valor)}</td><td class="mono">${dbr(n.emitida_em)}</td>
-      <td><span class="st st-${n.status}">${stLbl(n.status)}</span></td>
+      <td><span class="st st-${n.status}">${stLbl(n.status)}</span>${n.acao_motivo?`<div class="cd-hint" style="max-width:180px;white-space:normal">${esc(n.acao_motivo)}</div>`:''}</td>
       <td style="white-space:nowrap">${n.pdf_path?`<a class="mini" onclick="verPDF('${esc(n.pdf_path)}')" title="Visualizar em nova aba">📄 Ver</a> <a class="mini" onclick="baixarPDF('${esc(n.pdf_path)}','NF ${esc(n.nf_numero||'')}.pdf')" title="Baixar">⬇</a>`:'—'}</td>
       <td>${acoes.join(' ')||'—'}</td>
     </tr>`;
@@ -658,6 +665,19 @@ async function baixarPDF(path, nome){
     if(error) throw error;
     const a=document.createElement('a'); a.href=data.signedUrl; document.body.appendChild(a); a.click(); a.remove();
   }catch(e){ alert('Não foi possível baixar o PDF: '+(e.message||e)); }
+}
+
+async function nfAcao(id, acao){
+  const txt={devolver:'Devolver esta NF ao projetista para correção?',recusar:'Recusar esta NF? A parcela volta para "a faturar".',cancelar:'Apagar (cancelar) esta NF? O registro e o PDF ficam guardados para auditoria.'}[acao];
+  const motivo=prompt(txt+'\n\nMotivo (vai no e-mail ao projetista):');
+  if(motivo===null) return;
+  if(!motivo.trim()){ alert('Informe o motivo.'); return; }
+  try{
+    const { error } = await sb.rpc('nf_acao',{p_nf:id,p_acao:acao,p_motivo:motivo.trim()});
+    if(error) throw error;
+    const nf=NFS.find(x=>x.id===id); if(nf){ nf.status={devolver:'devolvida',recusar:'recusada',cancelar:'cancelada'}[acao]; nf.acao_motivo=motivo.trim(); }
+    render();
+  }catch(e){ alert('Erro: '+(e.message||e)); }
 }
 
 async function mudar(id, novo){

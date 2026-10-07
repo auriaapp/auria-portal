@@ -1150,7 +1150,12 @@ async function showContratos(){
   NF_POR_PARCELA = {};
   try{
     const { data: minhasNfs } = await sb.rpc('nf_minhas', {});
-    (minhasNfs||[]).forEach(function(n){ NF_POR_PARCELA[n.parcela_id]=n; });
+    // NF ativa tem prioridade; devolvida/recusada só aparece se não houver outra (mostra o motivo); cancelada some
+    (minhasNfs||[]).forEach(function(n){
+      if(n.status==='cancelada') return;
+      var fora=n.status==='devolvida'||n.status==='recusada', at=NF_POR_PARCELA[n.parcela_id];
+      if(!at || (!fora && (at.status==='devolvida'||at.status==='recusada'))) NF_POR_PARCELA[n.parcela_id]=n;
+    });
   }catch(e){ console.error('nf_minhas:', e); }
   // Item 77d: parcelas cujo marco de medição concluiu no Prevision (pode solicitar faturamento)
   P_LIBERAVEIS = {};
@@ -1159,6 +1164,15 @@ async function showContratos(){
   atualizarBadgeContratos();
 }
 var NF_POR_PARCELA = {}, P_LIBERAVEIS = {};
+async function pCancelarNF(id){
+  const motivo=prompt('Cancelar esta NF? Você poderá enviar uma nova em seguida.\n\nMotivo:');
+  if(motivo===null) return;
+  if(!motivo.trim()){ alert('Informe o motivo.'); return; }
+  const { error } = await sb.rpc('nf_acao',{p_nf:id,p_acao:'cancelar',p_motivo:motivo.trim()});
+  if(error){ alert('Erro: '+error.message); return; }
+  alert('NF cancelada. Envie a nova NF pela parcela.');
+  showContratos();
+}
 async function pVerNF(path){
   try{
     const { data, error } = await sb.storage.from('notas-fiscais').createSignedUrl(path, 120);
@@ -1224,6 +1238,7 @@ function renderContratosProjetista(){
             const acoes = [];
             if(podeSolic) acoes.push(`<button class="pmini warn" onclick="abrirSolicitar('${p.id}','${c._ci}')">💵 Solicitar</button>`);
             if(p.status==='autorizada') acoes.push(`<button class="pmini warn" onclick="abrirEnviarNF('${p.id}','${c._ci}')">📤 Enviar NF</button>`);
+            if(nf&&nf.status==='enviada') acoes.push(`<button class="pmini" title="Enviou errado? Cancele antes do financeiro receber e envie de novo" onclick="pCancelarNF('${nf.id}')">✕ Cancelar NF</button>`);
             if(nf&&nf.pdf_path){
               acoes.push(`<button class="pmini" onclick="pVerNF('${escH(nf.pdf_path)}')" title="Visualizar em nova aba">📄 NF</button>`);
               acoes.push(`<button class="pmini" onclick="pBaixarNF('${escH(nf.pdf_path)}','NF ${escH(nf.nf_numero||'')}.pdf')" title="Baixar">⬇</button>`);
@@ -1233,7 +1248,7 @@ function renderContratosProjetista(){
               <td>${escH(p.descricao||'—')}</td>
               <td>${pBRL(p.valor)}</td>
               <td>${pFmtDt(p.vencimento)||'—'}</td>
-              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${lib?`<span class="pctr-st pst-pg" style="margin-left:4px" title="Marco de medição concluído no cronograma (${escH(lib.tarefa||'')}) — solicite o faturamento">✔ marco concluído</span>`:''}${nf?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">${nf.emitida_em?('Fat. '+pFmtDt(nf.emitida_em)):''}${nf.nf_numero?(' · NF '+escH(nf.nf_numero)):''}</div>`:''}</td>
+              <td><span class="pctr-st ${pClsSt(p.status)}">${pLblSt(p.status)}</span>${lib?`<span class="pctr-st pst-pg" style="margin-left:4px" title="Marco de medição concluído no cronograma (${escH(lib.tarefa||'')}) — solicite o faturamento">✔ marco concluído</span>`:''}${nf?`<div style="font-size:10px;color:#94A3B8;margin-top:2px">${nf.emitida_em?('Fat. '+pFmtDt(nf.emitida_em)):''}${nf.nf_numero?(' · NF '+escH(nf.nf_numero)):''}</div>`:''}${nf&&(nf.status==='devolvida'||nf.status==='recusada')?`<div style="font-size:11px;color:#A93226;margin-top:3px;font-weight:600">NF ${nf.status==='devolvida'?'devolvida para correção':'recusada'}${nf.acao_motivo?': '+escH(nf.acao_motivo):''}</div>`:''}</td>
               <td>${acoes.join(' ')}</td>
             </tr>`;
           }).join(''):'<tr><td colspan="6" style="text-align:center;color:#94A3B8;padding:14px">Sem parcelas definidas.</td></tr>'}
@@ -1287,7 +1302,7 @@ async function abrirEnviarNF(parcId, ctrIdx){
   document.getElementById('nf-numero').value='';
   document.getElementById('nf-valor').value = (p&&p.valor)?p.valor:'';
   // NF única para várias parcelas: outras AUTORIZADAS do mesmo contrato, ainda sem NF.
-  const outras=(c.parcelas_auria||[]).filter(x=>x.id!==parcId && x.status==='autorizada' && !(NF_POR_PARCELA&&NF_POR_PARCELA[x.id]));
+  const outras=(c.parcelas_auria||[]).filter(x=>x.id!==parcId && x.status==='autorizada' && !(NF_POR_PARCELA&&NF_POR_PARCELA[x.id]&&!['devolvida','recusada'].includes(NF_POR_PARCELA[x.id].status)));
   const no=document.getElementById('nf-outras');
   if(outras.length){
     no.style.display='block';
