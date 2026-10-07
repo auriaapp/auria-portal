@@ -760,6 +760,18 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .dica-ref{display:inline-block;font-family:ui-monospace,monospace;font-size:10.5px;color:#1E3A5F;background:#E0E7FF;border-radius:4px;padding:0 5px;white-space:nowrap}
 .dica-fonte{font-size:10.5px;color:#92400E;opacity:.8;margin-top:2px}
 
+/* C2 — inspeções de segurança */
+.fvs-mtz td.c span.ins-venc{outline:2px dashed #C0392B;outline-offset:2px}
+.fvs-dica{display:block;color:#7C4A03;background:#FFFBEB;border-radius:5px;padding:3px 6px;margin-top:4px;font-size:11.5px}
+.fvs-grav{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0 0 26px;font-size:12px}
+.fvs-grav>span{font-weight:700;color:#334155}
+.fvs-grav button{border:1px solid #CBD5E1;background:#fff;border-radius:6px;padding:5px 9px;font-size:12px;font-weight:700;cursor:pointer;min-height:32px}
+.fvs-grav button.leve.on{background:#CA8A04;border-color:#CA8A04;color:#fff}
+.fvs-grav button.grave.on{background:#EA580C;border-color:#EA580C;color:#fff}
+.fvs-grav button.grave_iminente.on{background:#B91C1C;border-color:#B91C1C;color:#fff}
+.fvs-grav button.interd{background:#B91C1C!important;border-color:#B91C1C!important;color:#fff!important}
+.fvs-grav em.al{font-style:normal;color:#B91C1C;font-weight:700}
+
 </style>
 </head>
 <body>
@@ -10693,10 +10705,13 @@ const FVS_SIT = {
 };
 const FVS_ETAPAS = { estrutura:'Estrutura', vedacao:'Vedação', revestimento:'Revestimento', instalacoes:'Instalações', impermeabilizacao:'Impermeabilização', acabamento:'Acabamento', fachada:'Fachada', outro:'Outro' };
 function fvsPodeAbrir(){ return ['eng_chefe','coord_campo','equipe_campo'].includes(segMeuNivel()); }
+// FVS e inspeções de segurança dividem as tabelas (coluna tipo); a Qualidade só vê FVS
+function fvsSoFvs(l){ return (l || []).filter(x => x.tipo !== 'seguranca'); }
+function fvsPodeEditar(x){ return x && x.tipo === 'seguranca' ? ['seguranca','eng_chefe'].includes(segMeuNivel()) : fvsPodeAbrir(); }
 async function fvsCarregar(){
   FVS_MODELOS = []; FVS_INSP = [];
   if (!EMP) return;
-  const m = await sb.from('fvs_modelo_auria').select('id,codigo,servico,etapa,nivel_local,duas_aprovacoes,it_id,itens,revisao,ativo').eq('grupo_id', EMP.empresa_id).order('codigo');
+  const m = await sb.from('fvs_modelo_auria').select('id,codigo,servico,etapa,nivel_local,duas_aprovacoes,it_id,itens,revisao,ativo,tipo,periodicidade_dias').eq('grupo_id', EMP.empresa_id).order('codigo');
   if (m.error){ console.warn('fvs_modelo_auria indisponível:', m.error.message || m.error); return; }
   FVS_MODELOS = m.data || [];
   const i = await sb.from('fvs_inspecao_auria').select('*').eq('empreendimento_id', EMP.id).order('aberta_em', { ascending:false });
@@ -10720,6 +10735,7 @@ function fvsPainel(){
 }
 function fvsMatriz(){
   const f = _fvsFiltro, corpo = $('fvsCorpo'); if (!corpo) return;
+  const FVS_MODELOS = fvsSoFvs(window.FVS_MODELOS), FVS_INSP = fvsSoFvs(window.FVS_INSP);
   if (!FVS_MODELOS.length){
     corpo.innerHTML = '<div class="hint" style="padding:14px">O grupo ainda não tem modelos de FVS. A Qualidade cadastra em <b>Padrões do Grupo › Qualidade</b> (há modelos de partida do Auria para importar).</div>';
     return;
@@ -10743,7 +10759,7 @@ function fvsMatriz(){
 }
 function fvsCelulaVer(modId, pavId){
   const m = FVS_MODELOS.find(x => x.id === modId), p = fvsPavs().find(x => x.id === pavId);
-  const lista = FVS_INSP.filter(x => x.modelo_id === modId && x.pavimento_id === pavId);
+  const lista = fvsSoFvs(FVS_INSP).filter(x => x.modelo_id === modId && x.pavimento_id === pavId);
   if (!lista.length && fvsPodeAbrir() && m.nivel_local === 'pavimento'){ fvsNova(modId, pavId); return; }
   segOv('<div class="hd"><b>' + esc(m.servico) + ' · ' + esc(cdePavLabel(p)) + '</b><p class="cod">' + esc(m.codigo) + '</p></div><div class="ls">'
     + (lista.length ? lista.map(x => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + FVS_SIT[x.situacao].cor + '!important" onclick="fvsFicha(\'' + x.id + '\')">'
@@ -10798,8 +10814,8 @@ function fvsFicha(id){
 (function(){
   const _m = obraModulosHtml;
   obraModulosHtml = function(){
-    const ag = FVS_INSP.filter(x => x.situacao === 'aguardando').length, rep = FVS_INSP.filter(x => x.situacao === 'reprovada').length;
-    const sub = rep ? rep + ' reprovada(s)' : ag ? ag + ' aguardando aprovação' : FVS_INSP.length ? FVS_INSP.length + ' ficha(s)' : 'matriz pavimento × serviço';
+    const F = fvsSoFvs(FVS_INSP), ag = F.filter(x => x.situacao === 'aguardando').length, rep = F.filter(x => x.situacao === 'reprovada').length;
+    const sub = rep ? rep + ' reprovada(s)' : ag ? ag + ' aguardando aprovação' : F.length ? F.length + ' ficha(s)' : 'matriz pavimento × serviço';
     return _m().replace(/(onclick="obraModulo\('qualidade'\)"[\s\S]*?<span>)em construção(<\/span>)/, '$1' + sub + '$2');
   };
   const _o = obraModulo;
@@ -10836,18 +10852,18 @@ function fvsFicha(id){
   const x = FVS_INSP.find(i => i.id === id); if (!x) return;
   const m = FVS_MODELOS.find(i => i.id === x.modelo_id) || {};
   FVS_ABERTA = id;
-  const editavel = fvsPodeAbrir() && ['aberta','em_verificacao'].includes(x.situacao);
-  FVS_RASC = (x.itens || []).map(t => ({ resultado:t.resultado || null, obs:t.obs || '', fotos:(t.fotos || []).slice() }));
+  const editavel = fvsPodeEditar(x) && ['aberta','em_verificacao'].includes(x.situacao), SEGI = x.tipo === 'seguranca';
+  FVS_RASC = (x.itens || []).map(t => ({ resultado:t.resultado || null, obs:t.obs || '', fotos:(t.fotos || []).slice(), gravidade:t.gravidade || null }));
   const feitos = FVS_RASC.filter(r => r.resultado).length;
   let acoes = '';
-  if (editavel) acoes = '<button class="b2" onclick="fvsSalvarRasc(\'' + id + '\')">Salvar rascunho</button><button class="b1" id="segOk" onclick="fvsEnviar(\'' + id + '\')">Enviar</button>';
+  if (editavel) acoes = '<button class="b2" onclick="fvsSalvarRasc(\'' + id + '\')">Salvar rascunho</button><button class="b1" id="segOk" onclick="fvsEnviar(\'' + id + '\')">' + (SEGI ? 'Concluir inspeção' : 'Enviar') + '</button>';
   else if (x.situacao === 'aguardando' && fvsPodeAprovar()) acoes = '<button class="b2" onclick="fvsReprovarForm(\'' + id + '\')">Reprovar</button><button class="b1" id="segOk" onclick="fvsAprovar(\'' + id + '\')">' + (m.duas_aprovacoes && !x.aprov1_nome ? 'Aprovar (1ª de 2)' : 'Aprovar') + '</button>';
-  else if (x.situacao === 'reprovada' && fvsPodeAbrir()) acoes = '<button class="b1" onclick="fvsReinspecionar(\'' + id + '\')">Iniciar reinspeção</button>';
+  else if (x.situacao === 'reprovada' && fvsPodeEditar(x)) acoes = '<button class="b1" onclick="fvsReinspecionar(\'' + id + '\')">Iniciar reinspeção</button>';
   segOv('<div class="hd"><b>' + esc(x.codigo) + ' — ' + esc(x.servico) + '</b><p><span class="seg-chip" style="background:' + FVS_SIT[x.situacao].cor + ';color:#fff">' + FVS_SIT[x.situacao].rot + '</span> '
       + '<span class="cod">' + esc(x.modelo_codigo) + ' · rev. ' + String(x.modelo_revisao).padStart(2,'0') + (x.rodada > 1 ? ' · rodada ' + x.rodada : '') + '</span>'
       + (m.duas_aprovacoes ? ' <span class="seg-chip" style="background:#FEF3E2;color:#7C4A03">2 aprovações</span>' : '') + '</p></div>'
     + '<div class="ls"><div class="seg-det">'
-    + '<div class="seg-kv"><span>Local</span><b>' + esc([segPavNome(x.pavimento_id), x.local_txt].filter(Boolean).join(' › ') || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Local</span><b>' + esc([segPavNome(x.pavimento_id) || (SEGI ? 'Canteiro (obra toda)' : ''), x.frente, x.local_txt].filter(Boolean).join(' › ') || '—') + '</b></div>'
     + (x.situacao === 'reprovada' ? '<div class="fvs-rep"><b>' + (x.reprovado_origem === 'qualidade' ? 'Contestada pela Qualidade' : 'Reprovada') + '</b> · ' + esc(x.reprovado_nome || '') + ' · ' + (x.reprovado_em ? new Date(x.reprovado_em).toLocaleString('pt-BR') : '')
         + (x.reprovado_motivo ? '<div>' + esc(x.reprovado_motivo) + '</div>' : '') + '</div>' : '')
     + (x.aprov1_nome && x.situacao === 'aguardando' ? '<div class="seg-kv"><span>1ª aprovação</span><b>' + esc(x.aprov1_nome) + ' (' + (x.aprov1_nivel === 'eng_chefe' ? 'eng. chefe' : 'coord. de campo') + ') — falta o outro nível</b></div>' : '')
@@ -10856,7 +10872,7 @@ function fvsFicha(id){
     + '<div class="fvs-lista">' + (x.itens || []).map((t, i) => fvsItemHtml(t, i, editavel)).join('') + '</div>'
     + '<div class="seg-kv" style="border:none;margin-top:8px"><span>Histórico</span><b></b></div><div class="prot-hist" id="fvsHist"><div class="hint">Carregando…</div></div>'
     + '<div id="segMsg" class="seg-msg"></div></div></div>'
-    + '<div class="ft"><button class="b2" onclick="fvsPainel()">Matriz</button>' + acoes + '</div>');
+    + '<div class="ft"><button class="b2" onclick="' + (SEGI ? 'segPainel(\'insp\')' : 'fvsPainel()') + '">Matriz</button>' + acoes + '</div>');
   (x.itens || []).forEach((t, i) => { if ((t.fotos || []).length) segFotosHtml(t.fotos, 'fvsF' + i); });
   fvsHistorico(id);
 }
@@ -10864,11 +10880,13 @@ function fvsItemHtml(t, i, ed){
   const r = FVS_RASC[i], res = r.resultado;
   return '<div class="fvs-item' + (res ? ' r-' + res : '') + '" id="fvsIt' + i + '">'
     + '<div class="q"><span class="n">' + (i+1) + '</span><div><b>' + esc(t.item) + '</b>'
-    + '<small>' + [t.metodo, t.tolerancia ? 'tol. ' + t.tolerancia : ''].filter(Boolean).map(esc).join(' · ') + (t.exige_foto ? ' · 📷 exige foto' : '') + '</small></div></div>'
+    + '<small>' + [t.metodo, t.tolerancia ? 'tol. ' + t.tolerancia : ''].filter(Boolean).map(esc).join(' · ') + (t.exige_foto ? ' · 📷 exige foto' : '') + (t.norma_ref ? ' <span class="dica-ref">' + esc(t.norma_ref) + '</span>' : '') + '</small>'
+    + (t.dica ? '<small class="fvs-dica">💡 ' + esc(t.dica) + '</small>' : '') + '</div></div>'
     + (ed ? '<div class="op">' + Object.keys(FVS_RES).map(k => '<button class="' + (res === k ? 'on ' : '') + k + '" onclick="fvsMarcar(' + i + ',\'' + k + '\')">' + FVS_RES[k].rot + '</button>').join('') + '</div>'
           + '<div class="ex"' + (res && res !== 'c' || r.obs || r.fotos.length || t.exige_foto ? '' : ' style="display:none"') + '><input placeholder="Observação' + (res === 'nc' ? ' — o que está errado?' : '') + '" value="' + esc(r.obs) + '" oninput="FVS_RASC[' + i + '].obs=this.value">'
           + '<label class="fvs-foto">📷 ' + (r.fotos.length ? r.fotos.length + ' foto(s) · adicionar' : 'Foto') + '<input type="file" accept="image/*" capture="environment" multiple onchange="fvsFoto(' + i + ',this)"></label></div>'
-        : (res ? '<div class="rs" style="color:' + FVS_RES[res].cor + '">' + FVS_RES[res].rot + (r.obs ? ' — <span style="color:#334155">' + esc(r.obs) + '</span>' : '') + '</div>' : '<div class="rs" style="color:#94A3B8">não verificado</div>'))
+          + (fvsAbertaSeg() ? fvsGravHtml(t, i) : '')
+        : (res ? '<div class="rs" style="color:' + FVS_RES[res].cor + '">' + FVS_RES[res].rot + (r.gravidade ? ' · ' + esc(GRAV_ROT_O[r.gravidade] || r.gravidade) : '') + (r.obs ? ' — <span style="color:#334155">' + esc(r.obs) + '</span>' : '') + '</div>' : '<div class="rs" style="color:#94A3B8">não verificado</div>'))
     + '<div id="fvsF' + i + '"></div></div>';
 }
 function fvsMarcar(i, k){
@@ -10876,6 +10894,7 @@ function fvsMarcar(i, k){
   const el = $('fvsIt' + i); el.className = 'fvs-item r-' + k;
   el.querySelectorAll('.op button').forEach(b => b.classList.toggle('on', b.classList.contains(k)));
   const ex = el.querySelector('.ex'); if (k !== 'c') ex.style.display = '';
+  const gv = el.querySelector('.fvs-grav'); if (gv) gv.style.display = k === 'nc' ? '' : 'none';
   const inp = ex.querySelector('input'); inp.placeholder = 'Observação' + (k === 'nc' ? ' — o que está errado?' : '');
   if (k === 'nc') inp.focus();
   const feitos = FVS_RASC.filter(r => r.resultado).length, tx = $('fvsProgTx');
@@ -10893,7 +10912,7 @@ async function fvsFoto(i, inp){
   } catch (e){ lab.firstChild.textContent = '📷 Foto'; $('segMsg').textContent = e.message || e; }
 }
 async function fvsGravar(id){
-  const { error } = await sb.rpc('fvs_salvar_itens', { p_id:id, p_itens:FVS_RASC.map(r => ({ resultado:r.resultado, obs:(r.obs || '').trim(), fotos:r.fotos })) });
+  const { error } = await sb.rpc('fvs_salvar_itens', { p_id:id, p_itens:FVS_RASC.map(r => ({ resultado:r.resultado, obs:(r.obs || '').trim(), fotos:r.fotos, gravidade:r.gravidade || null })) });
   if (error) throw error;
 }
 async function fvsSalvarRasc(id){
@@ -10908,8 +10927,9 @@ async function fvsEnviar(id){
   if (semFoto.length) return msg('Item(ns) ' + semFoto.join(', ') + ' exigem foto.');
   const semObs = FVS_RASC.map((r, i) => r.resultado === 'nc' && !(r.obs || '').trim() ? i + 1 : null).filter(Boolean);
   if (semObs.length) return msg('Descreva o problema do(s) item(ns) não conforme(s): ' + semObs.join(', ') + '.');
+  if (x.tipo === 'seguranca'){ const sg = FVS_RASC.map((r, i) => r.resultado === 'nc' && !r.gravidade ? i + 1 : null).filter(Boolean); if (sg.length) return msg('Informe a gravidade do(s) item(ns) ' + sg.join(', ') + '.'); }
   const nc = FVS_RASC.filter(r => r.resultado === 'nc').length;
-  if (nc && !confirm(nc + ' item(ns) não conforme(s): a ficha será REPROVADA e a equipe avisada. Continuar?')) return;
+  if (nc && !confirm(nc + ' item(ns) não conforme(s): ' + (x.tipo === 'seguranca' ? 'a inspeção fica REPROVADA e o eng. chefe / coord. de campo são avisados' : 'a ficha será REPROVADA e a equipe avisada') + '. Continuar?')) return;
   const b = $('segOk'); b.disabled = true; b.textContent = 'Enviando…';
   try {
     await fvsGravar(id);
@@ -10974,7 +10994,7 @@ function fvsPend(){ return fvsReprovadas().filter(x => !OBRA_LIDOS.has(fvsChave(
     return h + '<div class="ap-sec obra-grp">Qualidade</div>' + rs.map(x => {
       const lido = OBRA_LIDOS.has(fvsChave(x)), nc = x.itens.filter(t => t.resultado === 'nc').length;
       return '<div class="ap-card seg-card fvs-card" onclick="fvsAbrirAviso(\'' + x.id + '\')">'
-        + '<div class="t"><span class="obra-orig">Qualidade:</span> ' + esc(x.codigo) + ' — ' + esc(x.servico) + ' reprovada</div>'
+        + '<div class="t"><span class="obra-orig">' + (x.tipo === 'seguranca' ? 'Segurança' : 'Qualidade') + ':</span> ' + esc(x.codigo) + ' — ' + esc(x.servico) + ' reprovada</div>'
         + '<div class="m">' + (nc ? nc + ' item(ns) não conforme(s) · ' : '') + esc([segPavNome(x.pavimento_id), x.local_txt].filter(Boolean).join(' › '))
         + (!lido ? ' <span class="seg-chip" style="background:#E8960A;color:#231703">não lido</span>' : '') + '</div></div>';
     }).join('');
@@ -11056,6 +11076,31 @@ function fvsInjetarAviso(forcar){
 })();
 // as FVS chegam depois do destaque da entrada: mostra uma vez quando carregarem
 (function(){ let primeira = true; const _c = fvsCarregar; fvsCarregar = async function(){ await _c(); if (primeira && EMP){ primeira = false; try { fvsInjetarAviso(false); } catch (_){} } }; })();
+
+// ── C2: item de INSPEÇÃO DE SEGURANÇA — gravidade + "Interditar agora" ──────
+const GRAV_ROT_O = { leve:'Leve', grave:'Grave', grave_iminente:'Grave e iminente' };
+function fvsAbertaSeg(){ const x = FVS_INSP.find(i => i.id === FVS_ABERTA); return !!(x && x.tipo === 'seguranca'); }
+function fvsGravHtml(t, i){
+  const r = FVS_RASC[i];
+  return '<div class="fvs-grav"' + (r.resultado === 'nc' ? '' : ' style="display:none"') + '><span>Gravidade</span>'
+    + Object.keys(GRAV_ROT_O).map(k => '<button class="' + k + (r.gravidade === k ? ' on' : '') + '" onclick="fvsGrav(' + i + ',\'' + k + '\')">' + GRAV_ROT_O[k] + '</button>').join('')
+    + (r.gravidade === 'grave_iminente' ? (segSouTecnico() ? '<button class="b1 mini interd" onclick="fvsInterditar(' + i + ')">⛔ Interditar agora</button>' : '<em class="al">risco grave e iminente — avise o técnico de segurança</em>') : '')
+    + (t.gravidade && !r.gravidade ? '<em style="color:#64748B">sugerida: ' + esc(GRAV_ROT_O[t.gravidade] || t.gravidade) + '</em>' : '') + '</div>';
+}
+function fvsGrav(i, k){
+  FVS_RASC[i].gravidade = k;
+  const x = FVS_INSP.find(f => f.id === FVS_ABERTA), el = $('fvsIt' + i), g = el.querySelector('.fvs-grav');
+  g.outerHTML = fvsGravHtml(x.itens[i], i);
+}
+// sugere a interdição: abre o alerta de INTERDIÇÃO já preenchido com o item (o técnico decide)
+async function fvsInterditar(i){
+  const x = FVS_INSP.find(f => f.id === FVS_ABERTA), t = x.itens[i], r = FVS_RASC[i];
+  try { await fvsGravar(x.id); } catch (_){}
+  SEG_ARASC = { nivel:'interdicao', titulo:(t.item || '').slice(0, 120), texto:'Inspeção ' + x.codigo + ' (' + x.servico + '): item não conforme com risco grave e iminente'
+      + (t.norma_ref ? ' — ' + t.norma_ref : '') + (r.obs ? '. ' + r.obs : '') + '.', pavimento_id:x.pavimento_id || '', local_txt:x.frente || x.local_txt || '',
+      valido_ate:'', zona_id:'', pin:null, fotos:[], _fotos:[] };
+  segNovo(null, true);
+}
 
 // ── App Obra · Qualidade (FVS) — B3: 3D COLORIDO PELA SITUAÇÃO ─────────────
 //  Escolhe um serviço (coluna da matriz) → o modelo pinta, pavimento a
@@ -12190,6 +12235,110 @@ function dicasAplicar(){
   new MutationObserver(() => { try { dicasAplicar(); } catch (_){} }).observe(ov, { childList:true, subtree:true }); }; vig(); })();
 // garante a dica já na PRIMEIRA janela aberta (antes de o vigia existir)
 (function(){ const _o = segOv; segOv = function(){ const r = _o.apply(this, arguments); try { dicasAplicar(); } catch (_){} return r; }; })();
+
+// ── App Obra · Segurança — C2: INSPEÇÕES DE SEGURANÇA (NR-18) ───────────────
+//  Motor das FVS (mesmas tabelas, tipo 'seguranca'). Aba "Inspeções" no painel
+//  de Segurança: matriz LOCAL × MODELO com a ÚLTIMA inspeção de cada célula —
+//  cor pela situação; VENCIDA (passou da periodicidade do modelo) em vermelho
+//  tracejado. Linha "Canteiro (obra toda)" p/ inspeções sem pavimento.
+//  Inspeciona/conclui: técnico de segurança (eng. chefe na ausência).
+function insModelos(){ return (FVS_MODELOS || []).filter(m => m.tipo === 'seguranca'); }
+function insInsp(){ return (FVS_INSP || []).filter(x => x.tipo === 'seguranca'); }
+function insPode(){ return ['seguranca','eng_chefe'].includes(segMeuNivel()); }
+function insUltima(modId, pavId){
+  return insInsp().filter(x => x.modelo_id === modId && (x.pavimento_id || '') === (pavId || ''))
+    .sort((a, b) => new Date(b.aberta_em) - new Date(a.aberta_em))[0] || null;
+}
+function insDias(t){ return Math.floor((Date.now() - new Date(t)) / 86400000); }
+function insVencida(m, ult){ return !ult || (m.periodicidade_dias && insDias(ult.enviado_em || ult.aberta_em) > m.periodicidade_dias); }
+function insContaVencidas(){
+  let n = 0; insModelos().filter(m => m.ativo).forEach(m => { const u = insInsp().filter(x => x.modelo_id === m.id); if (u.length && insVencida(m, u.sort((a, b) => new Date(b.aberta_em) - new Date(a.aberta_em))[0])) n++; });
+  return n;
+}
+
+(function(){
+  const _p = segPainel;
+  segPainel = function(aba){
+    if (aba === 'insp'){ insPainel(); return; }
+    _p(aba);
+    const tabs = document.querySelector('#segOv .seg-tabs');
+    if (tabs && !tabs.querySelector('[data-insp]')){
+      const rep = insInsp().filter(x => x.situacao === 'reprovada').length;
+      const b = document.createElement('button'); b.dataset.insp = '1';
+      b.innerHTML = 'Inspeções' + (rep ? ' <b>' + rep + '</b>' : '');
+      b.onclick = () => segPainel('insp');
+      tabs.insertBefore(b, tabs.querySelector('.seg-camada'));
+    }
+  };
+})();
+function insPainel(){
+  segPainel('alertas');
+  document.querySelectorAll('#segOv .seg-tabs button').forEach(b => b.classList.toggle('on', !!b.dataset.insp));
+  document.querySelector('#segOv .box').classList.add('fvs-larga');
+  const mods = insModelos().filter(m => m.ativo || insInsp().some(x => x.modelo_id === m.id));
+  const ls = document.querySelector('#segOv .ls');
+  if (!mods.length){
+    ls.innerHTML = '<div class="hint" style="padding:14px">O grupo ainda não tem modelos de inspeção de segurança. A Segurança cadastra em <b>Padrões do Grupo › Segurança › Modelos de inspeção</b> (há 12 modelos de partida do Auria, com as referências da NR-18).</div>';
+  } else {
+    const linhas = [{ id:'', rot:'Canteiro (obra toda)' }].concat(fvsPavs().map(p => ({ id:p.id, rot:cdePavLabel(p) })));
+    const usadas = new Set(insInsp().map(x => x.pavimento_id || ''));
+    const filtro = window._insSoUsados !== false;
+    const vis = linhas.filter(l => !filtro || l.id === '' || usadas.has(l.id));
+    const nRep = insInsp().filter(x => x.situacao === 'reprovada').length, nVenc = insContaVencidas();
+    ls.innerHTML = '<div class="fvs-filtros"><span class="fvs-leg">'
+      + Object.keys(FVS_SIT).filter(s => s !== 'aguardando').map(s => '<button><i style="background:' + FVS_SIT[s].cor + '"></i>' + (s === 'aprovada' ? 'Conforme' : FVS_SIT[s].rot) + '</button>').join('')
+      + '<button><i style="background:#fff;border:2px dashed #C0392B"></i>Vencida</button></span>'
+      + '<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" style="width:auto"' + (filtro ? ' checked' : '') + ' onchange="window._insSoUsados=this.checked;insPainel()"> só locais já inspecionados</label></div>'
+      + (nRep || nVenc ? '<div class="conc-fvs nok">' + [nRep ? nRep + ' inspeção(ões) com não conformidade' : '', nVenc ? nVenc + ' modelo(s) com periodicidade vencida' : ''].filter(Boolean).join(' · ') + '</div>' : '')
+      + '<div class="fvs-mtz"><table><thead><tr><th class="pv">Local</th>' + mods.map(m => '<th title="' + esc(m.codigo + ' — ' + m.servico) + '"><div>' + esc(m.servico) + '</div><span>' + esc(m.codigo) + ' · ' + (m.periodicidade_dias || '—') + ' d</span></th>').join('') + '</tr></thead><tbody>'
+      + vis.map(l => '<tr><td class="pv">' + esc(l.rot) + '</td>' + mods.map(m => {
+          const u = insUltima(m.id, l.id); if (!u) return '<td class="c" onclick="insCelula(\'' + m.id + '\',\'' + l.id + '\')"></td>';
+          const venc = insVencida(m, u), d = insDias(u.enviado_em || u.aberta_em);
+          return '<td class="c" onclick="insCelula(\'' + m.id + '\',\'' + l.id + '\')"><span class="' + (venc ? 'ins-venc' : '') + '" style="background:' + FVS_SIT[u.situacao].cor + '" title="' + esc(u.codigo + ' · ' + FVS_SIT[u.situacao].rot + ' · há ' + d + ' dia(s)') + '">' + d + 'd</span></td>'; }).join('') + '</tr>').join('')
+      + '</tbody></table></div><div class="hint" style="padding:6px 2px">Cada célula mostra a ÚLTIMA inspeção (dias desde então). ' + (insPode() ? 'Clique numa célula para inspecionar.' : 'Somente consulta.') + '</div>';
+  }
+  document.querySelector('#segOv .ft').innerHTML = '<button class="b2" onclick="segFechar()">Fechar</button>' + (insPode() && mods.length ? '<button class="b1" onclick="insNova()">＋ Inspeção</button>' : '');
+}
+function insCelula(modId, pavId){
+  const m = insModelos().find(x => x.id === modId), lista = insInsp().filter(x => x.modelo_id === modId && (x.pavimento_id || '') === (pavId || '')).sort((a, b) => new Date(b.aberta_em) - new Date(a.aberta_em));
+  if (!lista.length && insPode()){ insNova(modId, pavId); return; }
+  segOv('<div class="hd"><b>' + esc(m.servico) + ' · ' + esc(pavId ? segPavNome(pavId) : 'Canteiro') + '</b><p class="cod">' + esc(m.codigo) + ' · a cada ' + (m.periodicidade_dias || '—') + ' dias</p></div><div class="ls">'
+    + lista.map(x => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + FVS_SIT[x.situacao].cor + '!important" onclick="fvsFicha(\'' + x.id + '\')">'
+      + '<div class="cod">' + esc(x.codigo) + ' <span class="seg-chip" style="background:' + FVS_SIT[x.situacao].cor + ';color:#fff">' + (x.situacao === 'aprovada' ? 'Conforme' : FVS_SIT[x.situacao].rot) + '</span></div>'
+      + '<div class="t">' + esc(x.frente || x.local_txt || '—') + '</div><div class="m">' + esc(x.aberta_nome || '') + ' · ' + new Date(x.aberta_em).toLocaleDateString('pt-BR')
+      + ' · ' + x.itens.filter(t => t.resultado === 'nc').length + ' NC</div></div>').join('')
+    + '</div><div class="ft"><button class="b2" onclick="segPainel(\'insp\')">Voltar</button>' + (insPode() ? '<button class="b1" onclick="insNova(\'' + modId + '\',\'' + pavId + '\')">＋ Nova inspeção</button>' : '') + '</div>');
+}
+function insNova(modId, pavId){
+  if (!insPode()) return;
+  const mods = insModelos().filter(m => m.ativo);
+  segOv('<div class="hd"><b>Nova inspeção de segurança</b><p>O checklist traz a referência da norma e a dica de cada item; não conformidade pede a gravidade.</p></div>'
+    + '<div class="seg-form"><label>Modelo</label><select id="inMod">' + mods.map(m => '<option value="' + m.id + '"' + (m.id === modId ? ' selected' : '') + '>' + esc(m.codigo + ' — ' + m.servico) + ' (' + (m.itens || []).length + ' itens)</option>').join('') + '</select>'
+    + '<div class="seg-g2"><div><label>Local</label><select id="inPav"><option value="">Canteiro (obra toda)</option>' + fvsPavs().map(p => '<option value="' + p.id + '"' + (p.id === pavId ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Frente de serviço (opcional)</label><input id="inFr" maxlength="80" placeholder="Ex.: fachada norte, torre B"></div></div>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'insp\')">Voltar</button><button class="b1" id="segOk" onclick="insAbrir()">Começar inspeção</button></div>');
+}
+async function insAbrir(){
+  const modId = $('inMod').value, pav = $('inPav').value || null, fr = ($('inFr').value || '').trim() || null;
+  const b = $('segOk'); b.disabled = true;
+  try {
+    const c = await sb.rpc('seg_insp_proximo_codigo', { p_emp:EMP.id }); if (c.error) throw c.error;
+    const id = crypto.randomUUID();
+    const { error } = await sb.from('fvs_inspecao_auria').insert({ id, empreendimento_id:EMP.id, tipo:'seguranca', codigo:c.data, modelo_id:modId, pavimento_id:pav, frente:fr, aberta_por:USER.id });
+    if (error) throw error;
+    await fvsCarregar(); fvsFicha(id);
+  } catch (e){ $('segMsg').textContent = 'Não foi possível abrir: ' + (e.message || e); b.disabled = false; }
+}
+// módulo de Segurança na barra direita: avisa inspeção vencida / com NC
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    let h = _m(mod); const v = insContaVencidas(), r = insInsp().filter(x => x.situacao === 'reprovada').length;
+    if (v || r) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (r ? r + ' inspeção(ões) c/ NC' : v + ' inspeção(ões) vencida(s)') + '</span></span>');
+    return h;
+  };
+})();
 
 </script>
 <script src="auria_ajuda.js"></script>

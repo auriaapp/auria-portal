@@ -40,6 +40,7 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
   .card h3{margin:0 0 4px;font-size:14px;color:var(--navy)}
   td.cod{white-space:nowrap}
+  .ins-it{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px}.ins-it input[type=text]{width:100%;box-sizing:border-box}.ins-it .row input[type=text]{flex:1}.ins-it [data-f=dica]{margin-top:6px}
   .fm-it{width:100%}.fm-it input[type=text]{width:100%;box-sizing:border-box}.fm-it td{padding:3px 4px}.fm-it .btn.sec{padding:3px 8px;margin-left:2px}
   .card p.h{margin:0 0 12px;color:var(--mut);font-size:12.5px;line-height:1.5}
   label.l{display:block;font-size:11.5px;font-weight:700;color:var(--txt2);margin:10px 0 4px}
@@ -185,11 +186,13 @@ function telaSeguranca(){
     + (PODE.seguranca ? '<div class="row" style="margin-top:10px"><input type="text" id="tipoNovo" placeholder="Ex.: Trabalho em fachada (balancim)" style="max-width:320px"><button class="btn sec" onclick="addTag(\'_TIPOS\',\'tipoNovo\',\'tipoTags\')">Adicionar</button></div>' : '') + '</div>'
     + '<div class="card"><h3>Checklists das Permissões de Trabalho</h3><p class="h">Um item por linha. É o que o técnico confere em campo para <b>liberar</b> a PT no App Obra. Em branco = checklist padrão do Auria.</p>'
     + '<div class="g2">' + Object.keys(PT_ROT).map(k => '<div><label class="l">' + PT_ROT[k] + '</label><textarea rows="5" data-ptck="' + k + '"' + dis + ' placeholder="(padrão do Auria)">' + esc(((d.pt_checklists || {})[k] || []).join('\n')) + '</textarea></div>').join('') + '</div></div>'
+    + '<div class="card" id="insCard"><h3>Modelos de inspeção de segurança (NR-18)</h3><div id="insCorpo" class="hint">Carregando…</div></div>'
     + '<div class="card"><h3>💡 Dicas do grupo</h3><p class="h">Somam-se às dicas das normas que o App Obra mostra no formulário de cada tipo (zona de risco, PT, proteção coletiva, ocorrência). Uma dica por linha — ex.: o procedimento interno ou a IT do grupo para aquele caso.</p>'
     + '<div class="g2">' + Object.keys(DICA_ROT).map(k => '<div><label class="l">' + DICA_ROT[k] + '</label><textarea rows="3" data-dica="' + k + '"' + dis + ' placeholder="(só as dicas das normas)">' + esc(((d.dicas_extra || {})[k] || []).join('\n')) + '</textarea></div>').join('') + '</div></div>'
     + (PODE.seguranca ? '<div class="row"><button class="btn" id="segSalvar" onclick="salvarSeguranca()">Salvar padrões de segurança</button><span class="msg" id="segMsg"></span></div>' : '')
     + carimbo(PADRAO.seguranca);
   renderTags('_EPIS','epiTags'); renderTags('_TIPOS','tipoTags');
+  insCarregar();
 }
 function renderTags(arr, el){
   $(el).innerHTML = window[arr].map((t,i) => '<span class="tag">' + esc(t) + (PODE.seguranca ? '<button title="Tirar" onclick="window.' + arr + '.splice(' + i + ',1);renderTags(\'' + arr + '\',\'' + el + '\')">×</button>' : '') + '</span>').join('') || '<span class="hint">Nenhum.</span>';
@@ -212,6 +215,150 @@ async function salvarSeguranca(){
   await carregarPadroes(); telaSeguranca(); const m = $('segMsg'); if (m){ m.className = 'msg ok'; m.textContent = 'Salvo. Vale para todas as obras do grupo.'; }
 }
 
+// Modelos de partida das INSPEÇÕES DE SEGURANÇA (C2) — Auria.
+// Item: [o que verificar, referência, dica (paráfrase), gravidade sugerida p/ NC, exige foto]
+// Referências NR-18 conferidas 2026-10-07 no texto compilado gov.br 2026 + Portaria MTE 836/2026.
+// Usado em padroes_grupo.html (importar) — a Segurança do grupo ajusta ao padrão da construtora.
+const SEG_PARTIDA = [
+  { codigo:'INS-QUE-01', servico:'Proteção contra quedas — periferia e aberturas', per:7, itens:[
+    ['Periferia com proteção desde a concretagem da 1ª laje', 'NR-18 18.9.4', 'Obrigatória a partir do início dos serviços para a 1ª laje.', 'grave_iminente', true],
+    ['Guarda-corpo: travessão 1,20 m / intermediário 0,70 m / rodapé ≥ 0,15 m, vãos com tela', 'NR-18 18.9.4.2', 'Meça alturas; confira tela nos vãos e fixação.', 'grave', true],
+    ['Aberturas no piso fechadas (material resistente travado) ou com guarda-corpo', 'NR-18 18.9.2', 'Tampa solta não vale: precisa estar travada ou fixada.', 'grave_iminente', true],
+    ['Poços de elevador com fechamento de toda a abertura', 'NR-18 18.9.3', 'Até a colocação das portas definitivas.', 'grave_iminente', true],
+    ['Proteção contra queda de materiais em todo o perímetro', 'NR-18 18.9.1.1', 'Exigência da Portaria MTE 836/2026; projeto de PLH.', 'grave', false],
+    ['Redes de proteção inspecionadas na semana', 'NR-18 18.9.4.4.5', 'Inspeção semanal de elementos e pontos de fixação.', 'grave', false] ] },
+  { codigo:'INS-ESC-01', servico:'Escadas, rampas e passarelas', per:7, itens:[
+    ['Desníveis acima de 0,40 m com escada ou rampa', 'NR-18 18.8.1', '', 'grave', false],
+    ['Escada coletiva: largura ≥ 0,80 m, degraus ≤ 0,20 m, patamar a cada 2,90 m', 'NR-18 18.8.6.1', '', 'grave', true],
+    ['Escadas e rampas com proteção contra quedas e piso antiderrapante', 'NR-18 18.8.6.1 b/f', '', 'grave', true],
+    ['Rampas com inclinação inferior a 15°', 'NR-18 18.8.2 a', '', 'leve', false],
+    ['Passarela onde há trânsito sobre vão com risco de queda', 'NR-18 18.8.3', '', 'grave', false] ] },
+  { codigo:'INS-AND-01', servico:'Andaimes e plataformas', per:7, itens:[
+    ['Andaime com projeto de PLH (dispensa só torre única < 4× a menor base)', 'NR-18 18.12.2 e 18.12.2.1', '', 'grave', false],
+    ['Guarda-corpo e rodapé em todo o perímetro (exceto face de trabalho)', 'NR-18 18.12.1 d (Portaria 836/2026)', '', 'grave_iminente', true],
+    ['Multidirecional: travessão 1,0–1,2 m, intermediário 0,50 m abaixo, rodapé 0,15 m', 'NR-18 18.12.15.2', 'Regra nova da Portaria MTE 836/2026.', 'grave', true],
+    ['Acesso por escada quando o piso está a mais de 1 m', 'NR-18 18.12.14', '', 'grave', false],
+    ['Montagem/desmontagem por capacitados, com SPIQ e área isolada', 'NR-18 18.12.6', '', 'grave', false],
+    ['Nenhum dispositivo de segurança retirado; sem escada sobre o piso', 'NR-18 18.12.8', '', 'grave_iminente', true] ] },
+  { codigo:'INS-ELV-01', servico:'Elevador de obra', per:7, itens:[
+    ['Cancela em todos os acessos à torre, com no mínimo 1,80 m', 'NR-18 18.11.13', '', 'grave_iminente', true],
+    ['Base da torre fechada em todos os lados até 2,0 m e sinalizada', 'NR-18 18.11.14', '', 'grave', true],
+    ['Intertravamento das proteções funcionando', 'NR-18 18.11.19', '', 'grave_iminente', false],
+    ['Sem pessoas junto com materiais (exceto o previsto com barreira)', 'NR-18 18.11.17', '', 'grave', false],
+    ['Placa com nº máximo de passageiros e carga máxima', 'NR-18 18.11.18 d', '', 'leve', true] ] },
+  { codigo:'INS-GRU-01', servico:'Grua e içamento de cargas', per:7, itens:[
+    ['Área sob carga suspensa isolada e sinalizada', 'NR-18 18.10.1.21', '', 'grave_iminente', true],
+    ['Anticolisão ou sinaleiro quando há interferência entre equipamentos', 'NR-18 18.10.1.22', '', 'grave', false],
+    ['Limitador de momento e anemômetro na cabine funcionando', 'NR-18 18.10.1.26', '', 'grave', false],
+    ['Vento acima de 42 km/h só com análise de risco e PT', 'NR-18 18.10.1.34 a', '', 'grave_iminente', false],
+    ['Operador e sinaleiro capacitados e identificados', 'NR-18 18.14.2', '', 'grave', false] ] },
+  { codigo:'INS-MAQ-01', servico:'Máquinas e serra circular', per:7, itens:[
+    ['Serra circular com projeto, estrutura metálica estável e disco afiado/travado', 'NR-18 18.10.1.5', '', 'grave', true],
+    ['Dispositivo contra aprisionamento do disco e retrocesso da madeira', 'NR-18 18.10.1.5 d', '', 'grave_iminente', true],
+    ['Operadores capacitados para a máquina usada', 'NR-18 18.14.2', '', 'grave', false],
+    ['Abastecimento por trabalhador capacitado e em local apropriado', 'NR-18 18.10.1.9', '', 'grave', false] ] },
+  { codigo:'INS-ELE-01', servico:'Instalações elétricas provisórias', per:7, itens:[
+    ['Aterramento de proteção e laudo de medição em dia', 'NR-18 18.6.7', '', 'grave', false],
+    ['DR instalado conforme as normas técnicas', 'NR-18 18.6.9', '', 'grave', true],
+    ['Quadros: partes vivas inacessíveis, acesso livre, sem objetos guardados', 'NR-18 18.6.10 e 18.6.11', '', 'grave_iminente', true],
+    ['Dispositivos identificados e com bloqueio/sinalização de impedimento', 'NR-18 18.6.12', '', 'grave', false],
+    ['Intervenção energizada com área isolada e sinalizada', 'NR-18 18.6.17', '', 'grave_iminente', false] ] },
+  { codigo:'INS-EXC-01', servico:'Escavações e fundações', per:7, itens:[
+    ['Acima de 1,25 m: liberação do PLH, talude/escoramento de projeto', 'NR-18 18.7.2.3 e 18.7.2.8', '', 'grave_iminente', true],
+    ['Escada ou rampa perto do posto para saída rápida', 'NR-18 18.7.2.8', '', 'grave', false],
+    ['Faixa de 1 m nas bordas livre de cargas; sem entrada de água', 'NR-18 18.7.2.7', '', 'grave', true],
+    ['Sinalização (inclusive noturna) e barreira no perímetro', 'NR-18 18.7.2.2', '', 'grave', true],
+    ['Interferências (cabos, tubulações) identificadas', 'NR-18 18.7.2.10', '', 'grave', false] ] },
+  { codigo:'INS-VIV-01', servico:'Áreas de vivência', per:30, itens:[
+    ['Sanitário: 1 conjunto a cada 20 trabalhadores; chuveiro a cada 10', 'NR-18 18.5.3', '', 'leve', false],
+    ['Água potável, filtrada e fresca: 1 bebedouro a cada 25', 'NR-18 18.5.6', '', 'grave', false],
+    ['Bebedouro a no máximo 100 m na horizontal e 15 m na vertical do posto', 'NR-18 18.5.6.1', '', 'leve', false],
+    ['Áreas limpas e conservadas', 'NR-18 18.5', '', 'leve', true] ] },
+  { codigo:'INS-SIN-01', servico:'Sinalização do canteiro', per:14, itens:[
+    ['Locais de apoio, saídas de emergência e riscos sinalizados', 'NR-18 18.13.1', '', 'leve', true],
+    ['Vestimenta de alta visibilidade em áreas de veículos e cargas', 'NR-18 18.13.2', '', 'grave', false] ] },
+  { codigo:'INS-EPI-01', servico:'EPI e capacitação', per:7, itens:[
+    ['EPIs adequados ao risco, em uso e em bom estado', 'NR-06', '', 'grave', false],
+    ['Trabalho em altura: trabalhadores com NR-35 e ASO válidos', 'NR-35', '', 'grave_iminente', false],
+    ['Treinamento básico presencial realizado (Anexo I)', 'NR-18 18.14.3', '', 'leve', false] ] },
+  { codigo:'INS-INC-01', servico:'Combate a incêndio e inflamáveis', per:30, itens:[
+    ['Extintores adequados, sinalizados, desobstruídos e no prazo', 'NR-23', '', 'grave', true],
+    ['Inflamáveis armazenados em local apropriado e ventilado', 'NR-18 18.10.1.9 / NR-20', '', 'grave', false],
+    ['Saídas de emergência sinalizadas e desobstruídas', 'NR-18 18.13.1 b', '', 'grave', false] ] }
+];
+
+const GRAV_ROT = { leve:'Leve', grave:'Grave', grave_iminente:'Grave e iminente' };
+let INS_MODS = [];
+async function insCarregar(){
+  const { data, error } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).eq('tipo', 'seguranca').order('codigo');
+  INS_MODS = error ? [] : (data || []);
+  const el = $('insCorpo'); if (!el) return;
+  el.className = '';
+  el.innerHTML = '<p class="h">Checklists que o técnico usa nas inspeções periódicas do App Obra. Cada item traz a referência da norma, uma dica e a gravidade sugerida para a não conformidade. Mudar os itens sobe a revisão.</p>'
+    + (error ? '<div class="msg err">' + esc(error.message) + '</div>' : '')
+    + (PODE.seguranca ? '<div class="row" style="gap:8px">' + (INS_MODS.length ? '' : '<button class="btn sec" onclick="insImportar()">Importar modelos de partida do Auria (' + SEG_PARTIDA.length + ')</button>') + '<button class="btn" onclick="insForm()">＋ Modelo</button></div>' : '')
+    + (INS_MODS.length ? '<table style="margin-top:12px"><tr><th>Código</th><th>Inspeção</th><th>Itens</th><th>A cada</th><th>Rev.</th><th></th></tr>' + INS_MODS.map(m => '<tr' + (m.ativo ? '' : ' style="opacity:.55"') + '>'
+        + '<td class="cod">' + esc(m.codigo) + '</td><td>' + esc(m.servico) + (m.ativo ? '' : ' <span class="chip">inativo</span>') + '</td><td>' + (m.itens || []).length + '</td>'
+        + '<td>' + (m.periodicidade_dias || '—') + ' d</td><td class="cod">' + String(m.revisao).padStart(2,'0') + '</td>'
+        + '<td style="text-align:right"><button class="btn sec" onclick="insForm(\'' + m.id + '\')">' + (PODE.seguranca ? 'Editar' : 'Ver') + '</button></td></tr>').join('') + '</table>'
+      : '<div class="hint" style="margin-top:10px">Nenhum modelo ainda.</div>');
+}
+async function insImportar(){
+  if (!confirm('Criar os ' + SEG_PARTIDA.length + ' modelos de partida de inspeção de segurança neste grupo?')) return;
+  const rows = SEG_PARTIDA.map(m => ({ grupo_id:GRUPO, tipo:'seguranca', codigo:m.codigo, servico:m.servico, etapa:'outro', nivel_local:'pavimento', periodicidade_dias:m.per,
+    itens:m.itens.map(([item, norma_ref, dica, gravidade, exige_foto]) => ({ item, norma_ref, dica, gravidade, exige_foto, metodo:'', tolerancia:'', criterio:'' })) }));
+  const { error } = await sb.from('fvs_modelo_auria').insert(rows);
+  if (error) alert('Não foi possível importar: ' + error.message);
+  insCarregar();
+}
+function insForm(id){
+  const m = id ? INS_MODS.find(x => x.id === id) : { codigo:'INS-', servico:'', periodicidade_dias:7, ativo:true, itens:[{ item:'', norma_ref:'', dica:'', gravidade:'grave', exige_foto:false }] };
+  window._INS_IT = JSON.parse(JSON.stringify(m.itens || []));
+  const dis = PODE.seguranca ? '' : ' disabled';
+  ov('<div class="hd"><b>' + (id ? '<span class="cod">' + esc(m.codigo) + '</span> · rev. ' + String(m.revisao).padStart(2,'0') : 'Novo modelo de inspeção') + '</b></div><div class="bd">'
+    + '<div class="g3"><div><label class="l">Código</label><input type="text" id="imCod" value="' + esc(m.codigo) + '"' + (id ? ' disabled' : dis) + '></div>'
+    + '<div><label class="l">Inspeção</label><input type="text" id="imServ" value="' + esc(m.servico) + '"' + dis + '></div>'
+    + '<div><label class="l">Periodicidade (dias)</label><input type="number" min="1" max="180" id="imPer" value="' + esc(m.periodicidade_dias || 7) + '"' + dis + '></div></div>'
+    + (id ? '<label class="chk"><input type="checkbox" id="imAtivo"' + (m.ativo ? ' checked' : '') + dis + '> Ativo</label>' : '')
+    + '<label class="l" style="margin-top:12px">Itens</label><div id="imItens"></div>'
+    + (PODE.seguranca ? '<button class="btn sec" style="margin-top:6px" onclick="insLer();_INS_IT.push({item:\'\',norma_ref:\'\',dica:\'\',gravidade:\'grave\',exige_foto:false});insItens()">＋ Item</button>' : '')
+    + '<div class="msg" id="imMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar()">' + (PODE.seguranca ? 'Cancelar' : 'Fechar') + '</button>' + (PODE.seguranca ? '<button class="btn" id="imOk" onclick="insSalvar(' + (id ? '\'' + id + '\'' : '') + ')">Salvar</button>' : '') + '</div>');
+  insItens();
+}
+function insItens(){
+  const dis = PODE.seguranca ? '' : ' disabled';
+  $('imItens').innerHTML = _INS_IT.map((t, i) => '<div class="ins-it" data-i="' + i + '">'
+    + '<div class="g2"><div><input type="text" data-f="item" value="' + esc(t.item) + '" placeholder="O que verificar"' + dis + '></div>'
+    + '<div class="row" style="gap:6px"><input type="text" data-f="norma_ref" value="' + esc(t.norma_ref || '') + '" placeholder="Ex.: NR-18 18.9.4.2"' + dis + '>'
+    + '<select data-f="gravidade"' + dis + '>' + Object.keys(GRAV_ROT).map(k => '<option value="' + k + '"' + (k === (t.gravidade || 'grave') ? ' selected' : '') + '>' + GRAV_ROT[k] + '</option>').join('') + '</select>'
+    + '<label class="chk" style="margin:0"><input type="checkbox" data-f="exige_foto"' + (t.exige_foto ? ' checked' : '') + dis + '> foto</label>'
+    + (PODE.seguranca ? '<button class="btn sec" onclick="insLer();_INS_IT.splice(' + i + ',1);insItens()">×</button>' : '') + '</div></div>'
+    + '<input type="text" data-f="dica" value="' + esc(t.dica || '') + '" placeholder="💡 Dica (opcional)"' + dis + '></div>').join('');
+}
+function insLer(){
+  _INS_IT = [...document.querySelectorAll('#imItens .ins-it')].map(d => ({ item:d.querySelector('[data-f=item]').value.trim(), norma_ref:d.querySelector('[data-f=norma_ref]').value.trim(),
+    gravidade:d.querySelector('[data-f=gravidade]').value, exige_foto:d.querySelector('[data-f=exige_foto]').checked, dica:d.querySelector('[data-f=dica]').value.trim(), metodo:'', tolerancia:'', criterio:'' }));
+}
+async function insSalvar(id){
+  insLer();
+  const msg = t => { $('imMsg').className = 'msg err'; $('imMsg').textContent = t; };
+  const itens = _INS_IT.filter(t => t.item);
+  const row = { servico:($('imServ').value || '').trim(), periodicidade_dias:parseInt($('imPer').value, 10) || 7, itens };
+  if (row.servico.length < 3) return msg('Escreva o nome da inspeção.');
+  if (!itens.length) return msg('O modelo precisa de pelo menos um item.');
+  $('imOk').disabled = true;
+  let r;
+  if (id){ row.ativo = $('imAtivo').checked; r = await sb.from('fvs_modelo_auria').update(row).eq('id', id); }
+  else {
+    const cod = ($('imCod').value || '').trim().toUpperCase();
+    if (cod.length < 4){ $('imOk').disabled = false; return msg('Escreva o código.'); }
+    r = await sb.from('fvs_modelo_auria').insert(Object.assign(row, { grupo_id:GRUPO, tipo:'seguranca', codigo:cod, etapa:'outro', nivel_local:'pavimento' }));
+  }
+  if (r.error){ $('imOk').disabled = false; return msg(/duplicate|unique/i.test(r.error.message) ? 'Já existe um modelo com esse código.' : r.error.message); }
+  ovFechar(); insCarregar();
+}
+
 // ── Qualidade: biblioteca de modelos de FVS ─────────────────────────────────
 const ETAPA_ROT = { estrutura:'Estrutura', vedacao:'Vedação', revestimento:'Revestimento', instalacoes:'Instalações', impermeabilizacao:'Impermeabilização', acabamento:'Acabamento', fachada:'Fachada', outro:'Outro' };
 const NIVEL_ROT = { pavimento:'Pavimento', unidade:'Unidade (apto/sala)', ambiente:'Ambiente' };
@@ -228,7 +375,7 @@ const FVS_PARTIDA = [
 ];
 let FVS_MODS = [];
 async function carregarFvsModelos(){
-  const { data, error } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).order('codigo');
+  const { data, error } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).eq('tipo', 'fvs').order('codigo');
   FVS_MODS = error ? [] : (data || []); return error;
 }
 async function telaQualidade(){
