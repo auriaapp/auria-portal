@@ -10984,29 +10984,38 @@ function fvsAvisoHtml(x){
     + '<div class="bt"><button class="b2" onclick="obraFecharAvisos();fvsAbrirAviso(\'' + x.id + '\')">Abrir a ficha</button>'
     + '<button class="b1" onclick="obraConfirmar([\'' + fvsChave(x) + '\'])">Li e estou ciente</button></div></div>';
 }
+// injeta o grupo Qualidade no destaque; resiste a reconstruções do destaque
+// (o destaque de entrada é montado por várias camadas, às vezes depois das FVS)
+function fvsInjetarAviso(forcar){
+  const fp = fvsPend(); if (!fp.length || !EMP) return;
+  let ov = $('obraAvisos');
+  if (!ov || !ov.classList.contains('on')){
+    if (!ov){ ov = document.createElement('div'); ov.id = 'obraAvisos'; document.body.appendChild(ov); }
+    if (!forcar && ov.dataset.vistoF === EMP.id) return;
+    ov.innerHTML = '<div class="box"><div class="hd"><b>Alertas para a obra</b><p></p></div><div class="ls"></div>'
+      + '<div class="ft"><button class="b2" onclick="obraFecharAvisos()">Lembrar depois</button>'
+      + '<button class="b1" onclick="obraConfirmar(null)">Confirmar todos</button></div></div>';
+    ov.classList.add('on');
+  }
+  ov.dataset.vistoF = EMP.id;
+  const ls = ov.querySelector('.ls'); if (!ls || ls.querySelector('.grp-fvs')) return;
+  ls.insertAdjacentHTML('beforeend', '<div class="grp grp-fvs">Qualidade</div>' + fp.map(fvsAvisoHtml).join(''));
+  const p = ov.querySelector('.hd p');
+  if (p) p.textContent = ov.querySelectorAll('.ls .it').length + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.';
+}
 (function(){
   const _m = obraMostrarAvisos;
-  obraMostrarAvisos = function(forcar){
-    _m(forcar);
-    const fp = fvsPend(); if (!fp.length) return;
-    let ov = $('obraAvisos');
-    if (!ov || !ov.classList.contains('on')){
-      if (!ov){ ov = document.createElement('div'); ov.id = 'obraAvisos'; document.body.appendChild(ov); }
-      if (!forcar && ov.dataset.vistoF === EMP.id) return;
-      ov.innerHTML = '<div class="box"><div class="hd"><b>Alertas para a obra</b><p></p></div><div class="ls"></div>'
-        + '<div class="ft"><button class="b2" onclick="obraFecharAvisos()">Lembrar depois</button>'
-        + '<button class="b1" onclick="obraConfirmar(null)">Confirmar todos</button></div></div>';
-      ov.classList.add('on');
-    }
-    ov.dataset.vistoF = EMP.id;
-    const ls = ov.querySelector('.ls'); if (ls.querySelector('.grp-fvs')) return;
-    ls.insertAdjacentHTML('beforeend', '<div class="grp grp-fvs">Qualidade</div>' + fp.map(fvsAvisoHtml).join(''));
-    const p = ov.querySelector('.hd p');
-    if (p) p.textContent = ov.querySelectorAll('.ls .it').length + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.';
+  obraMostrarAvisos = function(forcar){ _m(forcar); fvsInjetarAviso(forcar); };
+  // vigia o destaque: se outra camada reconstruir o conteúdo, o grupo volta
+  const vigiar = () => {
+    const ov = $('obraAvisos'); if (!ov){ setTimeout(vigiar, 500); return; }
+    new MutationObserver(() => { if (ov.classList.contains('on') && !ov.querySelector('.grp-fvs') && fvsPend().length) fvsInjetarAviso(true); })
+      .observe(ov, { childList:true, subtree:false, attributes:true, attributeFilter:['class'] });
   };
+  vigiar();
 })();
 // as FVS chegam depois do destaque da entrada: mostra uma vez quando carregarem
-(function(){ let primeira = true; const _c = fvsCarregar; fvsCarregar = async function(){ await _c(); if (primeira && EMP){ primeira = false; try { obraMostrarAvisos(false); } catch (_){} } }; })();
+(function(){ let primeira = true; const _c = fvsCarregar; fvsCarregar = async function(){ await _c(); if (primeira && EMP){ primeira = false; try { fvsInjetarAviso(false); } catch (_){} } }; })();
 
 // ── B2b: coord. de campo exerce a Qualidade na obra — contesta ficha aprovada ─
 (function(){
