@@ -740,6 +740,17 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .conc-fvs.ok{background:#EAF6EE;border:1px solid #B7E1C4;color:#14532D}
 .conc-fvs.nok{background:#FEF3E2;border:1px solid #F5D29B;color:#7C4A03}
 
+/* Concretagem B4b — caminhões */
+.cam-lista{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.cam-it{display:flex;gap:8px;align-items:flex-start;border:1px solid #E2E8F0;border-radius:8px;padding:7px 9px;cursor:pointer;font-size:12px}
+.cam-it:hover{border-color:#E8960A}
+.cam-it.rec{background:#F8FAFC;opacity:.8}
+.cam-it i{min-width:24px;height:24px;border-radius:6px;color:#fff;font-style:normal;font-weight:800;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,monospace}
+.cam-it b{display:block;color:#0F172A}
+.cam-it span{color:#64748B}
+.cam-it em.al{font-style:normal;color:#C0392B;font-weight:700}
+.cam-hora{display:flex;gap:4px}.cam-hora input{flex:1;min-height:36px}
+
 </style>
 </head>
 <body>
@@ -11568,6 +11579,258 @@ async function concCancelar(id){
 })();
 // "Fechar" da barra (segSairModo) também encerra o modo de seleção de peças
 (function(){ const _s = segSairModo; segSairModo = function(){ CONC_MODO = null; return _s.apply(this, arguments); }; })();
+
+// ── App Obra · CONCRETAGEM — B4b: CAMINHÕES em campo + mapa 3D por caminhão ──
+//  "＋ Caminhão" pensado p/ celular: NF, placa, m³, horários (botão "agora"),
+//  slump (alerta fora da tolerância), água adicionada, aceito/recusado, CPs,
+//  fotos (NF/slump). Peças POR TRECHO: no 3D, o que ainda não tem caminhão
+//  fica laranja; tocar atribui/desatribui ao caminhão; "Todo o restante" pega
+//  o que sobrou. Alertas (>150 min NBR 7212, slump) são calculados no banco.
+var CAMS = [], CAM_RASC = null;
+const CAM_CORES = [0x2563EB, 0x16A34A, 0x9333EA, 0x0891B2, 0xCA8A04, 0xDB2777, 0x4F46E5, 0x059669, 0xEA580C, 0x7C3AED, 0x0D9488, 0xBE123C];
+function camCor(seq){ return CAM_CORES[(seq - 1) % CAM_CORES.length]; }
+function camCorCss(seq){ return '#' + camCor(seq).toString(16).padStart(6, '0'); }
+async function camCarregar(concId){
+  const { data, error } = await sb.from('conc_caminhao_auria').select('*').eq('concretagem_id', concId).order('seq');
+  CAMS = error ? [] : (data || []); return CAMS;
+}
+function camHora(t){ return t ? new Date(t).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '—'; }
+function camMin(a, b){ return a && b ? Math.round((new Date(b) - new Date(a)) / 60000) : null; }
+function camVolume(){ return CAMS.filter(c => c.aceito).reduce((s, c) => s + (+c.volume_m3 || 0), 0); }
+
+// ── Detalhe da concretagem ganha a seção de caminhões ───────────────────────
+(function(){
+  const _d = concDetalhe;
+  concDetalhe = async function(id){
+    await _d(id);
+    const c = CONCS.find(x => x.id === id); if (!c || !['liberada','em_andamento','concluida'].includes(c.situacao)) return;
+    await camCarregar(id);
+    const det = document.querySelector('#segOv .seg-det'); if (!det) return;
+    const hint = [...det.querySelectorAll('.hint')].find(h => /Registro dos caminhões/.test(h.textContent)); if (hint) hint.remove();
+    const vol = camVolume(), prev = +c.volume_previsto || 0, atrib = new Set(); CAMS.forEach(k => (k.pecas || []).forEach(g => g.ids.forEach(i => atrib.add(g.cde_arquivo_id + ':' + i))));
+    det.insertAdjacentHTML('beforeend', '<div class="seg-kv" style="border:none;margin-top:6px"><span>Caminhões</span><b>' + CAMS.filter(k => k.aceito).length + ' aceito(s) · ' + concM3(vol) + (prev ? ' de ' + concM3(prev) + ' previstos' : '')
+      + ' · ' + atrib.size + '/' + c.n_pecas + ' peças com caminhão</b></div>'
+      + (prev ? '<div class="fvs-prog"><span style="width:' + Math.min(100, Math.round(100 * vol / prev)) + '%"></span></div>' : '')
+      + '<div class="cam-lista">' + (CAMS.length ? CAMS.map(k => '<div class="cam-it' + (k.aceito ? '' : ' rec') + '" onclick="camDetalhe(\'' + k.id + '\')">'
+          + '<i style="background:' + (k.aceito ? camCorCss(k.seq) : '#94A3B8') + '">' + k.seq + '</i><div><b>' + (k.nf ? 'NF ' + esc(k.nf) : 'sem NF') + (k.placa ? ' · ' + esc(k.placa) : '') + ' · ' + concM3(k.volume_m3) + '</b>'
+          + '<span>' + (k.aceito ? 'saída ' + camHora(k.saida_usina) + ' → fim ' + camHora(k.fim_descarga) + (k.slump_mm != null ? ' · slump ' + k.slump_mm : '') + ' · ' + (k.cps_moldados || 0) + ' CP' : 'RECUSADO — ' + esc(k.motivo_recusa || ''))
+          + (k.fora_tempo ? ' <em class="al">⚠ +150 min</em>' : '') + (k.fora_slump ? ' <em class="al">⚠ slump</em>' : '') + (k.agua_litros ? ' <em class="al">água +' + k.agua_litros + ' L</em>' : '')
+          + ' · ' + (k.pecas || []).reduce((s, g) => s + g.ids.length, 0) + ' peça(s)</span></div></div>').join('') : '<div class="hint">Nenhum caminhão registrado.</div>') + '</div>');
+    const ft = document.querySelector('#segOv .ft');
+    if (ft){
+      if (CAMS.length) ft.firstElementChild.insertAdjacentHTML('afterend', '<button class="b2" onclick="camMapa3D(\'' + id + '\')">🧊 Mapa por caminhão</button>');
+      if (['liberada','em_andamento'].includes(c.situacao) && concPodePlanejar()) ft.insertAdjacentHTML('beforeend', '<button class="b1" onclick="camNovo(\'' + id + '\')">＋ Caminhão</button>');
+      if (c.situacao === 'em_andamento' && concPodeLiberar()) ft.insertAdjacentHTML('beforeend', '<button class="b2" onclick="concConcluir(\'' + id + '\')">Concluir concretagem</button>');
+    }
+  };
+})();
+
+// ── Formulário do caminhão ──────────────────────────────────────────────────
+function _hm(t){ if (!t) return ''; const d = new Date(t), p = n => String(n).padStart(2,'0'); return p(d.getHours()) + ':' + p(d.getMinutes()); }
+function _deHm(hm){ if (!hm) return null; const [h, m] = hm.split(':').map(Number), d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); }
+function camNovo(concId){
+  const c = CONCS.find(x => x.id === concId);
+  CAM_RASC = { concretagem_id:concId, nf:'', placa:'', volume_m3:'', saida_usina:null, chegada:new Date().toISOString(), inicio_descarga:null, fim_descarga:null,
+               slump_mm:'', agua_litros:'', aceito:true, motivo_recusa:'', cps_moldados:'', cps_ident:'', pecas:[], fotos:[], obs:'' };
+  camForm();
+}
+function camEditar(id){ const k = CAMS.find(x => x.id === id); if (!k) return; CAM_RASC = JSON.parse(JSON.stringify(k)); CAM_RASC._editId = id; camForm(); }
+function camLer(){
+  if (!$('kmNf') || !CAM_RASC) return;
+  const r = CAM_RASC, num = id => { const v = parseFloat(String($(id).value).replace(',', '.')); return isFinite(v) ? v : null; };
+  r.nf = $('kmNf').value.trim(); r.placa = $('kmPl').value.trim().toUpperCase(); r.volume_m3 = num('kmVol');
+  r.saida_usina = _deHm($('kmSai').value); r.chegada = _deHm($('kmChe').value); r.inicio_descarga = _deHm($('kmIni').value); r.fim_descarga = _deHm($('kmFim').value);
+  r.slump_mm = num('kmSl'); r.agua_litros = num('kmAg'); r.aceito = $('kmAc').value === '1'; r.motivo_recusa = $('kmMot').value.trim();
+  r.cps_moldados = num('kmCp'); r.cps_ident = $('kmCpi').value.trim(); r.obs = $('kmObs').value.trim();
+}
+function camAvisos(){
+  const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id), av = [];
+  const min = camMin(r.saida_usina, r.fim_descarga || r.inicio_descarga);
+  if (min != null && min > 150) av.push('⚠ ' + min + ' min entre a saída da usina e a descarga (limite NBR 7212: 150 min).');
+  if (r.slump_mm != null && c.slump_mm != null && Math.abs(r.slump_mm - c.slump_mm) > (c.slump_tol_mm || 0)) av.push('⚠ Slump ' + r.slump_mm + ' mm fora de ' + c.slump_mm + ' ± ' + (c.slump_tol_mm || 0) + ' mm.');
+  if (r.agua_litros) av.push('Água adicionada na obra: ' + r.agua_litros + ' L — confira com o traço.');
+  return av;
+}
+function camForm(){
+  const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id), x = r._editId;
+  const n = (r.pecas || []).reduce((s, g) => s + g.ids.length, 0), av = camAvisos();
+  const hora = (id, v, rot) => '<div><label>' + rot + '</label><div class="cam-hora"><input id="' + id + '" type="time" value="' + _hm(v) + '" onchange="camLer();camForm()"><button class="b2 mini" onclick="$(\'' + id + '\').value=_hm(new Date().toISOString());camLer();camForm()">agora</button></div></div>';
+  segOv('<div class="hd"><b>' + (x ? 'Caminhão ' + r.seq : 'Novo caminhão') + ' — ' + esc(c.codigo) + '</b><p>' + esc(segPavNome(c.pavimento_id) || '') + ' · C' + (c.fck_mpa || '—') + ' · slump ' + (c.slump_mm != null ? c.slump_mm + ' ± ' + (c.slump_tol_mm || 0) + ' mm' : '—') + '</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Nota fiscal</label><input id="kmNf" inputmode="numeric" value="' + esc(r.nf || '') + '"></div><div><label>Placa</label><input id="kmPl" value="' + esc(r.placa || '') + '" style="text-transform:uppercase"></div></div>'
+    + '<div class="seg-g2"><div><label>Volume (m³)</label><input id="kmVol" inputmode="decimal" value="' + esc(r.volume_m3 == null ? '' : r.volume_m3) + '" placeholder="Ex.: 8"></div><div><label>Slump medido (mm)</label><input id="kmSl" inputmode="numeric" value="' + esc(r.slump_mm == null ? '' : r.slump_mm) + '" onchange="camLer();camForm()"></div></div>'
+    + '<div class="seg-g2">' + hora('kmSai', r.saida_usina, 'Saída da usina (NF)') + hora('kmChe', r.chegada, 'Chegada') + '</div>'
+    + '<div class="seg-g2">' + hora('kmIni', r.inicio_descarga, 'Início da descarga') + hora('kmFim', r.fim_descarga, 'Fim da descarga') + '</div>'
+    + (av.length ? '<div class="conc-fvs nok">' + av.map(esc).join('<br>') + '</div>' : '')
+    + '<div class="seg-g2"><div><label>Água adicionada (L)</label><input id="kmAg" inputmode="decimal" value="' + esc(r.agua_litros == null ? '' : r.agua_litros) + '" placeholder="0" onchange="camLer();camForm()"></div>'
+    + '<div><label>Recebimento</label><select id="kmAc" onchange="camLer();camForm()"><option value="1"' + (r.aceito ? ' selected' : '') + '>Aceito</option><option value="0"' + (!r.aceito ? ' selected' : '') + '>Recusado</option></select></div></div>'
+    + '<div' + (r.aceito ? ' style="display:none"' : '') + '><label>Motivo da recusa</label><input id="kmMot" value="' + esc(r.motivo_recusa || '') + '" placeholder="Ex.: slump 180 mm; 170 min"></div>'
+    + '<div class="seg-g2"><div><label>CPs moldados</label><input id="kmCp" inputmode="numeric" value="' + esc(r.cps_moldados == null ? '' : r.cps_moldados) + '" placeholder="Ex.: 4"></div><div><label>Identificação dos CPs</label><input id="kmCpi" value="' + esc(r.cps_ident || '') + '" placeholder="Ex.: 45T-01 a 04"></div></div>'
+    + '<div class="seg-geom"><b>' + (n ? n + ' peça(s) preenchidas por este caminhão' : 'Peças: ainda não marcadas') + '</b><div>'
+    + '<button class="b2" onclick="camLer();camPecas3D()">🧊 Marcar trecho no 3D</button></div></div>'
+    + '<label>Fotos (NF, slump)</label><input id="kmFotos" type="file" accept="image/*" capture="environment" multiple>' + (r.fotos && r.fotos.length ? '<div class="hint">' + r.fotos.length + ' foto(s) já anexada(s)</div>' : '')
+    + '<label>Observação</label><input id="kmObs" value="' + esc(r.obs || '') + '">'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="concDetalhe(\'' + r.concretagem_id + '\')">Voltar</button><button class="b1" id="segOk" onclick="camSalvar()">' + (x ? 'Salvar' : 'Registrar caminhão') + '</button></div>');
+}
+async function camSubirFotos(files, concId){
+  const out = [];
+  for (const f of files){
+    const blob = await segReduzir(f), nome = (f.name || 'foto').replace(/[^\w.\-]+/g,'_').replace(/\.(heic|png|webp|jpeg)$/i,'.jpg');
+    const path = EMP.id + '/_qualidade/conc/' + concId + '/' + Date.now() + '_' + nome;
+    const url = await segR2Url('upload', path, 'image/jpeg');
+    const r = await fetch(url, { method:'PUT', headers:{ 'content-type':'image/jpeg' }, body:blob });
+    if (!r.ok) throw new Error('Falha ao enviar a foto (' + r.status + ').');
+    out.push({ path, nome:f.name || nome });
+  }
+  return out;
+}
+async function camSalvar(){
+  camLer();
+  const r = CAM_RASC, msg = t => { $('segMsg').textContent = t; };
+  if (!r.nf && !r.placa) return msg('Informe a nota fiscal ou a placa.');
+  if (r.volume_m3 == null || r.volume_m3 <= 0) return msg('Informe o volume do caminhão.');
+  if (!r.aceito && r.motivo_recusa.length < 3) return msg('Informe o motivo da recusa.');
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
+  try {
+    const f = $('kmFotos'), novas = f && f.files && f.files.length ? await camSubirFotos([...f.files], r.concretagem_id) : [];
+    const row = { nf:r.nf || null, placa:r.placa || null, volume_m3:r.volume_m3, saida_usina:r.saida_usina, chegada:r.chegada, inicio_descarga:r.inicio_descarga, fim_descarga:r.fim_descarga,
+                  slump_mm:r.slump_mm, agua_litros:r.agua_litros, aceito:r.aceito, motivo_recusa:r.aceito ? null : r.motivo_recusa, cps_moldados:r.cps_moldados, cps_ident:r.cps_ident || null,
+                  pecas:r.aceito ? (r.pecas || []) : [], fotos:(r.fotos || []).concat(novas), obs:r.obs || null };
+    if (r._editId){ const { error } = await sb.from('conc_caminhao_auria').update(row).eq('id', r._editId); if (error) throw error; }
+    else { const { error } = await sb.from('conc_caminhao_auria').insert(Object.assign(row, { concretagem_id:r.concretagem_id, empreendimento_id:EMP.id, seq:0, registrado_por:USER.id })); if (error) throw error; }
+    const cid = r.concretagem_id; CAM_RASC = null;
+    await concCarregar(); try { renderSideRight(); } catch (_){}
+    concDetalhe(cid);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; b.textContent = r._editId ? 'Salvar' : 'Registrar caminhão'; }
+}
+function camDetalhe(id){
+  const k = CAMS.find(x => x.id === id); if (!k) return;
+  const c = CONCS.find(x => x.id === k.concretagem_id), pode = c.situacao === 'em_andamento' && concPodePlanejar();
+  segOv('<div class="hd"><b>Caminhão ' + k.seq + ' — ' + esc(c.codigo) + '</b><p><span class="seg-chip" style="background:' + (k.aceito ? camCorCss(k.seq) : '#94A3B8') + ';color:#fff">' + (k.aceito ? 'Aceito' : 'Recusado') + '</span> '
+      + (k.fora_tempo ? '<span class="seg-chip" style="background:#C0392B;color:#fff">+150 min</span> ' : '') + (k.fora_slump ? '<span class="seg-chip" style="background:#C0392B;color:#fff">slump fora</span>' : '') + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Nota fiscal / placa</span><b>' + esc(k.nf || '—') + ' · ' + esc(k.placa || '—') + ' · ' + concM3(k.volume_m3) + '</b></div>'
+    + '<div class="seg-kv"><span>Horários</span><b>saída ' + camHora(k.saida_usina) + ' · chegada ' + camHora(k.chegada) + ' · descarga ' + camHora(k.inicio_descarga) + '–' + camHora(k.fim_descarga)
+      + (camMin(k.saida_usina, k.fim_descarga) != null ? ' (' + camMin(k.saida_usina, k.fim_descarga) + ' min)' : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Slump / água</span><b>' + (k.slump_mm != null ? k.slump_mm + ' mm' : '—') + (k.agua_litros ? ' · +' + k.agua_litros + ' L de água' : '') + '</b></div>'
+    + (!k.aceito ? '<div class="seg-kv"><span>Motivo da recusa</span><b>' + esc(k.motivo_recusa || '') + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Corpos de prova</span><b>' + (k.cps_moldados || 0) + (k.cps_ident ? ' · ' + esc(k.cps_ident) : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Peças</span><b>' + (k.pecas || []).reduce((s, g) => s + g.ids.length, 0) + '</b></div>'
+    + (k.obs ? '<div class="seg-kv"><span>Obs.</span><b>' + esc(k.obs) + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Registrado</span><b>' + esc(k.registrado_nome || '') + ' · ' + new Date(k.registrado_em).toLocaleString('pt-BR') + '</b></div>'
+    + '<div id="camF"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="concDetalhe(\'' + c.id + '\')">Voltar</button>' + (pode ? '<button class="b1" onclick="camEditar(\'' + id + '\')">Corrigir</button>' : '') + '</div>');
+  if ((k.fotos || []).length) segFotosHtml(k.fotos, 'camF');
+}
+async function concConcluir(id){
+  try { const { error } = await sb.rpc('conc_concluir', { p_id:id }); if (error) throw error; await concCarregar(); try { renderSideRight(); } catch (_){} concDetalhe(id); }
+  catch (e){ const m = $('segMsg'); if (m) m.textContent = e.message || e; }
+}
+
+// ── 3D: marcar o trecho deste caminhão ──────────────────────────────────────
+//  laranja = peça da concretagem ainda sem caminhão; cor do caminhão = deste;
+//  outros caminhões na cor deles. Tocar alterna entre "deste" e "sem caminhão".
+var CAM_MODO = null;
+async function camPecas3D(){
+  const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id);
+  segFechar();
+  if (!(await fvs3dGarantir({ servico:'concretagem estrutura', etapa:'estrutura' }))){ segBarraInfo('Não foi possível abrir o modelo de estrutura.', '<button onclick="camForm()">Voltar</button>'); return; }
+  CAM_MODO = 'trecho';
+  await camPintarTrecho(true);
+}
+function _camChaves(lista){ const s = new Set(); (lista || []).forEach(g => g.ids.forEach(i => s.add(g.cde_arquivo_id + ':' + i))); return s; }
+async function camPintarTrecho(enquadrar){
+  const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id);
+  const deste = _camChaves(r.pecas), outros = {};
+  CAMS.filter(k => k.aceito && k.id !== r._editId).forEach(k => (k.pecas || []).forEach(g => g.ids.forEach(i => outros[g.cde_arquivo_id + ':' + i] = k.seq)));
+  const grp = { neutro:{}, livre:{}, deste:{} }, outrosPm = {};
+  const add = (o, mi, id) => (o[mi] = o[mi] || []).push(id);
+  const daConc = _camChaves(c.elementos);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const m = F3D.modelos[mi], md = m.model; if (!md) continue;
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    todos.forEach(id => { const k = m.arquivoId + ':' + id;
+      if (!daConc.has(k)) add(grp.neutro, mi, id);
+      else if (deste.has(k)) add(grp.deste, mi, id);
+      else if (outros[k]) { const s = outros[k]; (outrosPm[s] = outrosPm[s] || {}); add(outrosPm[s], mi, id); }
+      else add(grp.livre, mi, id); });
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  try { await B3.colorirGrupo(F3D, grp.neutro, 0xE2E8F0); } catch (_){}
+  for (const [s, pm] of Object.entries(outrosPm)) try { await B3.colorirGrupo(F3D, pm, camCor(+s)); } catch (_){}
+  if (Object.keys(grp.livre).length) try { await B3.colorirGrupo(F3D, grp.livre, 0xE8960A); } catch (_){}
+  if (Object.keys(grp.deste).length) try { await B3.colorirGrupo(F3D, grp.deste, camCor(r.seq || (CAMS.length + 1))); } catch (_){}
+  if (enquadrar){ const pm = {}; (c.elementos || []).forEach(g => { const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi >= 0) pm[mi] = g.ids; }); try { await B3.enquadrarIds(F3D, pm); } catch (_){} }
+  await fvs3dRefrescar();
+  const nD = deste.size, nL = Object.values(grp.livre).reduce((s, a) => s + a.length, 0);
+  segBarraInfo('Caminhão ' + (r.seq || (CAMS.length + 1)) + ': <b style="color:' + camCorCss(r.seq || (CAMS.length + 1)) + '">' + nD + ' peça(s)</b> · <span style="color:#E8960A">' + nL + ' sem caminhão</span> · toque para marcar/desmarcar',
+    (nL ? '<button onclick="camTodoRestante()">Todo o restante</button>' : '') + '<button class="ok" onclick="camTrechoOk()">Concluir</button>');
+}
+async function camTodoRestante(){
+  const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id);
+  const ocupadas = new Set(); CAMS.filter(k => k.aceito && k.id !== r._editId).forEach(k => (k.pecas || []).forEach(g => g.ids.forEach(i => ocupadas.add(g.cde_arquivo_id + ':' + i))));
+  (c.elementos || []).forEach(g => {
+    let d = r.pecas.find(x => x.cde_arquivo_id === g.cde_arquivo_id); if (!d){ d = { cde_arquivo_id:g.cde_arquivo_id, ids:[] }; r.pecas.push(d); }
+    g.ids.forEach(i => { if (!ocupadas.has(g.cde_arquivo_id + ':' + i) && d.ids.indexOf(i) < 0) d.ids.push(i); });
+  });
+  await camPintarTrecho(false);
+}
+async function camTrechoOk(){ CAM_MODO = null; try { await B3.limparFiltro(F3D); await fvs3dRefrescar(); } catch (_){} try { segSairModo(); } catch (_){} camForm(); }
+(function(){
+  const _c = f3dClique;
+  f3dClique = async function(ev){
+    if (CAM_MODO !== 'trecho') return _c(ev);
+    const hit = await B3.raycast(F3D, ev); if (!hit) return;
+    const m = hit.__modelo, r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id);
+    if (!_camChaves(c.elementos).has(m.arquivoId + ':' + hit.localId)) return;           // fora da concretagem
+    const outro = CAMS.find(k => k.aceito && k.id !== r._editId && _camChaves(k.pecas).has(m.arquivoId + ':' + hit.localId));
+    if (outro){ segBarraInfo('Essa peça já está no caminhão ' + outro.seq + ' — corrija por ele.', '<button class="ok" onclick="camPintarTrecho(false)">Ok</button>'); return; }
+    let g = r.pecas.find(x => x.cde_arquivo_id === m.arquivoId); if (!g){ g = { cde_arquivo_id:m.arquivoId, ids:[] }; r.pecas.push(g); }
+    const i = g.ids.indexOf(hit.localId); if (i >= 0) g.ids.splice(i, 1); else g.ids.push(hit.localId);
+    await camPintarTrecho(false);
+  };
+})();
+(function(){ const _s = segSairModo; segSairModo = function(){ CAM_MODO = null; CAM_MAPA = null; return _s.apply(this, arguments); }; })();
+
+// ── Mapa 3D por caminhão (consulta) — clicar numa peça mostra o caminhão ────
+var CAM_MAPA = null;
+async function camMapa3D(concId){
+  const c = CONCS.find(x => x.id === concId); await camCarregar(concId);
+  segFechar();
+  if (!(await fvs3dGarantir({ servico:'concretagem estrutura', etapa:'estrutura' }))) return;
+  const daConc = _camChaves(c.elementos), dono = {};
+  CAMS.filter(k => k.aceito).forEach(k => (k.pecas || []).forEach(g => g.ids.forEach(i => dono[g.cde_arquivo_id + ':' + i] = k)));
+  const neutro = {}, sem = {}, porCam = {}, add = (o, mi, id) => (o[mi] = o[mi] || []).push(id);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const m = F3D.modelos[mi], md = m.model; if (!md) continue;
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    todos.forEach(id => { const k = m.arquivoId + ':' + id;
+      if (!daConc.has(k)) add(neutro, mi, id); else if (dono[k]) add((porCam[dono[k].seq] = porCam[dono[k].seq] || {}), mi, id); else add(sem, mi, id); });
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){}
+  if (Object.keys(sem).length) try { await B3.colorirGrupo(F3D, sem, 0xE8960A); } catch (_){}
+  for (const [s, pm] of Object.entries(porCam)) try { await B3.colorirGrupo(F3D, pm, camCor(+s)); } catch (_){}
+  const pm = {}; (c.elementos || []).forEach(g => { const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi >= 0) pm[mi] = g.ids; });
+  try { await B3.enquadrarIds(F3D, pm); } catch (_){}
+  await fvs3dRefrescar();
+  CAM_MAPA = { concId, dono };
+  const leg = CAMS.filter(k => k.aceito).map(k => '<span class="fvs3d-leg"><i style="background:' + camCorCss(k.seq) + '"></i>' + k.seq + '</span>').join('')
+    + (Object.keys(sem).length ? '<span class="fvs3d-leg"><i style="background:#E8960A"></i>sem caminhão</span>' : '');
+  segBarraInfo('<b>' + esc(c.codigo) + '</b> por caminhão ' + leg + ' · clique numa peça', '<button onclick="concDetalhe(\'' + concId + '\')">Detalhes</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
+}
+(function(){
+  const _c = f3dClique;
+  f3dClique = async function(ev){
+    if (!CAM_MAPA) return _c(ev);
+    const hit = await B3.raycast(F3D, ev); if (!hit) return _c(ev);
+    const k = CAM_MAPA.dono[hit.__modelo.arquivoId + ':' + hit.localId]; if (!k) return _c(ev);
+    segBarraInfo('<b style="color:' + camCorCss(k.seq) + '">Caminhão ' + k.seq + '</b> · NF ' + esc(k.nf || '—') + ' · ' + esc(k.placa || '') + ' · ' + concM3(k.volume_m3)
+      + ' · saída ' + camHora(k.saida_usina) + ' → fim ' + camHora(k.fim_descarga) + (k.slump_mm != null ? ' · slump ' + k.slump_mm + ' mm' : '') + ' · ' + (k.cps_moldados || 0) + ' CP' + (k.cps_ident ? ' (' + esc(k.cps_ident) + ')' : ''),
+      '<button onclick="camMapa3D(\'' + CAM_MAPA.concId + '\')">Voltar ao mapa</button><button onclick="camDetalhe(\'' + k.id + '\')">Ficha do caminhão</button>');
+  };
+})();
 
 </script>
 <script src="auria_ajuda.js"></script>
