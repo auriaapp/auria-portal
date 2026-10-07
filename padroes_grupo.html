@@ -39,6 +39,7 @@
   .tab.on{color:var(--navy);border-bottom-color:var(--navy)}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
   .card h3{margin:0 0 4px;font-size:14px;color:var(--navy)}
+  .fm-it{width:100%}.fm-it input[type=text]{width:100%;box-sizing:border-box}.fm-it td{padding:3px 4px}.fm-it .btn.sec{padding:3px 8px;margin-left:2px}
   .card p.h{margin:0 0 12px;color:var(--mut);font-size:12.5px;line-height:1.5}
   label.l{display:block;font-size:11.5px;font-weight:700;color:var(--txt2);margin:10px 0 4px}
   input[type=text],input[type=number],input[type=search],select,textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:13px;background:#fff;color:var(--txt);width:100%}
@@ -202,12 +203,109 @@ async function salvarSeguranca(){
   await carregarPadroes(); telaSeguranca(); const m = $('segMsg'); if (m){ m.className = 'msg ok'; m.textContent = 'Salvo. Vale para todas as obras do grupo.'; }
 }
 
-// ── Qualidade ───────────────────────────────────────────────────────────────
-function telaQualidade(){
+// ── Qualidade: biblioteca de modelos de FVS ─────────────────────────────────
+const ETAPA_ROT = { estrutura:'Estrutura', vedacao:'Vedação', revestimento:'Revestimento', instalacoes:'Instalações', impermeabilizacao:'Impermeabilização', acabamento:'Acabamento', fachada:'Fachada', outro:'Outro' };
+const NIVEL_ROT = { pavimento:'Pavimento', unidade:'Unidade (apto/sala)', ambiente:'Ambiente' };
+// Modelos de partida do Auria — a Qualidade importa e ajusta ao padrão da construtora.
+// Cada item: [o que verificar, método/instrumento, tolerância]
+const FVS_PARTIDA = [
+  { codigo:'FVS-FOR-01', servico:'Fôrma de estrutura', etapa:'estrutura', itens:[['Locação dos eixos conforme projeto','Trena a partir dos eixos','±5 mm'],['Prumo e nível das fôrmas','Prumo / nível a laser','±5 mm'],['Dimensões das peças','Trena','±5 mm'],['Escoramento conforme projeto','Visual + projeto de escoramento',''],['Estanqueidade e limpeza','Visual','']] },
+  { codigo:'FVS-ARM-01', servico:'Armação', etapa:'estrutura', itens:[['Bitolas e quantidades conforme projeto','Conferir com o projeto',''],['Espaçamento entre barras','Trena','±1 cm'],['Cobrimento (espaçadores)','Visual + trena','conforme projeto'],['Ancoragens e transpasses','Trena','conforme projeto'],['Amarração e limpeza das barras','Visual','']] },
+  { codigo:'FVS-CON-01', servico:'Concretagem', etapa:'estrutura', itens:[['Fôrma e armação liberadas (FVS aprovadas)','Conferir FVS',''],['Nota fiscal / fck / slump do caminhão','Slump test','conforme traço'],['Moldagem de corpos de prova','Visual',''],['Adensamento e acabamento da superfície','Visual',''],['Cura iniciada','Visual','']] },
+  { codigo:'FVS-ALV-01', servico:'Alvenaria de vedação', etapa:'vedacao', itens:[['Marcação conforme projeto (1ª fiada)','Trena + projeto','±5 mm'],['Prumo','Prumo / régua','≤3 mm/m'],['Nível das fiadas','Nível','±3 mm'],['Espessura e preenchimento das juntas','Visual + trena','10 ±3 mm'],['Amarração e encunhamento','Visual','']] },
+  { codigo:'FVS-REB-01', servico:'Reboco interno', etapa:'revestimento', itens:[['Taliscamento / mestras','Visual',''],['Planeza','Régua 2 m','≤3 mm'],['Prumo','Prumo','≤3 mm/m'],['Aderência (som cavo)','Percussão','sem som cavo'],['Acabamento e cantos','Visual','']] },
+  { codigo:'FVS-CTP-01', servico:'Contrapiso', etapa:'revestimento', itens:[['Nível conforme projeto','Nível a laser','±5 mm'],['Caimento em áreas molhadas','Nível','≥1%'],['Planeza','Régua 2 m','≤3 mm'],['Aderência (som cavo)','Percussão','sem som cavo'],['Juntas de dilatação','Visual','']] },
+  { codigo:'FVS-IMP-01', servico:'Impermeabilização', etapa:'impermeabilizacao', itens:[['Superfície limpa e regularizada','Visual',''],['Cantos arredondados / meia-cana','Visual',''],['Demãos / espessura','Conforme fabricante',''],['Rodapé de subida','Trena','≥30 cm'],['Teste de estanqueidade (72 h)','Lâmina de água','sem vazamento']] }
+];
+let FVS_MODS = [];
+async function carregarFvsModelos(){
+  const { data, error } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).order('codigo');
+  FVS_MODS = error ? [] : (data || []); return error;
+}
+async function telaQualidade(){
+  $('corpo').innerHTML = '<div class="hint">Carregando modelos…</div>';
+  const e = await carregarFvsModelos();
+  if (!ITS.length) await carregarITs();
+  const q = (window._fvsBusca || '').toLowerCase(), et = window._fvsEtapa || '', ina = !!window._fvsIna;
+  const lista = FVS_MODS.filter(m => (ina || m.ativo) && (!et || m.etapa === et) && (!q || (m.codigo + ' ' + m.servico).toLowerCase().includes(q)));
   $('corpo').innerHTML = aviso(PODE.qualidade, 'setor de Qualidade e gestão do grupo')
-    + '<div class="card"><h3>Biblioteca de modelos de FVS</h3><p class="h">Os modelos de FVS (itens, tolerância, critério, instrumento), o nível mínimo de local por modelo e quais exigem 2 aprovações ficam aqui. '
-    + 'Entra junto com o módulo de FVS do App Obra — a importação dos modelos que a Diagonal já tem (Construpoint / Qualitin) será feita nesta tela.</p>'
-    + '<div class="hint">Em construção. Enquanto isso, cadastre as ITs de qualidade na aba <b>Biblioteca de ITs</b> — os modelos de FVS vão apontar para elas.</div></div>';
+    + '<div class="card"><h3>Biblioteca de modelos de FVS</h3><p class="h">Cada modelo vira uma ficha na obra (serviço × local). Ao abrir a ficha, a obra recebe uma <b>cópia</b> dos itens — mudar o modelo vale para as próximas fichas, não para as já abertas. Mudar os itens sobe a revisão.</p>'
+    + (e ? '<div class="msg err">Não foi possível ler os modelos: ' + esc(e.message) + '</div>' : '')
+    + '<div class="row" style="flex-wrap:wrap;gap:8px"><input type="text" id="fvsBusca" placeholder="Buscar código ou serviço" value="' + esc(window._fvsBusca || '') + '" oninput="window._fvsBusca=this.value;clearTimeout(window._fvsT);window._fvsT=setTimeout(fvsRefiltrar,300)" style="max-width:260px">'
+    + '<select onchange="window._fvsEtapa=this.value;telaQualidade()" style="max-width:180px"><option value="">Todas as etapas</option>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === et ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select>'
+    + '<label class="chk" style="margin:0"><input type="checkbox"' + (ina ? ' checked' : '') + ' onchange="window._fvsIna=this.checked;telaQualidade()"> mostrar inativos</label><span style="flex:1"></span>'
+    + (PODE.qualidade ? (FVS_MODS.length ? '' : '<button class="btn sec" onclick="fvsImportarPartida()">Importar modelos de partida do Auria</button>') + '<button class="btn" onclick="fvsForm()">＋ Modelo</button>' : '') + '</div>'
+    + (lista.length ? '<table style="margin-top:12px"><tr><th>Código</th><th>Serviço</th><th>Etapa</th><th>Local</th><th>Itens</th><th>Rev.</th><th></th></tr>' + lista.map(m => '<tr' + (m.ativo ? '' : ' style="opacity:.55"') + '>'
+        + '<td class="cod">' + esc(m.codigo) + '</td><td>' + esc(m.servico) + (m.duas_aprovacoes ? ' <span class="chip t-seguranca">2 aprovações</span>' : '') + (m.ativo ? '' : ' <span class="chip">inativo</span>') + '</td>'
+        + '<td>' + ETAPA_ROT[m.etapa] + '</td><td>' + NIVEL_ROT[m.nivel_local] + '</td><td>' + (m.itens || []).length + '</td><td class="cod">' + String(m.revisao).padStart(2,'0') + '</td>'
+        + '<td style="text-align:right"><button class="btn sec" onclick="fvsForm(\'' + m.id + '\')">' + (PODE.qualidade ? 'Editar' : 'Ver') + '</button></td></tr>').join('') + '</table>'
+      : '<div class="hint" style="margin-top:12px">' + (FVS_MODS.length ? 'Nenhum modelo com esse filtro.' : 'Nenhum modelo cadastrado ainda.' + (PODE.qualidade ? ' Comece importando os modelos de partida do Auria e ajuste ao padrão da construtora.' : '')) + '</div>')
+    + '<p class="h" style="margin:12px 0 0">Origem "Qualitin"/"Construpoint" fica reservada para importar os modelos que a construtora já usa.</p></div>';
+}
+// busca sem perder o foco do campo
+async function fvsRefiltrar(){ await telaQualidade(); const b = $('fvsBusca'); if (b){ b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
+async function fvsImportarPartida(){
+  if (!confirm('Criar os ' + FVS_PARTIDA.length + ' modelos de partida do Auria neste grupo? Você pode editar ou inativar cada um depois.')) return;
+  const rows = FVS_PARTIDA.map(m => ({ grupo_id:GRUPO, codigo:m.codigo, servico:m.servico, etapa:m.etapa, nivel_local:'pavimento',
+    itens: m.itens.map(([item, metodo, tolerancia]) => ({ item, criterio:'', metodo, tolerancia, exige_foto:false })) }));
+  const { error } = await sb.from('fvs_modelo_auria').insert(rows);
+  if (error) alert('Não foi possível importar: ' + error.message);
+  telaQualidade();
+}
+function fvsForm(id){
+  const m = id ? FVS_MODS.find(x => x.id === id) : { codigo:'', servico:'', etapa:'vedacao', nivel_local:'pavimento', duas_aprovacoes:false, it_id:null, itens:[{ item:'', criterio:'', metodo:'', tolerancia:'', exige_foto:false }], ativo:true };
+  window._FVS_IT = JSON.parse(JSON.stringify(m.itens || []));
+  const dis = PODE.qualidade ? '' : ' disabled';
+  ov('<div class="hd"><b>' + (id ? '<span class="cod">' + esc(m.codigo) + '</span> · rev. ' + String(m.revisao).padStart(2,'0') : 'Novo modelo de FVS') + '</b>'
+    + (id && m.atualizado_em ? '<div class="hint" style="margin-top:4px">Última alteração: ' + esc(m.atualizado_nome || '') + ' · ' + new Date(m.atualizado_em).toLocaleString('pt-BR') + '</div>' : '') + '</div><div class="bd">'
+    + '<div class="g2"><div><label class="l">Código</label><input type="text" id="fmCod" value="' + esc(m.codigo) + '" placeholder="FVS-ALV-01"' + (id ? ' disabled' : dis) + '></div>'
+    + '<div><label class="l">Serviço</label><input type="text" id="fmServ" value="' + esc(m.servico) + '" placeholder="Ex.: Alvenaria de vedação"' + dis + '></div></div>'
+    + '<div class="g3"><div><label class="l">Etapa</label><select id="fmEtapa"' + dis + '>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === m.etapa ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select></div>'
+    + '<div><label class="l">Inspecionar por</label><select id="fmNivel"' + dis + '>' + Object.keys(NIVEL_ROT).map(k => '<option value="' + k + '"' + (k === m.nivel_local ? ' selected' : '') + '>' + NIVEL_ROT[k] + '</option>').join('') + '</select></div>'
+    + '<div><label class="l">IT de referência</label><select id="fmIt"' + dis + '><option value="">—</option>' + ITS.filter(i => i.ativo).map(i => '<option value="' + i.id + '"' + (i.id === m.it_id ? ' selected' : '') + '>' + esc(i.codigo + ' — ' + i.titulo) + '</option>').join('') + '</select></div></div>'
+    + '<label class="chk"><input type="checkbox" id="fmDuas"' + (m.duas_aprovacoes ? ' checked' : '') + dis + '> Exige 2 aprovações (coord. de campo e eng. chefe)</label>'
+    + (id ? '<label class="chk"><input type="checkbox" id="fmAtivo"' + (m.ativo ? ' checked' : '') + dis + '> Ativo (inativo não aparece para abrir novas fichas)</label>' : '')
+    + '<label class="l" style="margin-top:12px">Itens de verificação</label><div id="fmItens"></div>'
+    + (PODE.qualidade ? '<button class="btn sec" style="margin-top:6px" onclick="fvsLerItens();_FVS_IT.push({item:\'\',criterio:\'\',metodo:\'\',tolerancia:\'\',exige_foto:false});fvsItensHtml()">＋ Item</button>' : '')
+    + '<div class="msg" id="fmMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar()">' + (PODE.qualidade ? 'Cancelar' : 'Fechar') + '</button>'
+    + (PODE.qualidade ? '<button class="btn" id="fmOk" onclick="fvsSalvar(' + (id ? '\'' + id + '\'' : '') + ')">Salvar</button>' : '') + '</div>');
+  fvsItensHtml();
+}
+function fvsItensHtml(){
+  const dis = PODE.qualidade ? '' : ' disabled';
+  $('fmItens').innerHTML = '<table class="fm-it"><tr><th>#</th><th>O que verificar</th><th>Método / instrumento</th><th>Tolerância</th><th>Foto</th><th></th></tr>'
+    + _FVS_IT.map((t, i) => '<tr><td class="cod">' + (i+1) + '</td>'
+      + '<td><input type="text" data-fi="item" value="' + esc(t.item) + '"' + dis + '></td>'
+      + '<td><input type="text" data-fi="metodo" value="' + esc(t.metodo || '') + '"' + dis + '></td>'
+      + '<td><input type="text" data-fi="tolerancia" value="' + esc(t.tolerancia || '') + '" style="max-width:110px"' + dis + '></td>'
+      + '<td style="text-align:center"><input type="checkbox" data-fi="exige_foto"' + (t.exige_foto ? ' checked' : '') + dis + ' title="Exige foto"></td>'
+      + '<td style="white-space:nowrap">' + (PODE.qualidade ? '<button class="btn sec" title="Subir" onclick="fvsMover(' + i + ',-1)">↑</button><button class="btn sec" title="Tirar" onclick="fvsLerItens();_FVS_IT.splice(' + i + ',1);fvsItensHtml()">×</button>' : '') + '</td></tr>').join('') + '</table>';
+}
+function fvsLerItens(){
+  const rows = [...document.querySelectorAll('#fmItens tr')].slice(1);
+  _FVS_IT = rows.map((r, i) => Object.assign({}, _FVS_IT[i] || {}, {
+    item: r.querySelector('[data-fi=item]').value.trim(), metodo: r.querySelector('[data-fi=metodo]').value.trim(),
+    tolerancia: r.querySelector('[data-fi=tolerancia]').value.trim(), exige_foto: r.querySelector('[data-fi=exige_foto]').checked }));
+}
+function fvsMover(i, d){ fvsLerItens(); const j = i + d; if (j < 0 || j >= _FVS_IT.length) return; [_FVS_IT[i], _FVS_IT[j]] = [_FVS_IT[j], _FVS_IT[i]]; fvsItensHtml(); }
+async function fvsSalvar(id){
+  fvsLerItens();
+  const msg = t => { $('fmMsg').className = 'msg err'; $('fmMsg').textContent = t; };
+  const itens = _FVS_IT.filter(t => t.item).map(t => ({ item:t.item, criterio:t.criterio || '', metodo:t.metodo, tolerancia:t.tolerancia, exige_foto:!!t.exige_foto }));
+  const row = { servico:($('fmServ').value || '').trim(), etapa:$('fmEtapa').value, nivel_local:$('fmNivel').value, it_id:$('fmIt').value || null, duas_aprovacoes:$('fmDuas').checked, itens };
+  if (row.servico.length < 3) return msg('Escreva o serviço.');
+  if (!itens.length) return msg('O modelo precisa de pelo menos um item.');
+  $('fmOk').disabled = true;
+  let r;
+  if (id){ row.ativo = $('fmAtivo').checked; r = await sb.from('fvs_modelo_auria').update(row).eq('id', id); }
+  else {
+    const cod = ($('fmCod').value || '').trim().toUpperCase();
+    if (cod.length < 3){ $('fmOk').disabled = false; return msg('Escreva o código.'); }
+    r = await sb.from('fvs_modelo_auria').insert(Object.assign(row, { grupo_id:GRUPO, codigo:cod }));
+  }
+  if (r.error){ $('fmOk').disabled = false; return msg(/duplicate|unique/i.test(r.error.message) ? 'Já existe um modelo com esse código.' : r.error.message); }
+  ovFechar(); telaQualidade();
 }
 
 // ── Biblioteca de ITs ───────────────────────────────────────────────────────

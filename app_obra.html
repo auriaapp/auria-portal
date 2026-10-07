@@ -680,6 +680,29 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .oc-calor th:first-child,.oc-calor td:first-child{text-align:left;font-family:ui-monospace,monospace;color:#1E3A5F;font-weight:700}
 .oc-calor td{padding:4px 6px;border-top:1px solid #F1F5F9}
 
+/* Qualidade (FVS) — matriz pavimento × serviço */
+#segOv .box.fvs-larga{width:1100px}
+.fvs-filtros{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0 10px}
+.fvs-filtros select{max-width:200px}
+.fvs-leg{display:flex;gap:4px;flex-wrap:wrap}
+.fvs-leg button{border:1px solid #E2E8F0;background:#fff;border-radius:999px;padding:3px 9px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;color:#334155}
+.fvs-leg button.on{border-color:#E8960A;box-shadow:0 0 0 1px #E8960A}
+.fvs-leg i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.fvs-mtz{overflow:auto;max-height:58vh;border:1px solid #E2E8F0;border-radius:8px}
+.fvs-mtz table{border-collapse:separate;border-spacing:0;font-size:11px}
+.fvs-mtz th{position:sticky;top:0;background:#F8FAFC;z-index:1;padding:6px 4px;border-bottom:1px solid #E2E8F0;min-width:74px;max-width:96px;vertical-align:bottom;font-weight:600;color:#334155}
+.fvs-mtz th div{white-space:normal;line-height:1.2}
+.fvs-mtz th span{display:block;font-family:ui-monospace,monospace;color:#1E3A5F;font-size:9.5px;margin-top:2px}
+.fvs-mtz .pv{position:sticky;left:0;background:#fff;z-index:2;text-align:left;font-family:ui-monospace,monospace;font-weight:700;color:#1E3A5F;padding:4px 8px;white-space:nowrap;border-right:1px solid #E2E8F0}
+.fvs-mtz th.pv{z-index:3;background:#F8FAFC}
+.fvs-mtz td.c{text-align:center;padding:3px;border-bottom:1px solid #F1F5F9;cursor:pointer;height:26px}
+.fvs-mtz td.c:hover{background:#FEF3E2}
+.fvs-mtz td.c span{display:inline-block;min-width:26px;padding:2px 5px;border-radius:5px;color:#fff;font-weight:800}
+.fvs-itens{margin:0;padding-left:20px;font-size:12px;line-height:1.6}
+.fvs-tab{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.fvs-tab th{text-align:left;color:#64748B;font-weight:600;border-bottom:1px solid #E2E8F0;padding:4px}
+.fvs-tab td{padding:5px 4px;border-bottom:1px solid #F1F5F9;vertical-align:top}
+
 </style>
 </head>
 <body>
@@ -10595,6 +10618,135 @@ function ddsDetalhe(id){
     if (ab) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + ab + ' ocorrência(s) nova(s)</span></span>');
     return h;
   };
+})();
+
+// ── App Obra · Qualidade (FVS) — B1: MATRIZ PAVIMENTO × SERVIÇO ──────────────
+//  Modelos vêm da biblioteca do grupo (Padrões do Grupo › Qualidade).
+//  Matriz no lugar do kanban (queixa da obra no Construpoint): cada célula =
+//  fichas daquele serviço naquele pavimento, cor pela pior situação.
+//  Abrem ficha: eng. chefe, coord. de campo e equipe (o técnico só lê).
+//  Preenchimento/aprovação = B2; 3D colorido = B3.
+var FVS_MODELOS = [], FVS_INSP = [], _fvsFiltro = { etapa:'', pav:'', so:'' };
+const FVS_SIT = {
+  aberta:         { rot:'Aberta',                cor:'#64748B', ord:2 },
+  em_verificacao: { rot:'Em verificação',        cor:'#1E3A5F', ord:3 },
+  aguardando:     { rot:'Aguardando aprovação',  cor:'#E8960A', ord:4 },
+  reprovada:      { rot:'Reprovada',             cor:'#C0392B', ord:5 },
+  aprovada:       { rot:'Aprovada',              cor:'#1E8449', ord:1 }
+};
+const FVS_ETAPAS = { estrutura:'Estrutura', vedacao:'Vedação', revestimento:'Revestimento', instalacoes:'Instalações', impermeabilizacao:'Impermeabilização', acabamento:'Acabamento', fachada:'Fachada', outro:'Outro' };
+function fvsPodeAbrir(){ return ['eng_chefe','coord_campo','equipe_campo'].includes(segMeuNivel()); }
+async function fvsCarregar(){
+  FVS_MODELOS = []; FVS_INSP = [];
+  if (!EMP) return;
+  const m = await sb.from('fvs_modelo_auria').select('id,codigo,servico,etapa,nivel_local,duas_aprovacoes,it_id,itens,revisao,ativo').eq('grupo_id', EMP.empresa_id).order('codigo');
+  if (m.error){ console.warn('fvs_modelo_auria indisponível:', m.error.message || m.error); return; }
+  FVS_MODELOS = m.data || [];
+  const i = await sb.from('fvs_inspecao_auria').select('*').eq('empreendimento_id', EMP.id).order('aberta_em', { ascending:false });
+  if (i.error){ console.warn('fvs_inspecao_auria indisponível:', i.error.message || i.error); return; }
+  FVS_INSP = i.data || [];
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await fvsCarregar(); } catch (_){} try { renderSideRight(); } catch (_){} }; })();
+
+function fvsPavs(){ return (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse(); }
+// pior situação manda na cor (reprovada > aguardando > em verificação > aberta > aprovada)
+function fvsCelula(lista){
+  if (!lista.length) return null;
+  const pior = lista.reduce((a, b) => FVS_SIT[b.situacao].ord > FVS_SIT[a.situacao].ord ? b : a);
+  return { sit:pior.situacao, aprov:lista.filter(x => x.situacao === 'aprovada').length, n:lista.length };
+}
+function fvsPainel(){
+  segOv('<div class="hd"><b>Qualidade — Fichas de Verificação de Serviço</b><p>Pavimento × serviço. Cor = situação mais crítica da célula. Clique numa célula para ver ou abrir fichas.</p></div><div class="ls" id="fvsCorpo"></div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
+  document.querySelector('#segOv .box').classList.add('fvs-larga');
+  fvsMatriz();
+}
+function fvsMatriz(){
+  const f = _fvsFiltro, corpo = $('fvsCorpo'); if (!corpo) return;
+  if (!FVS_MODELOS.length){
+    corpo.innerHTML = '<div class="hint" style="padding:14px">O grupo ainda não tem modelos de FVS. A Qualidade cadastra em <b>Padrões do Grupo › Qualidade</b> (há modelos de partida do Auria para importar).</div>';
+    return;
+  }
+  const usados = new Set(FVS_INSP.map(x => x.modelo_id));
+  const mods = FVS_MODELOS.filter(m => (m.ativo || usados.has(m.id)) && (!f.etapa || m.etapa === f.etapa));
+  const pavs = fvsPavs().filter(p => !f.pav || p.id === f.pav);
+  const ins = FVS_INSP.filter(x => !f.so || x.situacao === f.so);
+  const tot = s => FVS_INSP.filter(x => x.situacao === s).length;
+  corpo.innerHTML = '<div class="fvs-filtros">'
+    + '<select onchange="_fvsFiltro.pav=this.value;fvsMatriz()"><option value="">Todos os pavimentos</option>' + fvsPavs().map(p => '<option value="' + p.id + '"' + (p.id === f.pav ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select>'
+    + '<select onchange="_fvsFiltro.etapa=this.value;fvsMatriz()"><option value="">Todas as etapas</option>' + Object.keys(FVS_ETAPAS).map(k => '<option value="' + k + '"' + (k === f.etapa ? ' selected' : '') + '>' + FVS_ETAPAS[k] + '</option>').join('') + '</select>'
+    + '<span class="fvs-leg">' + Object.keys(FVS_SIT).map(s => '<button class="' + (f.so === s ? 'on' : '') + '" onclick="_fvsFiltro.so=_fvsFiltro.so===\'' + s + '\'?\'\':\'' + s + '\';fvsMatriz()"><i style="background:' + FVS_SIT[s].cor + '"></i>' + FVS_SIT[s].rot + ' <b>' + tot(s) + '</b></button>').join('') + '</span></div>'
+    + (!pavs.length ? '<div class="hint" style="padding:12px">Este empreendimento não tem pavimentos cadastrados (o gestor cadastra no CDE).</div>'
+      : '<div class="fvs-mtz"><table><thead><tr><th class="pv">Pavimento</th>' + mods.map(m => '<th title="' + esc(m.codigo + ' — ' + m.servico) + '"><div>' + esc(m.servico) + '</div><span>' + esc(m.codigo) + '</span></th>').join('') + '</tr></thead><tbody>'
+        + pavs.map(p => '<tr><td class="pv">' + esc(cdePavLabel(p)) + '</td>' + mods.map(m => {
+            const c = fvsCelula(ins.filter(x => x.modelo_id === m.id && x.pavimento_id === p.id));
+            return '<td class="c" onclick="fvsCelulaVer(\'' + m.id + '\',\'' + p.id + '\')">' + (c ? '<span style="background:' + FVS_SIT[c.sit].cor + '" title="' + FVS_SIT[c.sit].rot + '">' + (c.n > 1 ? c.aprov + '/' + c.n : c.sit === 'aprovada' ? '✓' : c.sit === 'reprovada' ? '✕' : '•') + '</span>' : '') + '</td>'; }).join('') + '</tr>').join('')
+        + '</tbody></table></div>')
+    + '<div class="hint" style="padding:6px 2px">' + FVS_INSP.length + ' ficha(s) no empreendimento' + (fvsPodeAbrir() ? ' · célula vazia = clique para abrir a primeira ficha' : ' · somente consulta') + '</div>';
+}
+function fvsCelulaVer(modId, pavId){
+  const m = FVS_MODELOS.find(x => x.id === modId), p = fvsPavs().find(x => x.id === pavId);
+  const lista = FVS_INSP.filter(x => x.modelo_id === modId && x.pavimento_id === pavId);
+  if (!lista.length && fvsPodeAbrir() && m.nivel_local === 'pavimento'){ fvsNova(modId, pavId); return; }
+  segOv('<div class="hd"><b>' + esc(m.servico) + ' · ' + esc(cdePavLabel(p)) + '</b><p class="cod">' + esc(m.codigo) + '</p></div><div class="ls">'
+    + (lista.length ? lista.map(x => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + FVS_SIT[x.situacao].cor + '!important" onclick="fvsFicha(\'' + x.id + '\')">'
+        + '<div class="cod">' + esc(x.codigo) + ' <span class="seg-chip" style="background:' + FVS_SIT[x.situacao].cor + ';color:#fff">' + FVS_SIT[x.situacao].rot + '</span></div>'
+        + '<div class="t">' + esc(x.local_txt || 'Pavimento inteiro') + '</div><div class="m">aberta por ' + esc(x.aberta_nome || '') + ' · ' + new Date(x.aberta_em).toLocaleDateString('pt-BR') + '</div></div>').join('')
+      : '<div class="hint" style="padding:12px">Nenhuma ficha neste pavimento.</div>')
+    + '</div><div class="ft"><button class="b2" onclick="fvsPainel()">Voltar</button>' + (fvsPodeAbrir() ? '<button class="b1" onclick="fvsNova(\'' + modId + '\',\'' + pavId + '\')">＋ Abrir ficha</button>' : '') + '</div>');
+}
+const FVS_NIVEL_ROT = { pavimento:'Pavimento inteiro', unidade:'Unidade (apto/sala)', ambiente:'Ambiente' };
+function fvsNova(modId, pavId){
+  if (!fvsPodeAbrir()) return;
+  const m = FVS_MODELOS.find(x => x.id === modId), p = fvsPavs().find(x => x.id === pavId);
+  const precisaLocal = m.nivel_local !== 'pavimento';
+  segOv('<div class="hd"><b>Abrir ficha — ' + esc(m.servico) + '</b><p><span class="cod">' + esc(m.codigo) + ' · rev. ' + String(m.revisao).padStart(2,'0') + '</span> · ' + esc(cdePavLabel(p)) + ' · ' + (m.itens || []).length + ' itens</p></div>'
+    + '<div class="seg-form"><label>' + (precisaLocal ? FVS_NIVEL_ROT[m.nivel_local] : 'Local (opcional)') + '</label>'
+    + '<input id="fvsLoc" maxlength="80" placeholder="' + (m.nivel_local === 'unidade' ? 'Ex.: Apto 1203' : m.nivel_local === 'ambiente' ? 'Ex.: Apto 1203 — banheiro social' : 'Em branco = pavimento inteiro') + '">'
+    + '<label>Itens que serão verificados</label><ol class="fvs-itens">' + (m.itens || []).map(t => '<li>' + esc(t.item) + (t.tolerancia ? ' <small>(' + esc(t.tolerancia) + ')</small>' : '') + (t.exige_foto ? ' <small>📷</small>' : '') + '</li>').join('') + '</ol>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="fvsPainel()">Voltar</button><button class="b1" id="segOk" onclick="fvsAbrir(\'' + modId + '\',\'' + pavId + '\',' + precisaLocal + ')">Abrir ficha</button></div>');
+}
+async function fvsAbrir(modId, pavId, precisaLocal){
+  const loc = ($('fvsLoc').value || '').trim();
+  if (precisaLocal && loc.length < 2){ $('segMsg').textContent = 'Informe o local.'; return; }
+  if (FVS_INSP.some(x => x.modelo_id === modId && x.pavimento_id === pavId && (x.local_txt || '').toLowerCase() === loc.toLowerCase() && x.situacao !== 'reprovada')){
+    $('segMsg').textContent = 'Já existe uma ficha deste serviço neste local.'; return;
+  }
+  const b = $('segOk'); b.disabled = true;
+  try {
+    const c = await sb.rpc('fvs_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+    const id = crypto.randomUUID();
+    const { error } = await sb.from('fvs_inspecao_auria').insert({ id, empreendimento_id:EMP.id, codigo:c.data, modelo_id:modId, pavimento_id:pavId, local_txt:loc || null, aberta_por:USER.id });
+    if (error) throw error;
+    await fvsCarregar(); try { renderSideRight(); } catch (_){}
+    fvsFicha(id);
+  } catch (e){ $('segMsg').textContent = 'Não foi possível abrir: ' + (e.message || e); b.disabled = false; }
+}
+function fvsFicha(id){
+  const x = FVS_INSP.find(i => i.id === id); if (!x) return;
+  const m = FVS_MODELOS.find(i => i.id === x.modelo_id) || {};
+  segOv('<div class="hd"><b>' + esc(x.codigo) + ' — ' + esc(x.servico) + '</b><p><span class="seg-chip" style="background:' + FVS_SIT[x.situacao].cor + ';color:#fff">' + FVS_SIT[x.situacao].rot + '</span> '
+      + '<span class="cod">' + esc(x.modelo_codigo) + ' · rev. ' + String(x.modelo_revisao).padStart(2,'0') + '</span></p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Local</span><b>' + esc([segPavNome(x.pavimento_id), x.local_txt].filter(Boolean).join(' › ') || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Aberta</span><b>' + esc(x.aberta_nome || '') + ' · ' + new Date(x.aberta_em).toLocaleString('pt-BR') + '</b></div>'
+    + (m.it_id && typeof itsAbrirIt === 'function' ? '<div class="seg-kv"><span>IT</span><b><button class="b2 mini" onclick="segFechar();itsAbrirIt(\'' + m.it_id + '\')">📘 Abrir a IT do serviço</button></b></div>' : '')
+    + '<table class="fvs-tab"><tr><th>#</th><th>Item</th><th>Método</th><th>Tolerância</th></tr>' + (x.itens || []).map((t, i) => '<tr><td>' + (i+1) + '</td><td>' + esc(t.item) + (t.exige_foto ? ' 📷' : '') + '</td><td>' + esc(t.metodo || '') + '</td><td>' + esc(t.tolerancia || '') + '</td></tr>').join('') + '</table>'
+    + '<div class="hint" style="padding:8px 0">O preenchimento item a item (conforme / não conforme / não se aplica, com foto) e a aprovação entram na próxima etapa.</div>'
+    + '</div></div><div class="ft"><button class="b2" onclick="fvsPainel()">Voltar à matriz</button></div>');
+}
+
+// ── Módulo da barra direita ─────────────────────────────────────────────────
+(function(){
+  const _m = obraModulosHtml;
+  obraModulosHtml = function(){
+    const ag = FVS_INSP.filter(x => x.situacao === 'aguardando').length, rep = FVS_INSP.filter(x => x.situacao === 'reprovada').length;
+    const sub = rep ? rep + ' reprovada(s)' : ag ? ag + ' aguardando aprovação' : FVS_INSP.length ? FVS_INSP.length + ' ficha(s)' : 'matriz pavimento × serviço';
+    return _m().replace(/(onclick="obraModulo\('qualidade'\)"[\s\S]*?<span>)em construção(<\/span>)/, '$1' + sub + '$2');
+  };
+  const _o = obraModulo;
+  obraModulo = function(k){ if (k === 'qualidade'){ fvsPainel(); return; } return _o(k); };
 })();
 
 </script>
