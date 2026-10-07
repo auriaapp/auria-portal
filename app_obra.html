@@ -500,6 +500,7 @@
     #painelModal > div{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;border-radius:0!important}
   }
 </style>
+<link rel="stylesheet" href="auria_barra.css">
 <style>
 /* ── App Obra (gerado em app_obra.html por tools/gen_app_obra.py) ─────────
    Padrão Auria do CDE: centro claro, navy nos textos/abas, laranja = foco.
@@ -11083,6 +11084,40 @@ function fvs3dPavDoStorey(nome){
   }
   return null;
 }
+// Pareia os andares do modelo (em ordem de elevação) com os pavimentos do CDE
+// (na ordem cadastrada). 1) âncoras: nomes inequívocos (palavra + número) —
+// nomes de REPETIÇÃO do TQS (TIPO1-001, TIPO2-014…) nunca viram âncora;
+// 2) entre duas âncoras, se sobram N andares no modelo e N pavimentos no CDE,
+// pareia na ordem. Ex.: 1oPAV … ROOFTOP = 46 andares × 02T…47T = 46 pavimentos.
+const FVS3D_SIN = [ ['SUBSOLO','SUB','SS'], ['SOBRESSOLO','SOBRE','SB'], ['TERREO','TER'], ['LAZER','LAZ'], ['ROOFTOP','ROOF','ROF'],
+                    ['CASA DE MAQUINAS','CMAQ','CMQ','MAQUINAS'], ['COBERTURA','COB','HELIPONTO'], ['FUNDACAO','FUND'], ['MEZANINO','MEZ'], ['PILOTIS','PIL'], ['GARAGEM','GAR'] ];
+function _fvsChave(nome){
+  const n = _fvsNorm(nome); if (!n) return null;
+  if (/^[A-Z]+\d*-\d{2,}$/.test(n.replace(/\s/g, ''))) return null;           // repetição do TQS
+  const num = (n.match(/\d+/) || [])[0]; const nn = num ? String(parseInt(num, 10)) : '';
+  for (const g of FVS3D_SIN) if (g.some(w => n.replace(/\d+/g, ' ').split(/[^A-Z]+/).includes(w) || (w.length > 4 && n.includes(w)))) return g[0] + '#' + nn;
+  if (/PAV|TIPO|ANDAR/.test(n) && nn) return 'PAV#' + nn;
+  return null;
+}
+function fvs3dParear(nomesModelo){
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista');
+  const chP = pavs.map(p => _fvsChave(p.nome) || _fvsChave(p.codigo));
+  const chM = nomesModelo.map(_fvsChave);
+  const res = new Array(nomesModelo.length).fill(null);
+  // âncoras (monotônicas nas duas listas; chave única no CDE)
+  const anc = []; let ultP = -1;
+  chM.forEach((c, i) => { if (!c) return; const js = chP.map((x, j) => x === c ? j : -1).filter(j => j > ultP);
+    if (js.length === 1 || (js.length && chP.filter(x => x === c).length === 1)){ res[i] = pavs[js[0]]; anc.push([i, js[0]]); ultP = js[0]; } });
+  // preenche os vãos de mesmo tamanho
+  const marcos = [[-1, -1]].concat(anc, [[nomesModelo.length, pavs.length]]);
+  for (let k = 0; k + 1 < marcos.length; k++){
+    const [i0, j0] = marcos[k], [i1, j1] = marcos[k + 1];
+    const mi = []; for (let i = i0 + 1; i < i1; i++) if (!res[i] && !/FUNDAC|CX ?D.?AGUA|RESERVAT|TOPO|BARRILETE/.test(_fvsNorm(nomesModelo[i]))) mi.push(i);
+    const pj = []; for (let j = j0 + 1; j < j1; j++) pj.push(j);
+    if (mi.length && mi.length === pj.length) mi.forEach((i, t) => res[i] = pavs[pj[t]]);
+  }
+  return res;
+}
 var FVS3D_MAPA = null;   // { chave, dono: [Map(id → pavId)], semPar: [nomes] }
 async function fvs3dMapa(){
   const chave = F3D.modelos.map(m => m.arquivoId).join('|') + '#' + (CDE_PAVS || []).length;
@@ -11101,12 +11136,16 @@ async function fvs3dMapa(){
       for (const cn of (inst.children || [])) for (const ch of (cn.children || [])) walk(ch, cn.category);
     };
     for (const inst of (raw.children || [])) walk(inst, raw.category);
-    const nm = {}, sids = storeys.map(s => s.id);
+    const nm = {}, elev = {}, sids = storeys.map(s => s.id);
     for (let p = 0; p < sids.length; p += 400){
       let da = []; try { da = await md.getItemsData(sids.slice(p, p + 400), { attributesDefault:true, relationsDefault:{ attributes:false, relations:false } }); } catch (_){}
-      (da || []).forEach(d => { const lid = d && d._localId && d._localId.value; if (lid != null) nm[lid] = String((d.Name && d.Name.value) || (d.LongName && d.LongName.value) || ''); });
+      (da || []).forEach(d => { const lid = d && d._localId && d._localId.value; if (lid == null) return;
+        nm[lid] = String((d.Name && d.Name.value) || (d.LongName && d.LongName.value) || '');
+        elev[lid] = d.Elevation && isFinite(+d.Elevation.value) ? +d.Elevation.value : null; });
     }
-    storeys.forEach(s => { const pc = fvs3dPavDoStorey(nm[s.id]); if (!pc){ if (nm[s.id]) semPar.add(nm[s.id]); return; } s.ids.forEach(id => mapa.set(id, pc.id)); });
+    const lista = storeys.map((s, k) => ({ s, nome:nm[s.id] || '', z:elev[s.id] != null ? elev[s.id] : k })).sort((a, b) => a.z - b.z);
+    const par = fvs3dParear(lista.map(x => x.nome));
+    lista.forEach((x, k) => { const pc = par[k]; if (!pc){ if (x.nome) semPar.add(x.nome); return; } x.s.ids.forEach(id => mapa.set(id, pc.id)); });
   }
   FVS3D_MAPA = { chave, dono, semPar:[...semPar] };
   return FVS3D_MAPA;
