@@ -241,7 +241,65 @@ async function telaQualidade(){
         + '<td>' + ETAPA_ROT[m.etapa] + '</td><td>' + NIVEL_ROT[m.nivel_local] + '</td><td>' + (m.itens || []).length + '</td><td class="cod">' + String(m.revisao).padStart(2,'0') + '</td>'
         + '<td style="text-align:right"><button class="btn sec" onclick="fvsForm(\'' + m.id + '\')">' + (PODE.qualidade ? 'Editar' : 'Ver') + '</button></td></tr>').join('') + '</table>'
       : '<div class="hint" style="margin-top:12px">' + (FVS_MODS.length ? 'Nenhum modelo com esse filtro.' : 'Nenhum modelo cadastrado ainda.' + (PODE.qualidade ? ' Comece importando os modelos de partida do Auria e ajuste ao padrão da construtora.' : '')) + '</div>')
-    + '<p class="h" style="margin:12px 0 0">Origem "Qualitin"/"Construpoint" fica reservada para importar os modelos que a construtora já usa.</p></div>';
+    + '<p class="h" style="margin:12px 0 0">Origem "Qualitin"/"Construpoint" fica reservada para importar os modelos que a construtora já usa.</p></div>'
+    + '<div class="card" id="fichasCard"><h3>Fichas das obras</h3><p class="h">Acompanhamento das FVS de cada empreendimento do grupo. A Qualidade pode <b>contestar</b> uma ficha aprovada: ela volta a reprovada e a obra refaz a inspeção (o coordenador de campo também contesta, dentro da obra).</p><div id="fichasCorpo" class="hint">Carregando…</div></div>';
+  fichasCarregar();
+}
+// ── Fichas das obras (leitura + contestar) ──────────────────────────────────
+const FICHA_SIT = { aberta:['Aberta','#64748B'], em_verificacao:['Em verificação','#1E3A5F'], aguardando:['Aguardando aprovação','#E8960A'], reprovada:['Reprovada','#C0392B'], aprovada:['Aprovada','#1E8449'] };
+let FICHAS = [], EMPS_G = [], PAVS_G = {};
+async function fichasCarregar(){
+  if (!EMPS_G.length){
+    const { data } = await sb.from('empreendimentos_auria').select('id,nome').eq('empresa_id', GRUPO).order('nome');
+    EMPS_G = data || [];
+  }
+  const emp = window._fichaEmp || '', sit = window._fichaSit || 'aprovada';
+  let q = sb.from('fvs_inspecao_auria').select('id,empreendimento_id,codigo,servico,modelo_codigo,modelo_revisao,rodada,pavimento_id,local_txt,itens,situacao,aprovado_nome,aprovado_em,reprovado_nome,reprovado_em,reprovado_motivo,reprovado_origem,aberta_nome,aberta_em')
+    .in('empreendimento_id', EMPS_G.map(e => e.id).concat(['00000000-0000-0000-0000-000000000000'])).order('atualizado_em', { ascending:false }).limit(300);
+  if (emp) q = q.eq('empreendimento_id', emp);
+  if (sit) q = q.eq('situacao', sit);
+  const { data, error } = await q;
+  FICHAS = data || [];
+  const pids = [...new Set(FICHAS.map(f => f.pavimento_id).filter(id => id && !PAVS_G[id]))];
+  if (pids.length){ const r = await sb.from('cde_pavimento_auria').select('id,codigo,nome').in('id', pids); (r.data || []).forEach(p => PAVS_G[p.id] = p.codigo || p.nome); }
+  const nomeEmp = id => (EMPS_G.find(e => e.id === id) || {}).nome || '';
+  $('fichasCorpo').className = '';
+  $('fichasCorpo').innerHTML = '<div class="row" style="flex-wrap:wrap;gap:8px"><select onchange="window._fichaEmp=this.value;fichasCarregar()" style="max-width:260px"><option value="">Todos os empreendimentos</option>'
+      + EMPS_G.map(e => '<option value="' + e.id + '"' + (e.id === emp ? ' selected' : '') + '>' + esc(e.nome) + '</option>').join('') + '</select>'
+    + '<select onchange="window._fichaSit=this.value;fichasCarregar()" style="max-width:200px"><option value="">Todas as situações</option>'
+      + Object.keys(FICHA_SIT).map(k => '<option value="' + k + '"' + (k === sit ? ' selected' : '') + '>' + FICHA_SIT[k][0] + '</option>').join('') + '</select></div>'
+    + (error ? '<div class="msg err">' + esc(error.message) + '</div>' : '')
+    + (FICHAS.length ? '<table style="margin-top:12px"><tr><th>Ficha</th><th>Serviço</th><th>Empreendimento</th><th>Local</th><th>Situação</th><th></th></tr>' + FICHAS.map(f => '<tr>'
+        + '<td class="cod">' + esc(f.codigo) + '</td><td>' + esc(f.servico) + '<div class="hint">' + esc(f.modelo_codigo) + ' · rev. ' + String(f.modelo_revisao).padStart(2,'0') + (f.rodada > 1 ? ' · rodada ' + f.rodada : '') + '</div></td>'
+        + '<td>' + esc(nomeEmp(f.empreendimento_id)) + '</td><td>' + esc([PAVS_G[f.pavimento_id], f.local_txt].filter(Boolean).join(' › ')) + '</td>'
+        + '<td><span class="chip" style="background:' + FICHA_SIT[f.situacao][1] + ';color:#fff">' + FICHA_SIT[f.situacao][0] + '</span></td>'
+        + '<td style="text-align:right"><button class="btn sec" onclick="fichaVer(\'' + f.id + '\')">Ver</button></td></tr>').join('') + '</table>'
+      : '<div class="hint" style="margin-top:12px">Nenhuma ficha com esse filtro.</div>');
+}
+async function fichaVer(id){
+  const f = FICHAS.find(x => x.id === id); if (!f) return;
+  const RES = { c:['Conforme','#1E8449'], nc:['Não conforme','#C0392B'], na:['Não se aplica','#64748B'] };
+  const { data:evs } = await sb.from('fvs_evento_auria').select('*').eq('inspecao_id', id).order('em', { ascending:false });
+  const EV = { enviada:'Enviada', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada', reinspecao:'Reinspeção' };
+  ov('<div class="hd"><b><span class="cod">' + esc(f.codigo) + '</span> — ' + esc(f.servico) + '</b><div class="hint" style="margin-top:4px">' + FICHA_SIT[f.situacao][0] + ' · ' + esc([PAVS_G[f.pavimento_id], f.local_txt].filter(Boolean).join(' › ')) + '</div></div><div class="bd">'
+    + (f.situacao === 'reprovada' && f.reprovado_motivo ? '<div class="msg err" style="display:block">' + esc(f.reprovado_motivo) + ' — ' + esc(f.reprovado_nome || '') + '</div>' : '')
+    + '<table><tr><th>#</th><th>Item</th><th>Resultado</th><th>Fotos</th></tr>' + (f.itens || []).map((t, i) => '<tr><td class="cod">' + (i+1) + '</td><td>' + esc(t.item) + (t.obs ? '<div class="hint">' + esc(t.obs) + '</div>' : '') + '</td>'
+        + '<td>' + (t.resultado ? '<b style="color:' + RES[t.resultado][1] + '">' + RES[t.resultado][0] + '</b>' : '<span class="hint">—</span>') + '</td>'
+        + '<td>' + (t.fotos || []).map(p => '<button class="btn sec" onclick="fichaFoto(\'' + esc(p.path) + '\')">📷</button>').join('') + '</td></tr>').join('') + '</table>'
+    + '<label class="l" style="margin-top:12px">Histórico</label>' + (evs || []).map(e => '<div class="hint">' + (EV[e.tipo] || e.tipo) + ' · rodada ' + e.rodada + ' · ' + new Date(e.em).toLocaleString('pt-BR') + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
+    + '<div class="hint">Aberta · ' + new Date(f.aberta_em).toLocaleString('pt-BR') + ' · ' + esc(f.aberta_nome || '') + '</div>'
+    + (f.situacao === 'aprovada' && PODE.qualidade ? '<label class="l" style="margin-top:14px">Contestar (motivo)</label><textarea id="ctMot" rows="2" placeholder="O que foi encontrado"></textarea>' : '')
+    + '<div class="msg" id="ctMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Fechar</button>' + (f.situacao === 'aprovada' && PODE.qualidade ? '<button class="btn" id="ctOk" onclick="fichaContestar(\'' + id + '\')">Contestar</button>' : '') + '</div>');
+}
+async function fichaFoto(path){ try { window.open(await r2Url('download', path), '_blank'); } catch (e){ alert(e.message || e); } }
+async function fichaContestar(id){
+  const mot = ($('ctMot').value || '').trim(), m = $('ctMsg');
+  if (mot.length < 5){ m.className = 'msg err'; m.textContent = 'Informe o motivo (mínimo 5 caracteres).'; return; }
+  $('ctOk').disabled = true;
+  const { error } = await sb.rpc('fvs_contestar', { p_id:id, p_motivo:mot });
+  if (error){ $('ctOk').disabled = false; m.className = 'msg err'; m.textContent = error.message; return; }
+  ovFechar(); fichasCarregar();
 }
 // busca sem perder o foco do campo
 async function fvsRefiltrar(){ await telaQualidade(); const b = $('fvsBusca'); if (b){ b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
