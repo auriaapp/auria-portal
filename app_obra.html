@@ -11315,7 +11315,7 @@ function concPainel(){
     + '<div class="t">' + esc(c.descricao || 'Concretagem') + '</div>'
     + '<div class="m">' + concData(c.data_prevista) + ' · ' + concM3(c.volume_previsto) + ' · ' + c.n_pecas + ' peça(s)' + (c.fck_mpa ? ' · C' + c.fck_mpa : '')
     + (c.liberacao && c.liberacao.justificativa ? ' · <b style="color:#B45309">liberada sem FVS</b>' : '') + '</div></div>';
-  segOv('<div class="hd"><b>Concretagem</b><p>Planeje pelas peças do modelo; o volume vem das quantidades do TQS. A liberação confere as FVS de fôrma e armação do pavimento.</p></div>'
+  segOv('<div class="hd"><b>Concretagem</b><p>Planeje pelas peças do modelo; o volume é medido nas próprias peças. A liberação confere as FVS de fôrma e armação do pavimento.</p></div>'
     + '<div class="ls">' + (ativas.length ? '<div class="seg-dia">Em aberto</div>' + ativas.map(card).join('') : '<div class="hint" style="padding:12px">Nenhuma concretagem em aberto.</div>')
     + (outras.length ? '<div class="seg-dia">Concluídas e canceladas</div>' + outras.map(card).join('') : '') + '</div>'
     + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>' + (concPodePlanejar() ? '<button class="b1" onclick="concNova()">＋ Planejar concretagem</button>' : '') + '</div>');
@@ -11345,7 +11345,7 @@ function concForm(){
   const r = CONC_RASC, x = r._editId;
   const pavs = fvsPavs();
   const cls = r.volume_por_classe ? Object.entries(r.volume_por_classe).map(([k, v]) => esc(CONC_CLS_ROT[k] || k) + ' ' + concM3(v)).join(' · ') : '';
-  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(r.codigo) : 'Planejar concretagem') + '</b><p>Escolha o pavimento e confira as peças no 3D. O volume previsto soma as quantidades do TQS das peças escolhidas.</p></div>'
+  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(r.codigo) : 'Planejar concretagem') + '</b><p>Escolha o pavimento e confira as peças no 3D. O volume previsto é o volume real das peças no modelo; o fck vem do material do TQS se ficar em branco.</p></div>'
     + '<div class="seg-form">'
     + '<div class="seg-g2"><div><label>Pavimento</label><select id="ccPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
     + '<div><label>Data prevista</label><input id="ccData" type="date" value="' + esc(r.data_prevista || '') + '"></div></div>'
@@ -11433,10 +11433,15 @@ async function concBarra(){
   const vol = await concVolume();
   if (CONC_MODO !== 'pecas') return;
   segBarraInfo('<b>' + esc(segPavNome(r.pavimento_id)) + '</b> · ' + n + ' peça(s) · <b>' + concM3(vol.total) + '</b>'
-    + (vol.semValor ? ' <span title="Peças sem quantidade do TQS">(' + vol.semValor + ' sem volume)</span>' : '') + ' · toque numa peça para tirar/pôr',
+    + (vol.semValor ? ' (' + vol.semValor + ' sem volume)' : '') + (r.fck_mpa ? ' · C' + r.fck_mpa + ' (do modelo)' : '') + ' · toque numa peça para tirar/pôr',
     '<button class="ok" onclick="concPecasOk()">Concluir</button><button onclick="concPecasCancelar()">Cancelar</button>');
 }
-// volume por classe (Pset Auria_Quantities do TQS; o cache do bim3d torna recontagens instantâneas)
+// Volume = volume REAL da malha de cada peça (Fragments getItemsVolume, ~ms).
+// O IFC da estrutura (TQS) não traz quantidade de volume (o Auria_Quantities
+// era só do conversor antigo/XKT) e os Psets TQS_Geometria são irregulares
+// (nervurada sem espessura, viga-faixa como escada c/ área 0) → a malha é a
+// fonte confiável. Conferido 2026-10-06: P8 1,44 m² × 3,06 m = 4,41 → 4,406;
+// laje L2 4,255 m² × 0,12 = 0,511 → 0,511.
 async function concVolume(){
   const r = CONC_RASC, porCls = {}; let total = 0, semValor = 0;
   for (const g of (r.elementos || [])){
@@ -11446,14 +11451,28 @@ async function concVolume(){
     const sel = new Set(g.ids);
     for (const [cat, ids] of Object.entries(cats)){
       const meus = ids.filter(id => sel.has(id)); if (!meus.length) continue;
-      let s = { soma:0, comValor:0, n:meus.length }; try { s = await B3.somarIds(F3D, { [mi]:meus }, 'volume'); } catch (_){}
-      const k = String(cat).toUpperCase(); porCls[k] = Math.round(((porCls[k] || 0) + s.soma) * 100) / 100;
-      total += s.soma; semValor += (s.n - s.comValor);
+      let v = 0; try { v = +(await md.getItemsVolume(meus)) || 0; } catch (_){ semValor += meus.length; }
+      const k = String(cat).toUpperCase(); porCls[k] = Math.round(((porCls[k] || 0) + v) * 100) / 100;
+      total += v;
     }
   }
   r.volume_previsto = Math.round(total * 100) / 100; r.volume_por_classe = porCls;
   r.n_pecas = (r.elementos || []).reduce((s, g) => s + g.ids.length, 0);
+  if (r.fck_mpa == null || r.fck_mpa === '') { const f = await concFckDoModelo(); if (f) r.fck_mpa = f; }
   return { total:r.volume_previsto, semValor };
+}
+// fck do material do TQS (Pset TQS_Padrao.Material = "Concreto C50") — o mais frequente nas peças
+async function concFckDoModelo(){
+  const cont = {};
+  for (const g of (CONC_RASC.elementos || [])){
+    const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi < 0 || !g.ids.length) continue;
+    let dd = []; try { dd = await F3D.modelos[mi].model.getItemsData(g.ids.slice(0, 400), { attributesDefault:false, relationsDefault:{ attributes:false, relations:false }, relations:{ IsDefinedBy:{ attributes:true, relations:true } } }); } catch (_){}
+    (dd || []).forEach(d => (d.IsDefinedBy || []).forEach(ps => (ps.HasProperties || []).forEach(p => {
+      const nm = p.Name && p.Name.value, v = p.NominalValue && p.NominalValue.value;
+      const m = nm === 'Material' && /C\s?(\d{2,3})/i.exec(String(v || '')); if (m) cont[m[1]] = (cont[m[1]] || 0) + 1; })));
+  }
+  const top = Object.entries(cont).sort((a, b) => b[1] - a[1])[0];
+  return top ? parseInt(top[0], 10) : null;
 }
 async function concPecasOk(){ CONC_MODO = null; await concVolume(); try { await B3.limparFiltro(F3D); await fvs3dRefrescar(); } catch (_){} try { segSairModo(); } catch (_){} concForm(); }
 async function concPecasCancelar(){ CONC_MODO = null; try { await B3.limparFiltro(F3D); await fvs3dRefrescar(); } catch (_){} try { segSairModo(); } catch (_){} concForm(); }
