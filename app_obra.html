@@ -672,6 +672,14 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .pt-fotolab{display:block;font-size:11.5px;font-weight:700;color:#334155;margin:8px 0}
 .pt-fotolab input{display:block;margin-top:4px}
 
+/* Segurança parte 5 — mapa de calor das ocorrências */
+.oc-calor{margin:4px 0 10px;border:1px solid #E2E8F0;border-radius:8px;overflow-x:auto}
+.oc-calor-t{font-size:11px;font-weight:700;color:#1E3A5F;padding:6px 8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0}
+.oc-calor table{border-collapse:collapse;width:100%;font-size:11px}
+.oc-calor th{font-weight:600;color:#64748B;padding:4px 6px;text-align:center;white-space:nowrap}
+.oc-calor th:first-child,.oc-calor td:first-child{text-align:left;font-family:ui-monospace,monospace;color:#1E3A5F;font-weight:700}
+.oc-calor td{padding:4px 6px;border-top:1px solid #F1F5F9}
+
 </style>
 </head>
 <body>
@@ -10312,6 +10320,279 @@ function ptPinSvg(x, y, p){
     let h = _m(mod);
     const lib = PTS.filter(p => ptEstado(p) === 'liberada').length, venc = PTS.filter(p => ptEstado(p) === 'vencida').length;
     if (lib || venc) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (venc ? venc + ' PT vencida(s)' : lib + ' PT liberada(s)') + '</span></span>');
+    return h;
+  };
+})();
+
+// ── App Obra · Segurança — parte 5: OCORRÊNCIAS + MAPA DE CALOR + DDS (backlog 182) ─
+//  Ocorrência: acidente / quase-acidente / condição insegura / ato inseguro.
+//  QUALQUER pessoa da obra relata (mais relato = mais prevenção); só o técnico
+//  trata (ação corretiva) e encerra (RPC seg_oc_tratar). Ninguém exclui.
+//  Mapa de calor: pavimento × tipo nos últimos 90 dias.
+//  DDS: técnico registra; o Diário vai ler seg_dds_auria depois.
+var OCS = [], DDSS = [];
+const OC_TIPOS = {
+  acidente:          { rot:'Acidente',          cor:'#C0392B' },
+  quase_acidente:    { rot:'Quase-acidente',    cor:'#E67E22' },
+  condicao_insegura: { rot:'Condição insegura', cor:'#D4AC0D' },
+  ato_inseguro:      { rot:'Ato inseguro',      cor:'#7D3C98' }
+};
+const OC_GRAV = { leve:'Leve', moderada:'Moderada', grave:'Grave', fatal:'Fatal' };
+const OC_SIT = {
+  aberta:        { rot:'Aberta — aguarda o técnico', cor:'#C0392B' },
+  em_tratamento: { rot:'Em tratamento',              cor:'#E67E22' },
+  encerrada:     { rot:'Encerrada',                  cor:'#94A3B8' }
+};
+async function ocCarregar(){
+  OCS = []; DDSS = [];
+  if (!EMP || !SEG_OK) return;
+  const desde = new Date(Date.now() - 90*86400000).toISOString();
+  const r1 = await sb.from('seg_ocorrencia_auria').select('*').eq('empreendimento_id', EMP.id).gte('ocorreu_em', desde).order('ocorreu_em', { ascending:false });
+  if (r1.error){ console.warn('seg_ocorrencia_auria indisponível:', r1.error.message || r1.error); } else OCS = r1.data || [];
+  const r2 = await sb.from('seg_dds_auria').select('*').eq('empreendimento_id', EMP.id).gte('data', desde.slice(0,10)).order('data', { ascending:false });
+  if (r2.error){ console.warn('seg_dds_auria indisponível:', r2.error.message || r2.error); } else DDSS = r2.data || [];
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await ocCarregar(); } catch (_){} segRedesenhar(); }; })();
+
+// ── Abas: Ocorrências e DDS ─────────────────────────────────────────────────
+(function(){
+  const _p = segPainel;
+  segPainel = function(aba){
+    if (aba === 'ocs'){ ocPainel(); return; }
+    if (aba === 'dds'){ ddsPainel(); return; }
+    _p(aba);
+    const tabs = document.querySelector('#segOv .seg-tabs');
+    if (tabs && !tabs.querySelector('[data-oc]')){
+      const abertas = OCS.filter(o => o.situacao !== 'encerrada').length;
+      const b = document.createElement('button'); b.dataset.oc = '1';
+      b.innerHTML = 'Ocorrências <b>' + abertas + '</b>'; b.onclick = () => segPainel('ocs');
+      const d = document.createElement('button'); d.dataset.dds = '1';
+      d.innerHTML = 'DDS'; d.onclick = () => segPainel('dds');
+      const ref = tabs.querySelector('.seg-camada');
+      tabs.insertBefore(b, ref); tabs.insertBefore(d, ref);
+    }
+  };
+})();
+function _ocAba(attr){ document.querySelectorAll('#segOv .seg-tabs button').forEach(b => b.classList.toggle('on', !!b.dataset[attr])); }
+function ocLocal(o){ return [segPavNome(o.pavimento_id), o.local_txt].filter(Boolean).join(' › ') || '—'; }
+function ocData(t){ return new Date(t).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+var _ocVerEnc = false;
+function ocPainel(){
+  segPainel('alertas'); _ocAba('oc');
+  const lista = OCS.filter(o => _ocVerEnc || o.situacao !== 'encerrada');
+  document.querySelector('#segOv .ls').innerHTML = ocMapaCalor()
+    + '<div class="seg-dia"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox"' + (_ocVerEnc ? ' checked' : '') + ' onchange="_ocVerEnc=this.checked;ocPainel()" style="width:auto"> mostrar encerradas (últimos 90 dias)</label></div>'
+    + (lista.length ? lista.map(o => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + OC_TIPOS[o.tipo].cor + '!important" onclick="ocDetalhe(\'' + o.id + '\')">'
+        + '<div class="cod">' + esc(o.codigo) + ' <span class="seg-chip" style="background:' + OC_TIPOS[o.tipo].cor + ';color:#fff">' + OC_TIPOS[o.tipo].rot + '</span> '
+        + '<span class="seg-chip" style="background:' + OC_SIT[o.situacao].cor + ';color:#fff">' + OC_SIT[o.situacao].rot + '</span></div>'
+        + '<div class="t">' + esc(o.descricao.length > 120 ? o.descricao.slice(0,117) + '…' : o.descricao) + '</div>'
+        + '<div class="m">' + ocData(o.ocorreu_em) + ' · ' + esc(ocLocal(o)) + ' · relatado por ' + esc(o.relatado_nome || '') + '</div></div>').join('')
+      : '<div class="hint" style="padding:12px">Nenhuma ocorrência ' + (_ocVerEnc ? 'nos últimos 90 dias' : 'em aberto') + '.</div>');
+  document.querySelector('#segOv .ft').innerHTML = '<button class="b2" onclick="segFechar()">Fechar</button><button class="b1" onclick="ocNova()">＋ Relatar ocorrência</button>';
+}
+// pavimento × tipo, 90 dias; intensidade pela contagem da célula
+function ocMapaCalor(){
+  if (!OCS.length) return '';
+  const tipos = Object.keys(OC_TIPOS), linhas = {};
+  OCS.forEach(o => { const k = o.pavimento_id || '_'; (linhas[k] = linhas[k] || {})[o.tipo] = ((linhas[k] || {})[o.tipo] || 0) + 1; });
+  const ordem = (CDE_PAVS || []).map(p => p.id).reverse();
+  const ks = Object.keys(linhas).sort((a,b) => (a === '_') - (b === '_') || ordem.indexOf(a) - ordem.indexOf(b));
+  const max = Math.max(...ks.map(k => Math.max(...tipos.map(t => linhas[k][t] || 0))));
+  const cel = (n, cor) => '<td style="text-align:center;font-weight:700;background:' + (n ? cor + Math.round(40 + 215 * n / max).toString(16).padStart(2,'0') : 'transparent') + ';color:' + (n / max > .5 ? '#fff' : '#1E293B') + '">' + (n || '') + '</td>';
+  return '<div class="oc-calor"><div class="oc-calor-t">Mapa de calor — últimos 90 dias</div><table><tr><th>Pavimento</th>' + tipos.map(t => '<th>' + OC_TIPOS[t].rot + '</th>').join('') + '<th>Total</th></tr>'
+    + ks.map(k => { const tot = tipos.reduce((s, t) => s + (linhas[k][t] || 0), 0);
+        return '<tr><td>' + esc(k === '_' ? 'Sem pavimento' : segPavNome(k)) + '</td>' + tipos.map(t => cel(linhas[k][t] || 0, OC_TIPOS[t].cor)).join('') + '<td style="text-align:center;font-weight:800">' + tot + '</td></tr>'; }).join('')
+    + '</table></div>';
+}
+
+// ── Relato (qualquer pessoa da obra) ────────────────────────────────────────
+function ocNova(){
+  SEG_ARASC = { _kind:'oc', tipo:'quase_acidente', gravidade:'leve', com_afastamento:false, ocorreu_em:_dtLocal(new Date()), descricao:'', pavimento_id:'', local_txt:'', pin:null, envolvidos:'', empresa:'' };
+  ocForm();
+}
+function ocLerForm(){
+  if (!$('ocTipo') || !SEG_ARASC) return;
+  const r = SEG_ARASC;
+  r.tipo = $('ocTipo').value; r.gravidade = $('ocGrav').value; r.com_afastamento = $('ocAfast').checked;
+  r.ocorreu_em = $('ocQdo').value; r.descricao = $('ocDesc').value; r.pavimento_id = $('ocPav').value; r.local_txt = $('ocLoc').value;
+  r.envolvidos = $('ocEnv').value; r.empresa = $('ocEmp').value;
+}
+function ocForm(){
+  const r = SEG_ARASC;
+  const pavs = (CDE_PAVS || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista').slice().reverse();
+  const tem2D = !!(V.page && PRANCHA && !PRANCHA._it), tem3D = !!(F3D && F3D.vivo && F3D.modelos.length);
+  segOv('<div class="hd"><b>Relatar ocorrência</b><p>Todo relato ajuda a prevenir. O técnico de segurança recebe, define a ação corretiva e encerra.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Tipo</label><select id="ocTipo">' + Object.keys(OC_TIPOS).map(k => '<option value="' + k + '"' + (k === r.tipo ? ' selected' : '') + '>' + OC_TIPOS[k].rot + '</option>').join('') + '</select></div>'
+    + '<div><label>Quando</label><input id="ocQdo" type="datetime-local" value="' + esc(r.ocorreu_em) + '"></div></div>'
+    + '<div class="seg-g2"><div><label>Gravidade</label><select id="ocGrav">' + Object.keys(OC_GRAV).map(k => '<option value="' + k + '"' + (k === r.gravidade ? ' selected' : '') + '>' + OC_GRAV[k] + '</option>').join('') + '</select></div>'
+    + '<div><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center"><input id="ocAfast" type="checkbox" style="width:auto"' + (r.com_afastamento ? ' checked' : '') + '> com afastamento</label></div></div>'
+    + '<label>O que aconteceu</label><textarea id="ocDesc" rows="4" placeholder="Descreva o fato, sem procurar culpados">' + esc(r.descricao || '') + '</textarea>'
+    + '<div class="seg-g2"><div><label>Pavimento</label><select id="ocPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Local</label><input id="ocLoc" maxlength="140" value="' + esc(r.local_txt || '') + '" placeholder="Ex.: escada B, patamar"></div></div>'
+    + '<div class="seg-geom"><b>' + (r.pin ? (r.pin.d2 ? 'Ponto marcado na prancha' : 'Ponto marcado no modelo') : 'Sem ponto marcado') + '</b><div>'
+    + '<button class="b2" ' + (tem2D ? '' : 'disabled title="Abra a prancha"') + ' onclick="ocLerForm();segAlertaMarcar(\'pin2d\')">📍 Na prancha</button>'
+    + '<button class="b2" ' + (tem3D ? '' : 'disabled title="Abra o modelo 3D"') + ' onclick="ocLerForm();segAlertaMarcar(\'pin3d\')">📍 No modelo</button>'
+    + (r.pin ? '<button class="b2" onclick="ocLerForm();SEG_ARASC.pin=null;ocForm()">Tirar</button>' : '') + '</div></div>'
+    + '<div class="seg-g2"><div><label>Envolvidos (opcional)</label><input id="ocEnv" value="' + esc(r.envolvidos || '') + '" placeholder="Nomes"></div>'
+    + '<div><label>Empresa</label><input id="ocEmp" value="' + esc(r.empresa || '') + '" placeholder="Ex.: empreiteira"></div></div>'
+    + '<label>Fotos</label><input id="ocFotos" type="file" accept="image/*" capture="environment" multiple>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'ocs\')">Voltar</button><button class="b1" id="segOk" onclick="ocSalvar()">Enviar relato</button></div>');
+}
+(function(){ const _n = segNovo; segNovo = function(editId, voltando){ if (voltando && SEG_ARASC && SEG_ARASC._kind === 'oc') { ocForm(); return; } return _n(editId, voltando); }; })();
+async function ocSalvar(){
+  ocLerForm();
+  const r = SEG_ARASC, msg = t => { $('segMsg').textContent = t; };
+  if ((r.descricao || '').trim().length < 10) return msg('Descreva o que aconteceu (mínimo 10 caracteres).');
+  if (!r.ocorreu_em || new Date(r.ocorreu_em) > new Date(Date.now() + 5*60000)) return msg('A data não pode ser no futuro.');
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Enviando…';
+  try {
+    const id = crypto.randomUUID();
+    const f = $('ocFotos'), fotos = f && f.files && f.files.length ? await segSubirFotos([...f.files], 'ocorrencias/' + id) : [];
+    const c = await sb.rpc('seg_oc_proximo_codigo', { p_emp: EMP.id }); if (c.error) throw c.error;
+    const { error } = await sb.from('seg_ocorrencia_auria').insert({ id, empreendimento_id:EMP.id, codigo:c.data, tipo:r.tipo, gravidade:r.gravidade, com_afastamento:r.com_afastamento,
+      ocorreu_em:new Date(r.ocorreu_em).toISOString(), descricao:r.descricao.trim(), pavimento_id:r.pavimento_id || null, local_txt:(r.local_txt || '').trim() || null,
+      pin:r.pin || null, envolvidos:(r.envolvidos || '').trim() || null, empresa:(r.empresa || '').trim() || null, fotos, relatado_por:USER.id });
+    if (error) throw error;
+    SEG_ARASC = null;
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    ocDetalhe(id);
+  } catch (e){ msg('Não foi possível enviar: ' + (e.message || e)); b.disabled = false; b.textContent = 'Enviar relato'; }
+}
+
+// ── Detalhe + tratamento (técnico) ──────────────────────────────────────────
+function ocDetalhe(id){
+  const o = OCS.find(x => x.id === id); if (!o) return;
+  const tec = segSouTecnico() && o.situacao !== 'encerrada';
+  segOv('<div class="hd"><b>' + esc(o.codigo) + ' — ' + OC_TIPOS[o.tipo].rot + '</b><p><span class="seg-chip" style="background:' + OC_SIT[o.situacao].cor + ';color:#fff">' + OC_SIT[o.situacao].rot + '</span> '
+      + OC_GRAV[o.gravidade] + (o.com_afastamento ? ' · com afastamento' : '') + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Quando</span><b>' + ocData(o.ocorreu_em) + '</b></div>'
+    + '<div class="seg-kv"><span>Local</span><b>' + esc(ocLocal(o)) + (o.pin ? ' <button class="b2 mini" onclick="ocVerPonto(\'' + id + '\')">📍 Ver no ponto</button>' : '') + '</b></div>'
+    + '<div class="seg-kv"><span>O que aconteceu</span><b style="white-space:pre-wrap">' + esc(o.descricao) + '</b></div>'
+    + (o.envolvidos || o.empresa ? '<div class="seg-kv"><span>Envolvidos</span><b>' + esc([o.envolvidos, o.empresa].filter(Boolean).join(' · ')) + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Relatado por</span><b>' + esc(o.relatado_nome || '') + ' · ' + ocData(o.relatado_em) + '</b></div>'
+    + (o.acao_corretiva ? '<div class="seg-kv"><span>Ação corretiva</span><b style="white-space:pre-wrap">' + esc(o.acao_corretiva) + (o.acao_responsavel ? '<br>Resp.: ' + esc(o.acao_responsavel) : '') + (o.acao_prazo ? ' · prazo ' + new Date(o.acao_prazo + 'T12:00').toLocaleDateString('pt-BR') : '') + '<br><small>' + esc(o.tratado_nome || '') + '</small></b></div>' : '')
+    + (o.situacao === 'encerrada' ? '<div class="seg-kv"><span>Encerrada</span><b>' + esc(o.encerrado_nome || '') + ' · ' + ocData(o.encerrado_em) + (o.encerrado_obs ? '<br>' + esc(o.encerrado_obs) : '') + '</b></div>' : '')
+    + '<div id="ocF"></div>'
+    + (tec ? '<div class="seg-form" style="padding:8px 0 0">'
+        + '<label>Ação corretiva</label><textarea id="ocAcao" rows="3">' + esc(o.acao_corretiva || '') + '</textarea>'
+        + '<div class="seg-g2"><div><label>Responsável</label><input id="ocResp" value="' + esc(o.acao_responsavel || '') + '"></div><div><label>Prazo</label><input id="ocPrazo" type="date" value="' + esc(o.acao_prazo || '') + '"></div></div>'
+        + '<div class="seg-g2"><div><label>Gravidade (revisada)</label><select id="ocGrav2">' + Object.keys(OC_GRAV).map(k => '<option value="' + k + '"' + (k === o.gravidade ? ' selected' : '') + '>' + OC_GRAV[k] + '</option>').join('') + '</select></div>'
+        + '<div><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center"><input id="ocAfast2" type="checkbox" style="width:auto"' + (o.com_afastamento ? ' checked' : '') + '> com afastamento</label></div></div>'
+        + '<label>Observação de encerramento</label><input id="ocObs" maxlength="300"></div>' : '')
+    + '<div id="segMsg" class="seg-msg"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'ocs\')">Voltar</button>'
+    + (tec ? '<button class="b2" onclick="ocTratar(\'' + id + '\',false)">Salvar tratamento</button><button class="b1" onclick="ocTratar(\'' + id + '\',true)">Encerrar</button>' : '') + '</div>');
+  if ((o.fotos || []).length) segFotosHtml(o.fotos, 'ocF');
+}
+async function ocTratar(id, encerrar){
+  try {
+    const { error } = await sb.rpc('seg_oc_tratar', { p_id:id, p_acao:$('ocAcao').value, p_resp:$('ocResp').value, p_prazo:$('ocPrazo').value || null,
+      p_gravidade:$('ocGrav2').value, p_afast:$('ocAfast2').checked, p_encerrar:encerrar, p_obs:$('ocObs').value });
+    if (error) throw error;
+    await segCarregar(); try { renderSideRight(); } catch (_){}
+    ocDetalhe(id);
+  } catch (e){ $('segMsg').textContent = (e.message || e); }
+}
+async function ocVerPonto(id){
+  const o = OCS.find(x => x.id === id); if (!o || !o.pin) return;
+  SEG.push({ _ptTemp:true, situacao:'ativo', nivel:'informativo', titulo:o.descricao, id:'oc-' + o.id, codigo:o.codigo, pin:o.pin });
+  try { await segAlertaVer('oc-' + o.id); } finally { SEG = SEG.filter(a => !a._ptTemp); }
+}
+
+// ── Camada: ocorrências em aberto aparecem no ponto ─────────────────────────
+function ocPinSvg(x, y, o){
+  const c = OC_TIPOS[o.tipo].cor;
+  return '<g style="pointer-events:auto;cursor:pointer" onclick="ocDetalhe(\'' + o.id + '\');event.stopPropagation()">'
+    + '<circle cx="' + x + '" cy="' + y + '" r="9" fill="' + c + '" stroke="#fff" stroke-width="2"/><text x="' + x + '" y="' + (y+4) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">!</text>'
+    + '<text x="' + (x+13) + '" y="' + (y+4) + '" font-size="11" font-weight="700" fill="' + c + '" stroke="#fff" stroke-width="3" paint-order="stroke">' + esc(o.codigo) + '</text></g>';
+}
+(function(){
+  const _r = segRender2D;
+  segRender2D = function(){
+    _r();
+    const svg = $('segSvg2d'); if (!svg || !SEG_CAMADA || !V.page || !PRANCHA) return;
+    let out = '';
+    OCS.filter(o => o.pin && o.situacao !== 'encerrada').forEach(o => { const g = o.pin.d2; if (!g || g.prancha_id !== PRANCHA.id || (g.pg || 1) !== V.pageNum) return;
+      const s = pageToScreen(g.nx, g.ny); out += ocPinSvg(s.x, s.y, o); });
+    if (out) svg.insertAdjacentHTML('beforeend', out);
+  };
+  const _r3 = segRender3D;
+  segRender3D = function(E){
+    _r3(E);
+    const svg = $('segSvg3d'); if (!svg || !E || !E.vivo || !SEG_CAMADA) return;
+    const arqs = new Set(E.modelos.map(m => m.arquivoId)); let out = '';
+    OCS.filter(o => o.pin && o.situacao !== 'encerrada').forEach(o => { const pt = o.pin.d3; if (!pt || !arqs.has(pt.cde_arquivo_id)) return;
+      const w = f3dPinWorld(E, pt), s = f3dWorldToScreen(E, w.x, w.y, w.z); if (!s) return;
+      out += ocPinSvg(s.x, s.y, o); });
+    if (out) svg.insertAdjacentHTML('beforeend', out);
+  };
+})();
+
+// ── DDS ─────────────────────────────────────────────────────────────────────
+function ddsPainel(){
+  segPainel('alertas'); _ocAba('dds');
+  document.querySelector('#segOv .ls').innerHTML = (DDSS.length ? DDSS.map(d => '<div class="it seg-it" style="cursor:pointer" onclick="ddsDetalhe(\'' + d.id + '\')">'
+      + '<div class="cod">' + new Date(d.data + 'T12:00').toLocaleDateString('pt-BR') + (d.participantes ? ' · ' + d.participantes + ' participantes' : '') + '</div>'
+      + '<div class="t">' + esc(d.tema) + '</div><div class="m">' + esc(d.ministrado_por || d.registrado_nome || '') + (d.empresas ? ' · ' + esc(d.empresas) : '') + '</div></div>').join('')
+    : '<div class="hint" style="padding:12px">Nenhum DDS registrado nos últimos 90 dias.</div>');
+  document.querySelector('#segOv .ft').innerHTML = '<button class="b2" onclick="segFechar()">Fechar</button>'
+    + (segSouTecnico() ? '<button class="b1" onclick="ddsNovo()">＋ Registrar DDS</button>' : '');
+}
+function ddsNovo(){
+  if (!segSouTecnico()) return;
+  const hoje = new Date(), p = n => String(n).padStart(2,'0');
+  segOv('<div class="hd"><b>Registrar DDS</b><p>Diálogo Diário de Segurança — entra no Diário de Obra do dia.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Data</label><input id="ddsData" type="date" value="' + hoje.getFullYear() + '-' + p(hoje.getMonth()+1) + '-' + p(hoje.getDate()) + '"></div>'
+    + '<div><label>Participantes</label><input id="ddsN" type="number" min="1" placeholder="Nº de pessoas"></div></div>'
+    + '<label>Tema</label><input id="ddsTema" maxlength="160" placeholder="Ex.: uso do cinto em periferia sem proteção">'
+    + '<label>Ministrado por</label><input id="ddsMin" value="' + esc((USER && (USER.nome || USER.email)) || '') + '">'
+    + '<label>Empresas presentes</label><input id="ddsEmp" placeholder="Ex.: própria, Fachadas Nordeste">'
+    + '<label>Nomes (opcional, um por linha)</label><textarea id="ddsNomes" rows="3"></textarea>'
+    + '<label>Observação</label><textarea id="ddsObs" rows="2"></textarea>'
+    + '<label>Foto da lista de presença</label><input id="ddsFotos" type="file" accept="image/*" capture="environment" multiple>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'dds\')">Voltar</button><button class="b1" id="segOk" onclick="ddsSalvar()">Registrar</button></div>');
+}
+async function ddsSalvar(){
+  const tema = ($('ddsTema').value || '').trim(), msg = t => { $('segMsg').textContent = t; };
+  if (tema.length < 4) return msg('Informe o tema.');
+  if (!$('ddsData').value) return msg('Informe a data.');
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Salvando…';
+  try {
+    const id = crypto.randomUUID();
+    const f = $('ddsFotos'), fotos = f && f.files && f.files.length ? await segSubirFotos([...f.files], 'dds/' + id) : [];
+    const { error } = await sb.from('seg_dds_auria').insert({ id, empreendimento_id:EMP.id, data:$('ddsData').value, tema, ministrado_por:$('ddsMin').value.trim() || null,
+      participantes:parseInt($('ddsN').value, 10) || null, empresas:$('ddsEmp').value.trim() || null, nomes:$('ddsNomes').value.trim() || null,
+      observacao:$('ddsObs').value.trim() || null, fotos, registrado_por:USER.id });
+    if (error) throw error;
+    await segCarregar(); ddsDetalhe(id);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; b.textContent = 'Registrar'; }
+}
+function ddsDetalhe(id){
+  const d = DDSS.find(x => x.id === id); if (!d) return;
+  segOv('<div class="hd"><b>DDS — ' + new Date(d.data + 'T12:00').toLocaleDateString('pt-BR') + '</b><p>' + esc(d.tema) + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Ministrado por</span><b>' + esc(d.ministrado_por || '—') + '</b></div>'
+    + '<div class="seg-kv"><span>Participantes</span><b>' + (d.participantes || '—') + (d.empresas ? ' · ' + esc(d.empresas) : '') + '</b></div>'
+    + (d.nomes ? '<div class="seg-kv"><span>Nomes</span><b style="white-space:pre-wrap">' + esc(d.nomes) + '</b></div>' : '')
+    + (d.observacao ? '<div class="seg-kv"><span>Observação</span><b style="white-space:pre-wrap">' + esc(d.observacao) + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Registrado</span><b>' + esc(d.registrado_nome || '') + ' · ' + new Date(d.registrado_em).toLocaleString('pt-BR') + '</b></div>'
+    + '<div id="ddsF"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'dds\')">Voltar</button></div>');
+  if ((d.fotos || []).length) segFotosHtml(d.fotos, 'ddsF');
+}
+
+// ── Módulo da barra direita: ocorrências em aberto ──────────────────────────
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    let h = _m(mod);
+    const ab = OCS.filter(o => o.situacao === 'aberta').length;
+    if (ab) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + ab + ' ocorrência(s) nova(s)</span></span>');
     return h;
   };
 })();
