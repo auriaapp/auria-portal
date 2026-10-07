@@ -11201,10 +11201,42 @@ async function fvs3dColorir(modId, soInspId){
   const leg = Object.keys(FVS_SIT).filter(s => grupos[s]).map(s => '<span class="fvs3d-leg"><i style="background:' + FVS_SIT[s].cor + '"></i>' + FVS_SIT[s].rot + '</span>').join('');
   const info = '<b>' + esc(m.servico) + '</b> · ' + (total ? total + ' peça(s) ' + leg : 'nenhuma peça deste serviço nos pavimentos com ficha')
     + (semMapa.length ? ' · <span title="' + esc(semMapa.map(segPavNome).join(', ')) + '">⚠ ' + semMapa.length + ' pavimento(s) sem par no modelo</span>' : '');
-  segBarraInfo(info, '<button onclick="fvsPainel()">Matriz</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
-  if (soInspId && total){ const pm = Object.assign({}, ...Object.values(grupos)); try { await B3.enquadrarIds(F3D, pm); } catch (_){} }
+  segBarraInfo(info, '<button onclick="fvsPainel()">Matriz</button>' + (total ? '<button onclick="fvs3dEnquadrar()">Aproximar</button><button onclick="fvs3dTorre()">Ver a torre</button>' : '') + '<button onclick="fvs3dLimpar()">Limpar cores</button>');
+  // poucos andares num prédio alto somem na vista geral: vai direto até eles
+  if (total) await fvs3dEnquadrar();
 }
-async function fvs3dLimpar(){ FVS3D_ATIVO = null; try { await B3.limparFiltro(F3D); } catch (_){} try { segSairModo(); } catch (_){} }
+function fvs3dUniao(){
+  const pm = {};
+  (F3D._cores || []).forEach(g => Object.entries(g.porMod || {}).forEach(([mi, ids]) => (pm[mi] = (pm[mi] || []).concat(ids))));
+  return pm;
+}
+// O Fragments só aplica a cor nova aos blocos (tiles) que ele RECARREGA; os que
+// já estavam na tela ficam com a cor antiga até a câmera/tamanho mudar (o
+// usuário viu o verde aparecer só ao pôr em tela cheia). Força o recarregamento:
+// micro-movimento da câmera em alguns quadros + resize.
+async function fvs3dRefrescar(){
+  if (!F3D || !F3D.vivo) return;
+  const c = F3D.camera, t = F3D.controls, p0 = c.position.clone();
+  for (const k of [1, -1, 0]){
+    c.position.set(p0.x + k * 0.01, p0.y, p0.z); t.update();
+    try { await F3D.fragments.update(true); } catch (_){}
+    await new Promise(r => requestAnimationFrame(() => r()));
+  }
+  window.dispatchEvent(new Event('resize'));
+  try { await F3D.fragments.update(true); } catch (_){}
+}
+async function fvs3dEnquadrar(){
+  const pm = fvs3dUniao(); if (!Object.keys(pm).length) return;
+  try { await B3.enquadrarIds(F3D, pm); } catch (_){}
+  try { segAproximar(0.8); } catch (_){}
+  await fvs3dRefrescar();
+}
+async function fvs3dTorre(){
+  const pm = {}; F3D.modelos.forEach((m, mi) => { const d = FVS3D_MAPA && FVS3D_MAPA.dono[mi]; if (d) pm[mi] = [...d.keys()]; });
+  try { await B3.enquadrarIds(F3D, pm); } catch (_){}
+  await fvs3dRefrescar();
+}
+async function fvs3dLimpar(){ FVS3D_ATIVO = null; try { await B3.limparFiltro(F3D); } catch (_){} await fvs3dRefrescar(); try { segSairModo(); } catch (_){} }
 
 // ── Ganchos na matriz e na ficha ─────────────────────────────────────────────
 (function(){
