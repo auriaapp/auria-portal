@@ -11186,14 +11186,22 @@ async function fvs3dColorir(modId, soInspId){
   FVS_INSP.filter(x => x.modelo_id === modId && x.pavimento_id && (!soInspId || x.id === soInspId)).forEach(x => {
     const a = sitPav[x.pavimento_id]; if (!a || FVS_SIT[x.situacao].ord > FVS_SIT[a].ord) sitPav[x.pavimento_id] = x.situacao; });
   const grupos = {};   // situação → porMod
+  const neutro = {};   // peças do serviço SEM ficha
   const cls = fvs3dClasses(m);
   for (let mi = 0; mi < F3D.modelos.length; mi++){
     const md = F3D.modelos[mi].model; if (!md) continue;
     let ids = []; try { ids = Object.values(await md.getItemsOfCategories(cls) || {}).flat(); } catch (_){}
-    ids.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv]; if (!s) return;
+    ids.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv];
+      if (!s){ (neutro[mi] = neutro[mi] || []).push(id); return; }
       const g = (grupos[s] = grupos[s] || {}); (g[mi] = g[mi] || []).push(id); });
   }
   try { await B3.limparFiltro(F3D); } catch (_){}
+  // No TQS os andares tipo REPETEM a mesma geometria (instâncias): pintar só
+  // alguns andares fazia o Fragments parar de desenhar as cópias dos demais
+  // (lajes "sumiam"). Pintar o resto do serviço de cinza neutro mantém tudo
+  // desenhado — e ainda faz as cores das fichas se destacarem. Vai PRIMEIRO
+  // (as cores das situações por cima).
+  if (Object.keys(neutro).length) { try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){} }
   let total = 0;
   for (const s of Object.keys(grupos)) total += await B3.colorirGrupo(F3D, grupos[s], parseInt(FVS_SIT[s].cor.slice(1), 16));
   FVS3D_ATIVO = modId;
@@ -11207,7 +11215,7 @@ async function fvs3dColorir(modId, soInspId){
 }
 function fvs3dUniao(){
   const pm = {};
-  (F3D._cores || []).forEach(g => Object.entries(g.porMod || {}).forEach(([mi, ids]) => (pm[mi] = (pm[mi] || []).concat(ids))));
+  (F3D._cores || []).filter(g => g.cor !== 0xE2E8F0).forEach(g => Object.entries(g.porMod || {}).forEach(([mi, ids]) => (pm[mi] = (pm[mi] || []).concat(ids))));
   return pm;
 }
 // O Fragments só aplica a cor nova aos blocos (tiles) que ele RECARREGA; os que
