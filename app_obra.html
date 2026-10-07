@@ -735,6 +735,11 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .fvs3d-leg{display:inline-flex;align-items:center;gap:4px;margin-left:8px;font-size:11px}
 .fvs3d-leg i{width:10px;height:10px;border-radius:2px;display:inline-block}
 
+/* Concretagem B4a */
+.conc-fvs{border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12px;line-height:1.6}
+.conc-fvs.ok{background:#EAF6EE;border:1px solid #B7E1C4;color:#14532D}
+.conc-fvs.nok{background:#FEF3E2;border:1px solid #F5D29B;color:#7C4A03}
+
 </style>
 </head>
 <body>
@@ -11271,6 +11276,279 @@ async function fvs3dLimpar(){ FVS3D_ATIVO = null; try { await B3.limparFiltro(F3
     if (x && x.pavimento_id && ft) ft.firstElementChild.insertAdjacentHTML('afterend', '<button class="b2" onclick="fvs3dColorir(\'' + x.modelo_id + '\',\'' + id + '\')">🧊 Ver no 3D</button>');
   };
 })();
+
+// ── App Obra · CONCRETAGEM — B4a: PLANEJAR + LIBERAR (rastreabilidade) ──────
+//  Planejar: pavimento → o 3D (modelo EST) pré-seleciona lajes/vigas/pilares
+//  do andar; tocar numa peça tira/põe; volume previsto = quantidades do TQS
+//  (Pset Auria_Quantities, via B3.somarIds). Liberar: eng. chefe/coord. com
+//  FVS de fôrma+armação aprovadas; sem elas só o eng. chefe, c/ justificativa
+//  (regra no banco: conc_liberar). B4b = caminhões; B4c = corpos de prova.
+var CONCS = [], CONC_RASC = null, CONC_MODO = null;
+const CONC_SIT = {
+  planejada:    { rot:'Planejada',    cor:'#3B82F6' },
+  liberada:     { rot:'Liberada',     cor:'#1E8449' },
+  em_andamento: { rot:'Em andamento', cor:'#E8960A' },
+  concluida:    { rot:'Concluída',    cor:'#1E3A5F' },
+  cancelada:    { rot:'Cancelada',    cor:'#94A3B8' }
+};
+const CONC_CLS = [/^IFCSLAB$/, /^IFCBEAM/, /^IFCCOLUMN/, /^IFCWALL/, /^IFCSTAIR/, /^IFCFOOTING/];
+const CONC_CLS_ROT = { IFCSLAB:'Lajes', IFCBEAM:'Vigas', IFCCOLUMN:'Pilares', IFCWALL:'Pilares-parede', IFCSTAIRFLIGHT:'Escadas', IFCSTAIR:'Escadas', IFCFOOTING:'Fundações' };
+function concPodePlanejar(){ return ['eng_chefe','coord_campo','equipe_campo'].includes(segMeuNivel()); }
+function concPodeLiberar(){ return ['eng_chefe','coord_campo'].includes(segMeuNivel()); }
+async function concCarregar(){
+  CONCS = []; if (!EMP) return;
+  const { data, error } = await sb.from('conc_concretagem_auria').select('*').eq('empreendimento_id', EMP.id).order('data_prevista', { ascending:false, nullsFirst:true });
+  if (error){ console.warn('conc_concretagem_auria indisponível:', error.message || error); return; }
+  CONCS = data || [];
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await concCarregar(); } catch (_){} try { renderSideRight(); } catch (_){} }; })();
+function concData(d){ return d ? new Date(d + 'T12:00').toLocaleDateString('pt-BR') : '—'; }
+function concM3(v){ return v == null ? '—' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits:1, maximumFractionDigits:1 }) + ' m³'; }
+
+// ── Painel ───────────────────────────────────────────────────────────────────
+function concPainel(){
+  const ativas = CONCS.filter(c => ['planejada','liberada','em_andamento'].includes(c.situacao));
+  const outras = CONCS.filter(c => !['planejada','liberada','em_andamento'].includes(c.situacao));
+  const card = c => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + CONC_SIT[c.situacao].cor + '!important" onclick="concDetalhe(\'' + c.id + '\')">'
+    + '<div class="cod">' + esc(c.codigo) + ' <span class="seg-chip" style="background:' + CONC_SIT[c.situacao].cor + ';color:#fff">' + CONC_SIT[c.situacao].rot + '</span> '
+    + esc(segPavNome(c.pavimento_id) || '') + '</div>'
+    + '<div class="t">' + esc(c.descricao || 'Concretagem') + '</div>'
+    + '<div class="m">' + concData(c.data_prevista) + ' · ' + concM3(c.volume_previsto) + ' · ' + c.n_pecas + ' peça(s)' + (c.fck_mpa ? ' · C' + c.fck_mpa : '')
+    + (c.liberacao && c.liberacao.justificativa ? ' · <b style="color:#B45309">liberada sem FVS</b>' : '') + '</div></div>';
+  segOv('<div class="hd"><b>Concretagem</b><p>Planeje pelas peças do modelo; o volume vem das quantidades do TQS. A liberação confere as FVS de fôrma e armação do pavimento.</p></div>'
+    + '<div class="ls">' + (ativas.length ? '<div class="seg-dia">Em aberto</div>' + ativas.map(card).join('') : '<div class="hint" style="padding:12px">Nenhuma concretagem em aberto.</div>')
+    + (outras.length ? '<div class="seg-dia">Concluídas e canceladas</div>' + outras.map(card).join('') : '') + '</div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button>' + (concPodePlanejar() ? '<button class="b1" onclick="concNova()">＋ Planejar concretagem</button>' : '') + '</div>');
+}
+
+// ── Formulário ──────────────────────────────────────────────────────────────
+function concNova(){
+  if (!concPodePlanejar()) return;
+  const am = new Date(Date.now() + 86400000), p = n => String(n).padStart(2,'0');
+  CONC_RASC = { pavimento_id:'', descricao:'Laje e vigas', data_prevista:am.getFullYear() + '-' + p(am.getMonth()+1) + '-' + p(am.getDate()),
+                fck_mpa:'', slump_mm:100, slump_tol_mm:20, agressividade:'II', fornecedor:'', bomba:'', elementos:[], n_pecas:0, volume_previsto:null, volume_por_classe:null };
+  concForm();
+}
+function concEditar(id){
+  const c = CONCS.find(x => x.id === id); if (!c || c.situacao !== 'planejada' || !concPodePlanejar()) return;
+  CONC_RASC = JSON.parse(JSON.stringify(c)); CONC_RASC._editId = id; concForm();
+}
+function concLerForm(){
+  if (!$('ccPav') || !CONC_RASC) return;
+  const r = CONC_RASC, n = id => { const v = parseInt($(id).value, 10); return isFinite(v) ? v : null; };
+  const pav = $('ccPav').value; if (pav !== r.pavimento_id){ r.elementos = []; r.n_pecas = 0; r.volume_previsto = null; r.volume_por_classe = null; }
+  r.pavimento_id = pav; r.descricao = $('ccDesc').value; r.data_prevista = $('ccData').value;
+  r.fck_mpa = n('ccFck'); r.slump_mm = n('ccSl'); r.slump_tol_mm = n('ccTol'); r.agressividade = $('ccAgr').value;
+  r.fornecedor = $('ccForn').value; r.bomba = $('ccBomba').value;
+}
+function concForm(){
+  const r = CONC_RASC, x = r._editId;
+  const pavs = fvsPavs();
+  const cls = r.volume_por_classe ? Object.entries(r.volume_por_classe).map(([k, v]) => esc(CONC_CLS_ROT[k] || k) + ' ' + concM3(v)).join(' · ') : '';
+  segOv('<div class="hd"><b>' + (x ? 'Editar ' + esc(r.codigo) : 'Planejar concretagem') + '</b><p>Escolha o pavimento e confira as peças no 3D. O volume previsto soma as quantidades do TQS das peças escolhidas.</p></div>'
+    + '<div class="seg-form">'
+    + '<div class="seg-g2"><div><label>Pavimento</label><select id="ccPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
+    + '<div><label>Data prevista</label><input id="ccData" type="date" value="' + esc(r.data_prevista || '') + '"></div></div>'
+    + '<label>Descrição</label><input id="ccDesc" maxlength="120" value="' + esc(r.descricao || '') + '" placeholder="Ex.: laje e vigas — trecho 1">'
+    + '<div class="seg-geom"><b>' + (r.n_pecas ? r.n_pecas + ' peça(s) · ' + concM3(r.volume_previsto) : 'Nenhuma peça selecionada') + '</b>'
+    + (cls ? '<div class="hint" style="margin:2px 0 6px">' + cls + '</div>' : '')
+    + '<div><button class="b2" onclick="concLerForm();concPecas3D()">🧊 ' + (r.n_pecas ? 'Ajustar' : 'Selecionar') + ' peças no 3D</button></div></div>'
+    + '<div class="seg-g2"><div><label>fck (MPa)</label><input id="ccFck" type="number" min="10" max="120" value="' + esc(r.fck_mpa == null ? '' : r.fck_mpa) + '" placeholder="Ex.: 40"></div>'
+    + '<div><label>Classe de agressividade</label><select id="ccAgr">' + ['I','II','III','IV'].map(k => '<option' + (k === r.agressividade ? ' selected' : '') + '>' + k + '</option>').join('') + '</select></div></div>'
+    + '<div class="seg-g2"><div><label>Slump (mm)</label><input id="ccSl" type="number" min="0" max="300" value="' + esc(r.slump_mm == null ? '' : r.slump_mm) + '"></div>'
+    + '<div><label>Tolerância (± mm)</label><input id="ccTol" type="number" min="0" max="100" value="' + esc(r.slump_tol_mm == null ? '' : r.slump_tol_mm) + '"></div></div>'
+    + '<div class="seg-g2"><div><label>Concreteira</label><input id="ccForn" value="' + esc(r.fornecedor || '') + '"></div>'
+    + '<div><label>Bomba</label><input id="ccBomba" value="' + esc(r.bomba || '') + '" placeholder="Ex.: lança 36 m"></div></div>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="' + (x ? 'concDetalhe(\'' + x + '\')' : 'concPainel()') + '">Voltar</button><button class="b1" id="segOk" onclick="concSalvar()">' + (x ? 'Salvar' : 'Planejar') + '</button></div>');
+}
+async function concSalvar(){
+  concLerForm();
+  const r = CONC_RASC, msg = t => { $('segMsg').textContent = t; };
+  if (!r.pavimento_id) return msg('Escolha o pavimento.');
+  if (!r.data_prevista) return msg('Informe a data prevista.');
+  const b = $('segOk'); b.disabled = true;
+  try {
+    const row = { pavimento_id:r.pavimento_id, descricao:(r.descricao || '').trim() || null, data_prevista:r.data_prevista, elementos:r.elementos || [], n_pecas:r.n_pecas || 0,
+                  volume_previsto:r.volume_previsto, volume_por_classe:r.volume_por_classe, fck_mpa:r.fck_mpa, slump_mm:r.slump_mm, slump_tol_mm:r.slump_tol_mm,
+                  agressividade:r.agressividade, fornecedor:(r.fornecedor || '').trim() || null, bomba:(r.bomba || '').trim() || null };
+    let id = r._editId;
+    if (id){ const { error } = await sb.from('conc_concretagem_auria').update(row).eq('id', id); if (error) throw error; }
+    else {
+      id = crypto.randomUUID();
+      const c = await sb.rpc('conc_proximo_codigo', { p_emp:EMP.id }); if (c.error) throw c.error;
+      const { error } = await sb.from('conc_concretagem_auria').insert(Object.assign(row, { id, empreendimento_id:EMP.id, codigo:c.data, criado_por:USER.id })); if (error) throw error;
+    }
+    CONC_RASC = null; await concCarregar(); try { renderSideRight(); } catch (_){}
+    concDetalhe(id);
+  } catch (e){ msg('Não foi possível salvar: ' + (e.message || e)); b.disabled = false; }
+}
+
+// ── Peças no 3D (modelo de estrutura) ───────────────────────────────────────
+async function concPecas3D(){
+  const r = CONC_RASC; if (!r.pavimento_id){ $('segMsg').textContent = 'Escolha o pavimento primeiro.'; return; }
+  segFechar();
+  const m = { servico:'concretagem estrutura', etapa:'estrutura' };
+  if (!(await fvs3dGarantir(m))){ segBarraInfo('Não foi possível abrir o modelo de estrutura.', '<button onclick="concForm()">Voltar</button>'); return; }
+  segBarraInfo('Lendo o pavimento no modelo…', '');
+  const mp = await fvs3dMapa();
+  if (!(r.elementos || []).length){   // pré-seleção: estrutura do andar
+    const els = [];
+    for (let mi = 0; mi < F3D.modelos.length; mi++){
+      const md = F3D.modelos[mi].model; if (!md) continue;
+      let ids = []; try { ids = Object.values(await md.getItemsOfCategories(CONC_CLS) || {}).flat(); } catch (_){}
+      ids = ids.filter(id => mp.dono[mi].get(id) === r.pavimento_id);
+      if (ids.length) els.push({ cde_arquivo_id:F3D.modelos[mi].arquivoId, modelo:F3D.modelos[mi].nome || '', ids });
+    }
+    r.elementos = els;
+    if (!els.length){ segBarraInfo('Nenhuma peça de estrutura achada para ' + esc(segPavNome(r.pavimento_id)) + ' no modelo (o andar pode não ter par no IFC).', '<button onclick="concForm()">Voltar ao formulário</button>'); return; }
+  }
+  CONC_MODO = 'pecas';
+  await concPintar(true);
+}
+function concPorMod(){
+  const pm = {};
+  (CONC_RASC.elementos || []).forEach(g => { const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi >= 0 && g.ids.length) pm[mi] = g.ids.slice(); });
+  return pm;
+}
+async function concPintar(enquadrar){
+  const pm = concPorMod(), sel = new Set(), neutro = {};
+  Object.entries(pm).forEach(([mi, ids]) => ids.forEach(id => sel.add(mi + ':' + id)));
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const md = F3D.modelos[mi].model; if (!md) continue;
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    neutro[mi] = todos.filter(id => !sel.has(mi + ':' + id));
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){}
+  if (Object.keys(pm).length) try { await B3.colorirGrupo(F3D, pm, 0xE8960A); } catch (_){}
+  if (enquadrar && Object.keys(pm).length){ try { await B3.enquadrarIds(F3D, pm); } catch (_){} }
+  await fvs3dRefrescar();
+  await concBarra();
+}
+async function concBarra(){
+  const r = CONC_RASC, n = (r.elementos || []).reduce((s, g) => s + g.ids.length, 0);
+  segBarraInfo('<b>' + esc(segPavNome(r.pavimento_id)) + '</b> · ' + n + ' peça(s) em <span style="color:#E8960A">laranja</span> · toque numa peça para tirar/pôr · calculando volume…',
+    '<button class="ok" onclick="concPecasOk()">Concluir</button><button onclick="concPecasCancelar()">Cancelar</button>');
+  const vol = await concVolume();
+  if (CONC_MODO !== 'pecas') return;
+  segBarraInfo('<b>' + esc(segPavNome(r.pavimento_id)) + '</b> · ' + n + ' peça(s) · <b>' + concM3(vol.total) + '</b>'
+    + (vol.semValor ? ' <span title="Peças sem quantidade do TQS">(' + vol.semValor + ' sem volume)</span>' : '') + ' · toque numa peça para tirar/pôr',
+    '<button class="ok" onclick="concPecasOk()">Concluir</button><button onclick="concPecasCancelar()">Cancelar</button>');
+}
+// volume por classe (Pset Auria_Quantities do TQS; o cache do bim3d torna recontagens instantâneas)
+async function concVolume(){
+  const r = CONC_RASC, porCls = {}; let total = 0, semValor = 0;
+  for (const g of (r.elementos || [])){
+    const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi < 0 || !g.ids.length) continue;
+    const md = F3D.modelos[mi].model; let cats = {};
+    try { cats = await md.getItemsOfCategories(CONC_CLS) || {}; } catch (_){}
+    const sel = new Set(g.ids);
+    for (const [cat, ids] of Object.entries(cats)){
+      const meus = ids.filter(id => sel.has(id)); if (!meus.length) continue;
+      let s = { soma:0, comValor:0, n:meus.length }; try { s = await B3.somarIds(F3D, { [mi]:meus }, 'volume'); } catch (_){}
+      const k = String(cat).toUpperCase(); porCls[k] = Math.round(((porCls[k] || 0) + s.soma) * 100) / 100;
+      total += s.soma; semValor += (s.n - s.comValor);
+    }
+  }
+  r.volume_previsto = Math.round(total * 100) / 100; r.volume_por_classe = porCls;
+  r.n_pecas = (r.elementos || []).reduce((s, g) => s + g.ids.length, 0);
+  return { total:r.volume_previsto, semValor };
+}
+async function concPecasOk(){ CONC_MODO = null; await concVolume(); try { await B3.limparFiltro(F3D); await fvs3dRefrescar(); } catch (_){} try { segSairModo(); } catch (_){} concForm(); }
+async function concPecasCancelar(){ CONC_MODO = null; try { await B3.limparFiltro(F3D); await fvs3dRefrescar(); } catch (_){} try { segSairModo(); } catch (_){} concForm(); }
+// tocar numa peça no modo de seleção tira/põe da concretagem
+(function(){
+  const _c = f3dClique;
+  f3dClique = async function(ev){
+    if (CONC_MODO !== 'pecas') return _c(ev);
+    const hit = await B3.raycast(F3D, ev); if (!hit) return;
+    const m = hit.__modelo, r = CONC_RASC;
+    let g = r.elementos.find(x => x.cde_arquivo_id === m.arquivoId);
+    if (!g){ g = { cde_arquivo_id:m.arquivoId, modelo:m.nome || '', ids:[] }; r.elementos.push(g); }
+    const i = g.ids.indexOf(hit.localId); if (i >= 0) g.ids.splice(i, 1); else g.ids.push(hit.localId);
+    await concPintar(false);
+  };
+})();
+
+// ── Detalhe + liberar / cancelar ────────────────────────────────────────────
+async function concDetalhe(id){
+  const c = CONCS.find(x => x.id === id); if (!c) return;
+  let fvs = null;
+  if (c.situacao === 'planejada' && c.pavimento_id){ const r = await sb.rpc('conc_fvs_pavimento', { p_emp:EMP.id, p_pav:c.pavimento_id }); fvs = r.data; }
+  const lib = c.liberacao || fvs;
+  const fvsHtml = lib ? '<div class="conc-fvs ' + (lib.ok ? 'ok' : 'nok') + '"><b>' + (lib.ok ? '✓ FVS de fôrma e armação aprovadas' : '⚠ FVS de fôrma/armação pendentes') + '</b>'
+      + (lib.fichas || []).map(f => '<div>' + esc(f.exigido) + ': ' + (f.codigo ? esc(f.codigo) + (f.local ? ' (' + esc(f.local) + ')' : '') + ' — ' + esc((FVS_SIT[f.situacao] || {}).rot || f.situacao) : '<i>sem ficha</i>') + '</div>').join('')
+      + (lib.justificativa ? '<div style="margin-top:4px"><b>Liberada sem FVS — justificativa:</b> ' + esc(lib.justificativa) + '</div>' : '') + '</div>' : '';
+  const cls = c.volume_por_classe ? Object.entries(c.volume_por_classe).map(([k, v]) => esc(CONC_CLS_ROT[k] || k) + ' ' + concM3(v)).join(' · ') : '';
+  let acoes = '';
+  if (c.situacao === 'planejada' && concPodePlanejar()) acoes += '<button class="b2" onclick="concEditar(\'' + id + '\')">Editar</button>';
+  if (c.situacao === 'planejada' && concPodeLiberar()) acoes += '<button class="b1" onclick="concLiberarForm(\'' + id + '\',' + !!(fvs && fvs.ok) + ')">Liberar</button>';
+  if (['planejada','liberada'].includes(c.situacao) && concPodeLiberar()) acoes += '<button class="b2" onclick="concCancelarForm(\'' + id + '\')">Cancelar</button>';
+  segOv('<div class="hd"><b>' + esc(c.codigo) + ' — ' + esc(c.descricao || 'Concretagem') + '</b><p><span class="seg-chip" style="background:' + CONC_SIT[c.situacao].cor + ';color:#fff">' + CONC_SIT[c.situacao].rot + '</span> '
+      + esc(segPavNome(c.pavimento_id) || '') + ' · ' + concData(c.data_prevista) + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Peças</span><b>' + c.n_pecas + ' · ' + concM3(c.volume_previsto) + (cls ? '<div class="hint">' + cls + '</div>' : '')
+    + (c.n_pecas ? ' <button class="b2 mini" onclick="concVer3D(\'' + id + '\')">🧊 Ver no 3D</button>' : '') + '</b></div>'
+    + '<div class="seg-kv"><span>Concreto</span><b>' + (c.fck_mpa ? 'C' + c.fck_mpa : 'fck —') + (c.slump_mm != null ? ' · slump ' + c.slump_mm + (c.slump_tol_mm != null ? ' ± ' + c.slump_tol_mm : '') + ' mm' : '') + (c.agressividade ? ' · CAA ' + c.agressividade : '') + '</b></div>'
+    + ((c.fornecedor || c.bomba) ? '<div class="seg-kv"><span>Fornecimento</span><b>' + esc([c.fornecedor, c.bomba].filter(Boolean).join(' · ')) + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Planejada</span><b>' + esc(c.criado_nome || '') + ' · ' + new Date(c.criado_em).toLocaleString('pt-BR') + '</b></div>'
+    + (c.liberado_nome ? '<div class="seg-kv"><span>Liberada</span><b>' + esc(c.liberado_nome) + ' · ' + new Date(c.liberado_em).toLocaleString('pt-BR') + '</b></div>' : '')
+    + (c.cancelado_nome ? '<div class="seg-kv"><span>Cancelada</span><b>' + esc(c.cancelado_nome) + ' · ' + esc(c.cancelado_motivo || '') + '</b></div>' : '')
+    + fvsHtml
+    + '<div class="hint" style="padding:8px 0">Registro dos caminhões (NF, slump, horários, corpos de prova) entra na próxima etapa.</div>'
+    + '<div id="segMsg" class="seg-msg"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="concPainel()">Voltar</button>' + acoes + '</div>');
+}
+async function concVer3D(id){
+  const c = CONCS.find(x => x.id === id); if (!c) return;
+  CONC_RASC = JSON.parse(JSON.stringify(c)); segFechar();
+  if (!(await fvs3dGarantir({ servico:'concretagem estrutura', etapa:'estrutura' }))) return;
+  await concPintar(true);
+  segBarraInfo('<b>' + esc(c.codigo) + '</b> · ' + c.n_pecas + ' peça(s) · ' + concM3(c.volume_previsto), '<button onclick="concDetalhe(\'' + id + '\')">Detalhes</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
+}
+function concLiberarForm(id, fvsOk){
+  const c = CONCS.find(x => x.id === id);
+  if (fvsOk){ concLiberar(id, null); return; }
+  if (segMeuNivel() !== 'eng_chefe'){ $('segMsg').textContent = 'As FVS de fôrma/armação deste pavimento não estão aprovadas — só o eng. chefe libera, com justificativa.'; return; }
+  segOv('<div class="hd"><b>Liberar ' + esc(c.codigo) + ' sem FVS aprovadas</b><p>As FVS de fôrma e/ou armação do pavimento não estão aprovadas. A liberação fica registrada com o seu nome e a justificativa.</p></div>'
+    + '<div class="seg-form"><label>Justificativa</label><textarea id="segMot" rows="3" placeholder="Ex.: FVS conferidas em papel; lançamento no sistema até amanhã"></textarea><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="concDetalhe(\'' + id + '\')">Voltar</button><button class="b1" id="segOk" onclick="concLiberar(\'' + id + '\',$(\'segMot\').value)">Liberar com justificativa</button></div>');
+}
+async function concLiberar(id, just){
+  try {
+    const { error } = await sb.rpc('conc_liberar', { p_id:id, p_justificativa:just }); if (error) throw error;
+    await concCarregar(); try { renderSideRight(); } catch (_){}
+    concDetalhe(id);
+  } catch (e){ const m = $('segMsg'); if (m) m.textContent = e.message || e; }
+}
+function concCancelarForm(id){
+  const c = CONCS.find(x => x.id === id);
+  segOv('<div class="hd"><b>Cancelar ' + esc(c.codigo) + '</b></div>'
+    + '<div class="seg-form"><label>Motivo</label><textarea id="segMot" rows="3"></textarea><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="concDetalhe(\'' + id + '\')">Voltar</button><button class="b1" id="segOk" onclick="concCancelar(\'' + id + '\')">Cancelar concretagem</button></div>');
+}
+async function concCancelar(id){
+  try {
+    const { error } = await sb.rpc('conc_cancelar', { p_id:id, p_motivo:$('segMot').value }); if (error) throw error;
+    await concCarregar(); try { renderSideRight(); } catch (_){}
+    concDetalhe(id);
+  } catch (e){ $('segMsg').textContent = e.message || e; }
+}
+
+// ── Módulo da barra direita ─────────────────────────────────────────────────
+(function(){
+  const _m = obraModulosHtml;
+  obraModulosHtml = function(){
+    const prox = CONCS.filter(c => ['planejada','liberada','em_andamento'].includes(c.situacao)).sort((a, b) => String(a.data_prevista).localeCompare(String(b.data_prevista)))[0];
+    const sub = prox ? 'próxima: ' + (segPavNome(prox.pavimento_id) || prox.codigo) + ' · ' + concData(prox.data_prevista) : 'planejar pelas peças do modelo';
+    return _m().replace(/(onclick="obraModulo\('concretagem'\)"[\s\S]*?<span>)em construção(<\/span>)/, '$1' + esc(sub) + '$2');
+  };
+  const _o = obraModulo;
+  obraModulo = function(k){ if (k === 'concretagem'){ concPainel(); return; } return _o(k); };
+})();
+// "Fechar" da barra (segSairModo) também encerra o modo de seleção de peças
+(function(){ const _s = segSairModo; segSairModo = function(){ CONC_MODO = null; return _s.apply(this, arguments); }; })();
 
 </script>
 <script src="auria_ajuda.js"></script>
