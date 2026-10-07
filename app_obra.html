@@ -11839,6 +11839,220 @@ async function camMapa3D(concId){
   };
 })();
 
+// ── App Obra · CONCRETAGEM — B4c: CORPOS DE PROVA · fck,est · ALERTA < fck ──
+//  Exemplar = caminhão (amostragem total, NBR 12655); valor = maior CP de 28 d.
+//  Resultado < fck → alerta no banco (e-mail: eng. chefe, coord. de campo,
+//  Qualidade, coordenação de projetos, projetista de ESTRUTURA) + ponto de
+//  atenção aqui (aba Alertas e destaque de entrada, chave 'conc:<alerta>').
+//  Como cada caminhão tem o SEU trecho de peças, o mapa por resistência
+//  aponta exatamente as peças em risco.
+var CPS = [], CONC_ALERTAS = [], CPS_PEND = [];
+async function cpCarregarPend(){
+  CPS_PEND = []; CONC_ALERTAS = []; if (!EMP) return;
+  const lim = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const a = await sb.from('conc_cp_auria').select('id,ident,idade_dias,romper_em,concretagem_id,caminhao_id').eq('empreendimento_id', EMP.id).is('resultado_mpa', null).lte('romper_em', lim).order('romper_em').limit(60);
+  if (!a.error) CPS_PEND = a.data || [];
+  const b = await sb.from('conc_alerta_auria').select('*').eq('empreendimento_id', EMP.id).order('criado_em', { ascending:false });
+  if (!b.error) CONC_ALERTAS = b.data || [];
+}
+(function(){ const _c = concCarregar; concCarregar = async function(){ await _c(); try { await cpCarregarPend(); } catch (_){} try { renderListaApts(); obraContagens(); } catch (_){} }; })();
+async function cpCarregar(concId){ const { data } = await sb.from('conc_cp_auria').select('*').eq('concretagem_id', concId).order('idade_dias').order('ident'); CPS = data || []; return CPS; }
+const _hoje = () => new Date().toISOString().slice(0, 10);
+
+// ── Painel: rupturas da semana e alertas no topo ────────────────────────────
+(function(){
+  const _p = concPainel;
+  concPainel = function(){
+    _p();
+    const ls = document.querySelector('#segOv .ls'); if (!ls) return;
+    let h = '';
+    if (CONC_ALERTAS.length) h += '<div class="seg-dia" style="color:#C0392B">Resistência abaixo do fck</div>' + CONC_ALERTAS.map(a => { const c = CONCS.find(x => x.id === a.concretagem_id) || {};
+      return '<div class="it seg-it fvs-card" style="cursor:pointer" onclick="concDetalhe(\'' + a.concretagem_id + '\')"><div class="cod">' + esc(c.codigo || '') + ' <span class="seg-chip" style="background:#C0392B;color:#fff">' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</span></div><div class="m">' + esc(segPavNome(c.pavimento_id) || '') + '</div></div>'; }).join('');
+    if (CPS_PEND.length) h += '<div class="seg-dia">Rupturas até ' + new Date(Date.now() + 7 * 86400000).toLocaleDateString('pt-BR') + '</div>' + CPS_PEND.map(p => { const c = CONCS.find(x => x.id === p.concretagem_id) || {}, at = p.romper_em < _hoje();
+      return '<div class="it seg-it" style="cursor:pointer;border-left-color:' + (at ? '#C0392B' : '#E8960A') + '!important" onclick="concDetalhe(\'' + p.concretagem_id + '\')"><div class="cod">' + esc(p.ident) + ' · ' + p.idade_dias + ' d · ' + esc(c.codigo || '') + '</div><div class="m">' + (at ? '<b style="color:#C0392B">atrasada</b> — ' : '') + 'romper em ' + concData(p.romper_em) + '</div></div>'; }).join('');
+    if (h) ls.insertAdjacentHTML('afterbegin', h);
+  };
+})();
+
+// ── Detalhe da concretagem: resumo dos CPs + fck estimado ───────────────────
+(function(){
+  const _d = concDetalhe;
+  concDetalhe = async function(id){
+    await _d(id);
+    const c = CONCS.find(x => x.id === id); if (!c || !['em_andamento','concluida'].includes(c.situacao)) return;
+    await cpCarregar(id);
+    const det = document.querySelector('#segOv .seg-det'); if (!det || !CPS.length) return;
+    const { data:f } = await sb.rpc('conc_fck_est', { p_conc:id, p_idade:28 });
+    const pend = CPS.filter(p => p.resultado_mpa == null).length, al = CONC_ALERTAS.filter(a => a.concretagem_id === id);
+    det.insertAdjacentHTML('beforeend', '<div class="seg-kv" style="border:none;margin-top:6px"><span>Corpos de prova</span><b>' + CPS.length + ' moldado(s) · ' + pend + ' a romper</b></div>'
+      + '<div class="conc-fvs ' + (al.length ? 'nok' : (f && f.fck_est != null ? 'ok' : '')) + '" style="' + (al.length ? 'background:#FDF2F1;border-color:#F5C6C1;color:#7B241C' : '') + '">'
+      + (f && f.fck_est != null ? '<b>fck,est (28 d) = ' + Number(f.fck_est).toLocaleString('pt-BR') + ' MPa</b> · ' + f.n + ' exemplar(es) · especificado C' + (c.fck_mpa || '—')
+          + (c.fck_mpa ? (f.fck_est >= c.fck_mpa ? ' · <b>atende</b>' : ' · <b>NÃO atende</b>') : '')
+          + '<div>' + (f.exemplares || []).map(e => 'cam. ' + e.seq + ': ' + e.valor + ' MPa').join(' · ') + '</div>'
+        : '<b>fck,est</b>: aguardando rupturas de 28 dias')
+      + (al.length ? '<div style="margin-top:4px">⚠ ' + al.map(a => 'caminhão ' + ((CAMS.find(k => k.id === a.caminhao_id) || {}).seq || '?') + ' com ' + a.exemplar_mpa + ' MPa').join(' · ') + ' — peças em risco no mapa por resistência</div>' : '')
+      + '</div>');
+    const ft = document.querySelector('#segOv .ft');
+    if (ft) ft.firstElementChild.insertAdjacentHTML('afterend', '<button class="b2" onclick="cpMapa3D(\'' + id + '\')">🧊 Por resistência</button>');
+  };
+})();
+
+// ── Ficha do caminhão: CPs ──────────────────────────────────────────────────
+(function(){
+  const _d = camDetalhe;
+  camDetalhe = async function(id){
+    _d(id);
+    const k = CAMS.find(x => x.id === id); if (!k || !k.aceito) return;
+    await cpCarregar(k.concretagem_id);
+    const meus = CPS.filter(p => p.caminhao_id === id);
+    const det = document.querySelector('#segOv .seg-det'); if (!det) return;
+    det.insertAdjacentHTML('beforeend', '<div class="seg-kv" style="border:none"><span>Rupturas</span><b></b></div><div class="cam-lista">'
+      + (meus.length ? meus.map(p => '<div class="cam-it" onclick="' + (p.resultado_mpa == null && concPodePlanejar() ? 'cpLancarForm(\'' + p.id + '\')' : 'cpVer(\'' + p.id + '\')') + '">'
+          + '<i style="background:' + (p.resultado_mpa == null ? (p.romper_em < _hoje() ? '#C0392B' : '#94A3B8') : '#1E3A5F') + '">' + p.idade_dias + 'd</i><div><b>' + esc(p.ident) + (p.resultado_mpa != null ? ' · ' + p.resultado_mpa + ' MPa' : '') + '</b>'
+          + '<span>' + (p.resultado_mpa != null ? 'rompido ' + concData(p.rompido_em) + (p.laboratorio ? ' · ' + esc(p.laboratorio) : '') + (p.laudo ? ' · 📄 laudo' : '') : 'romper em ' + concData(p.romper_em) + (p.romper_em < _hoje() ? ' — <em class="al">atrasada</em>' : '') + ' · toque para lançar') + '</span></div></div>').join('')
+        : '<div class="hint">Nenhum CP cadastrado para este caminhão.</div>') + '</div>');
+    if (concPodePlanejar()){
+      const ft = document.querySelector('#segOv .ft'); if (ft) ft.insertAdjacentHTML('beforeend', '<button class="b2" onclick="cpGerarForm(\'' + id + '\')">＋ CPs</button>');
+    }
+  };
+})();
+function cpGerarForm(camId){
+  const k = CAMS.find(x => x.id === camId), n = k.cps_moldados || 4, base = (k.cps_ident || '').replace(/\s*a\s*\d+\s*$/i, '').replace(/[-\s]*\d+$/, '') || ('C' + k.seq);
+  const meio = Math.floor(n / 2);
+  segOv('<div class="hd"><b>Corpos de prova — caminhão ' + k.seq + '</b><p>Moldados ' + concData(String(k.registrado_em).slice(0, 10)) + '. Cada caminhão é um exemplar; o valor de 28 dias é o MAIOR entre os CPs dessa idade.</p></div>'
+    + '<div class="seg-form"><div class="seg-g2"><div><label>Prefixo da identificação</label><input id="cpBase" value="' + esc(base) + '"></div><div><label>Laboratório</label><input id="cpLab" placeholder="opcional"></div></div>'
+    + '<div class="seg-g2"><div><label>CPs para 7 dias</label><input id="cp7" type="number" min="0" max="10" value="' + (n - meio) + '"></div><div><label>CPs para 28 dias</label><input id="cp28" type="number" min="0" max="10" value="' + meio + '"></div></div>'
+    + '<div class="seg-g2"><div><label>Outra idade (dias)</label><input id="cpXi" type="number" min="1" max="365" placeholder="ex.: 63"></div><div><label>CPs nessa idade</label><input id="cpXn" type="number" min="0" max="10" value="0"></div></div>'
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="camDetalhe(\'' + camId + '\')">Voltar</button><button class="b1" id="segOk" onclick="cpGerar(\'' + camId + '\')">Cadastrar CPs</button></div>');
+}
+async function cpGerar(camId){
+  const k = CAMS.find(x => x.id === camId), base = ($('cpBase').value || '').trim() || ('C' + k.seq);
+  const grupos = [[7, +$('cp7').value || 0], [28, +$('cp28').value || 0]]; const xi = +$('cpXi').value; if (xi > 0) grupos.push([xi, +$('cpXn').value || 0]);
+  const mold = String(k.fim_descarga || k.registrado_em).slice(0, 10), ja = CPS.filter(p => p.caminhao_id === camId).length;
+  const rows = []; let s = ja;
+  grupos.forEach(([d, q]) => { for (let i = 0; i < q; i++){ s++; const r = new Date(mold + 'T12:00'); r.setDate(r.getDate() + d);
+    rows.push({ caminhao_id:camId, concretagem_id:k.concretagem_id, empreendimento_id:EMP.id, ident:base + '-' + String(s).padStart(2, '0'), idade_dias:d, moldado_em:mold, romper_em:r.toISOString().slice(0, 10), laboratorio:($('cpLab').value || '').trim() || null, criado_por:USER.id }); } });
+  if (!rows.length) return $('segMsg').textContent = 'Informe ao menos um CP.';
+  $('segOk').disabled = true;
+  const { error } = await sb.from('conc_cp_auria').insert(rows);
+  if (error){ $('segMsg').textContent = error.message; $('segOk').disabled = false; return; }
+  await cpCarregarPend(); camDetalhe(camId);
+}
+function cpLancarForm(cpId){
+  const p = CPS.find(x => x.id === cpId), k = CAMS.find(x => x.id === p.caminhao_id), c = CONCS.find(x => x.id === p.concretagem_id);
+  segOv('<div class="hd"><b>Resultado — ' + esc(p.ident) + '</b><p>' + p.idade_dias + ' dias · caminhão ' + k.seq + ' · ' + esc(c.codigo) + ' · especificado C' + (c.fck_mpa || '—') + '</p></div>'
+    + '<div class="seg-form"><div class="seg-g2"><div><label>Resistência (MPa)</label><input id="cpMpa" inputmode="decimal" placeholder="Ex.: 42,5"></div><div><label>Data da ruptura</label><input id="cpData" type="date" value="' + _hoje() + '"></div></div>'
+    + '<label>Laboratório</label><input id="cpLab2" value="' + esc(p.laboratorio || '') + '">'
+    + '<label>Laudo do laboratório (PDF ou foto)</label><input id="cpLaudo" type="file" accept="application/pdf,image/*">'
+    + '<div class="hint" style="padding:4px 0">O resultado não se reescreve depois de lançado.</div><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="camDetalhe(\'' + k.id + '\')">Voltar</button><button class="b1" id="segOk" onclick="cpLancar(\'' + cpId + '\')">Lançar resultado</button></div>');
+}
+async function cpLancar(cpId){
+  const p = CPS.find(x => x.id === cpId), mpa = parseFloat(String($('cpMpa').value).replace(',', '.'));
+  if (!(mpa > 0)) return $('segMsg').textContent = 'Informe a resistência em MPa.';
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Lançando…';
+  try {
+    let laudo = null; const f = $('cpLaudo').files[0];
+    if (f){
+      const pdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name), nome = f.name.replace(/[^\w.\-]+/g, '_');
+      const path = EMP.id + '/_qualidade/conc/' + p.concretagem_id + '/' + Date.now() + '_laudo_' + nome;
+      const ct = pdf ? 'application/pdf' : 'image/jpeg', body = pdf ? f : await segReduzir(f);
+      const url = await segR2Url('upload', path, ct); const r = await fetch(url, { method:'PUT', headers:{ 'content-type':ct }, body });
+      if (!r.ok) throw new Error('Falha ao enviar o laudo (' + r.status + ').');
+      laudo = { path, nome:f.name, pdf };
+    }
+    const { data, error } = await sb.rpc('conc_cp_resultado', { p_id:cpId, p_mpa:mpa, p_rompido:$('cpData').value || null, p_lab:$('cpLab2').value, p_laudo:laudo });
+    if (error) throw error;
+    await cpCarregarPend(); try { renderSideRight(); renderListaApts(); obraContagens(); } catch (_){}
+    camDetalhe(p.caminhao_id);
+  } catch (e){ $('segMsg').textContent = e.message || e; b.disabled = false; b.textContent = 'Lançar resultado'; }
+}
+async function cpVer(cpId){
+  const p = CPS.find(x => x.id === cpId); if (!p || !p.laudo) return;
+  const url = await segR2Url('download', p.laudo.path);
+  if (p.laudo.pdf && window.AuriaPDF) AuriaPDF.abrir({ url, codigo:p.ident + ' · ' + p.resultado_mpa + ' MPa', titulo:'Laudo de ruptura', sub:p.idade_dias + ' dias · ' + (p.laboratorio || '') });
+  else window.open(url, '_blank');
+}
+
+// ── Mapa 3D por resistência ─────────────────────────────────────────────────
+async function cpMapa3D(concId){
+  const c = CONCS.find(x => x.id === concId); await camCarregar(concId); await cpCarregar(concId);
+  segFechar();
+  if (!(await fvs3dGarantir({ servico:'concretagem estrutura', etapa:'estrutura' }))) return;
+  const ex = {}; CPS.filter(p => p.idade_dias === 28 && p.resultado_mpa != null).forEach(p => ex[p.caminhao_id] = Math.max(ex[p.caminhao_id] || 0, +p.resultado_mpa));
+  const sit = k => ex[k.id] == null ? 'agu' : (c.fck_mpa && ex[k.id] < c.fck_mpa ? 'baixo' : 'ok');
+  const COR = { ok:0x16A34A, agu:0xEAB308, baixo:0xC0392B };
+  const dono = {}; CAMS.filter(k => k.aceito).forEach(k => (k.pecas || []).forEach(g => g.ids.forEach(i => dono[g.cde_arquivo_id + ':' + i] = k)));
+  const daConc = _camChaves(c.elementos), grp = { neutro:{}, sem:{}, ok:{}, agu:{}, baixo:{} }, add = (o, mi, id) => (o[mi] = o[mi] || []).push(id);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const m = F3D.modelos[mi], md = m.model; if (!md) continue;
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    todos.forEach(id => { const key = m.arquivoId + ':' + id; if (!daConc.has(key)) add(grp.neutro, mi, id); else if (!dono[key]) add(grp.sem, mi, id); else add(grp[sit(dono[key])], mi, id); });
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  try { await B3.colorirGrupo(F3D, grp.neutro, 0xE2E8F0); } catch (_){}
+  if (Object.keys(grp.sem).length) try { await B3.colorirGrupo(F3D, grp.sem, 0xE8960A); } catch (_){}
+  for (const s of ['ok','agu','baixo']) if (Object.keys(grp[s]).length) try { await B3.colorirGrupo(F3D, grp[s], COR[s]); } catch (_){}
+  const pm = Object.keys(grp.baixo).length ? grp.baixo : (() => { const o = {}; (c.elementos || []).forEach(g => { const mi = F3D.modelos.findIndex(m => m.arquivoId === g.cde_arquivo_id); if (mi >= 0) o[mi] = g.ids; }); return o; })();
+  try { await B3.enquadrarIds(F3D, pm); } catch (_){}
+  await fvs3dRefrescar();
+  CAM_MAPA = { concId, dono };
+  const n = s => Object.values(grp[s]).reduce((a, b) => a + b.length, 0);
+  segBarraInfo('<b>' + esc(c.codigo) + '</b> por resistência (28 d) '
+    + '<span class="fvs3d-leg"><i style="background:#16A34A"></i>≥ C' + (c.fck_mpa || '?') + ' ' + n('ok') + '</span>'
+    + '<span class="fvs3d-leg"><i style="background:#EAB308"></i>aguardando ' + n('agu') + '</span>'
+    + '<span class="fvs3d-leg"><i style="background:#C0392B"></i>abaixo ' + n('baixo') + '</span>'
+    + (n('sem') ? '<span class="fvs3d-leg"><i style="background:#E8960A"></i>sem caminhão ' + n('sem') + '</span>' : '') + ' · clique numa peça',
+    '<button onclick="concDetalhe(\'' + concId + '\')">Detalhes</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
+}
+
+// ── Ponto de atenção: aba Alertas + destaque de entrada ─────────────────────
+function concChave(a){ return 'conc:' + a.id; }
+function concPend(){ return CONC_ALERTAS.filter(a => !OBRA_LIDOS.has(concChave(a))); }
+function concAvisoHtml(a){
+  const c = CONCS.find(x => x.id === a.concretagem_id) || {};
+  return '<div class="it seg-it fvs-card"><div class="cod">' + esc(c.codigo || '') + ' <span class="seg-chip" style="background:#C0392B;color:#fff">' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</span> <span style="font-weight:600;color:#334155">concreto abaixo do fck</span></div>'
+    + '<div class="t">' + esc(segPavNome(c.pavimento_id) || '') + ' · ' + esc(c.descricao || '') + '</div>'
+    + '<div class="bt"><button class="b2" onclick="obraFecharAvisos();cpMapa3D(\'' + a.concretagem_id + '\')">Ver peças no 3D</button>'
+    + '<button class="b1" onclick="obraConfirmar([\'' + concChave(a) + '\'])">Li e estou ciente</button></div></div>';
+}
+(function(){
+  const _l = segListaHtml;
+  segListaHtml = function(){
+    const h = _l(); if (!CONC_ALERTAS.length) return h;
+    return h + '<div class="ap-sec obra-grp">Concretagem</div>' + CONC_ALERTAS.map(a => { const c = CONCS.find(x => x.id === a.concretagem_id) || {}, lido = OBRA_LIDOS.has(concChave(a));
+      return '<div class="ap-card seg-card fvs-card" onclick="obraConfirmar([\'' + concChave(a) + '\']).then(()=>cpMapa3D(\'' + a.concretagem_id + '\'))"><div class="t"><span class="obra-orig">Concretagem:</span> ' + esc(c.codigo || '') + ' — ' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</div>'
+        + '<div class="m">' + esc(segPavNome(c.pavimento_id) || '') + (!lido ? ' <span class="seg-chip" style="background:#E8960A;color:#231703">não lido</span>' : '') + '</div></div>'; }).join('');
+  };
+  const _c = obraContagens;
+  obraContagens = function(){ _c(); const e = $('obraNProj'); if (e) e.textContent = (+e.textContent || 0) + CONC_ALERTAS.length; };
+  const _conf = obraConfirmar;
+  obraConfirmar = function(ids){ return _conf(ids || obraPendentes().map(a => a.id).concat(segPendentes().map(x => 'seg:' + x.id)).concat(segZonasPend().map(z => 'zona:' + z.id)).concat(fvsPend().map(fvsChave)).concat(concPend().map(concChave))); };
+  // destaque de entrada: mesmo esquema da FVS (resiste à reconstrução do destaque)
+  const _inj = fvsInjetarAviso;
+  fvsInjetarAviso = function(forcar){
+    _inj(forcar);
+    const cp = concPend(); if (!cp.length || !EMP) return;
+    let ov = $('obraAvisos');
+    if (!ov || !ov.classList.contains('on')){
+      if (!ov){ ov = document.createElement('div'); ov.id = 'obraAvisos'; document.body.appendChild(ov); }
+      if (!forcar && ov.dataset.vistoC === EMP.id) return;
+      ov.innerHTML = '<div class="box"><div class="hd"><b>Alertas para a obra</b><p></p></div><div class="ls"></div><div class="ft"><button class="b2" onclick="obraFecharAvisos()">Lembrar depois</button><button class="b1" onclick="obraConfirmar(null)">Confirmar todos</button></div></div>';
+      ov.classList.add('on');
+    }
+    ov.dataset.vistoC = EMP.id;
+    const ls = ov.querySelector('.ls'); if (!ls || ls.querySelector('.grp-conc')) return;
+    ls.insertAdjacentHTML('beforeend', '<div class="grp grp-conc">Concretagem</div>' + cp.map(concAvisoHtml).join(''));
+    const p = ov.querySelector('.hd p'); if (p) p.textContent = ov.querySelectorAll('.ls .it').length + ' alerta(s) ainda não lido(s). Confirme a leitura de cada um.';
+  };
+})();
+// o MutationObserver da FVS só reinjeta se houver FVS pendente: cobre a concretagem também
+(function(){ const vig = () => { const ov = $('obraAvisos'); if (!ov){ setTimeout(vig, 700); return; }
+  new MutationObserver(() => { if (ov.classList.contains('on') && !ov.querySelector('.grp-conc') && concPend().length) fvsInjetarAviso(true); }).observe(ov, { childList:true, attributes:true, attributeFilter:['class'] }); }; vig(); })();
+// as concretagens chegam depois do destaque: mostra uma vez
+(function(){ let primeira = true; const _c = cpCarregarPend; cpCarregarPend = async function(){ await _c(); if (primeira && EMP && concPend().length){ primeira = false; try { fvsInjetarAviso(false); } catch (_){} } }; })();
+
 </script>
 <script src="auria_ajuda.js"></script>
 </body>
