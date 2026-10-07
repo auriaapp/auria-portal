@@ -12,7 +12,7 @@
  *  margem): a imagem original fica como está.
  * ========================================================================== */
 (function(){
-  const SELETOR = '.glogo img, .tb-logo img, .cdh-logo img, header .grupo img';
+  const SELETOR = '.glogo img, .tb-logo img, .cdh-logo img, header .grupo img, .elogo img, .pjh-logo img';
   const FEITO = new WeakMap();   // img -> src já processado (o dataURL gerado)
 
   function bbox(ctx, w, h){
