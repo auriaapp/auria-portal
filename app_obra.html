@@ -11111,18 +11111,35 @@ async function fvs3dMapa(){
   FVS3D_MAPA = { chave, dono, semPar:[...semPar] };
   return FVS3D_MAPA;
 }
-async function fvs3dGarantir(){
-  if (F3D && F3D.vivo && F3D.modelos.length) return true;
-  segBarraInfo('Abrindo o modelo 3D…', '');
-  try { await f3dModo(true); } catch (_){}
-  for (let k = 0; k < 120 && !(F3D && F3D.vivo && F3D.modelos.length); k++) await new Promise(r => setTimeout(r, 250));
-  return !!(F3D && F3D.vivo && F3D.modelos.length);
+// disciplina do modelo IFC (código no nome: PINI-EST-EX-1000-IFC) por serviço
+const FVS3D_DISC = { estrutura:['EST'], vedacao:['ARQ'], revestimento:['ARQ'], impermeabilizacao:['ARQ','EST'], acabamento:['ARQ'],
+                     fachada:['ARQ','MLD','FAC'], instalacoes:['ELE','HID','INC','HVA','AVC'], outro:['ARQ','EST'] };
+function fvs3dDisc(m){
+  if (/f[oô]rma|arma[cç][aã]o|concret|estrutur/i.test(m.servico || '')) return FVS3D_DISC.estrutura;
+  return FVS3D_DISC[m.etapa] || FVS3D_DISC.outro;
+}
+function fvs3dArquivos(m){
+  const lista = (typeof F3D_LISTA !== 'undefined' && F3D_LISTA) || [];
+  const disc = fvs3dDisc(m), cod = n => ((String(n || '').toUpperCase().match(/-([A-Z]{3})-/) || [])[1]) || '';
+  for (const d of disc){ const a = lista.filter(x => cod(x.nome) === d).map(x => x.arquivoId); if (a.length) return a; }
+  return [];
+}
+async function fvs3dGarantir(m){
+  const precisa = fvs3dArquivos(m);
+  const temAlgum = F3D && F3D.vivo && F3D.modelos.length;
+  // já há modelo da disciplina certa aberto? usa o que está
+  if (temAlgum && (!precisa.length || F3D.modelos.some(x => precisa.includes(x.arquivoId)))) return true;
+  if (!precisa.length && !(typeof F3D_LISTA !== 'undefined' && F3D_LISTA && F3D_LISTA.length)){ try { await f3dModo(true); } catch (_){} }
+  const alvo = precisa.length ? precisa : fvs3dArquivos(m);
+  if (!alvo.length) return !!temAlgum;
+  segBarraInfo('Abrindo o modelo de ' + esc(fvs3dDisc(m).join('/')) + '…', '');
+  return await segAbrir3D(alvo);
 }
 var FVS3D_ATIVO = null;   // modelo de FVS pintado agora
 async function fvs3dColorir(modId, soInspId){
   const m = FVS_MODELOS.find(x => x.id === modId); if (!m) return;
   segFechar();
-  if (!(await fvs3dGarantir())){ segBarraInfo('Não foi possível abrir o modelo 3D — abra um modelo pelo menu e tente de novo.', ''); return; }
+  if (!(await fvs3dGarantir(m))){ segBarraInfo('Não foi possível abrir o modelo 3D — abra um modelo pelo menu e tente de novo.', ''); return; }
   segBarraInfo('Pintando ' + esc(m.servico) + ' no modelo…', '');
   const mp = await fvs3dMapa();
   // situação por pavimento (a mais crítica)
