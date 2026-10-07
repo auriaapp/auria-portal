@@ -11174,6 +11174,7 @@ async function fvs3dGarantir(m){
   segBarraInfo('Abrindo o modelo de ' + esc(fvs3dDisc(m).join('/')) + '…', '');
   return await segAbrir3D(alvo);
 }
+const FVS3D_NEUTRO_RE = /^IFC(?!SPACE$|OPENINGELEMENT$|ANNOTATION$|GRID$|PROJECT$|SITE$|BUILDING$|BUILDINGSTOREY$|ZONE$|VIRTUALELEMENT$)/;
 var FVS3D_ATIVO = null;   // modelo de FVS pintado agora
 async function fvs3dColorir(modId, soInspId){
   const m = FVS_MODELOS.find(x => x.id === modId); if (!m) return;
@@ -11191,14 +11192,19 @@ async function fvs3dColorir(modId, soInspId){
   for (let mi = 0; mi < F3D.modelos.length; mi++){
     const md = F3D.modelos[mi].model; if (!md) continue;
     let ids = []; try { ids = Object.values(await md.getItemsOfCategories(cls) || {}).flat(); } catch (_){}
-    ids.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv];
-      if (!s){ (neutro[mi] = neutro[mi] || []).push(id); return; }
-      const g = (grupos[s] = grupos[s] || {}); (g[mi] = g[mi] || []).push(id); });
+    const pint = new Set();
+    ids.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv]; if (!s) return;
+      pint.add(id); const g = (grupos[s] = grupos[s] || {}); (g[mi] = g[mi] || []).push(id); });
+    // TODO o resto do modelo vai p/ o neutro (não só o serviço): a cor do material
+    // (ex.: pilar vermelho do modelo de estrutura) confundia com "reprovada".
+    // Fora: volumes de ambiente/aberturas/anotações (encobririam a vista).
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    const resto = todos.filter(id => !pint.has(id)); if (resto.length) neutro[mi] = resto;
   }
   try { await B3.limparFiltro(F3D); } catch (_){}
   // No TQS os andares tipo REPETEM a mesma geometria (instâncias): pintar só
   // alguns andares fazia o Fragments parar de desenhar as cópias dos demais
-  // (lajes "sumiam"). Pintar o resto do serviço de cinza neutro mantém tudo
+  // (lajes "sumiam"). Pintar o resto do modelo de cinza neutro mantém tudo
   // desenhado — e ainda faz as cores das fichas se destacarem. Vai PRIMEIRO
   // (as cores das situações por cima).
   if (Object.keys(neutro).length) { try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){} }
