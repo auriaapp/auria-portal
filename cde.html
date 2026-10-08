@@ -7389,6 +7389,17 @@ function loteTitInput(el){
   $('recMsg').textContent = falta ? 'Preencha o título dos documentos novos para confirmar.' : '';
 }
 async function sha256(file){ try{ const buf=await file.arrayBuffer(); const h=await crypto.subtle.digest('SHA-256',buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }catch(e){ return null; } }
+// Upload com novas tentativas: rede instável derrubava arquivos do lote e o usuário
+// tinha de reenviar na mão. 3 tentativas (espera 1,5s e 4s); arquivo recusado pela
+// validação não é repetido.
+async function _comTentativas(fn, aviso){
+  const esperas=[1500,4000]; let ult;
+  for(let t=0;t<=esperas.length;t++){
+    try{ return await fn(); }
+    catch(e){ ult=e; if(e&&e._semRetry) throw e; if(t<esperas.length){ if(aviso) aviso(t+2); await new Promise(r=>setTimeout(r,esperas[t])); } }
+  }
+  throw ult;
+}
 async function confirmarLote(){
   const alvos=LOTE.filter(g=> g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'||g.acao.tipo==='add')); if(!alvos.length) return;
   // Em 'add' só sobem os formatos que faltam; nos demais, todos os arquivos do grupo.
@@ -7400,6 +7411,22 @@ async function confirmarLote(){
   let feito=0,falhas=0; const recebidos=[];
   for(const g of alvos){
     try{
+      // 1º sobem TODOS os arquivos do grupo (com novas tentativas); só então o banco
+      // ganha documento/revisão — falha no meio não deixa registro pela metade.
+      const subidos=[];
+      for(const f of g._upload){
+        const prov = provedorPara(f.name, f.size);
+        const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
+        const msg0='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
+        $('recMsg').textContent=msg0;
+        const provUsado = await _comTentativas(()=>cdeUpload(path, f), n=>{ $('recMsg').textContent=msg0+' — tentativa '+n+' de 3'; });
+        if(window.AuriaValida){   // item 32: o servidor confere o objeto gravado e apaga se for inválido
+          const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' });
+          if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo);
+        }
+        subidos.push({ f, path, prov });
+        done++; prog();
+      }
       let docId=g.acao.doc?g.acao.doc.id:null;
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
@@ -7423,24 +7450,16 @@ async function confirmarLote(){
       }
       // Só um PDF é o "principal" da revisão (o que a obra abre por padrão).
       let temPdf=(g.acao.rev&&(g.acao.rev.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'));
-      for(const f of g._upload){
+      for(const { f, path, prov } of subidos){
         const el=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
-        const prov = provedorPara(f.name, f.size);
-        $('recMsg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
-        const path=EMP_ID+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        const provUsado = await cdeUpload(path, f);
-        if(window.AuriaValida){   // item 32: o servidor confere o objeto gravado e apaga se for inválido
-          const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' });
-          if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo);
-        }
         const ehPdf = el==='pdf' && !temPdf; if(el==='pdf') temPdf=true;
-        await sb.from('cde_arquivo_auria').insert({
+        const hash=(f.size<10*1024*1024?await sha256(f):null);
+        await _comTentativas(async()=>{ const { error:ea } = await sb.from('cde_arquivo_auria').insert({
           revisao_id:revId, nome:f.name, extensao:el, tamanho_bytes:f.size,
-          sha256:(f.size<10*1024*1024?await sha256(f):null), storage_path:path,
+          sha256:hash, storage_path:path,
           eh_principal:ehPdf, visualizavel:(el==='pdf'||el==='dxf'),
           storage_provider:prov
-        });
-        done++; prog();
+        }); if(ea) throw ea; });
       }
       await sb.from('cde_evento_auria').insert({
         revisao_id:revId, acao:'recebeu', para_status:'S0',
@@ -7457,7 +7476,7 @@ async function confirmarLote(){
       // indexa o texto do PDF em segundo plano (busca por conteúdo) — não bloqueia
       try{ const pdfF=g._upload.find(function(f){ return /\.pdf$/i.test(f.name||''); }); if(pdfF) _cdeIndexarPdf(docId, pdfF); }catch(_){}
       feito++;
-    }catch(e){ falhas++; done+=g._upload.length; prog();
+    }catch(e){ falhas++; done=Math.min(totalFiles, done+g._upload.length); prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
       console.warn('receber',g.base,g._erro);
     }

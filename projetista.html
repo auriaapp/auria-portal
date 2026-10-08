@@ -2531,6 +2531,15 @@ async function _cdeIndexarPdf(docId, file){
   }catch(e){ console.warn('indexar pdf (bg):', e&&(e.message||e)); }
 }
 
+// Upload com novas tentativas (3; espera 1,5s e 4s) — rede instável derrubava arquivos do lote.
+async function cdeComTentativas(fn, aviso){
+  const esperas=[1500,4000]; var ult;
+  for(var t=0;t<=esperas.length;t++){
+    try{ return await fn(); }
+    catch(e){ ult=e; if(t<esperas.length){ if(aviso) aviso(t+2); await new Promise(function(r){ setTimeout(r,esperas[t]); }); } }
+  }
+  throw ult;
+}
 async function cdeConfirmar(){
   const alvos=CDE_LOTE.filter(function(g){ return g.acao&&(g.acao.tipo==='novo'||g.acao.tipo==='rev'); }); if(!alvos.length) return;
   const b=cdeEl('cde-btn-enviar'); b.disabled=true;
@@ -2540,6 +2549,19 @@ async function cdeConfirmar(){
   var feito=0,falhas=0; const enviados=[];
   for(const g of alvos){
     try{
+      // 1º sobem TODOS os arquivos do grupo (com novas tentativas); só depois o banco
+      // ganha documento/revisão — falha no meio não deixa entrega pela metade.
+      const subidos=[];
+      for(const f of g.arquivos){
+        const prov = cdeProvedorPara(f.name, f.size);
+        const msg0='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
+        cdeEl('cde-msg').textContent=msg0;
+        const path=CDE_CUR.id+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
+        const provUsado = await cdeComTentativas(function(){ return cdeUploadArquivo(path, f); }, function(n){ cdeEl('cde-msg').textContent=msg0+' — tentativa '+n+' de 3'; });
+        if(window.AuriaValida){ const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' }); if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo); }
+        subidos.push({ f:f, path:path, prov:prov });
+        done++; prog();
+      }
       var docId=g.acao.doc?g.acao.doc.id:null;
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
@@ -2561,20 +2583,16 @@ async function cdeConfirmar(){
         recebido_em:new Date().toISOString(), recebido_de:CDE_CUR.projetista_id||null, criado_por:USER.id
       }).select('id').single();
       if(er) throw er;
-      for(const f of g.arquivos){
+      for(const u of subidos){
+        const f=u.f, path=u.path, prov=u.prov;
         const ext=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
-        const prov = cdeProvedorPara(f.name, f.size);
-        cdeEl('cde-msg').textContent='Enviando '+(prov==='r2'?'(R2) ':'')+(done+1)+' de '+totalFiles+': '+f.name;
-        const path=CDE_CUR.id+'/'+g.parse.codigoDoc+'/'+(g.parse.revisao||'R00')+'/'+f.name;
-        const provUsado = await cdeUploadArquivo(path, f);
-        if(window.AuriaValida){ const vs=await AuriaValida.verificarServidor(sb,{ provider:provUsado, bucket:'cde', path, nome:f.name, contexto:'cde' }); if(!vs.ok) throw new Error('"'+f.name+'" recusado: '+vs.motivo); }
-        await sb.from('cde_arquivo_auria').insert({
+        const hash=(f.size<10*1024*1024?await cdeSha256(f):null);
+        await cdeComTentativas(async function(){ const r=await sb.from('cde_arquivo_auria').insert({
           revisao_id:rev.id, nome:f.name, extensao:ext, tamanho_bytes:f.size,
-          sha256:(f.size<10*1024*1024?await cdeSha256(f):null), storage_path:path,
+          sha256:hash, storage_path:path,
           eh_principal:(ext==='pdf'), visualizavel:(ext==='pdf'||ext==='dxf'),
           storage_provider:prov
-        });
-        done++; prog();
+        }); if(r.error) throw r.error; });
       }
       await sb.from('cde_evento_auria').insert({
         revisao_id:rev.id, acao:'recebeu', para_status:'S0',
@@ -2588,7 +2606,7 @@ async function cdeConfirmar(){
       // indexa o texto do PDF em segundo plano — fire-and-forget, não bloqueia o envio
       try{ const pdfF=g.arquivos.find(function(f){ return /\.pdf$/i.test(f.name||''); }); if(pdfF) _cdeIndexarPdf(docId, pdfF); }catch(_){}
       feito++;
-    }catch(e){ falhas++; done+=g.arquivos.length; prog();
+    }catch(e){ falhas++; done=Math.min(totalFiles, done+g.arquivos.length); prog();
       g._erro=(e&&(e.message||e.error||e.msg))||String(e);
       console.warn('cde entrega',g.base,g._erro);
     }
