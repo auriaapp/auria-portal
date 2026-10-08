@@ -169,7 +169,8 @@
   window.fetch = function(recurso, opts){
     var url = typeof recurso === 'string' ? recurso : (recurso && recurso.url) || '';
     var p = fetchOrig.apply(this, arguments);
-    if (url.indexOf('/rpc/erro_registrar') >= 0) return p;
+    // ping de acesso é telemetria de melhor esforço: falha dele não é erro de tela
+    if (url.indexOf('/rpc/erro_registrar') >= 0 || url.indexOf('/rpc/auria_ping_acesso') >= 0) return p;
     return p.then(function(r){
       try {
         var fn = url.indexOf('/functions/v1/') >= 0;
@@ -178,10 +179,16 @@
       } catch(_) {}
       return r;
     }, function(e){
-      if (!(e && e.name === 'AbortError')) enviar('rede', 'Falha de conexão: ' + (e && e.message || e) + ' em ' + curta(url).split('?')[0], (opts && opts.method) || 'GET');
+      // sem rede, aba em segundo plano/hibernando ou página fechando: o navegador
+      // corta o fetch — não é defeito do sistema, só ruído no resumo diário.
+      var ruido = (typeof navigator !== 'undefined' && navigator.onLine === false)
+        || document.visibilityState === 'hidden' || window.__auriaSaindo;
+      if (!(e && e.name === 'AbortError') && !ruido) enviar('rede', 'Falha de conexão: ' + (e && e.message || e) + ' em ' + curta(url).split('?')[0], (opts && opts.method) || 'GET');
       throw e;
     });
   };
+  window.addEventListener('pagehide', function(){ window.__auriaSaindo = true; });
+  window.addEventListener('pageshow', function(){ window.__auriaSaindo = false; });
   window.AuriaErros = { registrar: function(msg, origem){ enviar('manual', msg, origem || '', new Error().stack); } };
 })();
 
