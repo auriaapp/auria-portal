@@ -1205,7 +1205,7 @@ function auriaPingAcesso(){
 async function boot(){
   const { data:{ session } } = await sb.auth.getSession();
   auriaPingAcesso();
-  if(!session){ location.replace('./'); return; }
+  if(!session){ location.replace('./?next='+encodeURIComponent('cde.html'+location.search+location.hash)); return; }
   USER = session.user;
   try{
     const { data: prof } = await sb.from('usuarios_auria').select('role,nome').eq('id',USER.id).maybeSingle();
@@ -2057,8 +2057,9 @@ function etapaOrdem(v){
   }
   const j=ETAPA_ORDEM_PAD.indexOf(V); return j>=0 ? j : -1;
 }
-let BIM_SO_ATUAL = (()=>{ try{ return localStorage.getItem('cdeBimSoAtual')==='1'; }catch(_){ return false; } })();
-function bimSoAtualToggle(v){ BIM_SO_ATUAL=!!v; try{ localStorage.setItem('cdeBimSoAtual', v?'1':'0'); }catch(_){} renderNav(); }
+// Preferência POR EMPREENDIMENTO: empreendimento novo nunca vem com o filtro ligado.
+let BIM_SO_ATUAL = (()=>{ try{ return localStorage.getItem('cdeBimSoAtual:'+EMP_ID)==='1'; }catch(_){ return false; } })();
+function bimSoAtualToggle(v){ BIM_SO_ATUAL=!!v; try{ localStorage.setItem('cdeBimSoAtual:'+EMP_ID, v?'1':'0'); }catch(_){} renderNav(); }
 function navBim(){
   let bims=DOCS.filter(docEhBim);
   if(!bims.length) return '<div class="nav-hint">Nenhum modelo BIM (IFC, RVT…) recebido ainda.</div>';
@@ -2126,10 +2127,10 @@ function cardFdocBim(d){
     selo = `<button class="btn sec sm" onclick="event.stopPropagation();iniciarConversaoBim('${ifc.id}','${d.id}')" title="Gera o modelo leve usado pelo visualizador 3D"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.4 3 4 5.8v5.6l5.4 2.8 5.4-2.8V5.8z"/><path d="M4 5.8 9.4 8.6 14.8 5.8M9.4 8.6v5.6"/><path d="M13.6 15.4h4M15.8 13.4l2 2-2 2"/></svg> Converter para 3D</button>`;
   }
 
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" style="flex-wrap:wrap">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}" style="flex-wrap:wrap">
     ${chk}
-    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">${selo}</div>
@@ -2684,13 +2685,13 @@ function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
   const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
   const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}">
     ${chk}
-    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
-    <button class="gx" title="Remover do grupo" onclick="removeDoGrupo('${gid}','${d.id}')">×</button>
+    <button class="gx" title="Remover do grupo" onclick="event.stopPropagation();removeDoGrupo('${gid}','${d.id}')">×</button>
   </div>`;
 }
 
@@ -2767,10 +2768,10 @@ function cardFdoc(d){
   const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
   // Eng. chefe vendo o em-análise: o card abre, mas avisa que não é para executar.
   const analise = docEmAnalise(d) ? `<span class="fanalise" title="Em análise — não liberado para execução">em análise</span>` : '';
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}">
     ${chk}
-    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}" onclick="${abrir}"></span>
-    <span class="fmeta" onclick="${abrir}"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
