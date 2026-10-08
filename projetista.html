@@ -2261,6 +2261,43 @@ async function cdeCarregarDocs(){
 }
 
 // ── parser: mesmo motor do cde.html ──
+// Item 4 (2026-10-07): ensina a nomenclatura — o exemplo da construtora quebrado
+// em pedaços coloridos com o nome de cada campo, e os valores aceitos por campo.
+var CDE_CORES=['#185FA5','#C2410C','#047857','#7C3AED','#B45309','#0E7490','#BE185D','#4D7C0F'];
+function cdeGuiaNome(){
+  const campos=CDE_CONV.campos||[]; const sep=CDE_CONV.separador||'-';
+  if(!campos.length) return '';
+  const ex=String(CDE_CONV.exemplo||'').replace(/\.[^.]+$/,'').split(sep);
+  const segs=campos.map(function(c,i){
+    const cor=CDE_CORES[i%CDE_CORES.length];
+    return '<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 1px">'
+      +'<b style="font-family:monospace;font-size:15px;color:'+cor+'">'+escH(ex[i]!=null?ex[i]:'?')+'</b>'
+      +'<span style="font-size:10px;color:'+cor+';white-space:nowrap">'+escH(c.rotulo||c.chave)+(c.obrigatorio?'':' (opc.)')+'</span></span>';
+  }).join('<b style="font-family:monospace;font-size:15px;color:#94A3B8;align-self:flex-start">'+escH(sep)+'</b>');
+  const linhas=campos.map(function(c,i){
+    const cor=CDE_CORES[i%CDE_CORES.length];
+    const vs=c.dominio? c.dominio.map(function(d){ return (typeof d==='object')
+        ? '<span title="'+escH(d.rotulo||'')+'"><b style="font-family:monospace">'+escH(d.v)+'</b>'+(d.rotulo?' '+escH(d.rotulo):'')+'</span>'
+        : '<b style="font-family:monospace">'+escH(d)+'</b>'; }).join(' · ')
+      : (c.regex?'formato <code>'+escH(c.regex)+'</code>':'texto livre');
+    return '<tr><td style="color:'+cor+';font-weight:700;white-space:nowrap;padding:3px 10px 3px 0;vertical-align:top">'+(i+1)+'. '+escH(c.rotulo||c.chave)+'</td>'
+      +'<td style="padding:3px 0;color:#475569">'+vs+'</td></tr>';
+  }).join('');
+  return '<details class="cde-note" style="margin-top:10px" open><summary style="cursor:pointer;font-weight:700;color:#185FA5">Como nomear o arquivo</summary>'
+    +'<div style="margin:10px 0 6px;display:flex;flex-wrap:wrap;align-items:flex-start">'+segs+'<b style="font-family:monospace;font-size:15px;color:#94A3B8">.pdf</b></div>'
+    +'<div style="font-size:11.5px;color:#64748B;margin-bottom:6px">Cada parte do nome é separada por <b style="font-family:monospace">'+escH(sep)+'</b>, sempre nesta ordem. Valores aceitos em cada parte:</div>'
+    +'<div style="max-height:220px;overflow:auto"><table style="font-size:12px;border-collapse:collapse">'+linhas+'</table></div></details>';
+}
+// Nome do arquivo com cada parte colorida; parte errada em vermelho (usado na lista de erros).
+function cdeNomeSegs(base){
+  const campos=CDE_CONV.campos||[]; const sep=CDE_CONV.separador||'-'; const partes=String(base).split(sep);
+  return partes.map(function(p,i){
+    const c=campos[i];
+    var bom=!!c;
+    if(c){ const vs=cdeValoresDe(c); bom=vs?vs.includes(p):(c.regex?(function(){try{return new RegExp(c.regex).test(p)}catch(e){return true}})():true); }
+    return '<span title="'+escH(c?(c.rotulo||c.chave):'parte a mais')+'" style="font-family:monospace;'+(bom?'color:#334155':'color:#fff;background:#DC2626;border-radius:3px;padding:0 2px')+'">'+escH(p)+'</span>';
+  }).join('<span style="color:#94A3B8">'+escH(sep)+'</span>');
+}
 function cdeValoresDe(c){ return c.dominio? c.dominio.map(function(d){ return (typeof d==='object')?d.v:d; }) : null; }
 function cdeParse(nomeArquivo){
   const base=nomeArquivo.replace(/\.[^.]+$/,''); const ext=(nomeArquivo.match(/\.([^.]+)$/)||[])[1]||'';
@@ -2331,7 +2368,8 @@ function cdeRender(){
       +'<span id="cde-msg" style="font-size:12px;color:#7A9AB8"></span></div>'
       +'<div class="cde-prog" id="cde-prog"><i id="cde-progbar"></i></div></div>'
       +'<div class="cde-note">O par PDF + DWG da mesma prancha deve ter o <b>mesmo nome</b> (só muda a extensão). '
-      +'Prancha devolvida se reenvia com <b>nova revisão</b> no nome do arquivo. Cada envio fica protocolado no histórico do CDE.</div>';
+      +'Prancha devolvida se reenvia com <b>nova revisão</b> no nome do arquivo. Cada envio fica protocolado no histórico do CDE.</div>'
+      +cdeGuiaNome();
   }
   const docsHtml=cdeDocsHtml();
   cdeEl('cde-body').innerHTML = sel
@@ -2437,7 +2475,7 @@ function cdeAvaliar(){
         const titRow = a.tipo==='novo'
           ? '<tr><td colspan="5" style="padding-top:0"><input class="cdeLoteTit" data-base="'+escH(g.base)+'" maxlength="90" value="'+escH(g.titulo||'')+'" placeholder="Título / resumo do conteúdo desta prancha (obrigatório, até 90 caracteres)" oninput="cdeLoteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid '+((g.titulo||'').trim()?'#d9dee6':'#E67E22')+';border-radius:7px;font-family:inherit;font-size:12.5px"></td></tr>'
           : '';
-        return '<tr><td><span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span>'+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
+        return '<tr><td><span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span>'+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+cdeNomeSegs(p.base)+'<br>'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
           +'<td>'+escH(p.disciplina?cdeDiscLabel(p.disciplina):'—')+'</td><td class="cde-cod">'+escH(p.revisao||'—')+'</td>'
           +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>'+titRow+(a.tipo==='novo'?cdePavRow(g):'');
       }).join('')+'</tbody>';

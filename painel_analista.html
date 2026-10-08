@@ -583,7 +583,7 @@
           <button class="tb" data-aba="agenda" onclick="paAba('agenda')">Agenda</button>
           <button class="tb" data-aba="kanban" onclick="paAba('kanban')">Kanban</button>
           <button class="tb" data-aba="msg" onclick="paAba('msg')">Mensagens<span class="msg-badge" id="tMsg"></span></button>
-          <button class="tb" data-aba="custos" onclick="abrirCustosGeral()">Custos e NF</button>
+          <button class="tb" data-aba="custos" onclick="abrirCustosGeral()" title="NFs enviadas pelos projetistas aguardando o financeiro">Custos e NF<span class="msg-badge" id="tNf"></span></button>
           <button class="tb" data-aba="forn" onclick="abrirFornecedoresView()">Fornecedores</button>
           <button class="tb" data-aba="bi" onclick="paAba('bi')">Painel de Apontamentos</button>
           <button class="tb" data-aba="emp" id="tbEmp" style="display:none" onclick="paAba('emp')"></button>
@@ -948,6 +948,7 @@ async function boot(){
   // Mensagens são pesadas (campo mensagens de muitos apontamentos) → em segundo
   // plano, sem segurar a tela; o KPI e o badge se atualizam quando chegam.
   carregarMsgs().then(()=>{ try{ paBadges(); }catch(e){} }).catch(()=>{});
+  carregarNfNovas();
 }
 
 // Papel do analista POR empreendimento (analista_empreendimento_auria.papel):
@@ -1119,6 +1120,13 @@ function paHeader(){
 }
 function paBadges(){
   ['tMsg'].forEach(id=>{ const b=$(id); if(!b) return; b.textContent=MSG_NOVAS||''; b.classList.toggle('on', MSG_NOVAS>0); });
+  const bn=$('tNf'); if(bn){ bn.textContent=NF_NOVAS||''; bn.classList.toggle('on', NF_NOVAS>0); }
+}
+// Item 7: NFs que os projetistas enviaram e o financeiro ainda não marcou como recebidas.
+var NF_NOVAS=0;
+async function carregarNfNovas(){
+  try{ const r=await sb.rpc('nf_listar',{ p_status:'enviada' }); NF_NOVAS=r.error?0:(r.data||[]).length; }catch(e){ NF_NOVAS=0; }
+  paBadges();
 }
 // CDE dos meus empreendimentos: documentos (disciplinas/pranchas) e revisões
 // recebidas (S0) ou em análise (S1–S4) — é o que a coordenação precisa decidir.
@@ -1760,7 +1768,10 @@ async function loadContratos(empId){
   A_NFS_PARC={};
   try{
     const rn=await sb.rpc('nf_listar',{ p_empreendimento_id:empId });
-    if(!rn.error) (rn.data||[]).forEach(n=>{ if(n.parcela_id) A_NFS_PARC[n.parcela_id]=n; });
+    // NF ativa tem prioridade sobre devolvida/recusada/cancelada da mesma parcela
+    const FORA=['devolvida','recusada','cancelada'];
+    if(!rn.error) (rn.data||[]).forEach(n=>{ if(!n.parcela_id) return; const at=A_NFS_PARC[n.parcela_id];
+      if(!at || (FORA.includes(at.status) && !FORA.includes(n.status))) A_NFS_PARC[n.parcela_id]=n; });
   }catch(e){ console.warn('nf_listar (portal):', e.message||e); }
   try{
     const rc=await sb.from('cronograma_auria').select('*').eq('empreendimento_id',empId);
