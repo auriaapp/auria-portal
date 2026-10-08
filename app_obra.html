@@ -772,6 +772,19 @@ header h1#obraEmpNome{font-size:12.5px;font-weight:600;letter-spacing:0;padding-
 .fvs-grav button.interd{background:#B91C1C!important;border-color:#B91C1C!important;color:#fff!important}
 .fvs-grav em.al{font-style:normal;color:#B91C1C;font-weight:700}
 
+/* C3 — índice de conformidade + ações corretivas */
+.ins-idx{border:1px solid #E2E8F0;border-radius:8px;padding:8px 10px;margin:4px 0 10px}
+.ins-idx-t{font-size:12px;color:#334155;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ins-idx-t b{font-family:ui-monospace,monospace;font-size:18px;color:#1E3A5F}
+.ins-idx-t span{color:#64748B;font-size:11px}
+.ins-barras{display:flex;gap:6px;align-items:flex-end;height:70px;margin-top:6px}
+.ins-bar{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end}
+.ins-bar i{display:block;width:100%;max-width:34px;border-radius:3px 3px 0 0;background:#E2E8F0}
+.ins-bar span{font-size:9.5px;color:#64748B;font-family:ui-monospace,monospace;margin-top:2px}
+.seg-chip.ins-grav-leve{background:#FEF9C3;color:#713F12}
+.seg-chip.ins-grav-grave{background:#FFEDD5;color:#9A3412}
+.seg-chip.ins-grav-grave_iminente{background:#B91C1C;color:#fff}
+
 </style>
 </head>
 <body>
@@ -12338,6 +12351,174 @@ async function insAbrir(){
   segModuloHtml = function(mod){
     let h = _m(mod); const v = insContaVencidas(), r = insInsp().filter(x => x.situacao === 'reprovada').length;
     if (v || r) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + (r ? r + ' inspeção(ões) c/ NC' : v + ' inspeção(ões) vencida(s)') + '</span></span>');
+    return h;
+  };
+})();
+
+// ── App Obra · Segurança — C3: AÇÕES CORRETIVAS · ÍNDICE · 3D ───────────────
+//  Ações nascem no banco quando uma inspeção de segurança é reprovada (1 por
+//  item não conforme). Ciclo: aberta → feita (foto do "depois") → verificada
+//  (técnico) | reaberta. Índice de conformidade = itens conformes / (conformes +
+//  não conformes) das inspeções concluídas, por semana. 3D: pavimento na cor da
+//  pior situação entre as últimas inspeções de cada modelo.
+//  Interface SEM emojis (pedido do usuário 2026-10-07).
+var SEG_ACOES = [];
+const ACAO_SIT = { aberta:{ rot:'Aberta', cor:'#C0392B' }, feita:{ rot:'Feita — aguarda verificação', cor:'#E8960A' }, verificada:{ rot:'Verificada', cor:'#1E8449' } };
+const GRAV_TXT = { leve:'Leve', grave:'Grave', grave_iminente:'Grave e iminente' };
+async function acaoCarregar(){
+  SEG_ACOES = []; if (!EMP) return;
+  const { data, error } = await sb.from('seg_acao_auria').select('*').eq('empreendimento_id', EMP.id).order('prazo');
+  if (!error) SEG_ACOES = data || [];
+}
+(function(){ const _c = fvsCarregar; fvsCarregar = async function(){ await _c(); try { await acaoCarregar(); } catch (_){} }; })();
+const _hojeIso = () => new Date().toISOString().slice(0, 10);
+function acaoAtrasada(a){ return a.situacao === 'aberta' && a.prazo < _hojeIso(); }
+function acaoPodeVerificar(){ return ['seguranca','eng_chefe'].includes(segMeuNivel()); }
+
+// ── Índice de conformidade (8 semanas) ──────────────────────────────────────
+function insIndice(){
+  const sem = []; const seg = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime(); };
+  const hoje = seg(Date.now());
+  for (let k = 7; k >= 0; k--) sem.push({ ini:hoje - k * 7 * 86400000, c:0, nc:0 });
+  insInsp().filter(x => ['aprovada','reprovada'].includes(x.situacao) && x.enviado_em).forEach(x => {
+    const s = sem.find(w => w.ini === seg(x.enviado_em)); if (!s) return;
+    x.itens.forEach(t => { if (t.resultado === 'c') s.c++; else if (t.resultado === 'nc') s.nc++; });
+  });
+  return sem.map(s => ({ ini:s.ini, pct:(s.c + s.nc) ? Math.round(100 * s.c / (s.c + s.nc)) : null, n:s.c + s.nc }));
+}
+function insIndiceHtml(){
+  const idx = insIndice(), ult = [...idx].reverse().find(w => w.pct != null);
+  return '<div class="ins-idx"><div class="ins-idx-t">Índice de conformidade <b>' + (ult ? ult.pct + '%' : '—') + '</b><span>itens conformes nas inspeções concluídas, por semana</span></div><div class="ins-barras">'
+    + idx.map(w => '<div class="ins-bar" title="' + new Date(w.ini).toLocaleDateString('pt-BR') + (w.pct != null ? ': ' + w.pct + '% de ' + w.n + ' itens' : ': sem inspeção') + '">'
+      + '<i style="height:' + (w.pct != null ? Math.max(4, w.pct) : 0) + '%;background:' + (w.pct == null ? 'transparent' : w.pct >= 90 ? '#1E8449' : w.pct >= 75 ? '#E8960A' : '#C0392B') + '"></i>'
+      + '<span>' + new Date(w.ini).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + '</span></div>').join('') + '</div></div>';
+}
+
+// ── Aba Inspeções: índice + ações + botão 3D ────────────────────────────────
+(function(){
+  const _p = insPainel;
+  insPainel = function(){
+    _p();
+    const ls = document.querySelector('#segOv .ls'); if (!ls || !insModelos().length) return;
+    const abertas = SEG_ACOES.filter(a => a.situacao !== 'verificada');
+    ls.insertAdjacentHTML('afterbegin', insIndiceHtml());
+    ls.insertAdjacentHTML('beforeend', '<div class="seg-dia">Ações corretivas</div>'
+      + (abertas.length ? abertas.map(acaoLinha).join('') : '<div class="hint" style="padding:8px">Nenhuma ação pendente.</div>'));
+    const ft = document.querySelector('#segOv .ft');
+    if (ft && insInsp().some(x => x.pavimento_id)) ft.firstElementChild.insertAdjacentHTML('afterend', '<button class="b2" onclick="ins3D()">Ver no 3D</button>');
+  };
+})();
+function acaoLinha(a){
+  const x = (FVS_INSP || []).find(i => i.id === a.inspecao_id) || {}, atr = acaoAtrasada(a);
+  return '<div class="it seg-it" style="cursor:pointer;border-left-color:' + ACAO_SIT[a.situacao].cor + '!important" onclick="acaoDetalhe(\'' + a.id + '\')">'
+    + '<div class="cod">' + esc(x.codigo || '') + ' · item ' + (a.item_idx + 1) + ' <span class="seg-chip" style="background:' + ACAO_SIT[a.situacao].cor + ';color:#fff">' + ACAO_SIT[a.situacao].rot + '</span>'
+    + ' <span class="seg-chip ins-grav-' + a.gravidade + '">' + GRAV_TXT[a.gravidade] + '</span></div>'
+    + '<div class="t">' + esc(a.item) + '</div>'
+    + '<div class="m">' + esc([segPavNome(x.pavimento_id) || 'Canteiro', x.frente].filter(Boolean).join(' › ')) + ' · prazo ' + new Date(a.prazo + 'T12:00').toLocaleDateString('pt-BR')
+    + (atr ? ' <b style="color:#C0392B">atrasada</b>' : '') + (a.responsavel ? ' · resp. ' + esc(a.responsavel) : ' · sem responsável') + '</div></div>';
+}
+function acaoDetalhe(id){
+  const a = SEG_ACOES.find(x => x.id === id); if (!a) return;
+  const x = (FVS_INSP || []).find(i => i.id === a.inspecao_id) || {}, tec = acaoPodeVerificar();
+  let acoes = '';
+  if (a.situacao === 'aberta') acoes += '<button class="b1" onclick="acaoFeitaForm(\'' + id + '\')">Registrar correção</button>';
+  if (a.situacao === 'feita' && tec) acoes += '<button class="b2" onclick="acaoReabrirForm(\'' + id + '\')">Reabrir</button><button class="b1" onclick="acaoVerificar(\'' + id + '\',true)">Verificada</button>';
+  segOv('<div class="hd"><b>Ação corretiva — ' + esc(x.codigo || '') + ' · item ' + (a.item_idx + 1) + '</b><p><span class="seg-chip" style="background:' + ACAO_SIT[a.situacao].cor + ';color:#fff">' + ACAO_SIT[a.situacao].rot + '</span> '
+      + '<span class="seg-chip ins-grav-' + a.gravidade + '">' + GRAV_TXT[a.gravidade] + '</span>' + (a.reaberturas ? ' reaberta ' + a.reaberturas + 'x' : '') + '</p></div>'
+    + '<div class="ls"><div class="seg-det">'
+    + '<div class="seg-kv"><span>Item</span><b>' + esc(a.item) + (a.norma_ref ? ' <span class="dica-ref">' + esc(a.norma_ref) + '</span>' : '') + '</b></div>'
+    + (a.descricao ? '<div class="seg-kv"><span>Não conformidade</span><b>' + esc(a.descricao) + '</b></div>' : '')
+    + '<div class="seg-kv"><span>Local</span><b>' + esc([segPavNome(x.pavimento_id) || 'Canteiro (obra toda)', x.frente].filter(Boolean).join(' › ')) + '</b></div>'
+    + (tec && a.situacao !== 'verificada'
+        ? '<div class="seg-g2"><div><label>Responsável</label><input id="acResp" value="' + esc(a.responsavel || '') + '" placeholder="Nome / empresa"></div><div><label>Prazo</label><input id="acPrazo" type="date" value="' + a.prazo + '"></div></div>'
+          + '<div style="text-align:right;margin:6px 0"><button class="b2 mini" onclick="acaoDefinir(\'' + id + '\')">Salvar responsável e prazo</button></div>'
+        : '<div class="seg-kv"><span>Responsável / prazo</span><b>' + esc(a.responsavel || '—') + ' · ' + new Date(a.prazo + 'T12:00').toLocaleDateString('pt-BR') + (acaoAtrasada(a) ? ' (atrasada)' : '') + '</b></div>')
+    + (a.feita_nome ? '<div class="seg-kv"><span>Correção</span><b>' + esc(a.feita_nome) + ' · ' + new Date(a.feita_em).toLocaleString('pt-BR') + (a.feita_obs ? '<br>' + esc(a.feita_obs) : '') + '</b></div><div id="acF"></div>' : '')
+    + (a.verificada_nome ? '<div class="seg-kv"><span>Verificada</span><b>' + esc(a.verificada_nome) + ' · ' + new Date(a.verificada_em).toLocaleString('pt-BR') + '</b></div>' : '')
+    + '<div id="segMsg" class="seg-msg"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segPainel(\'insp\')">Voltar</button><button class="b2" onclick="fvsFicha(\'' + a.inspecao_id + '\')">Abrir a inspeção</button>' + acoes + '</div>');
+  if ((a.fotos_depois || []).length) segFotosHtml(a.fotos_depois, 'acF');
+}
+async function acaoDefinir(id){
+  try { const { error } = await sb.rpc('seg_acao_definir', { p_id:id, p_resp:$('acResp').value, p_prazo:$('acPrazo').value || null }); if (error) throw error; await acaoCarregar(); acaoDetalhe(id); }
+  catch (e){ $('segMsg').textContent = e.message || e; }
+}
+function acaoFeitaForm(id){
+  const a = SEG_ACOES.find(x => x.id === id);
+  segOv('<div class="hd"><b>Registrar correção</b><p>' + esc(a.item) + '</p></div>'
+    + '<div class="seg-form"><label>O que foi feito</label><textarea id="acObs" rows="3"></textarea>'
+    + '<label>Foto da correção (obrigatória)</label><input id="acFotos" type="file" accept="image/*" capture="environment" multiple><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="acaoDetalhe(\'' + id + '\')">Voltar</button><button class="b1" id="segOk" onclick="acaoFeita(\'' + id + '\')">Enviar para verificação</button></div>');
+}
+async function acaoFeita(id){
+  const a = SEG_ACOES.find(x => x.id === id), f = $('acFotos');
+  if (!f.files || !f.files.length) return $('segMsg').textContent = 'Anexe a foto da correção.';
+  const b = $('segOk'); b.disabled = true; b.textContent = 'Enviando…';
+  try {
+    const fotos = await fvsSubirFotos([...f.files], a.inspecao_id);
+    const { error } = await sb.rpc('seg_acao_feita', { p_id:id, p_obs:$('acObs').value, p_fotos:fotos }); if (error) throw error;
+    await acaoCarregar(); try { renderSideRight(); } catch (_){} acaoDetalhe(id);
+  } catch (e){ $('segMsg').textContent = e.message || e; b.disabled = false; b.textContent = 'Enviar para verificação'; }
+}
+function acaoReabrirForm(id){
+  segOv('<div class="hd"><b>Reabrir a ação</b><p>A correção não resolveu. Diga o que ainda falta.</p></div>'
+    + '<div class="seg-form"><textarea id="acMot" rows="3"></textarea><div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="acaoDetalhe(\'' + id + '\')">Voltar</button><button class="b1" onclick="acaoVerificar(\'' + id + '\',false)">Reabrir</button></div>');
+}
+async function acaoVerificar(id, ok){
+  try {
+    const { error } = await sb.rpc('seg_acao_verificar', { p_id:id, p_ok:ok, p_obs:ok ? null : $('acMot').value }); if (error) throw error;
+    await acaoCarregar(); try { renderSideRight(); } catch (_){} acaoDetalhe(id);
+  } catch (e){ $('segMsg').textContent = e.message || e; }
+}
+
+// ── Ficha da inspeção mostra as ações dela ──────────────────────────────────
+(function(){
+  const _f = fvsFicha;
+  fvsFicha = function(id){
+    _f(id);
+    const x = FVS_INSP.find(i => i.id === id); if (!x || x.tipo !== 'seguranca') return;
+    const minhas = SEG_ACOES.filter(a => a.inspecao_id === id); if (!minhas.length) return;
+    const det = document.querySelector('#segOv .seg-det');
+    if (det) det.insertAdjacentHTML('beforeend', '<div class="seg-kv" style="border:none;margin-top:6px"><span>Ações corretivas</span><b>' + minhas.filter(a => a.situacao === 'verificada').length + ' de ' + minhas.length + ' verificadas</b></div>' + minhas.map(acaoLinha).join(''));
+  };
+})();
+
+// ── 3D: pavimentos pela pior situação das últimas inspeções ─────────────────
+async function ins3D(){
+  segFechar();
+  if (!(await fvs3dGarantir({ servico:'estrutura', etapa:'estrutura' }))){ segBarraInfo('Não foi possível abrir o modelo de estrutura.', ''); return; }
+  const mp = await fvs3dMapa(), ORD = { aprovada:1, aberta:2, em_verificacao:2, reprovada:3 };
+  const sitPav = {};
+  insModelos().forEach(m => fvsPavs().forEach(p => { const u = insUltima(m.id, p.id); if (!u) return;
+    const s = u.situacao === 'reprovada' ? 'nc' : u.situacao === 'aprovada' ? (insVencida(m, u) ? 'venc' : 'ok') : 'and';
+    const peso = { ok:1, and:2, venc:3, nc:4 }[s]; if (!sitPav[p.id] || peso > sitPav[p.id].peso) sitPav[p.id] = { s, peso }; }));
+  const COR = { ok:0x1E8449, and:0x3B82F6, venc:0xE8960A, nc:0xC0392B }, grp = { neutro:{}, ok:{}, and:{}, venc:{}, nc:{} }, add = (o, mi, id) => (o[mi] = o[mi] || []).push(id);
+  for (let mi = 0; mi < F3D.modelos.length; mi++){
+    const md = F3D.modelos[mi].model; if (!md) continue;
+    let todos = []; try { todos = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){}
+    todos.forEach(id => { const pv = mp.dono[mi].get(id), s = pv && sitPav[pv]; add(s ? grp[s.s] : grp.neutro, mi, id); });
+  }
+  try { await B3.limparFiltro(F3D); } catch (_){}
+  try { await B3.colorirGrupo(F3D, grp.neutro, 0xE2E8F0); } catch (_){}
+  for (const s of ['ok','and','venc','nc']) if (Object.keys(grp[s]).length) try { await B3.colorirGrupo(F3D, grp[s], COR[s]); } catch (_){}
+  const foco = Object.keys(grp.nc).length ? grp.nc : null; if (foco) try { await B3.enquadrarIds(F3D, foco); } catch (_){}
+  await fvs3dRefrescar();
+  const n = s => Object.keys(sitPav).filter(k => sitPav[k].s === s).length;
+  segBarraInfo('<b>Inspeções de segurança</b> por pavimento '
+    + '<span class="fvs3d-leg"><i style="background:#C0392B"></i>não conforme ' + n('nc') + '</span>'
+    + '<span class="fvs3d-leg"><i style="background:#E8960A"></i>vencida ' + n('venc') + '</span>'
+    + '<span class="fvs3d-leg"><i style="background:#3B82F6"></i>em andamento ' + n('and') + '</span>'
+    + '<span class="fvs3d-leg"><i style="background:#1E8449"></i>conforme ' + n('ok') + '</span>',
+    '<button onclick="segPainel(\'insp\')">Inspeções</button><button onclick="fvs3dLimpar()">Limpar cores</button>');
+}
+
+// ── barra direita: ações atrasadas ──────────────────────────────────────────
+(function(){
+  const _m = segModuloHtml;
+  segModuloHtml = function(mod){
+    let h = _m(mod); const atr = SEG_ACOES.filter(acaoAtrasada).length;
+    if (atr) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + atr + ' ação(ões) atrasada(s)</span></span>');
     return h;
   };
 })();
