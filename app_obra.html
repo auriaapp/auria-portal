@@ -12742,8 +12742,18 @@ async function rdoCarregarDia(iso){
     : { id:null, data:iso, clima_manha:'', clima_tarde:'', efetivo:[{ empresa:'', funcao:'Pedreiro', qtd:'' }, { empresa:'', funcao:'Servente', qtd:'' }],
         equipamentos:[], atividades:[], ocorrencias:[], observacoes:'', fotos:[], adendos:[], clima_auto:null, fechado_em:null };
   ['efetivo','equipamentos','atividades','ocorrencias','fotos','adendos'].forEach(k => { if (!Array.isArray(RDOO.dia[k])) RDOO.dia[k] = []; });
+  await rdoAssinarFotos(RDOO.dia.fotos);
   RDOO.reg = await rdoRegistros(iso);
 }
+// Fotos do diário: o bucket "apontamentos" é PRIVADO — o link público não abre.
+// Guarda-se o caminho (path, ou extraído do url antigo) e mostra-se por link assinado (f._src, 6 h).
+async function rdoAssinarFotos(fotos){
+  const ps = (fotos || []).map(f => { if (!f.path){ const m = /\/apontamentos\/(.+)$/.exec(f.url || ''); if (m) f.path = decodeURIComponent(m[1]); } return f.path; });
+  const qs = ps.filter(Boolean); if (!qs.length) return;
+  try { const { data } = await sb.storage.from('apontamentos').createSignedUrls(qs, 21600);
+    (data || []).forEach(x => { const f = fotos.find(y => y.path === x.path); if (f && x.signedUrl) f._src = x.signedUrl; }); } catch (_){}
+}
+
 // ── registros do sistema no dia (somente leitura) ───────────────────────────
 async function rdoRegistros(iso){
   const [a, b] = rdoJanela(iso), E = EMP.id, R = {};
@@ -12846,7 +12856,7 @@ function rdoRender(){
     + '<div class="rdo-sec"><div class="rdo-t">Observações</div><textarea' + dis + ' rows="3" oninput="RDOO.dia.observacoes=this.value;RDOO.dirty=true">' + esc(d.observacoes || '') + '</textarea></div>'
     // fotos
     + '<div class="rdo-sec"><div class="rdo-t">Fotos <span>' + d.fotos.length + '</span></div><div class="rdo-fotos">'
-    + d.fotos.map(f => '<a href="' + esc(f.url) + '" target="_blank"><img src="' + esc(f.url) + '" alt=""></a>').join('') + '</div>'
+    + d.fotos.map(f => '<a href="' + esc(f._src || f.url) + '" target="_blank"><img src="' + esc(f._src || f.url) + '" alt=""></a>').join('') + '</div>'
     + (ed ? '<label class="fvs-foto">' + OI.camera + '<span>Adicionar fotos</span><input type="file" accept="image/*" capture="environment" multiple onchange="rdoFotos(this.files)"></label>' : '') + '</div>'
     // adendos
     + (fechado || d.adendos.length ? '<div class="rdo-sec"><div class="rdo-t">Adendos</div>' + (d.adendos.length ? d.adendos.map(x => '<div class="nota-ad"><b>' + esc(x.por || '') + '</b> · ' + new Date(x.em).toLocaleString('pt-BR') + '<div>' + esc(x.texto) + '</div></div>').join('') : '<div class="hint">Nenhum.</div>')
@@ -12880,7 +12890,7 @@ async function rdoSalvar(){
     efetivo:d.efetivo.filter(e => e.funcao && (+e.qtd || e.empresa)).map(e => Object.assign({ funcao:e.funcao, qtd:+e.qtd || 0 }, e.empresa ? { empresa:e.empresa.trim() } : {})),
     equipamentos:d.equipamentos.filter(e => (e.nome || '').trim()).map(e => ({ nome:e.nome.trim(), qtd:+e.qtd || 1 })),
     atividades:d.atividades.filter(t => (t.descricao || '').trim()), ocorrencias:d.ocorrencias.filter(o => (o.texto || '').trim()),
-    observacoes:(d.observacoes || '').trim() || null, fotos:d.fotos, clima_auto:d.clima_auto || null };
+    observacoes:(d.observacoes || '').trim() || null, fotos:d.fotos.map(f => ({ url:f.url, path:f.path, nome:f.nome })), clima_auto:d.clima_auto || null };
   try {
     const r = await sb.from('cde_rdo_auria').upsert(row, { onConflict:'empreendimento_id,data' }).select('id').single();
     if (r.error) throw r.error;
@@ -12908,7 +12918,7 @@ async function rdoFotos(files){
       const blob = await segReduzir(f);
       const path = 'rdo/' + EMP.id + '/' + RDOO.dia.data + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + '.jpg';
       const up = await sb.storage.from('apontamentos').upload(path, blob, { contentType:'image/jpeg', upsert:false }); if (up.error) throw up.error;
-      RDOO.dia.fotos.push({ url:sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, nome:f.name }); RDOO.dirty = true;
+      const fo = { url:sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, path, nome:f.name }; await rdoAssinarFotos([fo]); RDOO.dia.fotos.push(fo); RDOO.dirty = true;
     } catch (e){ msg.textContent = f.name + ': ' + (e.message || e); return; }
   }
   rdoRender(); $('segMsg').textContent = n + ' foto(s) anexada(s) — salve o diário.';
@@ -13024,7 +13034,7 @@ function rdoPdfHtml(d, R){
     + '<h3>Registros do sistema <span>' + regs.length + '</span></h3>' + tab([['Tipo'], ['Registro']], regs.map(([k, t]) => '<tr><td class="k">' + e(k) + '</td><td>' + e(t) + '</td></tr>'), 'Nada registrado no sistema neste dia.')
     + '<h3>Ocorrências</h3>' + ((d.ocorrencias || []).length ? (d.ocorrencias || []).map(o => '<div class="pre" style="margin-bottom:3px">• ' + e(o.texto) + '</div>').join('') : '<div class="vz">Nenhuma.</div>')
     + '<h3>Observações</h3><div class="pre">' + (d.observacoes ? e(d.observacoes) : '<span class="vz">—</span>') + '</div>'
-    + ((d.fotos || []).length ? '<h3>Fotos <span>' + d.fotos.length + '</span></h3><div class="fotos">' + d.fotos.map(f => '<img src="' + e(f.url) + '" alt="">').join('') + '</div>' : '')
+    + ((d.fotos || []).length ? '<h3>Fotos <span>' + d.fotos.length + '</span></h3><div class="fotos">' + d.fotos.map(f => '<img src="' + e(f._src || f.url) + '" alt="">').join('') + '</div>' : '')
     + ((d.adendos || []).length ? '<h3>Adendos</h3>' + d.adendos.map(x => '<div class="ad"><b>' + e(x.por) + '</b> <i>' + new Date(x.em).toLocaleString('pt-BR') + '</i><div class="pre">' + e(x.texto) + '</div></div>').join('') : '')
     + ass
     + '<div class="foot"><span>Auria · Diário de obra' + (d.autor_nome ? ' · registrado por ' + e(d.autor_nome) : '') + '</span><span>Gerado em ' + new Date().toLocaleString('pt-BR') + '</span></div>'

@@ -6755,9 +6755,18 @@ function rdoNovo(){
   RDO.atual={ id:null, data:d, clima_manha:'', clima_tarde:'', efetivo:[{funcao:'Pedreiro',qtd:''},{funcao:'Servente',qtd:''}], atividades:[{pavimento_cod:'',descricao:''}], ocorrencias:[], observacoes:'', fotos:[], autor_nome:USER_NOME };
   $('rdoDias').value=''; rdoRender(); RDO.dirty=false;
 }
-function rdoCarregarDia(data){
+// Fotos do diário: o bucket "apontamentos" é PRIVADO — o link público não abre.
+// Guarda-se o caminho (path, ou extraído do url antigo) e mostra-se por link assinado (f._src, 6 h).
+async function rdoAssinarFotos(fotos){
+  const ps = (fotos || []).map(f => { if (!f.path){ const m = /\/apontamentos\/(.+)$/.exec(f.url || ''); if (m) f.path = decodeURIComponent(m[1]); } return f.path; });
+  const qs = ps.filter(Boolean); if (!qs.length) return;
+  try { const { data } = await sb.storage.from('apontamentos').createSignedUrls(qs, 21600);
+    (data || []).forEach(x => { const f = fotos.find(y => y.path === x.path); if (f && x.signedUrl) f._src = x.signedUrl; }); } catch (_){}
+}
+async function rdoCarregarDia(data){
   const d=RDO.dias.find(x=>x.data===data); if(!d){ return; }
   RDO.atual=JSON.parse(JSON.stringify(d)); ['efetivo','atividades','ocorrencias','fotos'].forEach(k=>{ if(!Array.isArray(RDO.atual[k])) RDO.atual[k]=[]; });
+  await rdoAssinarFotos(RDO.atual.fotos);
   $('rdoDias').value=data; rdoRender(); RDO.dirty=false;
 }
 function rdoRender(){
@@ -6776,7 +6785,7 @@ function rdoRender(){
         ${(a.efetivo||[]).map((e,i)=>`<div class="rdo-row"><select onchange="rdoSetRow('efetivo',${i},'funcao',this.value)" style="flex:1">${RDO_FUNCOES.map(f=>`<option ${e.funcao===f?'selected':''}>${f}</option>`).join('')}${e.funcao&&!RDO_FUNCOES.includes(e.funcao)?`<option selected>${esc(e.funcao)}</option>`:''}</select><input type="number" min="0" placeholder="qtd" value="${esc(e.qtd)}" onchange="rdoSetRow('efetivo',${i},'qtd',this.value)" style="width:72px"><button class="del" onclick="rdoDel('efetivo',${i})">×</button></div>`).join('')||'<div style="color:var(--mut);font-size:12px">—</div>'}
         <div style="font-size:11.5px;color:var(--mut);margin-top:4px">Total: <b>${(a.efetivo||[]).reduce((s,e)=>s+(Number(e.qtd)||0),0)}</b></div></div>
       <div class="rdo-sec"><h4><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.4" y="5.4" width="15.2" height="11.2" rx="1.8"/><path d="M7 5.4l1.2-2h3.6l1.2 2"/><circle cx="10" cy="11" r="3.2"/></svg> Fotos${ro?'':'<label class="add" style="cursor:pointer">+ fotos<input type="file" accept="image/*" multiple style="display:none" onchange="rdoFotos(this.files)"></label>'}</h4>
-        <div class="rdo-fotos" id="rdoFotos">${(a.fotos||[]).map((f,i)=>`<div style="position:relative"><img src="${esc(f.url)}" onclick="window.open('${esc(f.url)}','_blank')" title="${esc(f.nome||'')}">${ro?'':`<button class="del" style="position:absolute;top:-6px;right:-6px;background:var(--panel);border:1px solid var(--line);border-radius:50%;width:22px;height:22px;line-height:1" onclick="rdoDel('fotos',${i})">×</button>`}</div>`).join('')||'<div style="color:var(--mut);font-size:12px">sem fotos</div>'}</div>
+        <div class="rdo-fotos" id="rdoFotos">${(a.fotos||[]).map((f,i)=>`<div style="position:relative"><img src="${esc(f._src||f.url)}" onclick="window.open('${esc(f._src||f.url)}','_blank')" title="${esc(f.nome||'')}">${ro?'':`<button class="del" style="position:absolute;top:-6px;right:-6px;background:var(--panel);border:1px solid var(--line);border-radius:50%;width:22px;height:22px;line-height:1" onclick="rdoDel('fotos',${i})">×</button>`}</div>`).join('')||'<div style="color:var(--mut);font-size:12px">sem fotos</div>'}</div>
         <div id="rdoFotoMsg" style="font-size:11.5px;color:var(--mut);margin-top:4px"></div></div>
     </div>
     <div class="rdo-sec"><h4>🏗 Atividades executadas<button class="add" onclick="rdoAdd('atividades',{pavimento_cod:'',descricao:''})">+ atividade</button></h4>
@@ -6801,7 +6810,7 @@ async function rdoFotos(files){
       const blob=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>{ const k=Math.min(1,1600/Math.max(im.width,im.height)); const cv=document.createElement('canvas'); cv.width=Math.round(im.width*k); cv.height=Math.round(im.height*k); cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height); cv.toBlob(b=>b?res(b):rej(new Error('canvas')),'image/jpeg',0.82); }; im.onerror=rej; im.src=URL.createObjectURL(f); });
       const path='rdo/'+EMP_ID+'/'+RDO.atual.data+'/'+Date.now().toString(36)+Math.random().toString(36).slice(2,6)+'.jpg';
       const up=await sb.storage.from('apontamentos').upload(path, blob, {contentType:'image/jpeg',upsert:false}); if(up.error) throw up.error;
-      RDO.atual.fotos.push({ url: sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, nome:f.name }); RDO.dirty=true;
+      const fo={ url: sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, path, nome:f.name }; await rdoAssinarFotos([fo]); RDO.atual.fotos.push(fo); RDO.dirty=true;
     }catch(e){ msg.textContent=f.name+': '+((e&&e.message)||e); }
   }
   rdoRender(); const m2=$('rdoFotoMsg'); if(m2&&n) m2.textContent=n+' foto(s) anexada(s) — salve o diário.';
@@ -6812,7 +6821,7 @@ async function rdoSalvar(){
   const b=$('rdoSalvarBtn'); b.disabled=true; $('rdoMsg').textContent='Salvando…';
   const row={ empreendimento_id:EMP_ID, data:a.data, clima_manha:a.clima_manha||null, clima_tarde:a.clima_tarde||null,
     efetivo:(a.efetivo||[]).filter(e=>e.funcao).map(e=>Object.assign({funcao:e.funcao,qtd:Number(e.qtd)||0}, e.empresa?{empresa:e.empresa}:{})),   /* empresa vem do App Obra — não perder */ atividades:(a.atividades||[]).filter(t=>(t.descricao||'').trim()),
-    ocorrencias:(a.ocorrencias||[]).filter(o=>(o.texto||'').trim()), observacoes:(a.observacoes||'').trim()||null, fotos:a.fotos||[], autor_nome:a.autor_nome||USER_NOME };
+    ocorrencias:(a.ocorrencias||[]).filter(o=>(o.texto||'').trim()), observacoes:(a.observacoes||'').trim()||null, fotos:(a.fotos||[]).map(f=>({url:f.url,path:f.path,nome:f.nome})), autor_nome:a.autor_nome||USER_NOME };
   try{
     const r=await sb.from('cde_rdo_auria').upsert(row,{ onConflict:'empreendimento_id,data' }).select('id,data,criado_em,atualizado_em').single();
     if(r.error) throw r.error;
@@ -6837,7 +6846,7 @@ function rdoExportarPDF(){
   <h3>Atividades executadas</h3><table><tr><th style="width:26%">Pavimento / local</th><th>Descrição</th></tr>${(a.atividades||[]).map(t=>`<tr><td>${esc(t.pavimento_cod||'—')}</td><td>${esc(t.descricao||'')}</td></tr>`).join('')||'<tr><td colspan="2">—</td></tr>'}</table>
   <h3>Ocorrências</h3>${(a.ocorrencias||[]).length?'<ul>'+(a.ocorrencias||[]).map(o=>'<li>'+esc(o.texto)+'</li>').join('')+'</ul>':'<div>nenhuma</div>'}
   <h3>Observações</h3><div style="white-space:pre-wrap">${esc(a.observacoes||'—')}</div>
-  ${(a.fotos||[]).length?'<h3>Fotos</h3><div class="fotos">'+(a.fotos||[]).map(f=>`<img src="${esc(f.url)}">`).join('')+'</div>':''}
+  ${(a.fotos||[]).length?'<h3>Fotos</h3><div class="fotos">'+(a.fotos||[]).map(f=>`<img src="${esc(f._src||f.url)}">`).join('')+'</div>':''}
   <div class="foot"><span>Auria · Diário de obra</span><span>${esc(emp)} · gerado em ${new Date().toLocaleString('pt-BR')}</span></div>
   <script>const imgs=[...document.images];let p=imgs.filter(i=>!i.complete).length;const go=()=>setTimeout(()=>window.print(),300);if(!p)go();else{imgs.forEach(i=>{if(!i.complete)i.onload=i.onerror=()=>{if(--p<=0)go();}});setTimeout(go,8000);}<\/script></body></html>`;
   const w=window.open('','_blank'); if(!w){ alert('O navegador bloqueou a janela do PDF. Permita pop-ups para este site.'); return; }
