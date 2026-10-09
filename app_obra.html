@@ -12814,7 +12814,7 @@ function rdoRender(){
     // clima
     + '<div class="rdo-sec"><div class="rdo-t">Clima</div><div class="seg-g2"><div><label>Manhã</label>' + sel('clima_manha', d.clima_manha) + '</div><div><label>Tarde</label>' + sel('clima_tarde', d.clima_tarde) + '</div></div>'
     + (d.clima_auto ? '<div class="hint">Previsão registrada: ' + esc(rdoClimaTxt(d.clima_auto)) + '</div>' : '')
-    + (ed ? '<button class="b2 mini" onclick="rdoClima()">Sugerir pelo clima da cidade</button><span id="rdoClMsg" class="hint"></span>' : '') + '</div>'
+    + (ed ? '<button class="b2 mini" onclick="rdoClima()">Sugerir pelo clima do local</button><span id="rdoClMsg" class="hint"></span>' : '') + '</div>'
     // efetivo
     + '<div class="rdo-sec"><div class="rdo-t">Efetivo <span>' + tot + ' pessoa(s)</span></div>'
     + d.efetivo.map((e, i) => '<div class="rdo-row"><input' + dis + ' placeholder="Empresa" value="' + esc(e.empresa || '') + '" oninput="RDOO.dia.efetivo[' + i + '].empresa=this.value;RDOO.dirty=true">'
@@ -12923,11 +12923,16 @@ function rdoClasse(codes, mm){
 async function rdoClima(){
   const m = $('rdoClMsg'); m.textContent = ' consultando…';
   try {
-    let cid = EMP.cidade;
-    if (!cid){ const r = await sb.from('empreendimentos_auria').select('cidade').eq('id', EMP.id).maybeSingle(); cid = r.data && r.data.cidade; }
-    if (!cid) throw new Error('o empreendimento não tem cidade cadastrada');
-    const g = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&language=pt&country=BR&name=' + encodeURIComponent(String(cid).split(/[-\/,]/)[0].trim()))).json();
-    const loc = g && g.results && g.results[0]; if (!loc) throw new Error('cidade não encontrada: ' + cid);
+    // Ponto marcado no mapa (ficha/gestão) tem prioridade; sem ele, cai na cidade.
+    const r = await sb.from('empreendimentos_auria').select('cidade,latitude,longitude').eq('id', EMP.id).maybeSingle();
+    const e = r.data || {}; let loc;
+    if (e.latitude != null && e.longitude != null) loc = { latitude:+e.latitude, longitude:+e.longitude, name:'ponto do empreendimento' };
+    else {
+      const cid = EMP.cidade || e.cidade;
+      if (!cid) throw new Error('o empreendimento não tem cidade nem localização marcada');
+      const g = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&language=pt&country=BR&name=' + encodeURIComponent(String(cid).split(/[-\/,]/)[0].trim()))).json();
+      loc = g && g.results && g.results[0]; if (!loc) throw new Error('cidade não encontrada: ' + cid);
+    }
     const d = RDOO.dia.data;
     const w = await (await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + loc.latitude + '&longitude=' + loc.longitude
       + '&hourly=weathercode,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&start_date=' + d + '&end_date=' + d)).json();

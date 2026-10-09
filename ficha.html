@@ -6,6 +6,7 @@
 <title>Auria — Ficha do empreendimento</title>
 <link rel="icon" type="image/png" href="logo_symbol.png">
 <script src="auria_busy.js"></script>
+<script src="auria_mapa_local.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   /* Mesmos tokens do CDE (cde.html) — a ficha é uma tela do CDE. */
@@ -174,6 +175,40 @@ function render(nome, logoUrl, config){
   $('wrap').innerHTML = html;
 }
 
+// Localização no mapa: todos veem (miniatura + Como chegar); gestão/coordenador marcam.
+let LOC={ emp:null, lat:null, lon:null, end:'', pode:false, cidade:'', uf:'' };
+function locRender(){
+  let el=$('secLoc');
+  if(!el){ el=document.createElement('div'); el.id='secLoc'; el.className='sec'; $('wrap').appendChild(el); }
+  const tem = LOC.lat!=null;
+  if(!tem && !LOC.pode){ el.remove(); return; }
+  el.innerHTML='<div class="sec-h"><b>Localização</b><span class="rule"></span></div>'
+    + (tem?'<div id="locMini" style="height:220px;border:1px solid var(--line);border-radius:11px;overflow:hidden;cursor:pointer" title="Abrir mapa"></div>':'')
+    + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:9px;font-size:12.5px;color:var(--mut)">'
+    + '<span style="flex:1;min-width:180px">'+(tem?esc(LOC.end||'')+' <span style="font-family:var(--mono);color:var(--navy)">'+LOC.lat.toFixed(5)+', '+LOC.lon.toFixed(5)+'</span>':'Sem localização marcada.')+'</span>'
+    + (tem?'<a class="anexo" target="_blank" rel="noopener" href="'+AuriaMapaLocal.comoChegar(LOC.lat,LOC.lon)+'">Como chegar</a>':'')
+    + (LOC.pode?'<button type="button" class="anexo" id="locEd">'+(tem?'Alterar no mapa':'Marcar no mapa')+'</button>':'')
+    + '</div>';
+  if(tem){ AuriaMapaLocal.miniatura($('locMini'),LOC.lat,LOC.lon).catch(()=>{});
+    $('locMini').onclick=()=>AuriaMapaLocal.abrir({lat:LOC.lat,lon:LOC.lon,endereco:LOC.end,podeEditar:false}); }
+  if(LOC.pode) $('locEd').onclick=()=>AuriaMapaLocal.abrir({ lat:LOC.lat, lon:LOC.lon, endereco:LOC.end, cidade:LOC.cidade, uf:LOC.uf,
+    onSalvar: async (lat,lon,end)=>{ const {error}=await sb.rpc('emp_set_local',{p_emp:LOC.emp,p_lat:lat,p_lon:lon,p_endereco:end||null});
+      if(error) throw error; LOC.lat=lat; LOC.lon=lon; LOC.end=end||''; locRender(); } });
+}
+async function locCarregar(emp){
+  LOC.emp=emp;
+  try{
+    const [r,e,ro]=await Promise.all([
+      sb.from('empreendimentos_auria').select('latitude,longitude,endereco,cidade,estado,empresa_id').eq('id',emp).maybeSingle(),
+      sb.rpc('estacao_edita',{p_emp:emp}), sb.rpc('minha_role_auria')]);
+    const d=r.data||{};
+    LOC.lat=d.latitude!=null?+d.latitude:null; LOC.lon=d.longitude!=null?+d.longitude:null;
+    LOC.end=d.endereco||''; LOC.cidade=d.cidade||''; LOC.uf=d.estado||'';
+    LOC.pode = e.data===true || ro.data==='super_admin' || ro.data==='gerente';
+    locRender();
+  }catch(_){}
+}
+
 (async function(){
   const emp = qp('emp');
   if(!emp){ $('wrap').innerHTML='<div class="msg">Link inválido (sem empreendimento).</div>'; return; }
@@ -186,6 +221,7 @@ function render(nome, logoUrl, config){
     const row = data && data[0];
     if(!row){ $('wrap').innerHTML='<div class="msg">Você não tem acesso a este empreendimento, ou ele não existe.</div>'; $('empSub').textContent=''; return; }
     render(row.nome, row.logo_url, row.config);
+    locCarregar(emp);
   }catch(e){
     $('wrap').innerHTML='<div class="msg">Erro ao carregar a ficha: '+esc(e.message||e)+'</div>';
     $('empSub').textContent='';

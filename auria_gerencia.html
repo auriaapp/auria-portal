@@ -1322,6 +1322,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
                        oninput="this.value=this.value.toUpperCase().slice(0,2)">
               </div>
             </div>
+            <div class="form-group" style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <button type="button" class="btn-secondary" onclick="empLocAbrir()" style="display:inline-flex;align-items:center;gap:6px"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.4s5.4-5.2 5.4-9a5.4 5.4 0 0 0-10.8 0c0 3.8 5.4 9 5.4 9z"/><circle cx="10" cy="8.4" r="1.9"/></svg>Marcar no mapa</button>
+              <span id="empLocTxt" style="font-size:11.5px;color:var(--text-soft);font-family:ui-monospace,Consolas,monospace">sem localização marcada</span>
+            </div>
           </div>
         </div>
 
@@ -4275,6 +4279,7 @@ async function abrirEditarEmp(empId){
   const sv=(id,val)=>{ const e=document.getElementById(id); if(e) e.value=val; };
   const spin=(id,valId,val)=>{ sv(id,val); const v2=document.getElementById(valId); if(v2) v2.textContent=val; };
   sv('empNome',emp.nome||''); sv('empSigla',emp.codigo||''); sv('empCidade',emp.cidade||''); sv('empEstado',emp.estado||'');
+  EMP_LOC={ lat:emp.latitude!=null?+emp.latitude:null, lon:emp.longitude!=null?+emp.longitude:null, end:emp.endereco||'', dirty:false }; empLocTexto();
   if(emp.construtora_id) sv('empEmpresa',emp.construtora_id);
   const tipo=emp.tipo_empreendimento||cfg.tipo_empreendimento||'Residencial';
   sv('empTipo',tipo); document.querySelectorAll('#grupoTipo .tipo-btn').forEach(b=>b.classList.toggle('sel', b.textContent.trim()===tipo));
@@ -4335,6 +4340,7 @@ async function salvarEmpreendimento(empId){
     if(logoFile){ btn.textContent='Enviando logo...'; try{ upd.logo_url=await uploadLogoStorage(logoFile,empId); }catch(le){ showToast('Logo não enviada: '+(le.message||le),''); } btn.textContent='Salvando...'; }
     const { error }=await sb.from('empreendimentos_auria').update(upd).eq('id',empId);
     if(error) throw error;
+    await empLocGravar(empId);
     let pavMsg='';
     try{ const r=await pavAplicar(emp); if(r.remComRef) pavMsg=' '+r.remComRef+' pavimento(s) desativado(s).'; }
     catch(pe){ showToast('Dados salvos, mas os pavimentos falharam: '+(pe.message||pe),'red'); }
@@ -4828,8 +4834,23 @@ async function uploadLogoStorage(file, empId){
   return data.publicUrl;
 }
 
+// Localização no mapa (auria_mapa_local.js). Grava pela função emp_set_local
+// (confere gestão/coordenador). Na criação, guarda e grava depois do insert.
+let EMP_LOC={ lat:null, lon:null, end:'', dirty:false };
+function empLocTexto(){ const t=document.getElementById('empLocTxt'); if(!t) return;
+  t.textContent = EMP_LOC.lat!=null ? (EMP_LOC.lat.toFixed(5)+', '+EMP_LOC.lon.toFixed(5)+(EMP_LOC.end?' · '+EMP_LOC.end.split(',').slice(0,2).join(','):'')+(EMP_LOC.dirty?' (salva ao confirmar)':'')) : 'sem localização marcada'; }
+function empLocAbrir(){
+  AuriaMapaLocal.abrir({ lat:EMP_LOC.lat, lon:EMP_LOC.lon, endereco:EMP_LOC.end, cidade:v('empCidade').trim(), uf:v('empEstado').trim(), titulo:'Localização — '+(v('empNome').trim()||'empreendimento'),
+    onSalvar: async (lat,lon,end)=>{ EMP_LOC={ lat, lon, end:end||'', dirty:true }; empLocTexto(); } });
+}
+async function empLocGravar(empId){
+  if(!EMP_LOC.dirty || !empId) return;
+  const { error }=await sb.rpc('emp_set_local',{ p_emp:empId, p_lat:EMP_LOC.lat, p_lon:EMP_LOC.lon, p_endereco:EMP_LOC.end||null });
+  if(error) showToast('Localização não salva: '+error.message,'red'); else EMP_LOC.dirty=false;
+}
 function resetFormEmp(){
   EMP_EDIT_ID=null;
+  EMP_LOC={ lat:null, lon:null, end:'', dirty:false }; empLocTexto();
   const _tt=document.querySelector('#modalNovoEmp .modal-title'); if(_tt) _tt.textContent='Novo Empreendimento';
   const _bt=document.getElementById('btnCriarEmp'); if(_bt) _bt.innerHTML='&#43; Criar Empreendimento';
   const _ib=document.getElementById('empImportBox'); if(_ib) _ib.style.display='none';   // import só na criação
@@ -4921,6 +4942,7 @@ async function criarEmpreendimento(){
       config:              _config
     }).select('id').single();
     if(error) throw error;
+    await empLocGravar(empRow && empRow.id);
 
     // 2. Upload da logo (se selecionada)
     const logoFile = logoArquivo('empLogoInput');
@@ -5654,5 +5676,6 @@ init();
 <script src="auria_cronocustos.js"></script>
 <script src="auria_ajuda.js"></script>
 <script src="auria_logo_trim.js"></script>
+<script src="auria_mapa_local.js"></script>
 </body>
 </html>
