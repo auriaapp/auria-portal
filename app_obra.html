@@ -908,6 +908,28 @@ svg.ci{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.5;str
 .obra-mod{--furo:#fff}.obra-mod:hover{--furo:#F1F5F9}.sr-ic.obra-ic{--furo:#fff}
 .obra-mod .ic svg.ci-sil{width:19px;height:19px}.sr-ic.obra-ic svg.ci-sil{width:19px;height:19px}
 
+/* Diário de obra (D1) — padrão da estética Auria */
+.rdo-hd{padding:8px 12px!important}
+.rdo-nav{display:flex;align-items:center;gap:10px}
+.rdo-nav>div{flex:1;min-width:0;text-align:center}
+.rdo-nav>button{font-size:20px;line-height:1;width:38px;min-height:38px;padding:0!important}
+.seg-form.rdo{gap:0}
+.rdo-sec{border-bottom:1px solid var(--line);padding:10px 0}
+.rdo-t{font-size:10.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--navy);margin-bottom:6px;display:flex;gap:8px;align-items:baseline}
+.rdo-t span{font-family:var(--mono);letter-spacing:0;color:var(--ob-mut,#64748B);font-weight:700}
+.rdo-row{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px}
+.rdo-row>input,.rdo-row>textarea{flex:1;min-width:0}
+.rdo-row>select{flex:0 0 40%}
+.rdo-row>select.pv{flex:0 0 92px;font-family:var(--mono)}
+.rdo-row>input.n{flex:0 0 72px}
+.rdo-row .b2.mini{flex:none}
+.rdo-reg{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ob-txt2,#334155);background:var(--panel2);border-left:3px solid var(--navy);border-radius:0 6px 6px 0;padding:8px 10px;margin-bottom:6px}
+.rdo-reg .fmini{margin-right:4px}
+.rdo-fotos{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.rdo-fotos img{width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+.nota-ad{font-size:12px;background:var(--panel2);border-left:3px solid var(--ob-laranja,#E8960A);border-radius:0 6px 6px 0;padding:6px 9px;margin-bottom:6px}
+@media (max-width:640px){ .rdo-row{flex-wrap:wrap} .rdo-row>select{flex:1 1 45%} .rdo-row>input.n{flex:0 0 80px} }
+
 </style>
 </head>
 <body>
@@ -12705,6 +12727,255 @@ async function ins3D(){
     if (atr) h = h.replace(/<span>([^<]*)<\/span><\/span>/, (m0, sub) => '<span>' + sub + ' · ' + atr + ' ação(ões) atrasada(s)</span></span>');
     return h;
   };
+})();
+
+// ── App Obra · DIÁRIO DE OBRA (D1) ───────────────────────────────────────────
+//  Mesma tabela do CDE (cde_rdo_auria): o diário do CDE e o do App Obra são o
+//  mesmo registro. O dia já nasce com os REGISTROS DO SISTEMA (DDS, concretagens,
+//  FVS, segurança, ações, apontamentos) — "Trazer para as atividades" copia como
+//  texto editável. Equipe preenche; só o eng. chefe FECHA (trava); depois só
+//  adendo. Clima sugerido pelo Open-Meteo (cidade do empreendimento).
+//  Sem emojis (padrão do App Obra).
+var RDOO = { dia:null, reg:null, dirty:false, data:null, ontem:null };
+const RDO_CLIMAS = ['', 'Bom', 'Nublado', 'Chuva fraca', 'Chuva forte', 'Impraticável'];
+const RDO_FUNC = ['Pedreiro','Servente','Carpinteiro','Armador','Eletricista','Encanador','Pintor','Gesseiro','Azulejista','Operador','Encarregado','Mestre','Engenheiro','Estagiário','Outro'];
+function rdoNivel(){ return segMeuNivel(); }
+function rdoEscreve(){ return ['eng_chefe','coord_campo','equipe_campo'].includes(rdoNivel()); }
+function rdoIso(d){ const p = n => String(n).padStart(2,'0'); return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()); }
+function rdoHojeIso(){ return rdoIso(new Date()); }
+function rdoMais(iso, n){ const d = new Date(iso + 'T12:00'); d.setDate(d.getDate() + n); return rdoIso(d); }
+function rdoFmtD(iso){ return new Date(iso + 'T12:00').toLocaleDateString('pt-BR', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' }); }
+function rdoJanela(iso){ const a = new Date(iso + 'T00:00'), b = new Date(iso + 'T00:00'); b.setDate(b.getDate() + 1); return [a.toISOString(), b.toISOString()]; }
+
+// ── carregar o dia ──────────────────────────────────────────────────────────
+async function rdoCarregarDia(iso){
+  RDOO.data = iso; RDOO.dirty = false;
+  const { data } = await sb.from('cde_rdo_auria').select('*').eq('empreendimento_id', EMP.id).eq('data', iso).maybeSingle();
+  RDOO.dia = data ? Object.assign({ efetivo:[], equipamentos:[], atividades:[], ocorrencias:[], fotos:[], adendos:[] }, data)
+    : { id:null, data:iso, clima_manha:'', clima_tarde:'', efetivo:[{ empresa:'', funcao:'Pedreiro', qtd:'' }, { empresa:'', funcao:'Servente', qtd:'' }],
+        equipamentos:[], atividades:[], ocorrencias:[], observacoes:'', fotos:[], adendos:[], clima_auto:null, fechado_em:null };
+  ['efetivo','equipamentos','atividades','ocorrencias','fotos','adendos'].forEach(k => { if (!Array.isArray(RDOO.dia[k])) RDOO.dia[k] = []; });
+  RDOO.reg = await rdoRegistros(iso);
+}
+// ── registros do sistema no dia (somente leitura) ───────────────────────────
+async function rdoRegistros(iso){
+  const [a, b] = rdoJanela(iso), E = EMP.id, R = {};
+  const dentro = t => t && t >= a && t < b;
+  const q = async (tab, sel, f) => { try { let x = sb.from(tab).select(sel).eq('empreendimento_id', E); x = f ? f(x) : x; const r = await x; return r.error ? [] : (r.data || []); } catch (_){ return []; } };
+  R.dds = await q('seg_dds_auria', 'tema,ministrado_por,participantes,empresas', x => x.eq('data', iso));
+  const concs = await q('conc_concretagem_auria', 'id,codigo,descricao,pavimento_id,volume_previsto,fck_mpa,situacao', x => x.eq('data_realizada', iso));
+  R.conc = [];
+  for (const c of concs){
+    const k = await q('conc_caminhao_auria', 'aceito,volume_m3,cps_moldados', x => x.eq('concretagem_id', c.id));
+    R.conc.push(Object.assign({}, c, { cam_ac:k.filter(z => z.aceito).length, cam_rec:k.filter(z => !z.aceito).length,
+      m3:k.filter(z => z.aceito).reduce((s, z) => s + (+z.volume_m3 || 0), 0), cps:k.reduce((s, z) => s + (z.cps_moldados || 0), 0) }));
+  }
+  const ins = await q('fvs_inspecao_auria', 'codigo,tipo,servico,pavimento_id,local_txt,frente,situacao,aberta_em,enviado_em,aprovado_em,reprovado_em,itens', x => x.gte('atualizado_em', a));
+  R.fvs = []; R.insp = [];
+  ins.forEach(x => {
+    const ev = dentro(x.reprovado_em) ? 'reprovada' : dentro(x.aprovado_em) ? (x.tipo === 'seguranca' ? 'conforme' : 'aprovada') : dentro(x.enviado_em) ? 'enviada' : dentro(x.aberta_em) ? 'aberta' : null;
+    if (!ev) return;
+    const it = { codigo:x.codigo, servico:x.servico, local:[segPavNome(x.pavimento_id), x.frente, x.local_txt].filter(Boolean).join(' › '), ev, nc:(x.itens || []).filter(t => t.resultado === 'nc').length };
+    (x.tipo === 'seguranca' ? R.insp : R.fvs).push(it);
+  });
+  R.alertas = (await q('seg_alerta_auria', 'codigo,nivel,titulo,emitido_em', x => x.gte('emitido_em', a).lt('emitido_em', b)));
+  R.ocorr = (await q('seg_ocorrencia_auria', 'codigo,tipo,descricao,gravidade,ocorreu_em', x => x.gte('ocorreu_em', a).lt('ocorreu_em', b)));
+  R.pts = (await q('seg_pt_auria', 'codigo,tipo,servico,liberado_em', x => x.gte('liberado_em', a).lt('liberado_em', b)));
+  const ac = await q('seg_acao_auria', 'item,situacao,feita_em,verificada_em', x => x.gte('atualizado_em', a));
+  R.acoes = ac.filter(z => dentro(z.feita_em) || dentro(z.verificada_em)).map(z => ({ item:z.item, ev:dentro(z.verificada_em) ? 'verificada' : 'corrigida' }));
+  const dm = iso.split('-').reverse().join('/');
+  R.apts = (typeof APTS !== 'undefined' ? APTS : []).filter(x => x.data_criacao === dm && /^OBR-/.test(x.id || '')).map(x => ({ id:x.id, titulo:x.titulo, status:x.status }));
+  return R;
+}
+function rdoRegLinhas(){
+  const R = RDOO.reg || {}, L = [];
+  (R.dds || []).forEach(d => L.push(['DDS', d.tema + (d.participantes ? ' — ' + d.participantes + ' participantes' : '') + (d.ministrado_por ? ' (' + d.ministrado_por + ')' : '')]));
+  (R.conc || []).forEach(c => L.push(['Concretagem', c.codigo + ' ' + (segPavNome(c.pavimento_id) || '') + ' — ' + (c.descricao || '') + ': ' + c.m3.toLocaleString('pt-BR', { maximumFractionDigits:1 }) + ' m³ em ' + c.cam_ac + ' caminhão(ões)' + (c.cam_rec ? ', ' + c.cam_rec + ' recusado(s)' : '') + (c.cps ? ', ' + c.cps + ' CP moldados' : '') + (c.fck_mpa ? ' · C' + c.fck_mpa : '')]));
+  (R.fvs || []).forEach(f => L.push(['FVS', f.codigo + ' ' + f.servico + (f.local ? ' (' + f.local + ')' : '') + ' — ' + f.ev + (f.nc ? ', ' + f.nc + ' item(ns) não conforme(s)' : '')]));
+  (R.insp || []).forEach(f => L.push(['Inspeção de segurança', f.codigo + ' ' + f.servico + (f.local ? ' (' + f.local + ')' : '') + ' — ' + f.ev + (f.nc ? ', ' + f.nc + ' não conformidade(s)' : '')]));
+  (R.alertas || []).forEach(x => L.push([x.nivel === 'interdicao' ? 'Interdição' : 'Alerta de segurança', x.codigo + ' — ' + x.titulo]));
+  (R.pts || []).forEach(x => L.push(['Permissão de trabalho', x.codigo + ' liberada — ' + x.servico]));
+  (R.ocorr || []).forEach(x => L.push(['Ocorrência', x.codigo + ' (' + String(x.tipo).replace('_', ' ') + ', ' + x.gravidade + ') — ' + x.descricao]));
+  (R.acoes || []).forEach(x => L.push(['Ação corretiva', x.item + ' — ' + x.ev]));
+  (R.apts || []).forEach(x => L.push(['Apontamento', x.id + ' — ' + (x.titulo || '') + ' (' + x.status + ')']));
+  return L;
+}
+
+// ── tela ─────────────────────────────────────────────────────────────────────
+async function rdoAbrir(iso){
+  if (!EMP) return;
+  segOv('<div class="hd"><b>Diário de obra</b><p>Carregando…</p></div><div class="ls"></div><div class="ft"></div>');
+  document.querySelector('#segOv .box').classList.add('fvs-larga');
+  await rdoCarregarDia(iso || rdoHojeIso());
+  rdoRender();
+}
+function rdoRender(){
+  const d = RDOO.dia, fechado = !!d.fechado_em, ed = rdoEscreve() && !fechado, dis = ed ? '' : ' disabled';
+  const pavs = fvsPavs(), tot = d.efetivo.reduce((s, e) => s + (+e.qtd || 0), 0), regs = rdoRegLinhas();
+  const sel = (k, v) => '<select' + dis + ' onchange="RDOO.dia.' + k + '=this.value;RDOO.dirty=true">' + RDO_CLIMAS.map(c => '<option' + (c === (v || '') ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>';
+  const box = document.querySelector('#segOv .box');
+  box.innerHTML = '<div class="hd rdo-hd"><div class="rdo-nav"><button class="b2" onclick="rdoIr(-1)" title="Dia anterior">‹</button>'
+      + '<div><b>Diário de obra · ' + esc(rdoFmtD(d.data)) + '</b><p><span class="seg-chip" style="--c:' + (fechado ? '#1E3A5F' : d.id ? '#B45309' : '#64748B') + '">' + (fechado ? 'Fechado' : d.id ? 'Aberto' : 'Sem registro') + '</span>'
+      + (fechado ? ' por ' + esc(d.fechado_nome || '') + ' em ' + new Date(d.fechado_em).toLocaleString('pt-BR') : d.autor_nome ? ' · ' + esc(d.autor_nome) : '') + '</p></div>'
+      + '<button class="b2" onclick="rdoIr(1)" title="Próximo dia"' + (d.data >= rdoHojeIso() ? ' disabled' : '') + '>›</button></div></div>'
+    + '<div class="ls"><div class="seg-form rdo">'
+    // registros do sistema
+    + '<div class="rdo-sec"><div class="rdo-t">Registros do sistema no dia <span>' + regs.length + '</span></div>'
+    + (regs.length ? '<div class="rdo-reg">' + regs.map(([k, t]) => '<div><span class="fmini">' + esc(k) + '</span> ' + esc(t) + '</div>').join('') + '</div>'
+        + (ed ? '<button class="b2 mini" onclick="rdoTrazer()">Trazer para as atividades</button>' : '')
+      : '<div class="hint">Nada registrado no sistema neste dia.</div>') + '</div>'
+    // clima
+    + '<div class="rdo-sec"><div class="rdo-t">Clima</div><div class="seg-g2"><div><label>Manhã</label>' + sel('clima_manha', d.clima_manha) + '</div><div><label>Tarde</label>' + sel('clima_tarde', d.clima_tarde) + '</div></div>'
+    + (d.clima_auto ? '<div class="hint">Previsão registrada: ' + esc(rdoClimaTxt(d.clima_auto)) + '</div>' : '')
+    + (ed ? '<button class="b2 mini" onclick="rdoClima()">Sugerir pelo clima da cidade</button><span id="rdoClMsg" class="hint"></span>' : '') + '</div>'
+    // efetivo
+    + '<div class="rdo-sec"><div class="rdo-t">Efetivo <span>' + tot + ' pessoa(s)</span></div>'
+    + d.efetivo.map((e, i) => '<div class="rdo-row"><input' + dis + ' placeholder="Empresa" value="' + esc(e.empresa || '') + '" oninput="RDOO.dia.efetivo[' + i + '].empresa=this.value;RDOO.dirty=true">'
+        + '<select' + dis + ' onchange="RDOO.dia.efetivo[' + i + '].funcao=this.value;RDOO.dirty=true">' + RDO_FUNC.concat(RDO_FUNC.includes(e.funcao) || !e.funcao ? [] : [e.funcao]).map(f => '<option' + (f === e.funcao ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select>'
+        + '<input' + dis + ' class="n" type="number" min="0" inputmode="numeric" placeholder="qtd" value="' + esc(e.qtd) + '" onchange="RDOO.dia.efetivo[' + i + '].qtd=this.value;RDOO.dirty=true;rdoRender()">'
+        + (ed ? '<button class="b2 mini" onclick="RDOO.dia.efetivo.splice(' + i + ',1);RDOO.dirty=true;rdoRender()">' + OI.x + '</button>' : '') + '</div>').join('')
+    + (ed ? '<button class="b2 mini" onclick="RDOO.dia.efetivo.push({empresa:\'\',funcao:\'Pedreiro\',qtd:\'\'});RDOO.dirty=true;rdoRender()">' + OI.mais + ' Linha</button>' : '') + '</div>'
+    // equipamentos
+    + '<div class="rdo-sec"><div class="rdo-t">Equipamentos</div>'
+    + d.equipamentos.map((e, i) => '<div class="rdo-row"><input' + dis + ' placeholder="Ex.: grua, betoneira, bomba lança" value="' + esc(e.nome || '') + '" oninput="RDOO.dia.equipamentos[' + i + '].nome=this.value;RDOO.dirty=true">'
+        + '<input' + dis + ' class="n" type="number" min="0" inputmode="numeric" placeholder="qtd" value="' + esc(e.qtd || '') + '" oninput="RDOO.dia.equipamentos[' + i + '].qtd=this.value;RDOO.dirty=true">'
+        + (ed ? '<button class="b2 mini" onclick="RDOO.dia.equipamentos.splice(' + i + ',1);RDOO.dirty=true;rdoRender()">' + OI.x + '</button>' : '') + '</div>').join('')
+    + (!d.equipamentos.length && !ed ? '<div class="hint">—</div>' : '')
+    + (ed ? '<button class="b2 mini" onclick="RDOO.dia.equipamentos.push({nome:\'\',qtd:1});RDOO.dirty=true;rdoRender()">' + OI.mais + ' Equipamento</button>' : '') + '</div>'
+    // atividades
+    + '<div class="rdo-sec"><div class="rdo-t">Atividades</div>'
+    + d.atividades.map((t, i) => '<div class="rdo-row"><select' + dis + ' class="pv" onchange="RDOO.dia.atividades[' + i + '].pavimento_cod=this.value;RDOO.dirty=true"><option value="">Geral</option>'
+        + pavs.map(p => '<option value="' + esc(p.codigo || '') + '"' + ((p.codigo || '') === (t.pavimento_cod || '') && t.pavimento_cod ? ' selected' : '') + '>' + esc(p.codigo || p.nome) + '</option>').join('') + '</select>'
+        + '<textarea' + dis + ' rows="2" oninput="RDOO.dia.atividades[' + i + '].descricao=this.value;RDOO.dirty=true">' + esc(t.descricao || '') + '</textarea>'
+        + (ed ? '<button class="b2 mini" onclick="RDOO.dia.atividades.splice(' + i + ',1);RDOO.dirty=true;rdoRender()">' + OI.x + '</button>' : '') + '</div>').join('')
+    + (!d.atividades.length && !ed ? '<div class="hint">—</div>' : '')
+    + (ed ? '<button class="b2 mini" onclick="RDOO.dia.atividades.push({pavimento_cod:\'\',descricao:\'\'});RDOO.dirty=true;rdoRender()">' + OI.mais + ' Atividade</button>' : '') + '</div>'
+    // ocorrências e observações
+    + '<div class="rdo-sec"><div class="rdo-t">Ocorrências</div>'
+    + d.ocorrencias.map((o, i) => '<div class="rdo-row"><textarea' + dis + ' rows="2" oninput="RDOO.dia.ocorrencias[' + i + '].texto=this.value;RDOO.dirty=true">' + esc(o.texto || '') + '</textarea>'
+        + (ed ? '<button class="b2 mini" onclick="RDOO.dia.ocorrencias.splice(' + i + ',1);RDOO.dirty=true;rdoRender()">' + OI.x + '</button>' : '') + '</div>').join('')
+    + (!d.ocorrencias.length && !ed ? '<div class="hint">—</div>' : '')
+    + (ed ? '<button class="b2 mini" onclick="RDOO.dia.ocorrencias.push({texto:\'\'});RDOO.dirty=true;rdoRender()">' + OI.mais + ' Ocorrência</button>' : '') + '</div>'
+    + '<div class="rdo-sec"><div class="rdo-t">Observações</div><textarea' + dis + ' rows="3" oninput="RDOO.dia.observacoes=this.value;RDOO.dirty=true">' + esc(d.observacoes || '') + '</textarea></div>'
+    // fotos
+    + '<div class="rdo-sec"><div class="rdo-t">Fotos <span>' + d.fotos.length + '</span></div><div class="rdo-fotos">'
+    + d.fotos.map(f => '<a href="' + esc(f.url) + '" target="_blank"><img src="' + esc(f.url) + '" alt=""></a>').join('') + '</div>'
+    + (ed ? '<label class="fvs-foto">' + OI.camera + '<span>Adicionar fotos</span><input type="file" accept="image/*" capture="environment" multiple onchange="rdoFotos(this.files)"></label>' : '') + '</div>'
+    // adendos
+    + (fechado || d.adendos.length ? '<div class="rdo-sec"><div class="rdo-t">Adendos</div>' + (d.adendos.length ? d.adendos.map(x => '<div class="nota-ad"><b>' + esc(x.por || '') + '</b> · ' + new Date(x.em).toLocaleString('pt-BR') + '<div>' + esc(x.texto) + '</div></div>').join('') : '<div class="hint">Nenhum.</div>')
+        + (fechado && rdoEscreve() ? '<textarea id="rdoAd" rows="2" placeholder="O que precisa ser acrescentado (fica registrado com seu nome e hora)"></textarea><button class="b2 mini" onclick="rdoAdendo()">Registrar adendo</button>' : '') + '</div>' : '')
+    + '<div id="segMsg" class="seg-msg"></div></div></div>'
+    + '<div class="ft"><button class="b2" onclick="rdoSair()">Fechar</button>'
+    + (ed ? '<button class="b1" id="rdoOk" onclick="rdoSalvar()">Salvar</button>' : '')
+    + (!fechado && d.id && rdoNivel() === 'eng_chefe' && d.data <= rdoHojeIso() ? '<button class="b2" onclick="rdoFecharDia()">Fechar o dia</button>' : '') + '</div>';
+}
+async function rdoIr(n){
+  if (RDOO.dirty && !confirm('Há alterações não salvas. Trocar de dia mesmo assim?')) return;
+  await rdoCarregarDia(rdoMais(RDOO.data, n)); rdoRender();
+}
+function rdoSair(){ if (RDOO.dirty && !confirm('Há alterações não salvas. Fechar mesmo assim?')) return; RDOO.dirty = false; segFechar(); try { renderSideRight(); } catch (_){} }
+function rdoTrazer(){
+  const d = RDOO.dia, R = RDOO.reg || {}, pc = id => { const p = (CDE_PAVS || []).find(x => x.id === id); return p ? (p.codigo || '') : ''; };
+  const add = (pav, txt) => { if (!d.atividades.some(a => a.descricao === txt)) d.atividades.push({ pavimento_cod:pav, descricao:txt }); };
+  (R.conc || []).forEach(c => add(pc(c.pavimento_id), 'Concretagem ' + c.codigo + ' — ' + (c.descricao || '') + ': ' + c.m3.toLocaleString('pt-BR', { maximumFractionDigits:1 }) + ' m³, ' + c.cam_ac + ' caminhão(ões)' + (c.cps ? ', ' + c.cps + ' CP moldados' : '')));
+  (R.fvs || []).forEach(f => add('', 'FVS ' + f.codigo + ' ' + f.servico + (f.local ? ' (' + f.local + ')' : '') + ' — ' + f.ev));
+  (R.insp || []).forEach(f => add('', 'Inspeção de segurança ' + f.codigo + ' ' + f.servico + ' — ' + f.ev + (f.nc ? ' (' + f.nc + ' NC)' : '')));
+  (R.dds || []).forEach(x => add('', 'DDS: ' + x.tema + (x.participantes ? ' (' + x.participantes + ' participantes)' : '')));
+  (R.pts || []).forEach(x => add('', 'PT ' + x.codigo + ' liberada — ' + x.servico));
+  (R.ocorr || []).forEach(x => { const t = x.codigo + ' — ' + x.descricao; if (!d.ocorrencias.some(o => o.texto === t)) d.ocorrencias.push({ texto:t }); });
+  (R.alertas || []).filter(x => x.nivel === 'interdicao').forEach(x => { const t = 'Interdição ' + x.codigo + ' — ' + x.titulo; if (!d.ocorrencias.some(o => o.texto === t)) d.ocorrencias.push({ texto:t }); });
+  RDOO.dirty = true; rdoRender();
+}
+async function rdoSalvar(){
+  const d = RDOO.dia, b = $('rdoOk'); b.disabled = true; $('segMsg').textContent = 'Salvando…';
+  const row = { empreendimento_id:EMP.id, data:d.data, clima_manha:d.clima_manha || null, clima_tarde:d.clima_tarde || null,
+    efetivo:d.efetivo.filter(e => e.funcao && (+e.qtd || e.empresa)).map(e => Object.assign({ funcao:e.funcao, qtd:+e.qtd || 0 }, e.empresa ? { empresa:e.empresa.trim() } : {})),
+    equipamentos:d.equipamentos.filter(e => (e.nome || '').trim()).map(e => ({ nome:e.nome.trim(), qtd:+e.qtd || 1 })),
+    atividades:d.atividades.filter(t => (t.descricao || '').trim()), ocorrencias:d.ocorrencias.filter(o => (o.texto || '').trim()),
+    observacoes:(d.observacoes || '').trim() || null, fotos:d.fotos, clima_auto:d.clima_auto || null };
+  try {
+    const r = await sb.from('cde_rdo_auria').upsert(row, { onConflict:'empreendimento_id,data' }).select('id').single();
+    if (r.error) throw r.error;
+    await rdoCarregarDia(d.data); rdoRender(); $('segMsg').textContent = 'Diário salvo.';
+    try { await rdoAvisoOntem(); renderSideRight(); } catch (_){}
+  } catch (e){ $('segMsg').textContent = 'Não foi possível salvar: ' + (e.message || e); b.disabled = false; }
+}
+async function rdoFecharDia(){
+  if (RDOO.dirty){ $('segMsg').textContent = 'Salve antes de fechar o dia.'; return; }
+  if (!confirm('Fechar o diário de ' + rdoFmtD(RDOO.dia.data) + '? Depois disso só entra adendo.')) return;
+  try { const { error } = await sb.rpc('rdo_fechar', { p_id:RDOO.dia.id }); if (error) throw error; await rdoCarregarDia(RDOO.dia.data); rdoRender(); try { await rdoAvisoOntem(); renderSideRight(); } catch (_){} }
+  catch (e){ $('segMsg').textContent = e.message || e; }
+}
+async function rdoAdendo(){
+  try { const { error } = await sb.rpc('rdo_adendo', { p_id:RDOO.dia.id, p_texto:$('rdoAd').value }); if (error) throw error; await rdoCarregarDia(RDOO.dia.data); rdoRender(); }
+  catch (e){ $('segMsg').textContent = e.message || e; }
+}
+// fotos: mesmo armazenamento do diário do CDE (bucket "apontamentos", pasta rdo/)
+async function rdoFotos(files){
+  const msg = $('segMsg'); let n = 0;
+  for (const f of [...(files || [])]){
+    if (!/^image\//.test(f.type)) continue;
+    msg.textContent = 'Enviando ' + (++n) + '/' + files.length + '…';
+    try {
+      const blob = await segReduzir(f);
+      const path = 'rdo/' + EMP.id + '/' + RDOO.dia.data + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + '.jpg';
+      const up = await sb.storage.from('apontamentos').upload(path, blob, { contentType:'image/jpeg', upsert:false }); if (up.error) throw up.error;
+      RDOO.dia.fotos.push({ url:sb.storage.from('apontamentos').getPublicUrl(path).data.publicUrl, nome:f.name }); RDOO.dirty = true;
+    } catch (e){ msg.textContent = f.name + ': ' + (e.message || e); return; }
+  }
+  rdoRender(); $('segMsg').textContent = n + ' foto(s) anexada(s) — salve o diário.';
+}
+// ── clima sugerido (Open-Meteo, gratuito, sem chave) pela cidade do empreendimento ──
+function rdoClimaTxt(c){ return [c.manha && 'manhã ' + c.manha, c.tarde && 'tarde ' + c.tarde, c.tmin != null && c.tmin + '–' + c.tmax + ' °C', c.mm != null && c.mm + ' mm'].filter(Boolean).join(' · '); }
+function rdoClasse(codes, mm){
+  if (mm >= 5) return 'Chuva forte';
+  if (mm >= 0.3 || codes.some(c => c >= 51)) return 'Chuva fraca';
+  if (codes.some(c => c >= 3)) return 'Nublado';
+  return 'Bom';
+}
+async function rdoClima(){
+  const m = $('rdoClMsg'); m.textContent = ' consultando…';
+  try {
+    let cid = EMP.cidade;
+    if (!cid){ const r = await sb.from('empreendimentos_auria').select('cidade').eq('id', EMP.id).maybeSingle(); cid = r.data && r.data.cidade; }
+    if (!cid) throw new Error('o empreendimento não tem cidade cadastrada');
+    const g = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&language=pt&country=BR&name=' + encodeURIComponent(String(cid).split(/[-\/,]/)[0].trim()))).json();
+    const loc = g && g.results && g.results[0]; if (!loc) throw new Error('cidade não encontrada: ' + cid);
+    const d = RDOO.dia.data;
+    const w = await (await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + loc.latitude + '&longitude=' + loc.longitude
+      + '&hourly=weathercode,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&start_date=' + d + '&end_date=' + d)).json();
+    if (!w.hourly) throw new Error('previsão indisponível para esta data');
+    const H = w.hourly, faixa = (h0, h1) => { const ix = H.time.map((t, i) => [+t.slice(11, 13), i]).filter(([h]) => h >= h0 && h <= h1).map(([, i]) => i);
+      return rdoClasse(ix.map(i => H.weathercode[i]), ix.reduce((s, i) => s + (H.precipitation[i] || 0), 0)); };
+    const c = { manha:faixa(7, 12), tarde:faixa(13, 17), tmin:Math.round(w.daily.temperature_2m_min[0]), tmax:Math.round(w.daily.temperature_2m_max[0]),
+                mm:Math.round((w.daily.precipitation_sum[0] || 0) * 10) / 10, fonte:'Open-Meteo · ' + loc.name };
+    RDOO.dia.clima_auto = c;
+    if (!RDOO.dia.clima_manha) RDOO.dia.clima_manha = c.manha;
+    if (!RDOO.dia.clima_tarde) RDOO.dia.clima_tarde = c.tarde;
+    RDOO.dirty = true; rdoRender(); $('segMsg').textContent = 'Clima sugerido (' + loc.name + '): ' + rdoClimaTxt(c) + '. Confira e salve.';
+  } catch (e){ const x = $('rdoClMsg'); if (x) x.textContent = ' ' + (e.message || e); }
+}
+
+// ── aviso: diário de ontem aberto / sem registro ────────────────────────────
+async function rdoAvisoOntem(){
+  RDOO.ontem = null; if (!EMP || !rdoEscreve()) return;
+  let d = rdoMais(rdoHojeIso(), -1); const dw = new Date(d + 'T12:00').getDay();
+  if (dw === 0) d = rdoMais(d, -2);          // domingo → sexta
+  const { data } = await sb.from('cde_rdo_auria').select('id,fechado_em').eq('empreendimento_id', EMP.id).eq('data', d).maybeSingle();
+  if (!data) RDOO.ontem = { data:d, txt:'diário de ' + rdoFmtD(d) + ' sem registro' };
+  else if (!data.fechado_em) RDOO.ontem = { data:d, txt:'diário de ' + rdoFmtD(d) + ' ainda aberto' };
+}
+(function(){ const _c = segCarregar; segCarregar = async function(){ await _c(); try { await rdoAvisoOntem(); } catch (_){} try { renderSideRight(); } catch (_){} }; })();
+(function(){
+  const _m = obraModulosHtml;
+  obraModulosHtml = function(){
+    let h = _m(); const o = RDOO.ontem;
+    const sub = o ? o.txt : 'hoje · registros do sistema já incluídos';
+    h = h.replace(/(<button class="obra-mod)(" onclick="obraModulo\('diario'\)"[\s\S]*?<span>)abre no CDE(<\/span>)/, (m0, a, b, c) => a + (o ? ' pend' : '') + b + esc(sub) + c);
+    return h;
+  };
+  const _o = obraModulo;
+  obraModulo = function(k){ if (k === 'diario'){ rdoAbrir(RDOO.ontem ? RDOO.ontem.data : null); return; } return _o(k); };
 })();
 
 </script>
