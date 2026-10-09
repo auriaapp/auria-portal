@@ -7304,7 +7304,9 @@ async function cdePdfBytes(path, provider){
 }
 
 // ── Parser (mesmo motor da tela de padrão) ──────────────────────────────────
-function valoresDe(c){ return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
+// Campo "empreendimento": só vale o código DO EMPREENDIMENTO ABERTO (arquivo de outra obra fica fora do padrão).
+function valoresDe(c){ if(c.mapeia==='empreendimento' && EMP && EMP.codigo) return [EMP.codigo];
+  return c.dominio? c.dominio.map(d=>(typeof d==='object')?d.v:d) : null; }
 function parseCodigo(nomeArquivo){
   const base=nomeArquivo.replace(/\.[^.]+$/,''); const ext=(nomeArquivo.match(/\.([^.]+)$/)||[])[1]||'';
   const sep=CONV.separador||'-'; const campos=CONV.campos||[]; const partes=base.split(sep);
@@ -7337,11 +7339,14 @@ function guiaNomeHtml(){
   if(!CONV) return '';
   const campos=CONV.campos||[]; const sep=CONV.separador||'-'; if(!campos.length) return '';
   const ex=String(CONV.exemplo||'').replace(/\.[^.]+$/,'').split(sep);
+  const empCod=(EMP&&EMP.codigo)||'';
+  campos.forEach((c,i)=>{ if(c.mapeia==='empreendimento' && empCod) ex[i]=empCod; });   // exemplo com o código DESTE empreendimento
   const segs=campos.map((c,i)=>{ const cor=GUIA_CORES[i%GUIA_CORES.length];
     return `<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 1px"><b style="font-family:var(--mono,monospace);font-size:14px;color:${cor}">${esc(ex[i]!=null?ex[i]:'?')}</b><span style="font-size:10px;color:${cor};white-space:nowrap">${esc(c.rotulo||c.chave)}${c.obrigatorio?'':' (opc.)'}</span></span>`;
   }).join(`<b style="font-family:var(--mono,monospace);font-size:14px;color:var(--mut)">${esc(sep)}</b>`);
   const linhas=campos.map((c,i)=>{ const cor=GUIA_CORES[i%GUIA_CORES.length];
-    const vs=c.dominio? c.dominio.map(d=>typeof d==='object'
+    const vs=(c.mapeia==='empreendimento' && empCod) ? `<b style="font-family:var(--mono,monospace)">${esc(empCod)}</b> ${esc(EMP.nome||'')} <span style="opacity:.75">(este empreendimento)</span>`
+      : c.dominio? c.dominio.map(d=>typeof d==='object'
         ? `<span title="${esc(d.rotulo||'')}"><b style="font-family:var(--mono,monospace)">${esc(d.v)}</b>${d.rotulo?' '+esc(d.rotulo):''}</span>`
         : `<b style="font-family:var(--mono,monospace)">${esc(d)}</b>`).join(' · ')
       : (c.regex?`formato <code>${esc(c.regex)}</code>`:'texto livre');

@@ -2161,6 +2161,9 @@ async function cdeAbrirEmp(empId){
       const { data: st } = await sb.from('cde_status_auria').select('*').order('ordem');
       CDE_ST={}; (st||[]).forEach(function(s){ CDE_ST[s.codigo]=s; });
     }
+    if(CDE_CUR.codigo===undefined){   // código do empreendimento (guia de nomenclatura + validação)
+      try{ const re=await sb.from('empreendimentos_auria').select('codigo').eq('id',CDE_CUR.id).maybeSingle(); CDE_CUR.codigo=(re.data&&re.data.codigo)||''; }catch(_){ CDE_CUR.codigo=''; }
+    }
     const { data: c } = await sb.rpc('cde_convencao', { p_emp: CDE_CUR.id });
     CDE_CONV=(c&&c[0])||null;
   }catch(e){ CDE_CONV=null; }
@@ -2268,6 +2271,7 @@ function cdeGuiaNome(){
   const campos=CDE_CONV.campos||[]; const sep=CDE_CONV.separador||'-';
   if(!campos.length) return '';
   const ex=String(CDE_CONV.exemplo||'').replace(/\.[^.]+$/,'').split(sep);
+  campos.forEach(function(c,i){ if(c.mapeia==='empreendimento' && CDE_CUR.codigo) ex[i]=CDE_CUR.codigo; });   // exemplo com o código DESTE empreendimento
   const segs=campos.map(function(c,i){
     const cor=CDE_CORES[i%CDE_CORES.length];
     return '<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 1px">'
@@ -2276,7 +2280,8 @@ function cdeGuiaNome(){
   }).join('<b style="font-family:monospace;font-size:15px;color:#94A3B8;align-self:flex-start">'+escH(sep)+'</b>');
   const linhas=campos.map(function(c,i){
     const cor=CDE_CORES[i%CDE_CORES.length];
-    const vs=c.dominio? c.dominio.map(function(d){ return (typeof d==='object')
+    const vs=(c.mapeia==='empreendimento' && CDE_CUR.codigo) ? '<b style="font-family:monospace">'+escH(CDE_CUR.codigo)+'</b> '+escH(CDE_CUR.nome||'')+' <span style="opacity:.75">(este empreendimento)</span>'
+      : c.dominio? c.dominio.map(function(d){ return (typeof d==='object')
         ? '<span title="'+escH(d.rotulo||'')+'"><b style="font-family:monospace">'+escH(d.v)+'</b>'+(d.rotulo?' '+escH(d.rotulo):'')+'</span>'
         : '<b style="font-family:monospace">'+escH(d)+'</b>'; }).join(' · ')
       : (c.regex?'formato <code>'+escH(c.regex)+'</code>':'texto livre');
@@ -2298,7 +2303,9 @@ function cdeNomeSegs(base){
     return '<span title="'+escH(c?(c.rotulo||c.chave):'parte a mais')+'" style="font-family:monospace;'+(bom?'color:#334155':'color:#fff;background:#DC2626;border-radius:3px;padding:0 2px')+'">'+escH(p)+'</span>';
   }).join('<span style="color:#94A3B8">'+escH(sep)+'</span>');
 }
-function cdeValoresDe(c){ return c.dominio? c.dominio.map(function(d){ return (typeof d==='object')?d.v:d; }) : null; }
+// Campo "empreendimento": só vale o código DO EMPREENDIMENTO ABERTO (arquivo de outra obra fica fora do padrão).
+function cdeValoresDe(c){ if(c.mapeia==='empreendimento' && CDE_CUR && CDE_CUR.codigo) return [CDE_CUR.codigo];
+  return c.dominio? c.dominio.map(function(d){ return (typeof d==='object')?d.v:d; }) : null; }
 function cdeParse(nomeArquivo){
   const base=nomeArquivo.replace(/\.[^.]+$/,''); const ext=(nomeArquivo.match(/\.([^.]+)$/)||[])[1]||'';
   const sep=CDE_CONV.separador||'-'; const campos=CDE_CONV.campos||[]; const partes=base.split(sep);
