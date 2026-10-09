@@ -12812,8 +12812,9 @@ function rdoRender(){
   const sel = (k, v) => '<select' + dis + ' onchange="RDOO.dia.' + k + '=this.value;RDOO.dirty=true">' + RDO_CLIMAS.map(c => '<option' + (c === (v || '') ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>';
   const box = document.querySelector('#segOv .box');
   box.innerHTML = '<div class="hd rdo-hd"><div class="rdo-nav"><button class="b2" onclick="rdoIr(-1)" title="Dia anterior">‹</button>'
-      + '<div><b>Diário de obra · ' + esc(rdoFmtD(d.data)) + '</b><p><span class="seg-chip" style="--c:' + (fechado ? '#1E3A5F' : d.id ? '#B45309' : '#64748B') + '">' + (fechado ? 'Fechado' : d.id ? 'Aberto' : 'Sem registro') + '</span>'
-      + (fechado ? ' por ' + esc(d.fechado_nome || '') + ' em ' + new Date(d.fechado_em).toLocaleString('pt-BR') : d.autor_nome ? ' · ' + esc(d.autor_nome) : '') + '</p></div>'
+      + '<div><b>Diário de obra · ' + esc(rdoFmtD(d.data)) + '</b><p><span class="seg-chip" style="--c:' + (d.visto_em ? '#1E8449' : fechado ? '#1E3A5F' : d.id ? '#B45309' : '#64748B') + '">' + (d.visto_em ? 'Vistado' : fechado ? 'Fechado · aguardando visto' : d.id ? 'Aberto' : 'Sem registro') + '</span>'
+      + (fechado ? ' por ' + esc(d.fechado_nome || '') + ' em ' + new Date(d.fechado_em).toLocaleString('pt-BR') : d.autor_nome ? ' · ' + esc(d.autor_nome) : '')
+      + (d.visto_em ? ' · visto de ' + esc(d.visto_nome || '') + ' em ' + new Date(d.visto_em).toLocaleString('pt-BR') : '') + '</p></div>'
       + '<button class="b2" onclick="rdoIr(1)" title="Próximo dia"' + (d.data >= rdoHojeIso() ? ' disabled' : '') + '>›</button></div></div>'
     + '<div class="ls"><div class="seg-form rdo">'
     // registros do sistema
@@ -12865,7 +12866,8 @@ function rdoRender(){
     + '<div class="ft"><button class="b2" onclick="rdoSair()">Sair</button>'
     + (d.id ? '<button class="b2" onclick="rdoPDF()">' + OI.doc + ' PDF</button>' : '')
     + (ed ? '<button class="b1" id="rdoOk" onclick="rdoSalvar()">Salvar</button>' : '')
-    + (!fechado && d.id && rdoNivel() === 'eng_chefe' && d.data <= rdoHojeIso() ? '<button class="b2" onclick="rdoFecharDia()">Fechar o dia</button>' : '') + '</div>';
+    + (!fechado && d.id && ['eng_chefe','coord_campo'].includes(rdoNivel()) && d.data <= rdoHojeIso() ? '<button class="b2" onclick="rdoFecharDia()">Fechar o dia</button>' : '')
+    + (fechado && !d.visto_em && rdoNivel() === 'eng_chefe' ? '<button class="b1" onclick="rdoVisar()">' + OI.check + ' Dar visto</button>' : '') + '</div>';
 }
 async function rdoIr(n){
   if (RDOO.dirty && !confirm('Há alterações não salvas. Trocar de dia mesmo assim?')) return;
@@ -12902,6 +12904,12 @@ async function rdoFecharDia(){
   if (RDOO.dirty){ $('segMsg').textContent = 'Salve antes de fechar o dia.'; return; }
   if (!confirm('Fechar o diário de ' + rdoFmtD(RDOO.dia.data) + '? Depois disso só entra adendo.')) return;
   try { const { error } = await sb.rpc('rdo_fechar', { p_id:RDOO.dia.id }); if (error) throw error; await rdoCarregarDia(RDOO.dia.data); rdoRender(); try { await rdoAvisoOntem(); renderSideRight(); } catch (_){} }
+  catch (e){ $('segMsg').textContent = e.message || e; }
+}
+// D2b: visto do engenheiro chefe (confere o dia fechado pela equipe)
+async function rdoVisar(){
+  if (!confirm('Dar o visto no diário de ' + rdoFmtD(RDOO.dia.data) + '? Confirma que você conferiu o registro do dia.')) return;
+  try { const { error } = await sb.rpc('rdo_visar', { p_id:RDOO.dia.id }); if (error) throw error; await rdoCarregarDia(RDOO.dia.data); rdoRender(); $('segMsg').textContent = 'Visto registrado.'; try { renderSideRight(); } catch (_){} }
   catch (e){ $('segMsg').textContent = e.message || e; }
 }
 async function rdoAdendo(){
@@ -13006,7 +13014,8 @@ function rdoPdfHtml(d, R, L){
   });
   const ass = fechado
     ? '<div class="ass"><div><span>Fechado por</span><b>' + e(d.fechado_nome) + '</b><i>' + new Date(d.fechado_em).toLocaleString('pt-BR') + '</i></div>'
-      + (d.visto_em ? '<div><span>Visto do engenheiro chefe</span><b>' + e(d.visto_nome) + '</b><i>' + new Date(d.visto_em).toLocaleString('pt-BR') + '</i></div>' : '') + '</div>'
+      + '<div><span>Visto do engenheiro chefe</span>' + (d.visto_em ? '<b>' + e(d.visto_nome) + '</b><i>' + new Date(d.visto_em).toLocaleString('pt-BR') + '</i>' : '<b class="vz">aguardando visto</b>') + '</div></div>'
+      + (d.fechado_hash ? '<div class="hash">Código de verificação do conteúdo fechado (SHA-256): <span class="cod">' + e(String(d.fechado_hash).slice(0, 16).replace(/(.{4})(?=.)/g, '$1 ')) + '</span>' + ((d.adendos || []).length ? ' · adendos posteriores não alteram este código' : '') + '</div>' : '')
     : '';
   return '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de obra ' + e(rdoFmtD(d.data)) + '</title><style>'
     + '@page{size:A4;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{font-family:"Segoe UI",system-ui,sans-serif;color:#0F172A;margin:0;font-size:11.5px;line-height:1.45}'
@@ -13020,13 +13029,13 @@ function rdoPdfHtml(d, R, L){
     + '.g2{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}.vz{color:#94A3B8}.pre{white-space:pre-wrap}'
     + '.fotos{display:grid;grid-template-columns:1fr 1fr;gap:6px}.fotos img{width:100%;height:62mm;object-fit:cover;border:1px solid #E2E8F0;border-radius:5px;break-inside:avoid}'
     + '.ad{border-left:2px solid #E8960A;padding:3px 9px;margin-bottom:6px}.ad i{color:#64748B;font-style:normal;font-size:10px}'
-    + '.ass{display:flex;gap:14px;margin-top:20px;break-inside:avoid}.ass div{flex:1;border-top:1px solid #0F172A;padding-top:5px;display:flex;flex-direction:column}.ass span{font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.08em}.ass i{font-style:normal;font-size:10px;color:#64748B}'
+    + '.ass{display:flex;gap:14px;margin-top:20px;break-inside:avoid}.ass div{flex:1;border-top:1px solid #0F172A;padding-top:5px;display:flex;flex-direction:column}.ass span{font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.08em}.ass i{font-style:normal;font-size:10px;color:#64748B}.hash{margin-top:8px;font-size:9.5px;color:#64748B}'
     + '.foot{margin-top:18px;font-size:9.5px;color:#64748B;border-top:1px solid #E2E8F0;padding-top:5px;display:flex;justify-content:space-between}'
     + '.wm{position:fixed;top:42%;left:0;right:0;text-align:center;font-size:84px;font-weight:800;color:rgba(180,83,9,.09);transform:rotate(-24deg);letter-spacing:.12em;pointer-events:none}'
     + '</style></head><body>'
     + (fechado ? '' : '<div class="wm">RASCUNHO</div>')
     + '<div class="hd">' + (L.empresa ? '<img src="' + e(L.empresa) + '" alt="">' : '') + '<div class="t"><div class="ey">Diário de obra</div><h1>' + e(rdoFmtD(d.data)) + '</h1>'
-    + '<div class="sub">' + e(emp) + ' · <span class="st ' + (fechado ? 'f">Fechado' : 'r">Rascunho — dia não fechado') + '</span></div></div>'
+    + '<div class="sub">' + e(emp) + ' · <span class="st ' + (d.visto_em ? 'f">Fechado e vistado' : fechado ? 'f">Fechado · aguardando visto' : 'r">Rascunho — dia não fechado') + '</span></div></div>'
     + (L.emp ? '<img src="' + e(L.emp) + '" alt="">' : '') + '</div>'
     + '<h3>Clima</h3><div class="g2"><div><b>Manhã:</b> ' + e(d.clima_manha || '—') + '</div><div><b>Tarde:</b> ' + e(d.clima_tarde || '—') + '</div></div>'
     + (d.clima_auto ? '<div class="vz" style="margin-top:3px">Previsão registrada (Open-Meteo): ' + e(rdoClimaTxt(d.clima_auto)) + '</div>' : '')
