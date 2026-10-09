@@ -2285,7 +2285,7 @@ function cdeGuiaNome(){
   }).join('');
   return '<details class="cde-note" style="margin-top:10px" open><summary style="cursor:pointer;font-weight:700;color:#185FA5">Como nomear o arquivo</summary>'
     +'<div style="margin:10px 0 6px;display:flex;flex-wrap:wrap;align-items:flex-start">'+segs+'<b style="font-family:monospace;font-size:15px;color:#94A3B8">.pdf</b></div>'
-    +'<div style="font-size:11.5px;color:#64748B;margin-bottom:6px">Cada parte do nome é separada por <b style="font-family:monospace">'+escH(sep)+'</b>, sempre nesta ordem. Valores aceitos em cada parte:</div>'
+    +'<div style="font-size:11.5px;color:#64748B;margin-bottom:6px">Cada parte do nome é separada por <b style="font-family:monospace">'+escH(sep)+'</b>, sempre nesta ordem. Nome fora do padrão? Use <b>✎</b> na lista abaixo para corrigir sem renomear o arquivo no computador. Valores aceitos em cada parte:</div>'
     +'<div style="max-height:220px;overflow:auto"><table style="font-size:12px;border-collapse:collapse">'+linhas+'</table></div></details>';
 }
 // Nome do arquivo com cada parte colorida; parte errada em vermelho (usado na lista de erros).
@@ -2464,6 +2464,26 @@ async function cdeAddFiles(fileList){
   });
   cdeAvaliar();
 }
+// Renomear no envio (2026-10-09): o arquivo é regravado com o nome novo (new File,
+// sem copiar bytes); o nome original aparece ao lado para não confundir.
+function cdeRenAbrir(base){
+  const g=CDE_LOTE.find(function(x){ return x.base===base; }); if(!g) return; g._editNome=true; cdeAvaliar();
+  const el=document.querySelector('input.cdeRen[data-ren="'+CSS.escape(base)+'"]'); if(el){ el.focus(); el.select(); }
+}
+function cdeRenomear(el){
+  const velho=el.dataset.ren; const g=CDE_LOTE.find(function(x){ return x.base===velho; }); if(!g) return;
+  const novo=String(el.value||'').trim().replace(/\.[^.\s]{1,5}$/,'');
+  g._editNome=false;
+  if(!novo || novo===velho){ cdeAvaliar(); return; }
+  const arqs=g.arquivos.map(function(f){ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+    const nf=new File([f], novo+(ext?'.'+ext:''), { type:f.type, lastModified:f.lastModified });
+    nf._orig=f._orig||f.name; return nf; });
+  CDE_LOTE=CDE_LOTE.filter(function(x){ return x!==g; });
+  var dest=CDE_LOTE.find(function(x){ return x.base===novo; });
+  if(!dest){ dest={ base:novo, parse:cdeParse(arqs[0].name), arquivos:[], titulo:g.titulo, pavSel:g.pavSel, pavNA:g.pavNA }; CDE_LOTE.push(dest); }
+  arqs.forEach(function(f){ if(!dest.arquivos.some(function(a){ return a.name===f.name; })) dest.arquivos.push(f); });
+  cdeAvaliar();
+}
 function cdeLimpar(){ CDE_LOTE=[]; cdeEl('cde-prev').style.display='none'; cdeEl('cde-btn-enviar').disabled=true; cdeEl('cde-msg').textContent=''; }
 function cdeAvaliar(){
   const validos=CDE_LOTE.filter(function(g){ g.acao=cdeAcaoDoGrupo(g); return g.acao.tipo==='novo'||g.acao.tipo==='rev'; });
@@ -2475,7 +2495,12 @@ function cdeAvaliar(){
         const titRow = a.tipo==='novo'
           ? '<tr><td colspan="5" style="padding-top:0"><input class="cdeLoteTit" data-base="'+escH(g.base)+'" maxlength="90" value="'+escH(g.titulo||'')+'" placeholder="Título / resumo do conteúdo desta prancha (obrigatório, até 90 caracteres)" oninput="cdeLoteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid '+((g.titulo||'').trim()?'#d9dee6':'#E67E22')+';border-radius:7px;font-family:inherit;font-size:12.5px"></td></tr>'
           : '';
-        return '<tr><td><span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span>'+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+cdeNomeSegs(p.base)+'<br>'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
+        const origs=g.arquivos.map(function(f){ return f._orig; }).filter(function(x,i,arr){ return x && arr.indexOf(x)===i; });
+        const nomeCel = g._editNome
+          ? '<input class="cdeRen" data-ren="'+escH(g.base)+'" value="'+escH(g.base)+'" onchange="cdeRenomear(this)" onkeydown="if(event.keyCode===13)this.blur();if(event.keyCode===27){this.value=this.dataset.ren;this.blur();}" style="font-family:monospace;font-size:12px;width:100%;min-width:220px;padding:3px 6px;border:1px solid #E8960A;border-radius:6px">'
+          : '<span class="cde-cod">'+escH(p.codigoDoc||g.base)+'</span> <button class="cde-btn sec" style="padding:1px 7px;font-size:11px" title="Corrigir o nome deste arquivo no envio (o arquivo no seu computador não muda)" data-b="'+escH(g.base)+'" onclick="cdeRenAbrir(this.dataset.b)">✎</button>';
+        const origCel = origs.length ? '<div style="font-size:10.5px;color:#7A9AB8;margin-top:2px" title="Nome do arquivo no seu computador">original: '+origs.map(escH).join(', ')+'</div>' : '';
+        return '<tr><td>'+nomeCel+origCel+(a.tipo==='err'&&p.erros.length?'<div class="cde-erros">'+cdeNomeSegs(p.base)+'<br>'+escH(p.erros.join(' · '))+'</div>':'')+'</td>'
           +'<td>'+escH(p.disciplina?cdeDiscLabel(p.disciplina):'—')+'</td><td class="cde-cod">'+escH(p.revisao||'—')+'</td>'
           +'<td>'+files+'</td><td><span class="cde-badge '+a.tipo+'">'+escH(a.txt)+'</span></td></tr>'+titRow+(a.tipo==='novo'?cdePavRow(g):'');
       }).join('')+'</tbody>';

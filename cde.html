@@ -908,6 +908,7 @@
         <small>PDF, DWG, RVT, SKP, DOC… O código é lido do nome; PDF e DWG do mesmo código entram juntos.</small>
       </div>
       <input type="file" id="fileInput" multiple style="display:none" onchange="addFiles(this.files)">
+      <div id="guiaNome"></div>
       <div id="prevWrap" style="display:none;margin-top:16px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <b style="font-size:13px">Pré-visualização</b>
@@ -2162,7 +2163,7 @@ function cardFdocBim(d){
 
   if(!ifc.ifc_schema) ifcSchemaDetectar(ifc, cdeSignedUrl).then(s=>{ if(s) renderNav(); });
   const verIfc = ifc.ifc_schema ? `<span class="fanalise" style="background:rgba(26,90,150,.12);color:var(--navy,#1A5A96)" title="Versão do IFC (FILE_SCHEMA)">${esc(ifc.ifc_schema)}</span>` : '';
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}" style="flex-wrap:wrap">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}" style="flex-wrap:wrap">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
     <span class="fmeta"><span class="fc">${esc(d.codigo)}${verIfc}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
@@ -2720,7 +2721,7 @@ function cardFdocGrupo(d,gid){
   const s=d.atual?STMAP[d.atual.status]:null; const cor=s?s.cor:'#94A3B8';
   const abrir = MULTI_MODE ? `toggleMultiSel('${d.id}')` : `abrirDoc('${d.id}')`;
   const chk = MULTI_MODE ? `<input type="checkbox" class="multiChk" ${MULTI_SEL.has(d.id)?'checked':''} onclick="event.stopPropagation();toggleMultiSel('${d.id}')">` : '';
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
     <span class="fmeta"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
@@ -2804,7 +2805,7 @@ function cardFdoc(d){
   // Eng. chefe vendo o em-análise: o card abre, mas avisa que não é para executar.
   const analise = (docEmAnalise(d) ? `<span class="fanalise" title="Em análise — não liberado para execução">em análise</span>` : '')
     + (d.devUlt && d.devUlt!==d.atual ? `<span class="fanalise" title="A revisão ${esc(d.devUlt.revisao||'')} foi devolvida ao projetista — continua valendo a ${esc(d.atual.revisao||'')}">${esc(d.devUlt.revisao||'')} devolvida</span>` : '');
-  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" onclick="${abrir}">
+  return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
     <span class="fmeta"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
@@ -3412,6 +3413,7 @@ class CdeWin {
       +   '<span class="cdeWin-sub"></span>'
       +   '<span class="cdeWin-status" title="Ver o controle de revisão desta prancha"></span>'
       +   '<div class="cdeWin-btns">'
+      +     '<button class="cdeWin-btn" data-act="menu" title="Opções do arquivo (baixar, formatos, QR, revisões…)">⋮</button>'
       +     '<button class="cdeWin-btn" data-act="min" title="Minimizar">—</button>'
       +     '<button class="cdeWin-btn" data-act="max" title="Restaurar/Maximizar">◱</button>'
       +     '<button class="cdeWin-btn" data-act="close" title="Fechar">×</button>'
@@ -3696,6 +3698,7 @@ class CdeWin {
         if(a==='min') this.minimizar();
         else if(a==='max') this.toggleMax();
         else if(a==='close') this.fechar();
+        else if(a==='menu'){ if(this.DOC_SEL && !this.isFed && !this.isCmp){ focar(this); docMenuOpen(e, this.DOC_SEL.id); } }
       });
     });
     // Foca ao clicar em qualquer lugar da janela
@@ -5991,7 +5994,28 @@ function focar(w){
   WIN_STATE.list.forEach(x=> x.el.classList.toggle('act', x===w));
   atualizarToolbar();
   atualizarTaskbar();
+  navSincronizar(w);   // lista da esquerda acompanha a prancha em foco
   salvarUltimoCDE();   // registra o estado atual (disciplina + prancha aberta)
+}
+// Item 3 (2026-10-09): clicar numa prancha aberta leva a lista à disciplina dela e
+// destaca o card. Só troca o filtro se o card não estiver visível na lista atual.
+let _navSyncDoc=null;
+function navSincronizar(w){
+  try{
+    const d = w && !w.isFed && !w.isCmp ? w.DOC_SEL : null;
+    if(!d || _navSyncDoc===d.id && document.querySelector('.fdoc.sel[data-doc="'+d.id+'"]')) return;
+    _navSyncDoc=d.id;
+    if(MULTI_MODE) return;
+    let card=document.querySelector('.fdoc[data-doc="'+d.id+'"]');
+    if(!card){
+      _zeraBusca(); GRUPO_SEL=null; NAV_MODE='disc';
+      if(docEhBim(d)){ SEL_DISC='__BIM__'; FILTROS.disc.clear(); }
+      else { bimPararPoll(); SEL_DISC=null; if(d.disciplina) FILTROS.disc=new Set([d.disciplina]); }
+      renderRail();
+    } else renderNav();
+    card=document.querySelector('.fdoc[data-doc="'+d.id+'"]');
+    if(card) card.scrollIntoView({ block:'nearest' });
+  }catch(e){ console.warn('navSincronizar:', e&&e.message||e); }
 }
 
 function atualizarToolbar(){
@@ -7256,7 +7280,49 @@ function parseCodigo(nomeArquivo){
 // Ao abrir o envio, recarrega a convenção: disciplina/etapa adicionadas na gestão ou no
 // analista em OUTRA aba não eram reconhecidas até dar F5 no CDE (item 56).
 async function convRecarregar(){ try{ const { data: c } = await sb.rpc('cde_convencao', { p_emp: EMP_ID }); if(c&&c[0]) CONV=c[0]; }catch(_){} }
-function abrirReceber(){ LOTE=[]; convRecarregar(); $('prevWrap').style.display='none'; $('recMsg').textContent=''; $('progwrap').style.display='none'; $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
+// Guia de nomenclatura (mesmo do portal do projetista): exemplo da convenção quebrado
+// em partes coloridas com o nome de cada campo + valores aceitos.
+const GUIA_CORES=['#185FA5','#C2410C','#047857','#7C3AED','#B45309','#0E7490','#BE185D','#4D7C0F'];
+function guiaNomeHtml(){
+  if(!CONV) return '';
+  const campos=CONV.campos||[]; const sep=CONV.separador||'-'; if(!campos.length) return '';
+  const ex=String(CONV.exemplo||'').replace(/\.[^.]+$/,'').split(sep);
+  const segs=campos.map((c,i)=>{ const cor=GUIA_CORES[i%GUIA_CORES.length];
+    return `<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 1px"><b style="font-family:var(--mono,monospace);font-size:14px;color:${cor}">${esc(ex[i]!=null?ex[i]:'?')}</b><span style="font-size:10px;color:${cor};white-space:nowrap">${esc(c.rotulo||c.chave)}${c.obrigatorio?'':' (opc.)'}</span></span>`;
+  }).join(`<b style="font-family:var(--mono,monospace);font-size:14px;color:var(--mut)">${esc(sep)}</b>`);
+  const linhas=campos.map((c,i)=>{ const cor=GUIA_CORES[i%GUIA_CORES.length];
+    const vs=c.dominio? c.dominio.map(d=>typeof d==='object'
+        ? `<span title="${esc(d.rotulo||'')}"><b style="font-family:var(--mono,monospace)">${esc(d.v)}</b>${d.rotulo?' '+esc(d.rotulo):''}</span>`
+        : `<b style="font-family:var(--mono,monospace)">${esc(d)}</b>`).join(' · ')
+      : (c.regex?`formato <code>${esc(c.regex)}</code>`:'texto livre');
+    return `<tr><td style="color:${cor};font-weight:700;white-space:nowrap;padding:3px 10px 3px 0;vertical-align:top">${i+1}. ${esc(c.rotulo||c.chave)}</td><td style="padding:3px 0;color:var(--mut)">${vs}</td></tr>`;
+  }).join('');
+  return `<details style="margin-top:10px;font-size:12px"><summary style="cursor:pointer;font-weight:700;color:var(--navy,#1A5A96)">Como nomear o arquivo</summary>
+    <div style="margin:10px 0 6px;display:flex;flex-wrap:wrap;align-items:flex-start">${segs}<b style="font-family:var(--mono,monospace);font-size:14px;color:var(--mut)">.pdf</b></div>
+    <div style="color:var(--mut);margin-bottom:6px">Cada parte é separada por <b>${esc(sep)}</b>, sempre nesta ordem. Nome fora do padrão? Use <b>✎</b> na pré-visualização para corrigir sem renomear o arquivo no computador.</div>
+    <div style="max-height:200px;overflow:auto"><table style="border-collapse:collapse">${linhas}</table></div></details>`;
+}
+// Item 1 (2026-10-09): renomear no upload. O arquivo é regravado com o nome novo
+// (new File, sem copiar bytes); o nome original fica ao lado para não confundir.
+function loteRenomearAbrir(base){
+  const g=LOTE.find(x=>x.base===base); if(!g) return; g._editNome=true; avaliarLote();
+  const el=document.querySelector('input.loteRen[data-ren="'+CSS.escape(base)+'"]'); if(el){ el.focus(); el.select(); }
+}
+function loteRenomear(el){
+  const velho=el.dataset.ren; const g=LOTE.find(x=>x.base===velho); if(!g) return;
+  const novo=String(el.value||'').trim().replace(/\.[^.\s]{1,5}$/,'');
+  g._editNome=false;
+  if(!novo || novo===velho){ avaliarLote(); return; }
+  const arqs=g.arquivos.map(f=>{ const ext=(f.name.match(/\.([^.]+)$/)||[])[1]||'';
+    const nf=new File([f], novo+(ext?'.'+ext:''), { type:f.type, lastModified:f.lastModified });
+    nf._orig=f._orig||f.name; return nf; });
+  LOTE=LOTE.filter(x=>x!==g);
+  let dest=LOTE.find(x=>x.base===novo);
+  if(!dest){ dest={ base:novo, parse:parseCodigo(arqs[0].name), arquivos:[], titulo:g.titulo, motivo:g.motivo }; LOTE.push(dest); }
+  arqs.forEach(f=>{ if(!dest.arquivos.some(a=>a.name===f.name)) dest.arquivos.push(f); });
+  avaliarLote();
+}
+function abrirReceber(){ LOTE=[]; const gn=$('guiaNome'); if(gn) gn.innerHTML=guiaNomeHtml(); convRecarregar(); $('prevWrap').style.display='none'; $('recMsg').textContent=''; $('progwrap').style.display='none'; $('btnConfirmar').disabled=true; $('ov').classList.add('on'); }
 // item 61: (1) o "clique fora" só vale se o mouse desceu E subiu no fundo — selecionar texto
 // numa descrição e soltar fora do modal disparava click no #ov e fechava tudo; (2) com arquivos
 // no lote, fechar pede confirmação (X, Cancelar, fundo, Esc). Envio concluído passa forcar=true.
@@ -7330,7 +7396,12 @@ function avaliarLote(){
       const titRow = a.tipo==='novo'
         ? `<tr><td colspan="5" style="padding-top:0"><input class="loteTit" data-base="${esc(g.base)}" maxlength="90" value="${esc(g.titulo||'')}" placeholder="Título / resumo do conteúdo desta prancha (obrigatório, até 90 caracteres)" oninput="loteTitInput(this)" style="width:100%;padding:6px 9px;border:1.5px solid ${(g.titulo||'').trim()?'var(--line)':'#E67E22'};border-radius:7px;background:var(--panel2);color:var(--txt);font-family:inherit;font-size:12.5px"></td></tr>`
         : '';
-      return `<tr><td><div class="cod">${esc(p.codigoDoc||g.base)}</div>${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
+      const origs=[...new Set(g.arquivos.map(f=>f._orig).filter(Boolean))];
+      const nomeCel = g._editNome
+        ? `<input class="loteRen" data-ren="${esc(g.base)}" value="${esc(g.base)}" onchange="loteRenomear(this)" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.dataset.ren;this.blur();}" style="font-family:var(--mono,monospace);font-size:12px;width:100%;min-width:220px;padding:3px 6px;border:1px solid var(--accent,#E8960A);border-radius:6px">`
+        : `<div class="cod" style="display:flex;align-items:center;gap:6px">${esc(p.codigoDoc||g.base)}<button class="btn sec" style="padding:1px 7px;font-size:11px" title="Corrigir o nome deste arquivo no envio (o arquivo no seu computador não muda)" data-b="${esc(g.base)}" onclick="loteRenomearAbrir(this.dataset.b)">✎</button></div>`;
+      const origCel = origs.length ? `<div style="font-size:10.5px;color:var(--mut);margin-top:2px" title="Nome do arquivo no seu computador">original: ${origs.map(esc).join(', ')}</div>` : '';
+      return `<tr><td>${nomeCel}${origCel}${a.tipo==='err'?`<div class="erros">${esc(p.erros.join(' · '))}</div>`:''}</td>
         <td>${esc(p.disciplina?discLabel(p.disciplina):'—')}</td><td class="cod">${esc(p.revisao||'—')}</td>
         <td><div class="files">${files}</div></td><td><span class="badge ${a.tipo}">${esc(a.txt)}</span></td></tr>`+titRow+motRow;
     }).join('')+'</tbody>';
