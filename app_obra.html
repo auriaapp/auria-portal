@@ -12853,6 +12853,7 @@ function rdoRender(){
         + (fechado && rdoEscreve() ? '<textarea id="rdoAd" rows="2" placeholder="O que precisa ser acrescentado (fica registrado com seu nome e hora)"></textarea><button class="b2 mini" onclick="rdoAdendo()">Registrar adendo</button>' : '') + '</div>' : '')
     + '<div id="segMsg" class="seg-msg"></div></div></div>'
     + '<div class="ft"><button class="b2" onclick="rdoSair()">Sair</button>'
+    + (d.id ? '<button class="b2" onclick="rdoPDF()">' + OI.doc + ' PDF</button>' : '')
     + (ed ? '<button class="b1" id="rdoOk" onclick="rdoSalvar()">Salvar</button>' : '')
     + (!fechado && d.id && rdoNivel() === 'eng_chefe' && d.data <= rdoHojeIso() ? '<button class="b2" onclick="rdoFecharDia()">Fechar o dia</button>' : '') + '</div>';
 }
@@ -12969,6 +12970,73 @@ async function rdoAvisoOntem(){
   const _o = obraModulo;
   obraModulo = function(k){ if (k === 'diario'){ rdoAbrir(RDOO.ontem ? RDOO.ontem.data : null); return; } return _o(k); };
 })();
+
+// ── App Obra · DIÁRIO DE OBRA — PDF (D2a) ────────────────────────────────────
+//  Documento do dia no padrão Auria (logo do Auria + logo do empreendimento,
+//  faixa laranja, códigos mono navy). rdoPdfHtml() monta o HTML completo — o
+//  D2c reaproveita para gerar o arquivo que vai para o CDE. Dia não fechado
+//  sai com a marca RASCUNHO. Impressão: janela nova + window.print().
+function rdoPdfHtml(d, R){
+  const e = s => esc(s == null ? '' : String(s));
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const emp = EMP ? ((EMP.codigo ? EMP.codigo + ' · ' : '') + EMP.nome) : '';
+  const fechado = !!d.fechado_em, tot = (d.efetivo || []).reduce((s, x) => s + (+x.qtd || 0), 0);
+  const regs = (function(){ const g = RDOO.reg; RDOO.reg = R; try { return rdoRegLinhas(); } finally { RDOO.reg = g; } })();
+  const tab = (cab, linhas, vazio) => linhas.length
+    ? '<table><tr>' + cab.map(c => '<th' + (c[1] ? ' style="' + c[1] + '"' : '') + '>' + c[0] + '</th>').join('') + '</tr>' + linhas.join('') + '</table>'
+    : '<div class="vz">' + (vazio || '—') + '</div>';
+  // efetivo agrupado por empresa
+  const porEmp = {};
+  (d.efetivo || []).filter(x => +x.qtd).forEach(x => { const k = (x.empresa || '').trim() || 'Sem empresa informada'; (porEmp[k] = porEmp[k] || []).push(x); });
+  const efet = Object.keys(porEmp).map(k => {
+    const s = porEmp[k].reduce((a, x) => a + (+x.qtd || 0), 0);
+    return '<tr class="gr"><td>' + e(k) + '</td><td class="n">' + s + '</td></tr>' + porEmp[k].map(x => '<tr><td class="in">' + e(x.funcao) + '</td><td class="n">' + e(x.qtd) + '</td></tr>').join('');
+  });
+  const ass = fechado
+    ? '<div class="ass"><div><span>Fechado por</span><b>' + e(d.fechado_nome) + '</b><i>' + new Date(d.fechado_em).toLocaleString('pt-BR') + '</i></div>'
+      + (d.visto_em ? '<div><span>Visto do engenheiro chefe</span><b>' + e(d.visto_nome) + '</b><i>' + new Date(d.visto_em).toLocaleString('pt-BR') + '</i></div>' : '') + '</div>'
+    : '';
+  return '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de obra ' + e(rdoFmtD(d.data)) + '</title><style>'
+    + '@page{size:A4;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{font-family:"Segoe UI",system-ui,sans-serif;color:#0F172A;margin:0;font-size:11.5px;line-height:1.45}'
+    + '.hd{display:flex;align-items:center;gap:12px;border-bottom:1px solid #E2E8F0;padding-bottom:9px;position:relative}.hd:after{content:"";position:absolute;left:0;bottom:-1px;width:90px;height:2px;background:#E8960A}'
+    + '.hd img{height:34px;max-width:110px;object-fit:contain}.hd .t{flex:1}.hd .ey{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#64748B}'
+    + '.hd h1{margin:1px 0 0;font-size:17px;color:#1E3A5F}.hd .sub{font-size:11px;color:#64748B}.cod{font-family:ui-monospace,Consolas,monospace;color:#1E3A5F;font-weight:700}'
+    + '.st{display:inline-block;padding:1px 8px;border-radius:9px;font-size:10px;font-weight:700;border:1px solid}.st.f{color:#1E3A5F;border-color:#1E3A5F}.st.r{color:#B45309;border-color:#B45309}'
+    + 'h3{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#1E3A5F;margin:15px 0 6px;display:flex;align-items:center;gap:7px}h3:before{content:"";width:3px;height:11px;background:#E8960A;border-radius:2px}h3 span{color:#64748B;font-weight:600;letter-spacing:0;text-transform:none}'
+    + 'table{border-collapse:collapse;width:100%}td,th{padding:4px 6px;border-bottom:1px solid #EEF2F7;text-align:left;vertical-align:top}th{font-size:9.5px;color:#64748B;font-weight:700;text-transform:uppercase;letter-spacing:.05em}'
+    + 'td.n{text-align:right;width:60px;font-variant-numeric:tabular-nums}tr.gr td{font-weight:700;background:#F6F9FC}td.in{padding-left:18px;color:#334155}.k{font-size:9.5px;font-weight:700;color:#64748B;white-space:nowrap;width:26%}'
+    + '.g2{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}.vz{color:#94A3B8}.pre{white-space:pre-wrap}'
+    + '.fotos{display:grid;grid-template-columns:1fr 1fr;gap:6px}.fotos img{width:100%;height:62mm;object-fit:cover;border:1px solid #E2E8F0;border-radius:5px;break-inside:avoid}'
+    + '.ad{border-left:2px solid #E8960A;padding:3px 9px;margin-bottom:6px}.ad i{color:#64748B;font-style:normal;font-size:10px}'
+    + '.ass{display:flex;gap:14px;margin-top:20px;break-inside:avoid}.ass div{flex:1;border-top:1px solid #0F172A;padding-top:5px;display:flex;flex-direction:column}.ass span{font-size:9px;color:#64748B;text-transform:uppercase;letter-spacing:.08em}.ass i{font-style:normal;font-size:10px;color:#64748B}'
+    + '.foot{margin-top:18px;font-size:9.5px;color:#64748B;border-top:1px solid #E2E8F0;padding-top:5px;display:flex;justify-content:space-between}'
+    + '.wm{position:fixed;top:42%;left:0;right:0;text-align:center;font-size:84px;font-weight:800;color:rgba(180,83,9,.09);transform:rotate(-24deg);letter-spacing:.12em;pointer-events:none}'
+    + '</style></head><body>'
+    + (fechado ? '' : '<div class="wm">RASCUNHO</div>')
+    + '<div class="hd"><img src="' + base + 'logo_symbol.png" alt=""><div class="t"><div class="ey">Diário de obra</div><h1>' + e(rdoFmtD(d.data)) + '</h1>'
+    + '<div class="sub">' + e(emp) + ' · <span class="st ' + (fechado ? 'f">Fechado' : 'r">Rascunho — dia não fechado') + '</span></div></div>'
+    + (EMP && EMP.logo_url ? '<img src="' + e(EMP.logo_url) + '" alt="">' : '') + '</div>'
+    + '<h3>Clima</h3><div class="g2"><div><b>Manhã:</b> ' + e(d.clima_manha || '—') + '</div><div><b>Tarde:</b> ' + e(d.clima_tarde || '—') + '</div></div>'
+    + (d.clima_auto ? '<div class="vz" style="margin-top:3px">Previsão registrada (Open-Meteo): ' + e(rdoClimaTxt(d.clima_auto)) + '</div>' : '')
+    + '<h3>Efetivo <span>' + tot + ' pessoa(s)</span></h3>' + tab([['Empresa / função'], ['Qtd', 'text-align:right']], efet)
+    + '<h3>Equipamentos</h3>' + tab([['Equipamento'], ['Qtd', 'text-align:right']], (d.equipamentos || []).map(x => '<tr><td>' + e(x.nome) + '</td><td class="n">' + e(x.qtd) + '</td></tr>'))
+    + '<h3>Atividades executadas</h3>' + tab([['Local', 'width:18%'], ['Descrição']], (d.atividades || []).map(t => '<tr><td class="cod">' + e(t.pavimento_cod || 'Geral') + '</td><td class="pre">' + e(t.descricao) + '</td></tr>'))
+    + '<h3>Registros do sistema <span>' + regs.length + '</span></h3>' + tab([['Tipo'], ['Registro']], regs.map(([k, t]) => '<tr><td class="k">' + e(k) + '</td><td>' + e(t) + '</td></tr>'), 'Nada registrado no sistema neste dia.')
+    + '<h3>Ocorrências</h3>' + ((d.ocorrencias || []).length ? (d.ocorrencias || []).map(o => '<div class="pre" style="margin-bottom:3px">• ' + e(o.texto) + '</div>').join('') : '<div class="vz">Nenhuma.</div>')
+    + '<h3>Observações</h3><div class="pre">' + (d.observacoes ? e(d.observacoes) : '<span class="vz">—</span>') + '</div>'
+    + ((d.fotos || []).length ? '<h3>Fotos <span>' + d.fotos.length + '</span></h3><div class="fotos">' + d.fotos.map(f => '<img src="' + e(f.url) + '" alt="">').join('') + '</div>' : '')
+    + ((d.adendos || []).length ? '<h3>Adendos</h3>' + d.adendos.map(x => '<div class="ad"><b>' + e(x.por) + '</b> <i>' + new Date(x.em).toLocaleString('pt-BR') + '</i><div class="pre">' + e(x.texto) + '</div></div>').join('') : '')
+    + ass
+    + '<div class="foot"><span>Auria · Diário de obra' + (d.autor_nome ? ' · registrado por ' + e(d.autor_nome) : '') + '</span><span>Gerado em ' + new Date().toLocaleString('pt-BR') + '</span></div>'
+    + '</body></html>';
+}
+function rdoPDF(){
+  const d = RDOO.dia; if (!d) return;
+  if (RDOO.dirty && !confirm('Há alterações não salvas — o PDF sai com o que está na tela. Continuar?')) return;
+  const w = window.open('', '_blank'); if (!w){ $('segMsg').textContent = 'O navegador bloqueou a janela do PDF. Permita pop-ups para este site.'; return; }
+  const h = rdoPdfHtml(d, RDOO.reg).replace('</body>', '<script>const im=[...document.images];let p=im.filter(i=>!i.complete).length;const go=()=>setTimeout(()=>print(),300);if(!p)go();else{im.forEach(i=>{if(!i.complete)i.onload=i.onerror=()=>{if(--p<=0)go();}});setTimeout(go,8000);}<\/script></body>');
+  w.document.open(); w.document.write(h); w.document.close();
+}
 
 </script>
 <script src="auria_ajuda.js"></script>
