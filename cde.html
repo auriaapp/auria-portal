@@ -7393,6 +7393,24 @@ async function sha256(file){ try{ const buf=await file.arrayBuffer(); const h=aw
 // Upload com novas tentativas: rede instável derrubava arquivos do lote e o usuário
 // tinha de reenviar na mão. 3 tentativas (espera 1,5s e 4s); arquivo recusado pela
 // validação não é repetido.
+// Envio à prova de repetição: uma tentativa anterior pode ter criado o documento
+// ou a revisão e caído antes do fim. Reenviar reaproveita o que já existe em vez de
+// bater na chave única (empreendimento+código / documento+revisão).
+async function _cdeDocExistente(emp, codigo){
+  const r=await sb.from('cde_documento_auria').select('id').eq('empreendimento_id',emp).eq('codigo',codigo).maybeSingle();
+  return (r.data&&r.data.id)||null;
+}
+async function _cdeRevExistente(docId, revisao){
+  const r=await sb.from('cde_revisao_auria').select('id').eq('documento_id',docId).eq('revisao',revisao).maybeSingle();
+  if(!r.data) return null;
+  const ev=await sb.from('cde_evento_auria').select('id').eq('revisao_id',r.data.id).eq('acao','recebeu').limit(1);
+  return { id:r.data.id, completa:!!(ev.data&&ev.data.length) };
+}
+async function _cdeArqExiste(revId, nome){
+  const r=await sb.from('cde_arquivo_auria').select('id').eq('revisao_id',revId).eq('nome',nome).limit(1);
+  return !!(r.data&&r.data.length);
+}
+const _DUP=e=>e&&(e.code==='23505'||/duplicate key/i.test(e.message||''));
 async function _comTentativas(fn, aviso){
   const esperas=[1500,4000]; let ult;
   for(let t=0;t<=esperas.length;t++){
@@ -7429,17 +7447,25 @@ async function confirmarLote(){
         done++; prog();
       }
       let docId=g.acao.doc?g.acao.doc.id:null;
+      if(!docId) docId=await _cdeDocExistente(EMP_ID, g.parse.codigoDoc);
       if(!docId){
         const { data:d, error } = await sb.from('cde_documento_auria').insert({
           empreendimento_id:EMP_ID, codigo:g.parse.codigoDoc, titulo:(g.titulo||'').trim()||g.parse.codigoDoc,
           disciplina:g.parse.disciplina, campos:g.parse.vals, numero:g.parse.numero, local_txt:g.parse.local, criado_por:USER.id
         }).select('id').single();
-        if(error) throw error; docId=d.id;
+        if(_DUP(error)){ docId=await _cdeDocExistente(EMP_ID, g.parse.codigoDoc);
+          if(!docId) throw new Error('O código '+g.parse.codigoDoc+' já existe neste empreendimento, numa disciplina a que você não tem acesso.'); }
+        else if(error) throw error; else docId=d.id;
       }
       // 'add' reaproveita a revisão existente; senão, cria uma nova (RECEBIDO/S0).
       let revId;
       if(g.acao.tipo==='add'){ revId=g.acao.rev.id; }
       else{
+        const _ex=await _cdeRevExistente(docId, g.parse.revisao||'R00');
+        if(_ex && _ex.completa) throw new Error('A revisão '+(g.parse.revisao||'R00')+' de '+g.parse.codigoDoc+' já foi recebida — envie com nova revisão no nome.');
+        if(_ex) revId=_ex.id;   // tentativa anterior criou a revisão e caiu: completa ela
+      }
+      if(!revId){
         const _novaRev={ documento_id:docId, revisao:g.parse.revisao||'R00', estado:'RECEBIDO', status:'S0',
           recebido_em:new Date().toISOString(), criado_por:USER.id };
         if((g.motivo||'').trim()) _novaRev.motivo=(g.motivo||'').trim();   // item 110
@@ -7447,11 +7473,13 @@ async function confirmarLote(){
         // coluna nova: se o SQL do item 110 ainda não rodou, registra a revisão sem o motivo
         if(er && /motivo/i.test(er.message||'')){ delete _novaRev.motivo;
           ({ data:rev, error:er } = await sb.from('cde_revisao_auria').insert(_novaRev).select('id').single()); }
-        if(er) throw er; revId=rev.id;
+        if(_DUP(er)){ const _ex=await _cdeRevExistente(docId, g.parse.revisao||'R00'); if(_ex) revId=_ex.id; else throw er; }
+        else if(er) throw er; else revId=rev.id;
       }
       // Só um PDF é o "principal" da revisão (o que a obra abre por padrão).
       let temPdf=(g.acao.rev&&(g.acao.rev.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf'));
       for(const { f, path, prov } of subidos){
+        if(await _cdeArqExiste(revId, f.name)) continue;
         const el=((f.name.match(/\.([^.]+)$/)||[])[1]||'').toLowerCase();
         const ehPdf = el==='pdf' && !temPdf; if(el==='pdf') temPdf=true;
         const hash=(f.size<10*1024*1024?await sha256(f):null);
