@@ -299,9 +299,39 @@ async function abrir3D(fragUrl, jaAberto){
   }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 
+// ── QR do MODELO FEDERADO (?f=token): só os modelos com revisão LIBERADA ──
+async function bootFed(t){
+  let r;
+  try{
+    const resp=await fetch(SB_URL+'/functions/v1/qr-view', { method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey':SB_ANON, 'Authorization':'Bearer '+SB_ANON }, body:JSON.stringify({ fed:t }) });
+    r=await resp.json(); if(!resp.ok||r.error) throw new Error(r&&r.error||('HTTP '+resp.status));
+  }catch(e){ msg('<div class="big">⚠</div><div>Não foi possível abrir o modelo federado.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); return; }
+  DADOS=r; $('tCod').textContent='🧩 '+(r.fed.nome||'Modelo federado');
+  $('tSub').textContent=[r.fed.empreendimento, (r.modelos||[]).length+' modelo(s) liberado(s)'].filter(Boolean).join(' · ');
+  document.title='Auria — '+(r.fed.nome||'modelo federado');
+  const faltam=r.faltam||[];
+  if(faltam.length || r.hasNewerUnreleased){
+    const b=$('banner'); b.style.display='block';
+    b.innerHTML = (faltam.length ? '⚠ <b>'+faltam.length+' de '+(faltam.length+(r.modelos||[]).length)+' modelo(s) fora desta vista</b> (ainda não liberados para a obra): '+faltam.map(x=>esc(x.codigo)).join(', ')+'. ' : '')
+      + (r.hasNewerUnreleased ? 'Há versão mais atual ainda não liberada em algum modelo. ' : '')
+      + '<b>Contatar a coordenação de projeto.</b>';
+  }
+  if(!(r.modelos||[]).length){ msg('<div class="big">🔒</div><div><b>Nenhum modelo desta federação está liberado</b> para a obra ainda.<br>Contatar a coordenação de projeto.</div>'); return; }
+  try{
+    carregando('Carregando '+r.modelos.length+' modelo(s)…');
+    if(!B3) B3=await import('./bim3d.js');
+    if(!F3D) F3D=await B3.criar($('bim'), { fundo:0x20262f, on:{} });
+    await B3.carregar(F3D, r.modelos.map((m,i)=>({ nome:m.codigo+(m.revisao?' '+m.revisao:''), id:'qrf'+i, arquivoId:'qrf'+i, url:()=>m.frag })), txt=>carregando(txt));
+    $('bim').style.display='block'; hideMsg(); cvBase.style.display='none'; paperEl.style.display='none'; pinsEl.style.display='none';
+  }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
+}
+
 // ── Boot ──
 function token(){ const u=new URLSearchParams(location.search); return (u.get('p')||u.get('token')||'').trim(); }
 async function boot(){
+  const tf=(new URLSearchParams(location.search).get('f')||'').trim();
+  if(tf) return bootFed(tf);
   const t=token(); if(!t){ msg('<div class="big">🔗</div><div>Link inválido — sem código da prancha.</div>'); return; }
   let r;
   try{

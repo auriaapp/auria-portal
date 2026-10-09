@@ -2183,7 +2183,7 @@ function cardFed(f){
       <span class="fc">🧩 ${esc(f.nome)}</span>
       <span class="fcomp" title="${esc(nomes.join(', '))}">${f.n_componentes} modelo(s)${faltam>0?(' · '+faltam+' sem 3D pronto'):''}${f.criado_por_nome?(' · '+esc(f.criado_por_nome)):''}</span>
     </span>
-    ${SEM_ESCRITA?'':`<button class="fkebab" title="Renomear ou remover" onclick="fedMenu(event,'${f.id}')">⋮</button>`}
+    ${(SEM_ESCRITA && !RAMO_OBRA)?'':`<button class="fkebab" title="QR do modelo federado${SEM_ESCRITA?'':', renomear ou remover'}" onclick="fedMenu(event,'${f.id}')">⋮</button>`}
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">
       <button class="btn sec sm" onclick="abrirFedSalva('${f.id}')">👁 Abrir federado</button>
       ${SEM_ESCRITA?'':`<button class="btn sec sm" onclick="fedEditar('${f.id}')" title="Trocar os modelos que compõem esta federação">✎ Compor</button>`}
@@ -2228,8 +2228,35 @@ function fedEditar(fid){
   renderNav();
   _cdeToast('Marque os modelos desta federação e clique em "Salvar federação".');
 }
+// ⋮ do card 🧩: QR do modelo federado (coordenação e obra) + renomear/remover (coordenação).
 function fedMenu(ev, fid){
   ev.stopPropagation();
+  const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc==='fed:'+fid;
+  docMenuClose(); if(reabrir) return;
+  const rows=[
+    `<button onclick="docMenuClose();fedQr('${fid}','img')"><span class="mi">▦</span>Baixar QR (cartaz A4)</button>`,
+    `<button onclick="docMenuClose();fedQr('${fid}','link')"><span class="mi">🔗</span>Copiar link público</button>`];
+  if(!SEM_ESCRITA) rows.push('<div class="dm-sep"></div>', `<button onclick="docMenuClose();fedRenomear('${fid}')"><span class="mi">✎</span>Renomear ou remover</button>`);
+  const m=document.createElement('div'); m.className='docmenu'; m._doc='fed:'+fid; m.innerHTML=rows.join('');
+  document.body.appendChild(m);
+  const r=ev.currentTarget.getBoundingClientRect(), w=210, h=m.offsetHeight;
+  let left=r.right-w; if(left<8) left=8;
+  let top=r.bottom+5; if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-5);
+  m.style.left=left+'px'; m.style.top=top+'px';
+  DOC_MENU_EL=m;
+}
+// QR do federado: a página pública v.html?f=… mostra só os modelos com revisão LIBERADA.
+async function fedQr(fid, modo){
+  const f=FEDS.find(x=>x.id===fid); if(!f) return;
+  const r=await sb.from('cde_federacao_auria').select('qr_token').eq('id',fid).maybeSingle();
+  const tok=r.data&&r.data.qr_token;
+  if(!tok){ alert('Esta federação ainda não tem código de QR (rode supabase_qr_federacao.sql).'); return; }
+  const url=location.origin+'/v.html?f='+tok;
+  if(modo==='link'){ try{ await navigator.clipboard.writeText(url); alert('Link copiado: '+url); }catch(_){ prompt('Copie o link:', url); } return; }
+  baixarQrImagem(null, { codigo:'🧩 '+f.nome, titulo:(f.n_componentes||0)+' modelo(s) federado(s)', disc:'Modelo federado', url,
+    rodape:'Escaneie para ver os modelos liberados para a obra.', arquivo:'federado_'+String(f.nome||'').replace(/[^\w-]+/g,'_') });
+}
+function fedRenomear(fid){
   const f=FEDS.find(x=>x.id===fid); if(!f) return;
   const o=prompt('Nome da federação (apague o texto para REMOVER):', f.nome);
   if(o===null) return;
@@ -2977,15 +3004,16 @@ async function baixarPranchaComQr(docId){
 // Cartaz A4 (retrato) do QR — a obra imprime e afixa por pavimento. Topo: logo
 // COMPLETA do Auria + disciplina + código (sem revisão); abaixo, o QR grande
 // (com o símbolo no centro). 200 DPI (1654×2339) p/ impressão nítida.
-async function baixarQrImagem(docId){
-  const d=DOCS.find(x=>x.id===docId); if(!d) return;
-  if(!d.qr_token){ alert('Esta prancha ainda não tem token de QR.'); return; }
-  const url=location.origin+'/v.html?p='+d.qr_token, tit=document.title;
+async function baixarQrImagem(docId, alt){
+  // alt = cartaz de outra coisa que não a prancha (ex.: modelo federado): { codigo, titulo, disc, url, rodape, arquivo }
+  const d=alt || DOCS.find(x=>x.id===docId); if(!d) return;
+  if(!alt && !d.qr_token){ alert('Esta prancha ainda não tem token de QR.'); return; }
+  const url=alt ? alt.url : location.origin+'/v.html?p='+d.qr_token, tit=document.title;
   const FONT='system-ui,Segoe UI,Roboto,Arial,sans-serif';
   try{
     document.title='⏳ Gerando QR…';
     const W=1654, H=2339, ACC='#e8960a', NAVY='#152036', SLATE='#475569', MUT='#94a3b8';
-    const disc=discLabel(d.disciplina)||d.disciplina||'', cod=d.codigo||'';
+    const disc=alt ? (alt.disc||'') : (discLabel(d.disciplina)||d.disciplina||''), cod=d.codigo||'';
     const out=document.createElement('canvas'); out.width=W; out.height=H;
     const ctx=out.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
     // moldura de recorte
@@ -3042,8 +3070,8 @@ async function baixarQrImagem(docId){
     ctx.drawImage(qr,X,y,qrSide,qrSide); y+=qrSide+panelPad+gE;
     // rodapé
     ctx.fillStyle=MUT; ctx.font='500 '+footF+'px '+FONT;
-    ctx.fillText('Escaneie para ver a última revisão liberada para a obra.', W/2, y);
-    out.toBlob(b=>{ if(b) _baixarBlob(b,(d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
+    ctx.fillText((alt&&alt.rodape)||'Escaneie para ver a última revisão liberada para a obra.', W/2, y);
+    out.toBlob(b=>{ if(b) _baixarBlob(b,((alt&&alt.arquivo)||d.codigo||'prancha')+'_QR_A4.png'); }, 'image/png');
   }catch(e){ alert('Não foi possível gerar o QR: '+((e&&e.message)||e)); console.warn('qrimg',e); }
   finally{ document.title=tit; }
 }
