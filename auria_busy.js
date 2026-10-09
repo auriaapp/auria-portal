@@ -205,3 +205,94 @@
     }
   }, true);
 })();
+
+/* ============================================================================
+ *  Mídia PRIVADA (2026-10-09). O bucket `apontamentos` (prints de apontamento,
+ *  anexos, fotos do Diário) deixou de ser público. Os registros antigos guardam o
+ *  link /object/public/apontamentos/<caminho>, que agora não abre sem login. Em
+ *  vez de reescrever banco e telas, este bloco troca o link na hora por um link
+ *  ASSINADO (1 h) com a sessão do usuário — no <img>/<a> que entra na página, em
+ *  new Image().src e em fetch(). Sem sessão (página pública), o link fica como
+ *  está e simplesmente não abre — é o objetivo.
+ *  AuriaMidia.assinarTexto(html) serve a quem monta HTML para outra janela/impressão.
+ * ========================================================================== */
+(function(){
+  if (window.AuriaMidia) return;
+  var URL_SB = 'https://sabzccokueowpromwxdg.supabase.co';
+  var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+  var RX = /https?:\/\/[^"'\s)]*\/storage\/v1\/object\/public\/apontamentos\/([^"'\s?#)]+)/;
+  var RXG = new RegExp(RX.source, 'g');
+  var fetchBase = window.fetch;
+  var cache = {}, pend = {}, fila = [], timer = null;
+
+  function sessao(){
+    try { var s = JSON.parse(localStorage.getItem('sb-sabzccokueowpromwxdg-auth-token') || 'null');
+          return (s && (s.access_token || (s.currentSession && s.currentSession.access_token))) || null; }
+    catch(_) { return null; }
+  }
+  function caminho(u){ var m = RX.exec(String(u || '')); if (!m) return null; try { return decodeURIComponent(m[1]); } catch(_) { return m[1]; } }
+  function despachar(){
+    timer = null;
+    var lote = fila.splice(0, 100); if (!lote.length) return;
+    var tk = sessao();
+    var resolver = function(mapa){ lote.forEach(function(p){ var d = pend[p]; delete pend[p];
+      var u = mapa && mapa[p]; if (u) cache[p] = { url: u, exp: Date.now() + 50*60*1000 };
+      if (d) d.res(u || null); }); };
+    if (!tk) { resolver(null); return; }
+    fetchBase.call(window, URL_SB + '/storage/v1/object/sign/apontamentos', { method: 'POST',
+      headers: { 'apikey': ANON, 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expiresIn: 3600, paths: lote }) })
+      .then(function(r){ return r.ok ? r.json() : []; })
+      .then(function(arr){ var m = {}; (arr || []).forEach(function(x){ if (x && x.signedURL && x.path) m[x.path] = URL_SB + '/storage/v1' + x.signedURL; }); resolver(m); })
+      .catch(function(){ resolver(null); });
+    if (fila.length) timer = setTimeout(despachar, 0);
+  }
+  // → Promise<string|null> (null = sem sessão/sem permissão)
+  function assinar(p){
+    var c = cache[p]; if (c && c.exp > Date.now()) return Promise.resolve(c.url);
+    if (pend[p]) return pend[p].p;
+    var d = {}; d.p = new Promise(function(res){ d.res = res; }); pend[p] = d; fila.push(p);
+    if (!timer) timer = setTimeout(despachar, 30);
+    return d.p;
+  }
+  function urlFinal(u){ var p = caminho(u); return p ? assinar(p).then(function(s){ return s || u; }) : Promise.resolve(u); }
+
+  window.AuriaMidia = {
+    url: urlFinal,
+    assinarTexto: function(txt){
+      txt = String(txt || ''); var achados = txt.match(RXG); if (!achados) return Promise.resolve(txt);
+      var unicos = achados.filter(function(x, i){ return achados.indexOf(x) === i; });
+      return Promise.all(unicos.map(urlFinal)).then(function(novos){
+        unicos.forEach(function(v, i){ if (novos[i] !== v) txt = txt.split(v).join(novos[i].replace(/&/g, '&amp;')); });
+        return txt; });
+    }
+  };
+
+  // fetch(url pública) → fetch(url assinada)
+  window.fetch = function(rec, opts){
+    var u = typeof rec === 'string' ? rec : (rec && rec.url);
+    if (!caminho(u)) return fetchBase.apply(this, arguments);
+    var self = this;
+    return urlFinal(u).then(function(s){ return fetchBase.call(self, s, opts); });
+  };
+  // new Image().src = url pública (canvas, PDF, export)
+  try {
+    var dsc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (dsc && dsc.set) Object.defineProperty(HTMLImageElement.prototype, 'src', { configurable: true, enumerable: dsc.enumerable,
+      get: dsc.get, set: function(v){ var el = this; if (!caminho(v)) return dsc.set.call(el, v);
+        urlFinal(v).then(function(s){ dsc.set.call(el, s); }); } });
+  } catch(_) {}
+  // <img>/<a> que entram por innerHTML
+  function trocar(el){
+    var at = el.tagName === 'A' ? 'href' : 'src', v = el.getAttribute(at);
+    if (!caminho(v)) return;
+    urlFinal(v).then(function(s){ if (s !== v && el.getAttribute(at) === v) el.setAttribute(at, s); });
+  }
+  var SEL = 'img[src*="/object/public/apontamentos/"],a[href*="/object/public/apontamentos/"]';
+  function varrer(n){ if (!n || n.nodeType !== 1) return; if (n.matches && n.matches(SEL)) trocar(n); if (n.querySelectorAll) n.querySelectorAll(SEL).forEach(trocar); }
+  try {
+    new MutationObserver(function(ms){ ms.forEach(function(m){
+      if (m.type === 'attributes') varrer(m.target); else m.addedNodes.forEach(varrer); }); })
+      .observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src','href'] });
+  } catch(_) {}
+})();
