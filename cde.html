@@ -595,7 +595,7 @@
   .docmenu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:var(--txt);
                   font-family:inherit;font-size:12.5px;font-weight:600;text-align:left;padding:8px 10px;border-radius:7px;cursor:pointer}
   .docmenu button:hover{background:var(--panel2)}
-  .docmenu .mi{width:16px;text-align:center;font-size:12px}
+  .docmenu .mi{width:16px;text-align:center;font-size:12px;display:inline-flex;justify-content:center;color:var(--navy)}
   .docmenu .dm-sep{height:1px;background:var(--line);margin:4px 6px}
   .docmenu .dm-empty{font-size:11.5px;color:var(--mut);padding:6px 10px}
   /* Elo B — vinculação assistida de prancha legada */
@@ -2861,6 +2861,15 @@ async function editarTituloDoc(id){
     d.titulo=t; renderNav(); if(DOC_SEL&&DOC_SEL.id===id){ DOC_SEL.titulo=t; renderDetalhe&&renderDetalhe(); }
   }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para editar a descrição.':'Erro: '+m); }
 }
+// Ícones de linha do menu ⋮ (mesmo traço dos de QR/vínculo — sem emoji, sem seta solta).
+const DM_IC=(()=>{ const sv=p=>'<svg class="ci" viewBox="0 0 20 20" aria-hidden="true">'+p+'</svg>'; return {
+  baixar: sv('<path d="M10 3.4v8.8"/><path d="M6.4 8.8 10 12.4l3.6-3.6"/><path d="M3.6 12.8v2.4a1.2 1.2 0 0 0 1.2 1.2h10.4a1.2 1.2 0 0 0 1.2-1.2v-2.4"/>'),
+  ver:    sv('<path d="M1.8 10s3-5.4 8.2-5.4 8.2 5.4 8.2 5.4-3 5.4-8.2 5.4S1.8 10 1.8 10z"/><circle cx="10" cy="10" r="2.4"/>'),
+  app:    sv('<circle cx="8.6" cy="8.6" r="5"/><path d="m12.4 12.4 4.2 4.2"/>'),
+  cubo:   sv('<path d="M10 2.6 16.6 6.3v7.4L10 17.4 3.4 13.7V6.3z"/><path d="M3.4 6.3 10 10l6.6-3.7M10 10v7.4"/>'),
+  cmp:    sv('<path d="M3.6 7h11.6l-3-3"/><path d="M16.4 13H4.8l3 3"/>'),
+  editar: sv('<path d="M13.4 3.6 16.4 6.6 7.2 15.8l-3.8.8.8-3.8z"/><path d="m11.8 5.2 3 3"/>'),
+  rev:    sv('<circle cx="10" cy="10" r="7"/><path d="M10 6v4.2l2.8 1.8"/>') }; })();
 function docMenuOpen(ev,id){
   ev.stopPropagation();
   const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc===id;
@@ -2871,11 +2880,13 @@ function docMenuOpen(ev,id){
   // Ramo obra só BAIXA o liberado (Camada 3): numa revisão em análise o eng.
   // chefe abre, mas o "Baixar" nem aparece. Abrir (👁) continua.
   const baixavel = statusBaixavel(d.atual ? d.atual.status : null);
-  FMT_ORDER.filter(e=>byExt[e]).forEach(e=>{ const view=(e==='pdf'||e==='dxf');
-    if(!view && !baixavel) return;
-    rows.push(`<button onclick="docMenuAct('${id}','${e}','${view?'view':'down'}')"><span class="mi">${view?'👁':'⬇'}</span>${view?'Abrir':'Baixar'} ${e.toUpperCase()}</button>`);
+  // Clicar no card já abre a prancha (PDF): o menu só BAIXA. DXF continua com "Abrir"
+  // (o card abre o PDF) — e também baixa, quando permitido.
+  FMT_ORDER.filter(e=>byExt[e]).forEach(e=>{
+    if(e==='dxf') rows.push(`<button onclick="docMenuAct('${id}','dxf','view')"><span class="mi">${DM_IC.ver}</span>Abrir DXF</button>`);
+    if(baixavel) rows.push(`<button onclick="docMenuAct('${id}','${e}','down')"><span class="mi">${DM_IC.baixar}</span>Baixar ${e.toUpperCase()}</button>`);
   });
-  if(!rows.length) rows.push('<div class="dm-empty">Sem arquivos nesta revisão</div>');
+  if(!rows.length) rows.push(`<div class="dm-empty">${Object.keys(byExt).length?'Download só depois da liberação para a obra':'Sem arquivos nesta revisão'}</div>`);
   // QR: obra (qualquer nível) e coordenação. Setor é consulta — não afixa QR.
   if(d.qr_token && (RAMO_OBRA || !SEM_ESCRITA) && baixavel){
     rows.push('<div class="dm-sep"></div>');
@@ -2884,26 +2895,26 @@ function docMenuOpen(ev,id){
   }
   if(byExt.pdf && !SEM_ESCRITA){
     rows.push('<div class="dm-sep"></div>');
-    rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">🔍</span>Analisar no App</button>`);
+    rows.push(`<button onclick="docMenuAct('${id}','','app')"><span class="mi">${DM_IC.app}</span>Analisar no App</button>`);
   }
   // Mesmo caminho da prancha 2D, agora para o modelo: quem analisa é o App.
   // Só aparece com a conversão pronta — sem .frag não há o que abrir lá.
   if(byExt.ifc && !SEM_ESCRITA && byExt.ifc.frag_status==='pronto'){
     if(!byExt.pdf) rows.push('<div class="dm-sep"></div>');
-    rows.push(`<button onclick="docMenuAct('${id}','','appbim')"><span class="mi">🧊</span>Analisar no App (3D)</button>`);
+    rows.push(`<button onclick="docMenuAct('${id}','','appbim')"><span class="mi">${DM_IC.cubo}</span>Analisar no App (3D)</button>`);
   }
   const revsComPdf=((d.revs)||[]).filter(r=>(r.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf')).length;
   if(revsComPdf>=2){
     rows.push('<div class="dm-sep"></div>');
-    rows.push(`<button onclick="docMenuAct('${id}','','cmp')"><span class="mi">⇄</span>Comparar revisões</button>`);
+    rows.push(`<button onclick="docMenuAct('${id}','','cmp')"><span class="mi">${DM_IC.cmp}</span>Comparar revisões</button>`);
   }
   if(!CDE_LINKED_DOCS.has(id) && !SEM_ESCRITA){
     rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','link')"><span class="mi"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.4 11.6a3.4 3.4 0 0 0 5 .4l2.2-2.2a3.4 3.4 0 0 0-4.8-4.8l-1.3 1.2"/><path d="M11.6 8.4a3.4 3.4 0 0 0-5-.4L4.4 10.2a3.4 3.4 0 0 0 4.8 4.8l1.3-1.2"/></svg></span>Vincular apontamentos existentes</button>`);
   }
   rows.push('<div class="dm-sep"></div>');
-  if(!SEM_ESCRITA) rows.push(`<button onclick="docMenuAct('${id}','','titulo')"><span class="mi">✎</span>Editar descrição (título)</button>`);   // item 64
-  rows.push(`<button onclick="docMenuAct('${id}','','rev')"><span class="mi">🕓</span>Controle de revisão</button>`);
+  if(!SEM_ESCRITA) rows.push(`<button onclick="docMenuAct('${id}','','titulo')"><span class="mi">${DM_IC.editar}</span>Editar descrição (título)</button>`);   // item 64
+  rows.push(`<button onclick="docMenuAct('${id}','','rev')"><span class="mi">${DM_IC.rev}</span>Controle de revisão</button>`);
   const m=document.createElement('div'); m.className='docmenu'; m._doc=id; m.innerHTML=rows.join('');
   document.body.appendChild(m);
   const r=ev.currentTarget.getBoundingClientRect(), w=210, h=m.offsetHeight;
