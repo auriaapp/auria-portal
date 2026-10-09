@@ -13011,7 +13011,7 @@ function rdoPdfHtml(d, R, L){
   return '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de obra ' + e(rdoFmtD(d.data)) + '</title><style>'
     + '@page{size:A4;margin:14mm 13mm 16mm}*{box-sizing:border-box}body{font-family:"Segoe UI",system-ui,sans-serif;color:#0F172A;margin:0;font-size:11.5px;line-height:1.45}'
     + '.hd{display:flex;align-items:center;gap:12px;border-bottom:1px solid #E2E8F0;padding-bottom:9px;position:relative}.hd:after{content:"";position:absolute;left:0;bottom:-1px;width:90px;height:2px;background:#E8960A}'
-    + '.hd img{height:40px;max-width:130px;object-fit:contain}.hd .t{flex:1}.hd .ey{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#64748B}'
+    + '.hd img{flex:none;height:48px;max-width:190px;object-fit:contain}.hd .t{flex:1}.hd .ey{font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#64748B}'
     + '.hd h1{margin:1px 0 0;font-size:17px;color:#1E3A5F}.hd .sub{font-size:11px;color:#64748B}.cod{font-family:ui-monospace,Consolas,monospace;color:#1E3A5F;font-weight:700}'
     + '.st{display:inline-block;padding:1px 8px;border-radius:9px;font-size:10px;font-weight:700;border:1px solid}.st.f{color:#1E3A5F;border-color:#1E3A5F}.st.r{color:#B45309;border-color:#B45309}'
     + 'h3{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#1E3A5F;margin:15px 0 6px;display:flex;align-items:center;gap:7px}h3:before{content:"";width:3px;height:11px;background:#E8960A;border-radius:2px}h3 span{color:#64748B;font-weight:600;letter-spacing:0;text-transform:none}'
@@ -13042,6 +13042,27 @@ function rdoPdfHtml(d, R, L){
     + '<div class="foot"><span><img src="' + base + 'logo_symbol.png" alt="" style="height:11px;vertical-align:-2px;margin-right:4px">Auria · Diário de obra' + (d.autor_nome ? ' · registrado por ' + e(d.autor_nome) : '') + '</span><span>Gerado em ' + new Date().toLocaleString('pt-BR') + '</span></div>'
     + '</body></html>';
 }
+// As logos são salvas num QUADRADO com margem branca (recortador) — no PDF elas
+// encolhem. Corta a margem branca/transparente e devolve dataURL (serve também
+// para o arquivo do D2c). Falha (CORS etc.) → URL original.
+function rdoLogoCortada(url){
+  if (!url) return Promise.resolve('');
+  return new Promise(ok => {
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => { try {
+      const w = im.naturalWidth, h = im.naturalHeight, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); const d = cx.getImageData(0, 0, w, h).data;
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){ const i = (y * w + x) * 4;
+        if (d[i + 3] < 20 || (d[i] > 237 && d[i + 1] > 237 && d[i + 2] > 237)) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) return ok(url);
+      const p = 2, cw = x1 - x0 + 1 + 2 * p, ch = y1 - y0 + 1 + 2 * p, c2 = document.createElement('canvas'); c2.width = cw; c2.height = ch;
+      c2.getContext('2d').drawImage(cv, x0 - p, y0 - p, cw, ch, 0, 0, cw, ch); ok(c2.toDataURL('image/png'));
+    } catch (_){ ok(url); } };
+    im.onerror = () => ok(url); im.src = url + (url.includes('?') ? '&' : '?') + 'c=1';
+  });
+}
 // logos: empreendimento (EMP.logo_url) e empresa (construtora do empreendimento; sem ela, o grupo)
 async function rdoLogos(){
   if (RDOO.logos && RDOO.logos.id === EMP.id) return RDOO.logos;
@@ -13052,6 +13073,7 @@ async function rdoLogos(){
     if (x.construtora_id){ const c = await sb.from('construtoras_auria').select('logo_url').eq('id', x.construtora_id).maybeSingle(); L.empresa = (c.data && c.data.logo_url) || ''; }
     if (!L.empresa && x.empresa_id){ const g = await sb.from('empresas_auria').select('logo_url').eq('id', x.empresa_id).maybeSingle(); L.empresa = (g.data && g.data.logo_url) || ''; }
   } catch (_){}
+  [L.emp, L.empresa] = await Promise.all([rdoLogoCortada(L.emp), rdoLogoCortada(L.empresa)]);
   return (RDOO.logos = L);
 }
 async function rdoPDF(){
