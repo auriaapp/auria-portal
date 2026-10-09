@@ -7401,10 +7401,11 @@ async function _cdeDocExistente(emp, codigo){
   return (r.data&&r.data.id)||null;
 }
 async function _cdeRevExistente(docId, revisao){
-  const r=await sb.from('cde_revisao_auria').select('id').eq('documento_id',docId).eq('revisao',revisao).maybeSingle();
+  const r=await sb.from('cde_revisao_auria').select('id,criado_por').eq('documento_id',docId).eq('revisao',revisao).maybeSingle();
   if(!r.data) return null;
   const ev=await sb.from('cde_evento_auria').select('id').eq('revisao_id',r.data.id).eq('acao','recebeu').limit(1);
-  return { id:r.data.id, completa:!!(ev.data&&ev.data.length) };
+  // sem leitura do evento (RLS), na dúvida trata como completa — nunca sobrescrever
+  return { id:r.data.id, autor:r.data.criado_por, completa:!!(ev.error || (ev.data&&ev.data.length)) };
 }
 async function _cdeArqExiste(revId, nome){
   const r=await sb.from('cde_arquivo_auria').select('id').eq('revisao_id',revId).eq('nome',nome).limit(1);
@@ -7432,6 +7433,15 @@ async function confirmarLote(){
     try{
       // 1º sobem TODOS os arquivos do grupo (com novas tentativas); só então o banco
       // ganha documento/revisão — falha no meio não deixa registro pela metade.
+      // Trava ANTES de subir qualquer byte: o R2 sobrescreve no mesmo caminho, então
+      // reenviar por engano uma revisão já recebida trocaria o arquivo correto.
+      // Só se completa revisão que o PRÓPRIO usuário deixou pela metade.
+      if(g.acao.tipo!=='add'){
+        const _d0=g.acao.doc?g.acao.doc.id:await _cdeDocExistente(EMP_ID, g.parse.codigoDoc);
+        const _r0=_d0?await _cdeRevExistente(_d0, g.parse.revisao||'R00'):null;
+        if(_r0 && (_r0.completa || _r0.autor!==USER.id))
+          throw new Error('A revisão '+(g.parse.revisao||'R00')+' de '+g.parse.codigoDoc+' já existe no CDE — nada foi enviado. Para substituir, envie com nova revisão no nome.');
+      }
       const subidos=[];
       for(const f of g._upload){
         const prov = provedorPara(f.name, f.size);
@@ -7462,7 +7472,7 @@ async function confirmarLote(){
       if(g.acao.tipo==='add'){ revId=g.acao.rev.id; }
       else{
         const _ex=await _cdeRevExistente(docId, g.parse.revisao||'R00');
-        if(_ex && _ex.completa) throw new Error('A revisão '+(g.parse.revisao||'R00')+' de '+g.parse.codigoDoc+' já foi recebida — envie com nova revisão no nome.');
+        if(_ex && (_ex.completa || _ex.autor!==USER.id)) throw new Error('A revisão '+(g.parse.revisao||'R00')+' de '+g.parse.codigoDoc+' já foi recebida — envie com nova revisão no nome.');
         if(_ex) revId=_ex.id;   // tentativa anterior criou a revisão e caiu: completa ela
       }
       if(!revId){
