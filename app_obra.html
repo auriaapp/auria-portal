@@ -13092,6 +13092,107 @@ async function rdoPDF(){
   w.document.open(); w.document.write(h); w.document.close();
 }
 
+// ── App Obra · DIÁRIO DE OBRA — ARQUIVAR NO CDE (D2c) ────────────────────────
+//  Dia fechado + vistado → gera o PDF (arquivo, não impressão) e grava no CDE
+//  pela função rdo_arquivar: código <EMP>-OBR-RDO-AAAAMMDD (editável na 1ª
+//  vez), disciplina OBR, grupo "Diário de obra", revisão PUBLICADO/A1. Adendo
+//  depois do visto → nova revisão (R01…). Arquivo no R2 em <emp>/_diario/<rdo>/.
+//  PDF: o HTML do rdoPdfHtml num iframe oculto → html2canvas → jsPDF, quebrando
+//  as páginas entre blocos (linha de tabela, foto, título) para não cortar texto.
+const RDO_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+                  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'];
+let _rdoLibs = null;
+function rdoCarregarLibs(){
+  if (window.html2canvas && window.jspdf) return Promise.resolve();
+  return _rdoLibs || (_rdoLibs = RDO_LIBS.reduce((p, src) => p.then(() => new Promise((ok, err) => {
+    const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => err(new Error('não foi possível carregar o gerador de PDF')); document.head.appendChild(s);
+  })), Promise.resolve()));
+}
+function rdoCodigoSugerido(d){ return ((EMP && EMP.codigo) || 'EMP').toUpperCase().replace(/[^A-Z0-9_.-]/g, '') + '-OBR-RDO-' + d.data.replace(/-/g, ''); }
+
+async function rdoPdfBlob(d){
+  await rdoCarregarLibs();
+  const html = rdoPdfHtml(d, RDOO.reg, await rdoLogos()).replace(/<div class="wm">[^<]*<\/div>/, '');
+  const LARG = 703, ALT = 1032;                    // 186 × 273 mm a 96 dpi (A4 menos margens de 12 mm)
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:' + LARG + 'px;height:' + ALT + 'px;border:0;visibility:hidden';
+  document.body.appendChild(fr);
+  try {
+    const doc = fr.contentDocument; doc.open(); doc.write(html); doc.close();
+    doc.body.style.padding = '0'; doc.body.style.margin = '0';
+    await Promise.all([...doc.images].map(i => i.complete ? 0 : new Promise(ok => { i.onload = i.onerror = ok; setTimeout(ok, 10000); })));
+    // pontos onde pode quebrar página: fim de cada bloco
+    const corpo = doc.body, topo = corpo.getBoundingClientRect().top;
+    const quebras = [...corpo.querySelectorAll('h3, tr, .ad, .fotos img, .pre, .g2, .ass, .hash, .foot, .hd')]
+      .map(el => Math.round(el.getBoundingClientRect().bottom - topo)).sort((a, b) => a - b);
+    const total = Math.ceil(corpo.scrollHeight);
+    const K = 2, cv = await html2canvas(corpo, { scale:K, useCORS:true, backgroundColor:'#ffffff', width:LARG, windowWidth:LARG, height:total, windowHeight:total });
+    const { jsPDF } = window.jspdf, pdf = new jsPDF({ unit:'mm', format:'a4' });
+    let y = 0, pg = 0;
+    while (y < total - 2){
+      let fim = Math.min(total, y + ALT);
+      if (fim < total){ const q = quebras.filter(b => b > y + 80 && b <= fim); if (q.length) fim = q[q.length - 1]; }
+      const fatia = document.createElement('canvas'); fatia.width = cv.width; fatia.height = Math.round((fim - y) * K);
+      fatia.getContext('2d').drawImage(cv, 0, Math.round(y * K), cv.width, fatia.height, 0, 0, cv.width, fatia.height);
+      if (pg++) pdf.addPage();
+      pdf.addImage(fatia.toDataURL('image/jpeg', 0.9), 'JPEG', 12, 12, 186, (fim - y) * 186 / LARG);
+      pdf.setFontSize(7); pdf.setTextColor(100, 116, 139);
+      pdf.text('Página ' + pg, 198, 290, { align:'right' });
+      y = fim;
+    }
+    return pdf.output('blob');
+  } finally { fr.remove(); }
+}
+async function rdoSha256(blob){ const h = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+// Arquiva o dia no CDE. pedirCodigo: na 1ª vez mostra o código sugerido para editar.
+async function rdoArquivar(pedirCodigo){
+  const d = RDOO.dia, msg = t => { const m = $('segMsg'); if (m) m.textContent = t; };
+  if (!d || !d.id || !d.visto_em) return;
+  let cod = d.cde_codigo || rdoCodigoSugerido(d);
+  try {
+    if (!d.cde_documento_id && pedirCodigo !== false){
+      const r = prompt('Código do diário no CDE (pode ajustar à convenção da construtora):', cod);
+      if (r === null){ msg('Diário não foi para o CDE. Use "Arquivar no CDE" quando quiser.'); return; }
+      cod = r.trim().toUpperCase();
+    }
+    msg('Conferindo o código…');
+    const c = await sb.rpc('rdo_arquivar', { p_rdo:d.id, p_codigo:cod, p_path:null, p_bytes:null, p_sha:null });
+    if (c.error) throw c.error;
+    msg('Gerando o PDF…');
+    const blob = await rdoPdfBlob(d);
+    const nome = c.data.codigo.replace(/[^A-Za-z0-9_.-]/g, '_') + '_' + c.data.revisao + '_' + Date.now().toString(36) + '.pdf';
+    const path = EMP.id + '/_diario/' + d.id + '/' + nome;
+    msg('Enviando para o CDE…');
+    const url = await segR2Url('upload', path, 'application/pdf');
+    const put = await fetch(url, { method:'PUT', headers:{ 'Content-Type':'application/pdf' }, body:blob });
+    if (!put.ok) throw new Error('falha no envio (' + put.status + ')');
+    const r = await sb.rpc('rdo_arquivar', { p_rdo:d.id, p_codigo:cod, p_path:path, p_bytes:blob.size, p_sha:await rdoSha256(blob) });
+    if (r.error) throw r.error;
+    await rdoCarregarDia(d.data); rdoRender();
+    msg('Arquivado no CDE: ' + r.data.codigo + ' ' + r.data.revisao + ' (grupo "Diário de obra").');
+  } catch (e){ msg('Não foi para o CDE: ' + (e.message || e) + ' — tente de novo em "Arquivar no CDE".'); try { rdoRender(); } catch (_){} }
+}
+
+// ── ganchos: visto → arquiva; adendo depois do visto → nova revisão ───────────
+(function(){
+  const _v = rdoVisar;
+  rdoVisar = async function(){ const antes = RDOO.dia && RDOO.dia.visto_em; await _v(); if (!antes && RDOO.dia && RDOO.dia.visto_em) await rdoArquivar(true); };
+  const _a = rdoAdendo;
+  rdoAdendo = async function(){ const n = (RDOO.dia.adendos || []).length; await _a(); if (RDOO.dia.visto_em && RDOO.dia.cde_documento_id && (RDOO.dia.adendos || []).length > n) await rdoArquivar(false); };
+  // tela: etiqueta do CDE no cabeçalho + botão "Arquivar no CDE" se o visto existe e não foi
+  const _r = rdoRender;
+  rdoRender = function(){
+    _r();
+    const d = RDOO.dia; if (!d) return;
+    const p = document.querySelector('#segOv .rdo-hd p');
+    if (p && d.cde_codigo) p.insertAdjacentHTML('beforeend', ' · CDE <span class="fvs-cod">' + esc(d.cde_codigo) + ' ' + esc(d.cde_revisao || '') + '</span>');
+    const ft = document.querySelector('#segOv .ft');
+    const pendente = d.visto_em && (!d.cde_documento_id || (d.adendos || []).some(x => !d.cde_arquivado_em || x.em > d.cde_arquivado_em));
+    if (ft && pendente && rdoEscreve()) ft.insertAdjacentHTML('beforeend', '<button class="b2" onclick="rdoArquivar(true)">' + OI.doc + ' Arquivar no CDE</button>');
+  };
+})();
+
 </script>
 <script src="auria_ajuda.js"></script>
 </body>
