@@ -299,6 +299,39 @@ async function abrir3D(fragUrl, jaAberto){
   }catch(e){ if(!jaAberto) msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }
 
+// ── Pinos dos apontamentos 3D PÚBLICOS (mesma regra do App: ponto local do modelo
+//  quando existe — independe da ordem de carga —, senão o ponto de mundo gravado).
+//  Os elementos são criados uma vez e só reposicionados a cada quadro (recriar a cada
+//  quadro mataria o clique). Clique abre o mesmo card das pranchas.
+let _PINS3D=null;
+function pins3d(E){
+  const host=$('bim'); if(!host||!E||!E.camera||!APTS.length) return;
+  if(!_PINS3D){
+    _PINS3D=[]; const lay=document.createElement('div'); lay.id='pins3d';
+    lay.style.cssText='position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3';
+    host.appendChild(lay);
+    APTS.forEach(a=>(a.pontos_json||[]).forEach(pt=>{ if(!pt||!pt.k3d) return;
+      const el=document.createElement('div'); el.className='pin'; el.style.pointerEvents='auto';
+      el.innerHTML=pinSvg(a.id_num,corPrio(a.prioridade));
+      el.onclick=ev=>{ ev.stopPropagation(); abrirCard(a); };
+      lay.appendChild(el); _PINS3D.push({ el, pt }); }));
+  }
+  const cv=E.renderer&&E.renderer.domElement; if(!cv) return;
+  const W=cv.clientWidth, Hh=cv.clientHeight;
+  for(const p of _PINS3D){
+    let w={ x:p.pt.x, y:p.pt.y, z:p.pt.z };
+    if(p.pt.lx!=null && p.pt.ly!=null && p.pt.lz!=null){
+      const m=(E.modelos||[]).find(x=>x.arquivoId===p.pt.cde_arquivo_id); const o=m&&m.model&&m.model.object;
+      if(o){ try{ o.updateMatrixWorld(); const v=o.localToWorld(new E.THREE.Vector3(p.pt.lx,p.pt.ly,p.pt.lz)); w={x:v.x,y:v.y,z:v.z}; }catch(_){} }
+    }
+    const v=new E.THREE.Vector3(w.x,w.y,w.z).project(E.camera);
+    if(v.z>1 || !isFinite(v.x)){ p.el.style.display='none'; continue; }
+    const x=((v.x+1)*0.5)*W, y=((1-v.y)*0.5)*Hh;
+    if(x<-30||y<-40||x>W+30||y>Hh+10){ p.el.style.display='none'; continue; }
+    p.el.style.display=''; p.el.style.left=x+'px'; p.el.style.top=y+'px';
+  }
+}
+
 // ── QR do MODELO FEDERADO (?f=token): só os modelos com revisão LIBERADA ──
 async function bootFed(t){
   let r;
@@ -321,8 +354,9 @@ async function bootFed(t){
   try{
     carregando('Carregando '+r.modelos.length+' modelo(s)…');
     if(!B3) B3=await import('./bim3d.js');
-    if(!F3D) F3D=await B3.criar($('bim'), { fundo:0x20262f, on:{} });
-    await B3.carregar(F3D, r.modelos.map((m,i)=>({ nome:m.codigo+(m.revisao?' '+m.revisao:''), id:'qrf'+i, arquivoId:'qrf'+i, url:()=>m.frag })), txt=>carregando(txt));
+    APTS=(r.apontamentos||[]).filter(a=>a.status!=='Resolvido'&&a.status!=='Reprovado');
+    if(!F3D) F3D=await B3.criar($('bim'), { fundo:0x20262f, on:{ pinos:v=>pins3d(v) } });
+    await B3.carregar(F3D, r.modelos.map((m,i)=>({ nome:m.codigo+(m.revisao?' '+m.revisao:''), id:'qrf'+i, arquivoId:m.aid||('qrf'+i), url:()=>m.frag })), txt=>carregando(txt));
     $('bim').style.display='block'; hideMsg(); cvBase.style.display='none'; paperEl.style.display='none'; pinsEl.style.display='none';
   }catch(e){ msg('<div class="big">⚠</div><div>Falha ao abrir o 3D.<br><small>'+esc((e&&e.message)||e)+'</small></div>'); }
 }

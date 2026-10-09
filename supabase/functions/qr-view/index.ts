@@ -56,9 +56,10 @@ serve(async (req) => {
       const fd = rf.ok ? await rf.json().catch(() => null) : null;
       if (!fd || !fd.fed) return j({ error: "não encontrado" }, 404);
       const modelos = await Promise.all((fd.modelos || []).map(async (m: any) => ({
-        codigo: m.codigo, disciplina: m.disciplina, revisao: m.revisao, frag: await signR2(m.frag_path),
+        codigo: m.codigo, disciplina: m.disciplina, revisao: m.revisao, aid: m.aid, frag: await signR2(m.frag_path),
       })));
-      return j({ ok: true, fed: fd.fed, modelos, faltam: fd.faltam || [], hasNewerUnreleased: !!fd.hasNewerUnreleased });
+      return j({ ok: true, fed: fd.fed, modelos, faltam: fd.faltam || [], apontamentos: fd.apontamentos || [],
+                 hasNewerUnreleased: !!fd.hasNewerUnreleased });
     }
 
     const token: string = (body?.token || "").trim();
