@@ -41,7 +41,7 @@
   #amlOv .mapa > .m{position:absolute;inset:0}
   #amlOv .ft{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid #E2E8F0;flex-wrap:wrap}
   #amlOv .coord{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#1E3A5F;flex:1;min-width:160px}
-  #amlOv .msg{font-size:12px;color:#A32D2D;width:100%}
+  #amlOv .aml-msg{font-size:12px;color:#A32D2D;width:100%}
   @media (max-width:640px){ #amlOv{padding:0} #amlOv .box{height:100%;border-radius:0} }`;
   function camadas(){
     return {
@@ -70,7 +70,7 @@
       + '<div class="mapa"><div class="m" id="amlMapa"></div><div class="res" id="amlRes"></div></div>'
       + '<div class="ft"><span class="coord" id="amlCoord">' + (ed ? 'Clique no mapa para marcar o ponto; arraste o pino para ajustar.' : '') + '</span>'
       + '<button id="amlSair">' + (ed ? 'Cancelar' : 'Fechar') + '</button>' + (ed ? '<button id="amlLimpar">Remover ponto</button><button class="pri" id="amlOk">Salvar localização</button>' : '')
-      + '<div class="msg" id="amlMsg"></div></div></div>';
+      + '<div class="aml-msg" id="amlMsg"></div></div></div>';
     document.body.appendChild(ov);
     const $ = id => document.getElementById(id), msg = t => { $('amlMsg').textContent = t || ''; };
     try { await carregarLeaflet(); } catch (e){ msg(e.message); return; }
