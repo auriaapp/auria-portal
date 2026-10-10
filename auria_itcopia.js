@@ -7,7 +7,7 @@
 //    AuriaIT.ver(sb, revId, {codigo,titulo,sub})  → abre no visualizador (CÓPIA NÃO CONTROLADA)
 //    AuriaIT.copia(sb, {revId, codigo, titulo, grupoId, empId}) → modal obra/responsável/qtd → baixa o PDF
 //    AuriaIT.textoArquivo(file)                     → texto do PDF/planilha p/ indexar (busca no conteúdo)
-//  Não-PDF: planilha abre no leitor SheetJS (só leitura); outros formatos não visualizam,
+//  Não-PDF: planilha abre no leitor SheetJS e .docx no auria_word.js (só leitura); outros não visualizam,
 //  só baixam pela cópia controlada (registrada, sem carimbo).
 //    AuriaIT.lerNome(nomeArquivo)                   → {tipo, codigo, familia, revisao, titulo}
 //  Depende de: supabase-js (sb), auria_pdfview.js (AuriaPDF).
@@ -28,7 +28,7 @@
   async function bytes(sb, revId){ return new Uint8Array(await (await pedir(sb, { modo:'ver', revisao_id:revId })).blob.arrayBuffer()); }
   const EXT_PLANILHA = ['xlsx','xlsm','xls','csv','ods'];
   const extDe = n => (String(n || '').split('.').pop() || '').toLowerCase();
-  function podeVer(ext){ return ext === 'pdf' || EXT_PLANILHA.includes(ext); }
+  function podeVer(ext){ return ext === 'pdf' || ext === 'docx' || EXT_PLANILHA.includes(ext); }
   // SheetJS (Apache-2.0) só é carregado quando alguém abre uma planilha.
   function carregarXlsx(){
     if (window.XLSX) return Promise.resolve(window.XLSX);
@@ -61,6 +61,8 @@
     info = info || {};
     const ext = info.ext || 'pdf';
     if (EXT_PLANILHA.includes(ext)) return verPlanilha(sb, revId, info);
+    if (ext === 'docx' && window.AuriaWord) return AuriaWord.abrir({ url: async () => URL.createObjectURL((await pedir(sb, { modo:'ver', revisao_id:revId })).blob),
+      codigo: info.codigo || '', titulo: info.titulo || '', faixa: 'CÓPIA NÃO CONTROLADA — somente consulta. Para uso na obra, emita a cópia controlada.' });
     if (ext !== 'pdf'){ alert('Este formato (.' + ext + ') não tem visualização no Auria. Use "Cópia controlada" para baixar.'); return; }
     let u = null;
     AuriaPDF.abrir({ url: async () => { u = URL.createObjectURL((await pedir(sb, { modo:'ver', revisao_id:revId })).blob); return u; },
@@ -132,6 +134,11 @@
     if (EXT_PLANILHA.includes(ext)){
       const XL = await carregarXlsx(), wb = XL.read(new Uint8Array(await file.arrayBuffer()), { type:'array' });
       return wb.SheetNames.map(n => n + ' ' + XL.utils.sheet_to_csv(wb.Sheets[n], { FS:' ' })).join(' ').replace(/\s+/g, ' ').trim();
+    }
+    if (ext === 'docx' && window.AuriaWord){
+      await AuriaWord.carregar();                           // traz o JSZip junto
+      const z = await JSZip.loadAsync(await file.arrayBuffer()), x = z.file('word/document.xml');
+      return x ? (await x.async('string')).replace(/<\/w:p>/g, ' ').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim() : '';
     }
     return ext === 'pdf' ? textoPdf(file) : '';
   }
