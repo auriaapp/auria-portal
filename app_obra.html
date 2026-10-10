@@ -8564,6 +8564,7 @@ function voltarPortal(){
 boot();
 </script>
 <script src="auria_pdfview.js"></script>
+<script src="auria_itcopia.js"></script>
 <script>
 // ── App Obra · ÍCONES DE LINHA (padrão do CDE: svg.ci 20×20, só traço) ─────
 //  Substituem os emojis (pedido do usuário 2026-10-07: "não devemos usar
@@ -9824,7 +9825,7 @@ var ITS_OBRA = null, SEG_PADRAO_GRUPO = null;
 
 async function itsCarregar(){
   if (!EMP) return [];
-  const { data, error } = await sb.from('grupo_it_auria').select('id,codigo,titulo,tema,palavras,ativo,grupo_it_revisao_auria(revisao,arquivo_path,publicado_em,vigente)')
+  const { data, error } = await sb.from('grupo_it_auria').select('id,codigo,titulo,tema,palavras,ativo,grupo_it_revisao_auria(id,revisao,arquivo_path,publicado_em,vigente)')
     .eq('grupo_id', EMP.empresa_id).eq('ativo', true).order('codigo');
   if (error){ console.warn('ITs:', error.message || error); ITS_OBRA = []; return ITS_OBRA; }
   ITS_OBRA = (data || []).map(i => Object.assign(i, { vig: (i.grupo_it_revisao_auria || []).find(r => r.vigente) || null }));
@@ -9857,9 +9858,8 @@ async function itsAbrirIt(id){
   segBarraInfo('Abrindo ' + info + '…', '');
   try {
     if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
-    const url = await segR2Url('download', i.vig.arquivo_path);
-    const resp = await fetch(url); if (!resp.ok) throw new Error('falha ao baixar (' + resp.status + ')');
-    const pdoc = await pdfjsLib.getDocument({ data: await resp.arrayBuffer() }).promise;
+    // PDF vem carimbado ("cópia não controlada") pela it-copia — a obra não lê o arquivo cru.
+    const pdoc = await pdfjsLib.getDocument({ data: await AuriaIT.bytes(sb, i.vig.id) }).promise;
     const page = await pdoc.getPage(1);
     const pr = { id:null, _it:true, _ro:true, codigo:i.codigo, arquivo_nome:i.codigo + ' — ' + i.titulo, disciplina:'IT' };
     const L = { prancha:pr, doc:pdoc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:i.codigo + ' · rev. ' + i.vig.revisao };
@@ -9870,7 +9870,7 @@ async function itsAbrirIt(id){
     $('dropHint').style.display = 'none';
     TRENA = { m_por_pt:null, cotas:[], areas:[] };
     renderCamadas(); renderPins(); renderListaApts();
-    segBarraInfo(info + ' · Instrução Técnica — leitura (sem apontamentos)', '<button onclick="itsPainel(\'\')">Outras ITs</button>');
+    segBarraInfo(info + ' · Instrução Técnica — leitura (sem apontamentos)', '<button onclick="itsCopia(\'' + i.id + '\')">Cópia controlada</button><button onclick="itsPainel(\'\')">Outras ITs</button>');
   } catch (e){ console.warn('abrir IT:', e); segBarraInfo('Não foi possível abrir a IT — ' + (e.message || e), ''); }
 }
 // IT aberta no quadro é só leitura: apontar e medir ficam para as pranchas do projeto.
@@ -9881,6 +9881,11 @@ async function itsAbrirIt(id){
     return _n(nx, ny);
   };
 })();
+// Cópia controlada (impressa) para esta obra — registra e carimba; revisão nova avisa por e-mail.
+function itsCopia(id){
+  const i = (ITS_OBRA || []).find(x => x.id === id); if (!i || !i.vig) return;
+  AuriaIT.copia(sb, { revId: i.vig.id, codigo: i.codigo + ' rev. ' + i.vig.revisao, titulo: i.titulo, grupoId: EMP.empresa_id, empId: EMP.id });
+}
 async function itsAbrir(path){
   const w = window.open('', '_blank');
   try { const u = await segR2Url('download', path); if (w) w.location = u; else location.href = u; }
@@ -10923,7 +10928,7 @@ function ddsDetalhe(id){
 /* app_obra_fvs.js */
 // ── App Obra · Qualidade (FVS) — B1: MATRIZ PAVIMENTO × SERVIÇO ──────────────
 //  Modelos vêm da biblioteca do grupo (Padrões do Grupo › Qualidade).
-//  Matriz no lugar do kanban (queixa da obra no Construpoint): cada célula =
+//  Matriz no lugar do kanban (queixa da obra com o kanban antigo): cada célula =
 //  fichas daquele serviço naquele pavimento, cor pela pior situação.
 //  Abrem ficha: eng. chefe, coord. de campo e equipe (o técnico só lê).
 //  Preenchimento/aprovação = B2; 3D colorido = B3.

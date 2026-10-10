@@ -123,5 +123,5 @@
   }
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && document.getElementById('apv')) fechar(); });
   window.addEventListener('resize', () => { if (estado && estado.doc) { clearTimeout(window._apvR); window._apvR = setTimeout(() => zoom(null), 200); } });
-  window.AuriaPDF = { abrir, fechar };
+  window.AuriaPDF = { abrir, fechar, carregarPdfjs };
 })();

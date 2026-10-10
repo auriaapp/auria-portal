@@ -9,6 +9,7 @@
 <script src="auria_busy.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="auria_pdfview.js"></script>
+<script src="auria_itcopia.js"></script>
 <!-- ===========================================================================
      Padrões do Grupo (backlog 179/187)
      Regras que valem para TODAS as obras do grupo, editadas por quem é dono do
@@ -92,7 +93,7 @@
     <div class="tabs" id="tabs">
       <button class="tab on" data-t="seguranca" onclick="aba('seguranca')">Segurança do Trabalho</button>
       <button class="tab" data-t="qualidade" onclick="aba('qualidade')">Qualidade</button>
-      <button class="tab" data-t="its" onclick="aba('its')">Biblioteca de ITs</button>
+      <button class="tab" data-t="its" onclick="aba('its')">Biblioteca normativa</button>
       <button class="tab" data-t="pessoas" onclick="aba('pessoas')" id="tabPessoas" style="display:none">Responsáveis</button>
     </div>
     <div id="corpo"></div>
@@ -396,7 +397,7 @@ async function telaQualidade(){
         + '<td>' + ETAPA_ROT[m.etapa] + '</td><td>' + NIVEL_ROT[m.nivel_local] + '</td><td>' + (m.itens || []).length + '</td><td class="cod">' + String(m.revisao).padStart(2,'0') + '</td>'
         + '<td style="text-align:right"><button class="btn sec" onclick="fvsForm(\'' + m.id + '\')">' + (PODE.qualidade ? 'Editar' : 'Ver') + '</button></td></tr>').join('') + '</table>'
       : '<div class="hint" style="margin-top:12px">' + (FVS_MODS.length ? 'Nenhum modelo com esse filtro.' : 'Nenhum modelo cadastrado ainda.' + (PODE.qualidade ? ' Comece importando os modelos de partida do Auria e ajuste ao padrão da construtora.' : '')) + '</div>')
-    + '<p class="h" style="margin:12px 0 0">Origem "Qualitin"/"Construpoint" fica reservada para importar os modelos que a construtora já usa.</p></div>'
+    + '</div>'
     + '<div class="card" id="fichasCard"><h3>Fichas das obras</h3><p class="h">Acompanhamento das FVS de cada empreendimento do grupo. A Qualidade pode <b>contestar</b> uma ficha aprovada: ela volta a reprovada e a obra refaz a inspeção.</p><div id="fichasCorpo" class="hint">Carregando…</div></div>';
   fichasCarregar();
 }
@@ -522,77 +523,120 @@ async function fvsSalvar(id){
   ovFechar(); telaQualidade();
 }
 
-// ── Biblioteca de ITs ───────────────────────────────────────────────────────
+// ── Biblioteca normativa (ITs, PCs, POPs, REGs…) ─────────────────────────────
+//  Mesmo modelo do CDE: documento → revisões; só a vigente vale para a obra.
+//  Quem mantém (PODE.its) vê histórico e cópias distribuídas; os demais só a
+//  vigente. Abrir/baixar passa pela it-copia (carimbo) — ver auria_itcopia.js.
+const FAM_ROT = { grupo:'Grupo', victa:'Victa' };
 async function carregarITs(){
-  const { data, error } = await sb.from('grupo_it_auria').select('*, grupo_it_revisao_auria(*)').eq('grupo_id', GRUPO).order('codigo');
+  const { data, error } = await sb.from('grupo_it_auria').select('*, grupo_it_revisao_auria(id,it_id,revisao,arquivo_path,arquivo_nome,bytes,observacao,vigente,publicado_nome,publicado_em)').eq('grupo_id', GRUPO).order('codigo');
   if (error){ ITS = []; return error; }
   ITS = (data || []).map(i => Object.assign(i, { revs: (i.grupo_it_revisao_auria || []).sort((a,b) => new Date(b.publicado_em) - new Date(a.publicado_em)) }));
 }
+function _itOrdem(a, b){ return a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }); }
+function itRefiltrar(){
+  window._itRender = true;
+  telaITs().then(() => { const b = $('itBusca'); if (b){ b.focus(); b.setSelectionRange(b.value.length, b.value.length); } });
+}
 async function telaITs(){
-  $('corpo').innerHTML = '<div class="hint">Carregando ITs…</div>';
-  const e = await carregarITs();
-  const q = (window._itBusca || '').toLowerCase(), tm = window._itTema || '', obs = !!window._itObs;
-  const lista = ITS.filter(i => (obs || i.ativo) && (!tm || i.tema === tm)
-    && (!q || (i.codigo + ' ' + i.titulo + ' ' + (i.palavras || '')).toLowerCase().includes(q)));
-  $('corpo').innerHTML = aviso(PODE.its, 'setores de Segurança e de Qualidade')
-    + (e ? '<div class="ro" style="display:block">Biblioteca indisponível: ' + esc(e.message) + '</div>' : '')
-    + '<div class="card"><div class="row"><input type="search" placeholder="Buscar por código, título ou palavra" value="' + esc(window._itBusca || '') + '" oninput="window._itBusca=this.value;clearTimeout(window._itT);window._itT=setTimeout(telaITs,250)" style="flex:1;min-width:200px">'
-    + '<select onchange="window._itTema=this.value;telaITs()" style="width:auto"><option value="">Todos os temas</option>' + Object.keys(TEMA_ROT).map(k => '<option value="' + k + '"' + (k === tm ? ' selected' : '') + '>' + TEMA_ROT[k] + '</option>').join('') + '</select>'
-    + '<label class="chk" style="margin:0"><input type="checkbox"' + (obs ? ' checked' : '') + ' onchange="window._itObs=this.checked;telaITs()"> mostrar obsoletas</label>'
-    + (PODE.its ? '<button class="btn" onclick="itForm()">＋ Nova IT</button>' : '') + '</div>'
-    + '<p class="h" style="margin:10px 0 0">A obra pesquisa e abre estas ITs no App Obra, sempre na revisão vigente. Origem "Qualitin" fica reservada para a sincronização com o sistema da Qualidade.</p></div>'
-    + '<div class="card" style="padding:6px 10px">' + (lista.length ? '<table><tr><th>Código</th><th>Título</th><th>Tema</th><th>Revisão vigente</th><th></th></tr>' + lista.map(i => {
-        const v = i.revs.find(r => r.vigente);
-        return '<tr' + (i.ativo ? '' : ' style="opacity:.55"') + '><td class="cod">' + esc(i.codigo) + '</td><td>' + esc(i.titulo) + (i.ativo ? '' : ' <span class="chip t-outro">obsoleta</span>') + '</td>'
-          + '<td><span class="chip t-' + i.tema + '">' + TEMA_ROT[i.tema] + '</span></td>'
-          + '<td>' + (v ? '<b class="cod">' + esc(v.revisao) + '</b> · ' + new Date(v.publicado_em).toLocaleDateString('pt-BR') : '<span class="hint">sem arquivo</span>') + '</td>'
-          + '<td style="text-align:right;white-space:nowrap">' + (v && v.arquivo_path ? '<button class="btn sec" onclick="abrirPdf(\'' + esc(v.arquivo_path) + '\')">Abrir</button> ' : '')
-          + '<button class="btn sec" onclick="itDetalhe(\'' + i.id + '\')">' + (PODE.its ? 'Revisões' : 'Histórico') + '</button></td></tr>';
-      }).join('') + '</table>' : '<div class="hint" style="padding:14px">Nenhuma IT' + (q || tm ? ' no filtro' : ' cadastrada ainda') + '.</div>') + '</div>';
+  if (!window._itRender) $('corpo').innerHTML = '<div class="hint">Carregando a biblioteca…</div>';
+  const e = window._itRender ? null : await carregarITs(); window._itRender = false;
+  const q = (window._itBusca || '').trim(), ql = q.toLowerCase(), tp = window._itTipo || '', fm = window._itFam || '', obs = !!window._itObs, cont = !!window._itCont;
+  let trechos = null;
+  if (cont && q.length >= 2){
+    const r = await sb.rpc('it_buscar', { p_grupo: GRUPO, p_q: q });
+    trechos = {}; (r.data || []).forEach(x => trechos[x.it_id] = x.trecho);
+  }
+  const tipos = [...new Set(ITS.map(i => i.tipo || 'IT'))].sort();
+  const lista = ITS.filter(i => (obs || i.ativo) && (!tp || (i.tipo || 'IT') === tp) && (!fm || (i.familia || 'grupo') === fm)
+    && (trechos ? trechos[i.id] !== undefined : (!ql || (i.codigo + ' ' + i.titulo + ' ' + (i.palavras || '')).toLowerCase().includes(ql)))).sort(_itOrdem);
+  const hoje = new Date().toISOString().slice(0, 10);
+  $('corpo').innerHTML = (e ? '<div class="ro" style="display:block">Biblioteca indisponível: ' + esc(e.message) + '</div>' : '')
+    + '<div class="card"><div class="row" style="flex-wrap:wrap;gap:8px"><input type="search" id="itBusca" placeholder="' + (cont ? 'Buscar dentro dos documentos…' : 'Buscar por código, título ou palavra') + '" value="' + esc(q) + '" oninput="window._itBusca=this.value;clearTimeout(window._itT);window._itT=setTimeout(itRefiltrar,300)" style="flex:1;min-width:220px">'
+    + '<button class="btn ' + (cont ? '' : 'sec') + '" title="Buscar no conteúdo dos PDFs" onclick="window._itCont=!window._itCont;itRefiltrar()">Aa</button>'
+    + '<select onchange="window._itTipo=this.value;itRefiltrar()" style="width:auto"><option value="">Todos os tipos</option>' + tipos.map(k => '<option' + (k === tp ? ' selected' : '') + '>' + esc(k) + '</option>').join('') + '</select>'
+    + '<select onchange="window._itFam=this.value;itRefiltrar()" style="width:auto"><option value="">Grupo e Victa</option>' + Object.keys(FAM_ROT).map(k => '<option value="' + k + '"' + (k === fm ? ' selected' : '') + '>' + FAM_ROT[k] + '</option>').join('') + '</select>'
+    + (PODE.its ? '<label class="chk" style="margin:0"><input type="checkbox"' + (obs ? ' checked' : '') + ' onchange="window._itObs=this.checked;itRefiltrar()"> obsoletos</label>' : '')
+    + (PODE.its ? '<button class="btn sec" onclick="itImportar()">Importar pasta</button><button class="btn" onclick="itForm()">＋ Documento</button>' : '') + '</div>'
+    + '<p class="h" style="margin:10px 0 0">' + ITS.filter(i => i.ativo).length + ' documentos vigentes. Todos os setores consultam a revisão vigente; para levar à obra, emita a <b>cópia controlada</b> — se sair revisão nova, o responsável é avisado por e-mail.'
+    + (PODE.its ? ' Você mantém a biblioteca: vê o histórico de revisões e as cópias distribuídas.' : '') + '</p></div>'
+    + '<div class="card" style="padding:6px 10px">' + (lista.length ? '<table><tr><th>Código</th><th>Documento</th><th>Rev.</th><th></th></tr>' + lista.map(i => {
+        const v = i.revs.find(r => r.vigente), venc = i.validade && i.validade < hoje;
+        return '<tr' + (i.ativo ? '' : ' style="opacity:.55"') + '><td class="cod" style="white-space:nowrap">' + esc(i.codigo) + '</td><td>' + esc(i.titulo)
+          + ' <span class="chip t-' + ((i.familia || 'grupo') === 'victa' ? 'seguranca' : 'qualidade') + '">' + FAM_ROT[i.familia || 'grupo'] + '</span>'
+          + (i.ativo ? '' : ' <span class="chip t-outro">obsoleto</span>') + (venc ? ' <span class="chip t-seguranca">validade vencida</span>' : '')
+          + (trechos && trechos[i.id] ? '<div class="hint" style="margin-top:3px">…' + esc(trechos[i.id]).replace(/«/g, '<b style="background:#FDE7D3;color:#9A3412">').replace(/»/g, '</b>') + '…</div>' : '') + '</td>'
+          + '<td>' + (v ? '<b class="cod">' + esc(v.revisao) + '</b><div class="hint">' + new Date(v.publicado_em).toLocaleDateString('pt-BR') + '</div>' : '<span class="hint">—</span>') + '</td>'
+          + '<td style="text-align:right;white-space:nowrap">' + (v && v.arquivo_path ? '<button class="btn sec" onclick="itAbrir(\'' + v.id + '\')">Abrir</button> '
+            + (i.ativo ? '<button class="btn sec" title="Emitir cópia controlada para uma obra" onclick="itCopia(\'' + i.id + '\')">Cópia controlada</button> ' : '') : '')
+          + (PODE.its ? '<button class="btn sec" onclick="itDetalhe(\'' + i.id + '\')">Revisões</button>' : '') + '</td></tr>';
+      }).join('') + '</table>' : '<div class="hint" style="padding:14px">' + (trechos ? 'Nada encontrado dentro dos documentos.' : 'Nenhum documento' + (q || tp || fm ? ' no filtro' : ' cadastrado ainda') + '.') + '</div>') + '</div>';
+}
+function itAbrir(revId){
+  let it = null, rv = null;
+  ITS.forEach(i => (i.revs || []).forEach(r => { if (r.id === revId){ it = i; rv = r; } }));
+  ovFechar();
+  AuriaIT.ver(sb, revId, { codigo: it ? it.codigo + ' · rev. ' + rv.revisao : '', titulo: it ? it.titulo : 'Documento', sub: rv && !rv.vigente ? 'revisão anterior (histórico)' : 'revisão vigente' });
+}
+function itCopia(id){
+  const i = ITS.find(x => x.id === id), v = i && i.revs.find(r => r.vigente); if (!v) return;
+  AuriaIT.copia(sb, { revId: v.id, codigo: i.codigo + ' rev. ' + v.revisao, titulo: i.titulo, grupoId: GRUPO });
 }
 function ov(html){ $('ovBox').innerHTML = html; $('ov').classList.add('on'); }
 function ovFechar(){ $('ov').classList.remove('on'); }
 function itForm(id){
-  const i = id ? ITS.find(x => x.id === id) : { codigo:'', titulo:'', tema: ME.setor_area === 'seguranca' ? 'seguranca' : 'qualidade', palavras:'', ativo:true };
-  ov('<div class="hd"><b>' + (id ? 'Editar ' + esc(i.codigo) : 'Nova IT') + '</b></div><div class="bd">'
-    + '<div class="g2"><div><label class="l">Código</label><input type="text" id="itCod" value="' + esc(i.codigo) + '" placeholder="IT-038"' + (id ? ' disabled' : '') + '></div>'
-    + '<div><label class="l">Tema</label><select id="itTema">' + Object.keys(TEMA_ROT).map(k => '<option value="' + k + '"' + (k === i.tema ? ' selected' : '') + '>' + TEMA_ROT[k] + '</option>').join('') + '</select></div></div>'
+  const i = id ? ITS.find(x => x.id === id) : { codigo:'', titulo:'', tema:'execucao', tipo:'IT', familia:'grupo', palavras:'', validade:'', ativo:true };
+  ov('<div class="hd"><b>' + (id ? 'Editar ' + esc(i.codigo) : 'Novo documento') + '</b></div><div class="bd">'
+    + '<div class="g2"><div><label class="l">Código</label><input type="text" id="itCod" value="' + esc(i.codigo) + '" placeholder="IT 038 ou IT 038 (V)"' + (id ? ' disabled' : '') + '></div>'
+    + '<div><label class="l">Família</label><select id="itFam">' + Object.keys(FAM_ROT).map(k => '<option value="' + k + '"' + (k === (i.familia || 'grupo') ? ' selected' : '') + '>' + FAM_ROT[k] + '</option>').join('') + '</select></div></div>'
+    + '<div class="g2"><div><label class="l">Tema</label><select id="itTema">' + Object.keys(TEMA_ROT).map(k => '<option value="' + k + '"' + (k === i.tema ? ' selected' : '') + '>' + TEMA_ROT[k] + '</option>').join('') + '</select></div>'
+    + '<div><label class="l">Validade (opcional)</label><input type="date" id="itVal" value="' + esc(i.validade || '') + '"></div></div>'
     + '<label class="l">Título</label><input type="text" id="itTit" value="' + esc(i.titulo) + '" placeholder="Ex.: Execução de alvenaria de vedação">'
     + '<label class="l">Palavras de busca (opcional)</label><input type="text" id="itPal" value="' + esc(i.palavras || '') + '" placeholder="Ex.: bloco cerâmico, argamassa, prumo">'
-    + (id ? '<label class="chk"><input type="checkbox" id="itAtivo"' + (i.ativo ? ' checked' : '') + '> Vigente (desmarque para tornar obsoleta)</label>' : '')
+    + (id ? '<label class="chk"><input type="checkbox" id="itAtivo"' + (i.ativo ? ' checked' : '') + '> Vigente (desmarque para tornar obsoleto)</label>' : '')
     + '<div class="msg" id="itMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Cancelar</button><button class="btn" id="itOk" onclick="itSalvar(' + (id ? '\'' + id + '\'' : '') + ')">' + (id ? 'Salvar' : 'Criar e anexar o PDF') + '</button></div>');
 }
 async function itSalvar(id){
-  const row = { titulo: ($('itTit').value || '').trim(), tema: $('itTema').value, palavras: ($('itPal').value || '').trim() || null };
+  const row = { titulo: ($('itTit').value || '').trim(), tema: $('itTema').value, familia: $('itFam').value, validade: $('itVal').value || null, palavras: ($('itPal').value || '').trim() || null };
   const msg = t => { $('itMsg').className = 'msg err'; $('itMsg').textContent = t; };
   if (row.titulo.length < 3) return msg('Escreva o título.');
   $('itOk').disabled = true;
   let r;
   if (id){ row.ativo = $('itAtivo').checked; r = await sb.from('grupo_it_auria').update(row).eq('id', id).select('id').single(); }
   else {
-    const cod = ($('itCod').value || '').trim().toUpperCase();
+    const cod = ($('itCod').value || '').trim().toUpperCase().replace(/\s+/g, ' ');
     if (cod.length < 2){ $('itOk').disabled = false; return msg('Escreva o código.'); }
-    r = await sb.from('grupo_it_auria').insert(Object.assign(row, { grupo_id: GRUPO, codigo: cod })).select('id').single();
+    r = await sb.from('grupo_it_auria').insert(Object.assign(row, { grupo_id: GRUPO, codigo: cod, tipo: (cod.match(/^[A-Z]+/) || ['DOC'])[0] })).select('id').single();
   }
-  if (r.error){ $('itOk').disabled = false; return msg(/duplicate|unique/i.test(r.error.message) ? 'Já existe uma IT com esse código.' : r.error.message); }
+  if (r.error){ $('itOk').disabled = false; return msg(/duplicate|unique/i.test(r.error.message) ? 'Já existe um documento com esse código.' : r.error.message); }
   await carregarITs();
   if (id){ ovFechar(); telaITs(); } else revForm(r.data.id);
 }
-function itDetalhe(id){
+async function itDetalhe(id){
   const i = ITS.find(x => x.id === id); if (!i) return;
-  ov('<div class="hd"><b><span class="cod">' + esc(i.codigo) + '</span> — ' + esc(i.titulo) + '</b><div class="hint" style="margin-top:4px">' + TEMA_ROT[i.tema] + (i.origem === 'qualitin' ? ' · origem Qualitin' : '') + (i.ativo ? '' : ' · obsoleta') + '</div></div><div class="bd">'
-    + (i.revs.length ? '<table><tr><th>Revisão</th><th>Publicada</th><th>O que mudou</th><th></th></tr>' + i.revs.map(r => '<tr><td class="cod">' + esc(r.revisao) + (r.vigente ? ' <span class="chip t-execucao">vigente</span>' : '') + '</td>'
+  ov('<div class="hd"><b><span class="cod">' + esc(i.codigo) + '</span> — ' + esc(i.titulo) + '</b><div class="hint" style="margin-top:4px">' + FAM_ROT[i.familia || 'grupo'] + ' · ' + TEMA_ROT[i.tema] + (i.validade ? ' · validade ' + new Date(i.validade + 'T12:00').toLocaleDateString('pt-BR') : '') + (i.ativo ? '' : ' · obsoleto') + '</div></div><div class="bd">'
+    + '<h4 style="margin:10px 0 4px;color:var(--navy)">Revisões</h4>'
+    + (i.revs.length ? '<table><tr><th>Rev.</th><th>Publicada</th><th>O que mudou</th><th></th></tr>' + i.revs.map(r => '<tr><td class="cod">' + esc(r.revisao) + (r.vigente ? ' <span class="chip t-execucao">vigente</span>' : '') + '</td>'
         + '<td>' + new Date(r.publicado_em).toLocaleDateString('pt-BR') + '<div class="hint">' + esc(r.publicado_nome || '') + '</div></td><td>' + esc(r.observacao || '—') + '</td>'
-        + '<td style="text-align:right">' + (r.arquivo_path ? '<button class="btn sec" onclick="abrirPdf(\'' + esc(r.arquivo_path) + '\')">Abrir</button>' : '') + '</td></tr>').join('') + '</table>'
-      : '<div class="hint">Nenhuma revisão publicada.</div>') + '</div>'
+        + '<td style="text-align:right">' + (r.arquivo_path ? '<button class="btn sec" onclick="itAbrir(\'' + r.id + '\')">Abrir</button>' : '') + '</td></tr>').join('') + '</table>'
+      : '<div class="hint">Nenhuma revisão publicada.</div>')
+    + '<h4 style="margin:16px 0 4px;color:var(--navy)">Cópias distribuídas</h4><div id="itCopias" class="hint">Carregando…</div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Fechar</button>'
-    + (PODE.its ? '<button class="btn sec" onclick="itForm(\'' + i.id + '\')">Editar dados</button><button class="btn" onclick="revForm(\'' + i.id + '\')">Publicar nova revisão</button>' : '') + '</div>');
+    + '<button class="btn sec" onclick="itForm(\'' + i.id + '\')">Editar dados</button><button class="btn" onclick="revForm(\'' + i.id + '\')">Publicar nova revisão</button></div>');
+  const { data, error } = await sb.from('grupo_it_copia_auria').select('numero,quantidade,emitido_em,obsoleta_em,avisado_em,revisao_id,empreendimentos_auria(nome),usuarios_auria(nome,email)').eq('it_id', id).order('emitido_em', { ascending:false });
+  const el = $('itCopias'); if (!el) return;
+  const revN = {}; i.revs.forEach(r => revN[r.id] = r.revisao);
+  el.className = ''; el.innerHTML = error ? '<div class="msg err">' + esc(error.message) + '</div>' : (data || []).length
+    ? '<table><tr><th>Nº</th><th>Obra</th><th>Responsável</th><th>Rev.</th><th>Situação</th></tr>' + data.map(c => '<tr' + (c.obsoleta_em ? ' style="opacity:.6"' : '') + '><td class="cod">' + c.numero + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—') + '</td>'
+        + '<td>' + esc(c.usuarios_auria ? (c.usuarios_auria.nome || c.usuarios_auria.email) : '—') + '<div class="hint">' + c.quantidade + ' cópia(s) · ' + new Date(c.emitido_em).toLocaleDateString('pt-BR') + '</div></td>'
+        + '<td class="cod">' + esc(revN[c.revisao_id] || '') + '</td><td>' + (c.obsoleta_em ? '<span class="chip t-seguranca">obsoleta</span>' + (c.avisado_em ? '<div class="hint">avisado por e-mail</div>' : '') : '<span class="chip t-execucao">vigente</span>') + '</td></tr>').join('') + '</table>'
+    : '<div class="hint">Nenhuma cópia controlada emitida.</div>';
 }
 function revForm(id){
   const i = ITS.find(x => x.id === id); const v = i && i.revs.find(r => r.vigente);
   const prox = v && /^\d+$/.test(v.revisao) ? String(+v.revisao + 1).padStart(v.revisao.length, '0') : (v ? '' : '00');
-  ov('<div class="hd"><b>Publicar revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">A revisão atual' + (v ? ' (' + esc(v.revisao) + ')' : '') + ' fica no histórico; a obra passa a abrir a nova.</div></div><div class="bd">'
+  ov('<div class="hd"><b>Publicar revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">A revisão atual' + (v ? ' (' + esc(v.revisao) + ')' : '') + ' vai para o histórico; todos passam a ver a nova, e quem tem cópia controlada da antiga recebe e-mail.</div></div><div class="bd">'
     + '<div class="g2"><div><label class="l">Revisão</label><input type="text" id="rvNum" value="' + esc(prox) + '" placeholder="Ex.: 03"></div><div><label class="l">Arquivo (PDF)</label><input type="file" id="rvArq" accept="application/pdf"></div></div>'
     + '<label class="l">O que mudou nesta revisão</label><textarea id="rvObs" rows="3"></textarea><div class="msg" id="rvMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Cancelar</button><button class="btn" id="rvOk" onclick="revPublicar(\'' + id + '\')">Publicar</button></div>');
@@ -602,31 +646,69 @@ async function r2Url(action, path, contentType){
   if (r.error){ let m = r.error.message; try { const b = await r.error.context.json(); if (b && b.error) m = b.error; } catch (_){} throw new Error(m); }
   return r.data.url;
 }
+// Sobe o PDF, publica a revisão e indexa o texto (busca no conteúdo) — uma vez só.
+async function _itPublicarArquivo(itId, rev, f, obs){
+  const nome = f.name.replace(/[^\w.\-]+/g, '_');
+  const path = GRUPO + '/_its/' + itId + '/' + Date.now() + '_' + nome;
+  const url = await r2Url('upload', path, 'application/pdf');
+  const up = await fetch(url, { method:'PUT', headers:{ 'content-type':'application/pdf' }, body:f });
+  if (!up.ok) throw new Error('Falha no envio (' + up.status + ').');
+  const { data:revId, error } = await sb.rpc('grupo_it_publicar', { p_it:itId, p_revisao:rev, p_path:path, p_nome:f.name, p_bytes:f.size, p_obs:obs || '' });
+  if (error) throw error;
+  try { const t = await AuriaIT.textoPdf(f); await sb.rpc('it_indexar', { p_revisao: revId, p_texto: t || ' ' }); } catch (e){ console.warn('indexar:', e); }
+}
 async function revPublicar(id){
   const msg = (t, ok) => { $('rvMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('rvMsg').textContent = t; };
   const rev = ($('rvNum').value || '').trim(), f = $('rvArq').files[0];
   if (!rev) return msg('Informe a revisão.');
-  if (!f) return msg('Escolha o PDF da IT.');
+  if (!f) return msg('Escolha o PDF.');
   if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) return msg('O arquivo precisa ser PDF.');
   $('rvOk').disabled = true; msg('Enviando o arquivo…', true);
-  try {
-    const nome = f.name.replace(/[^\w.\-]+/g, '_');
-    const path = GRUPO + '/_its/' + id + '/' + Date.now() + '_' + nome;
-    const url = await r2Url('upload', path, 'application/pdf');
-    const up = await fetch(url, { method:'PUT', headers:{ 'content-type':'application/pdf' }, body:f });
-    if (!up.ok) throw new Error('Falha no envio (' + up.status + ').');
-    const { error } = await sb.rpc('grupo_it_publicar', { p_it:id, p_revisao:rev, p_path:path, p_nome:f.name, p_bytes:f.size, p_obs:($('rvObs').value || '').trim() });
-    if (error) throw error;
-    await carregarITs(); itDetalhe(id);
-  } catch (e){ $('rvOk').disabled = false; msg('Não foi possível publicar: ' + (e.message || e)); }
+  try { await _itPublicarArquivo(id, rev, f, ($('rvObs').value || '').trim()); await carregarITs(); itDetalhe(id); }
+  catch (e){ $('rvOk').disabled = false; msg('Não foi possível publicar: ' + (e.message || e)); }
 }
-// Abre no visualizador do próprio Auria (auria_pdfview.js), estilo CDE.
-function abrirPdf(path){
-  let it = null, rv = null;
-  ITS.forEach(i => (i.revs || []).forEach(r => { if (r.arquivo_path === path){ it = i; rv = r; } }));
-  ovFechar();
-  AuriaPDF.abrir({ url: () => r2Url('download', path), codigo: it ? it.codigo + ' · rev. ' + rv.revisao : '',
-                   titulo: it ? it.titulo : 'Documento', sub: rv ? (rv.vigente ? 'revisão vigente' : 'revisão anterior (histórico)') : '' });
+// Importar pasta: código/revisão/família saem do nome ("Cópia controlada - IT 003 (V)R01 Título.pdf");
+// pula duplicatas "(1)"; cria o documento se não existir; publica só se a revisão for nova.
+let _IMP = [];
+function itImportar(){
+  ov('<div class="hd"><b>Importar pasta de documentos</b><div class="hint" style="margin-top:4px">Escolha os PDFs (pode selecionar todos de uma vez). Código, revisão e família — (V) = Victa — saem do nome do arquivo. Documento que já existe só ganha revisão se o número for diferente da vigente.</div></div><div class="bd">'
+    + '<input type="file" id="impArq" accept="application/pdf" multiple onchange="itImportarPrevia()"><div id="impPrev" style="margin-top:10px"></div><div class="msg" id="impMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Fechar</button><button class="btn" id="impOk" disabled onclick="itImportarRodar()">Importar</button></div>');
+}
+function itImportarPrevia(){
+  const fs = [...$('impArq').files]; _IMP = [];
+  const vistos = {};
+  fs.forEach(f => {
+    const r = AuriaIT.lerNome(f.name);
+    if (!r){ _IMP.push({ f, erro:'nome fora do padrão' }); return; }
+    if (vistos[r.codigo.toUpperCase()]){ _IMP.push({ f, r, pula:'duplicata' }); return; }
+    vistos[r.codigo.toUpperCase()] = 1;
+    const ex = ITS.find(i => i.codigo.toUpperCase() === r.codigo.toUpperCase()), v = ex && ex.revs.find(x => x.vigente);
+    _IMP.push({ f, r, ex, pula: v && v.revisao === r.revisao ? 'já está nesta revisão' : '' });
+  });
+  const vai = _IMP.filter(x => x.r && !x.pula && !x.erro);
+  $('impPrev').innerHTML = '<div class="hint" style="margin-bottom:6px"><b>' + vai.length + '</b> a importar · ' + (_IMP.length - vai.length) + ' ignorados</div><div style="max-height:300px;overflow:auto"><table><tr><th>Código</th><th>Rev.</th><th>Título</th><th></th></tr>'
+    + _IMP.map(x => '<tr' + (x.pula || x.erro ? ' style="opacity:.5"' : '') + '><td class="cod">' + esc(x.r ? x.r.codigo : '?') + '</td><td class="cod">' + esc(x.r ? x.r.revisao : '') + '</td><td>' + esc(x.r ? x.r.titulo : x.f.name) + '</td><td class="hint">' + esc(x.erro || x.pula || (x.ex ? 'nova revisão' : 'novo')) + '</td></tr>').join('') + '</table></div>';
+  $('impOk').disabled = !vai.length;
+}
+async function itImportarRodar(){
+  const vai = _IMP.filter(x => x.r && !x.pula && !x.erro);
+  const msg = (t, ok) => { $('impMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('impMsg').textContent = t; };
+  $('impOk').disabled = true; let ok = 0; const falhas = [];
+  for (const x of vai){
+    msg('Importando ' + (ok + falhas.length + 1) + ' de ' + vai.length + ' — ' + x.r.codigo + '…', true);
+    try {
+      let itId = x.ex && x.ex.id;
+      if (!itId){
+        const r = await sb.from('grupo_it_auria').insert({ grupo_id:GRUPO, codigo:x.r.codigo, titulo:x.r.titulo, tipo:x.r.tipo, familia:x.r.familia, tema: x.r.tipo === 'IT' ? 'execucao' : 'qualidade' }).select('id').single();
+        if (r.error) throw r.error; itId = r.data.id;
+      }
+      await _itPublicarArquivo(itId, x.r.revisao, x.f, x.ex ? 'Importado da pasta' : 'Carga inicial');
+      ok++;
+    } catch (e){ falhas.push(x.r.codigo + ': ' + (e.message || e)); }
+  }
+  await carregarITs();
+  msg(ok + ' importado(s).' + (falhas.length ? ' Falharam: ' + falhas.join(' · ') : ''), !falhas.length);
 }
 
 // ── Responsáveis (gestão) ───────────────────────────────────────────────────
