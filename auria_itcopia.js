@@ -49,7 +49,7 @@
       const wb = XL.read(new Uint8Array(await r.blob.arrayBuffer()), { type:'array' });
       const mostra = nome => {
         ov.querySelectorAll('#aitAbas button').forEach(b => { const on = b.dataset.n === nome; b.style.background = on ? '#E8762B' : '#fff'; b.style.color = on ? '#fff' : '#1E293B'; });
-        ov.querySelector('#aitPl').innerHTML = XL.utils.sheet_to_html(wb.Sheets[nome], { editable:false }).replace(/<table/, '<table style="border-collapse:collapse" class="ait-t"');
+        ov.querySelector('#aitPl').innerHTML = XL.utils.sheet_to_html(wb.Sheets[nome], { editable:false, header:'', footer:'' }).replace(/<table/, '<table style="border-collapse:collapse" class="ait-t"');
         ov.querySelectorAll('.ait-t td').forEach(td => { td.style.border = '1px solid #E2E8F0'; td.style.padding = '3px 6px'; td.style.whiteSpace = 'nowrap'; });
       };
       ov.querySelector('#aitAbas').innerHTML = wb.SheetNames.map(n => '<button data-n="' + esc(n) + '" style="border:1px solid #CBD5E1;border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer">' + esc(n) + '</button>').join('');
