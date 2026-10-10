@@ -402,6 +402,10 @@
   .vempty.hidden{display:none}
   /* Overlay de pins do App sobre o canvas do CDE (Elo C) — mesma estética do
      Auria App: balão circular numerado + ponteiro, cor por PRIORIDADE. */
+  .cdeHl{position:absolute;border:2px solid #E8762B;background:rgba(232,118,43,.22);border-radius:3px;pointer-events:none}
+  .cdeHl.on{border-width:3px;background:rgba(232,118,43,.38);box-shadow:0 0 0 3px rgba(232,118,43,.25)}
+  .cdeHlBar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:6px;background:#0F1B2D;color:#fff;border-radius:999px;padding:5px 6px 5px 14px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  .cdeHlBar button{background:#E8762B;color:#fff;border:none;border-radius:999px;width:26px;height:24px;cursor:pointer;font-size:11px}
   .cdePin{position:absolute;width:26px;height:34px;margin-left:-13px;margin-top:-32px;pointer-events:auto;cursor:pointer;
           filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));transition:transform .12s}
   .cdePin svg{display:block}
@@ -1859,6 +1863,8 @@ async function buscaConteudo(q){
     if(error) throw error;
     BUSCA_IDS=new Set((data||[]).map(r=>r.id));
     console.info('[busca conteúdo]', q, '→', BUSCA_IDS.size, 'documento(s) no banco');
+    // janelas abertas atualizam os destaques da nova busca
+    try{ WIN_STATE.list.forEach(w=>{ if(w.DOC_SEL && !w.isCmp && !w.isFed && w.carregarDestaques) w.carregarDestaques(w.DOC_SEL.id); }); }catch(_){}
   }catch(e){ BUSCA_IDS=new Set(); console.warn('busca conteúdo:', e.message||e); }
   renderNav();
 }
@@ -4040,6 +4046,7 @@ class CdeWin {
     }
     if(!fmt){ this.msg(rev ? 'Sem visualização disponível para este arquivo. Baixe em "Detalhes / status".' : 'Este documento ainda não tem revisão com arquivo.'); if(cdeAtiva()===this) atualizarToolbar(); return; }
     await this.abrirFormato(fmt);
+    if(fmt==='pdf') this.carregarDestaques(doc.id);
   }
   // Janela federada: várias disciplinas numa cena só. Não pertence a um
   // documento (DOC_SEL fica null), então nada que dependa de "a prancha desta
@@ -5935,8 +5942,59 @@ class CdeWin {
     else this.CDE_APTS = apts||[];
     this.renderPinsCDE();
   }
+  // Busca no conteúdo (OCR): as caixas das palavras encontradas, desenhadas por
+  // cima da prancha. Coordenadas 0..1 da página — mesmo referencial dos pins.
+  async carregarDestaques(docId){
+    this.BUSCA_HL=null; this.BUSCA_HL_I=-1;
+    const q=(BUSCA_CONTEUDO && BUSCA) ? BUSCA.trim() : '';
+    if(q.length<2 || !docId){ this.renderPinsCDE(); this._hlBarra(); return; }
+    try{
+      const r=await sb.rpc('cde_ocr_caixas',{ p_doc:docId }); if(r.error) throw r.error;
+      const cx=r.data; if(!cx || !cx.pags){ this.renderPinsCDE(); this._hlBarra(); return; }
+      const norm=t=>String(t).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9,./]/g,'');
+      const termos=q.split(/\s+/).map(norm).filter(t=>t.length>=2);
+      const hl=[];
+      cx.pags.forEach(pg=>(pg.w||[]).forEach(w=>{ const n=norm(w[0]); if(termos.some(t=>n.includes(t))) hl.push({ p:pg.p, x0:w[1], y0:w[2], x1:w[3], y1:w[4] }); }));
+      hl.sort((a,b)=>a.p-b.p || a.y0-b.y0 || a.x0-b.x0);
+      this.BUSCA_HL=hl;
+    }catch(e){ console.warn('destaques:', e.message||e); }
+    this.renderPinsCDE(); this._hlBarra();
+  }
+  // Barra "n ocorrências ◀ ▶" no canto da janela; as setas centralizam a próxima.
+  _hlBarra(){
+    let b=this.stage && this.stage.querySelector('.cdeHlBar');
+    const hl=this.BUSCA_HL;
+    if(!hl || !hl.length){ if(b) b.remove(); return; }
+    if(!b){ b=document.createElement('div'); b.className='cdeHlBar'; this.stage.appendChild(b); }
+    b.innerHTML='<span>'+hl.length+' ocorrência'+(hl.length>1?'s':'')+' de “'+esc(BUSCA)+'”</span><button data-d="-1">◀</button><button data-d="1">▶</button>';
+    b.querySelectorAll('button').forEach(x=>x.onclick=()=>this.irDestaque(+x.dataset.d));
+  }
+  async irDestaque(d){
+    const hl=this.BUSCA_HL; if(!hl||!hl.length||!this.V.page) return;
+    this.BUSCA_HL_I=((this.BUSCA_HL_I<0 && d<0 ? 0 : this.BUSCA_HL_I)+d+hl.length)%hl.length;
+    const h=hl[this.BUSCA_HL_I];
+    if(h.p!==this.V.pageNum && this.V.doc) await this.pdfPage(h.p-this.V.pageNum);
+    const { pw, ph } = this._dims();
+    const q=this._rotOut((h.x0+h.x1)/2, (h.y0+h.y1)/2);
+    this.V.panX = q.nx*pw*this.V.zoom - this.stage.clientWidth/2;
+    this.V.panY = q.ny*ph*this.V.zoom - this.stage.clientHeight/2;
+    this.updateCss();
+  }
   renderPinsCDE(){
     const wrap=this.pinsWrap; if(!wrap) return; wrap.innerHTML='';
+    if(this.BUSCA_HL && this.BUSCA_HL.length && this.V.page && this.VIEW_FMT==='pdf'){
+      const { pw, ph } = this._dims(), z=this.V.zoom;
+      this.BUSCA_HL.forEach((h,i)=>{
+        if(h.p!==this.V.pageNum) return;
+        const a=this._rotOut(h.x0,h.y0), b=this._rotOut(h.x1,h.y1);
+        const x=Math.min(a.nx,b.nx)*pw*z-this.V.panX, y=Math.min(a.ny,b.ny)*ph*z-this.V.panY;
+        const w=Math.abs(b.nx-a.nx)*pw*z, hh=Math.abs(b.ny-a.ny)*ph*z;
+        if(x+w<0||y+hh<0||x>this.stage.clientWidth||y>this.stage.clientHeight) return;
+        const el=document.createElement('div'); el.className='cdeHl'+(i===this.BUSCA_HL_I?' on':'');
+        el.style.cssText='left:'+(x-3)+'px;top:'+(y-3)+'px;width:'+(w+6)+'px;height:'+(hh+6)+'px';
+        wrap.appendChild(el);
+      });
+    }
     if(!this.CDE_APTS.length || !this.V.page || this.VIEW_FMT!=='pdf') return;
     const { pw, ph } = this._dims();   // mesmas dimensões do canvas (com /Rotate aplicado)
     const pg = this.V.pageNum;
