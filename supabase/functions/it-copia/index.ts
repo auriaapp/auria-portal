@@ -26,7 +26,7 @@ const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Expose-Headers": "x-copia-numero",
+  "Access-Control-Expose-Headers": "x-copia-numero, x-arquivo-ext",
 };
 const encodePath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 // Helvetica padrão só cobre WinAnsi: troca o que ela não desenha.
@@ -67,11 +67,18 @@ serve(async (req) => {
                 v.vigente ? "Para uso na obra, emita a copia controlada." : "Nao usar na obra."];
     }
     if (!path) return j({ error: "documento sem arquivo" }, 404);
+    const ext = (path.split(".").pop() || "").toLowerCase();
 
     const signed = await r2.sign(new Request(`${R2_ENDPOINT}/${R2_BUCKET}/${encodePath(path)}`, { method: "GET" }));
     const resp = await fetch(signed);
     if (!resp.ok) return j({ error: "falha ao ler o arquivo (" + resp.status + ")" }, 502);
 
+    // Não-PDF (planilha, Word…): não dá para carimbar — a cópia fica registrada e o
+    // arquivo segue com o nº no nome (o navegador monta o nome a partir de x-copia-numero).
+    if (ext !== "pdf") {
+      return new Response(await resp.arrayBuffer(), { headers: { ...CORS, "Content-Type": resp.headers.get("content-type") || "application/octet-stream",
+        "x-arquivo-ext": ext, ...(numero ? { "x-copia-numero": String(numero) } : {}) } });
+    }
     const pdf = await PDFDocument.load(await resp.arrayBuffer(), { ignoreEncryption: true });
     const fb = await pdf.embedFont(StandardFonts.HelveticaBold), fr = await pdf.embedFont(StandardFonts.Helvetica);
     const cor = modo === "copia" ? rgb(0.11, 0.23, 0.37) : rgb(0.75, 0.22, 0.17);
@@ -88,7 +95,7 @@ serve(async (req) => {
       pg.drawText(t, { x: w / 2 - tw / 2 * 0.7, y: h / 2 - tw / 2 * 0.7, size: sz, font: fb, color: cor, opacity: 0.08, rotate: degrees(45) });
     }
     const out = await pdf.save();
-    return new Response(out, { headers: { ...CORS, "Content-Type": "application/pdf", ...(numero ? { "x-copia-numero": String(numero) } : {}) } });
+    return new Response(out, { headers: { ...CORS, "Content-Type": "application/pdf", "x-arquivo-ext": "pdf", ...(numero ? { "x-copia-numero": String(numero) } : {}) } });
   } catch (e) {
     return j({ error: (e as Error).message || String(e) }, 500);
   }

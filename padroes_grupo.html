@@ -567,7 +567,7 @@ async function telaITs(){
           + (i.ativo ? '' : ' <span class="chip t-outro">obsoleto</span>') + (venc ? ' <span class="chip t-seguranca">validade vencida</span>' : '')
           + (trechos && trechos[i.id] ? '<div class="hint" style="margin-top:3px">…' + esc(trechos[i.id]).replace(/«/g, '<b style="background:#FDE7D3;color:#9A3412">').replace(/»/g, '</b>') + '…</div>' : '') + '</td>'
           + '<td>' + (v ? '<b class="cod">' + esc(v.revisao) + '</b><div class="hint">' + new Date(v.publicado_em).toLocaleDateString('pt-BR') + '</div>' : '<span class="hint">—</span>') + '</td>'
-          + '<td style="text-align:right;white-space:nowrap">' + (v && v.arquivo_path ? '<button class="btn sec" onclick="itAbrir(\'' + v.id + '\')">Abrir</button> '
+          + '<td style="text-align:right;white-space:nowrap">' + (v && v.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(v.arquivo_path)) ? '<button class="btn sec" onclick="itAbrir(\'' + v.id + '\')">Abrir</button> ' : '<span class="hint" style="margin-right:6px">.' + esc(AuriaIT.extDe(v.arquivo_path)) + '</span>')
             + (i.ativo ? '<button class="btn sec" title="Emitir cópia controlada para uma obra" onclick="itCopia(\'' + i.id + '\')">Cópia controlada</button> ' : '') : '')
           + (PODE.its ? '<button class="btn sec" onclick="itDetalhe(\'' + i.id + '\')">Revisões</button>' : '') + '</td></tr>';
       }).join('') + '</table>' : '<div class="hint" style="padding:14px">' + (trechos ? 'Nada encontrado dentro dos documentos.' : 'Nenhum documento' + (q || tp || fm ? ' no filtro' : ' cadastrado ainda') + '.') + '</div>') + '</div>';
@@ -576,7 +576,7 @@ function itAbrir(revId){
   let it = null, rv = null;
   ITS.forEach(i => (i.revs || []).forEach(r => { if (r.id === revId){ it = i; rv = r; } }));
   ovFechar();
-  AuriaIT.ver(sb, revId, { codigo: it ? it.codigo + ' · rev. ' + rv.revisao : '', titulo: it ? it.titulo : 'Documento', sub: rv && !rv.vigente ? 'revisão anterior (histórico)' : 'revisão vigente' });
+  AuriaIT.ver(sb, revId, { ext: rv ? AuriaIT.extDe(rv.arquivo_path) : 'pdf', codigo: it ? it.codigo + ' · rev. ' + rv.revisao : '', titulo: it ? it.titulo : 'Documento', sub: rv && !rv.vigente ? 'revisão anterior (histórico)' : 'revisão vigente' });
 }
 function itCopia(id){
   const i = ITS.find(x => x.id === id), v = i && i.revs.find(r => r.vigente); if (!v) return;
@@ -619,7 +619,7 @@ async function itDetalhe(id){
     + '<h4 style="margin:10px 0 4px;color:var(--navy)">Revisões</h4>'
     + (i.revs.length ? '<table><tr><th>Rev.</th><th>Publicada</th><th>O que mudou</th><th></th></tr>' + i.revs.map(r => '<tr><td class="cod">' + esc(r.revisao) + (r.vigente ? ' <span class="chip t-execucao">vigente</span>' : '') + '</td>'
         + '<td>' + new Date(r.publicado_em).toLocaleDateString('pt-BR') + '<div class="hint">' + esc(r.publicado_nome || '') + '</div></td><td>' + esc(r.observacao || '—') + '</td>'
-        + '<td style="text-align:right">' + (r.arquivo_path ? '<button class="btn sec" onclick="itAbrir(\'' + r.id + '\')">Abrir</button>' : '') + '</td></tr>').join('') + '</table>'
+        + '<td style="text-align:right">' + (r.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(r.arquivo_path)) ? '<button class="btn sec" onclick="itAbrir(\'' + r.id + '\')">Abrir</button>' : '<button class="btn sec" onclick="itBaixarOriginal(\'' + esc(r.arquivo_path) + '\')">Baixar original</button>') : '') + '</td></tr>').join('') + '</table>'
       : '<div class="hint">Nenhuma revisão publicada.</div>')
     + '<h4 style="margin:16px 0 4px;color:var(--navy)">Cópias distribuídas</h4><div id="itCopias" class="hint">Carregando…</div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Fechar</button>'
@@ -637,7 +637,7 @@ function revForm(id){
   const i = ITS.find(x => x.id === id); const v = i && i.revs.find(r => r.vigente);
   const prox = v && /^\d+$/.test(v.revisao) ? String(+v.revisao + 1).padStart(v.revisao.length, '0') : (v ? '' : '00');
   ov('<div class="hd"><b>Publicar revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">A revisão atual' + (v ? ' (' + esc(v.revisao) + ')' : '') + ' vai para o histórico; todos passam a ver a nova, e quem tem cópia controlada da antiga recebe e-mail.</div></div><div class="bd">'
-    + '<div class="g2"><div><label class="l">Revisão</label><input type="text" id="rvNum" value="' + esc(prox) + '" placeholder="Ex.: 03"></div><div><label class="l">Arquivo (PDF)</label><input type="file" id="rvArq" accept="application/pdf"></div></div>'
+    + '<div class="g2"><div><label class="l">Revisão</label><input type="text" id="rvNum" value="' + esc(prox) + '" placeholder="Ex.: 03"></div><div><label class="l">Arquivo (PDF, planilha, Word…)</label><input type="file" id="rvArq"></div></div>'
     + '<label class="l">O que mudou nesta revisão</label><textarea id="rvObs" rows="3"></textarea><div class="msg" id="rvMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Cancelar</button><button class="btn" id="rvOk" onclick="revPublicar(\'' + id + '\')">Publicar</button></div>');
 }
@@ -646,23 +646,28 @@ async function r2Url(action, path, contentType){
   if (r.error){ let m = r.error.message; try { const b = await r.error.context.json(); if (b && b.error) m = b.error; } catch (_){} throw new Error(m); }
   return r.data.url;
 }
-// Sobe o PDF, publica a revisão e indexa o texto (busca no conteúdo) — uma vez só.
+// Original sem carimbo — só quem mantém a biblioteca (o R2 recusa os demais).
+async function itBaixarOriginal(path){
+  try { const a = document.createElement('a'); a.href = await r2Url('download', path); a.download = path.split('/').pop(); document.body.appendChild(a); a.click(); a.remove(); }
+  catch (e){ alert('Não foi possível baixar: ' + (e.message || e)); }
+}
+// Sobe o arquivo, publica a revisão e indexa o texto (busca no conteúdo) — uma vez só.
 async function _itPublicarArquivo(itId, rev, f, obs){
   const nome = f.name.replace(/[^\w.\-]+/g, '_');
   const path = GRUPO + '/_its/' + itId + '/' + Date.now() + '_' + nome;
-  const url = await r2Url('upload', path, 'application/pdf');
-  const up = await fetch(url, { method:'PUT', headers:{ 'content-type':'application/pdf' }, body:f });
+  const ct = f.type || 'application/octet-stream';
+  const url = await r2Url('upload', path, ct);
+  const up = await fetch(url, { method:'PUT', headers:{ 'content-type':ct }, body:f });
   if (!up.ok) throw new Error('Falha no envio (' + up.status + ').');
   const { data:revId, error } = await sb.rpc('grupo_it_publicar', { p_it:itId, p_revisao:rev, p_path:path, p_nome:f.name, p_bytes:f.size, p_obs:obs || '' });
   if (error) throw error;
-  try { const t = await AuriaIT.textoPdf(f); await sb.rpc('it_indexar', { p_revisao: revId, p_texto: t || ' ' }); } catch (e){ console.warn('indexar:', e); }
+  try { const t = await AuriaIT.textoArquivo(f); await sb.rpc('it_indexar', { p_revisao: revId, p_texto: t || ' ' }); } catch (e){ console.warn('indexar:', e); }
 }
 async function revPublicar(id){
   const msg = (t, ok) => { $('rvMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('rvMsg').textContent = t; };
   const rev = ($('rvNum').value || '').trim(), f = $('rvArq').files[0];
   if (!rev) return msg('Informe a revisão.');
-  if (!f) return msg('Escolha o PDF.');
-  if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) return msg('O arquivo precisa ser PDF.');
+  if (!f) return msg('Escolha o arquivo.');
   $('rvOk').disabled = true; msg('Enviando o arquivo…', true);
   try { await _itPublicarArquivo(id, rev, f, ($('rvObs').value || '').trim()); await carregarITs(); itDetalhe(id); }
   catch (e){ $('rvOk').disabled = false; msg('Não foi possível publicar: ' + (e.message || e)); }
@@ -671,8 +676,8 @@ async function revPublicar(id){
 // pula duplicatas "(1)"; cria o documento se não existir; publica só se a revisão for nova.
 let _IMP = [];
 function itImportar(){
-  ov('<div class="hd"><b>Importar pasta de documentos</b><div class="hint" style="margin-top:4px">Escolha os PDFs (pode selecionar todos de uma vez). Código, revisão e família — (V) = Victa — saem do nome do arquivo. Documento que já existe só ganha revisão se o número for diferente da vigente.</div></div><div class="bd">'
-    + '<input type="file" id="impArq" accept="application/pdf" multiple onchange="itImportarPrevia()"><div id="impPrev" style="margin-top:10px"></div><div class="msg" id="impMsg"></div></div>'
+  ov('<div class="hd"><b>Importar pasta de documentos</b><div class="hint" style="margin-top:4px">Escolha os arquivos (pode selecionar todos de uma vez; PDF, planilha, Word…). Arquivo cujo nome não segue o padrão fica de fora — cadastre-o em "＋ Documento". Código, revisão e família — (V) = Victa — saem do nome do arquivo. Documento que já existe só ganha revisão se o número for diferente da vigente.</div></div><div class="bd">'
+    + '<input type="file" id="impArq" multiple onchange="itImportarPrevia()"><div id="impPrev" style="margin-top:10px"></div><div class="msg" id="impMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Fechar</button><button class="btn" id="impOk" disabled onclick="itImportarRodar()">Importar</button></div>');
 }
 function itImportarPrevia(){
@@ -715,7 +720,7 @@ async function itImportarRodar(){
 async function telaPessoas(){
   $('corpo').innerHTML = '<div class="hint">Carregando…</div>';
   const { data, error } = await sb.from('usuarios_auria').select('id,nome,email,setor_area,pode_aprovar_fvs').eq('role','setor').eq('empresa_id', GRUPO).order('nome');
-  $('corpo').innerHTML = '<div class="card"><h3>Área de cada setor</h3><p class="h">A área decide o que a pessoa edita aqui: <b>Segurança</b> edita os padrões de segurança e as ITs; <b>Qualidade</b> edita os padrões de qualidade e as ITs. '
+  $('corpo').innerHTML = '<div class="card"><h3>Área de cada setor</h3><p class="h">A área decide o que a pessoa edita aqui: <b>Segurança</b> edita os padrões de segurança; <b>Qualidade</b> edita os padrões de qualidade e mantém a Biblioteca normativa. '
     + '"Pode aprovar FVS" vale quando o módulo de FVS entrar. Só a gestão do grupo muda a área.</p>'
     + (error ? '<div class="ro" style="display:block">' + esc(error.message) + '</div>' : '')
     + ((data || []).length ? '<table><tr><th>Pessoa</th><th>Área</th><th>Pode aprovar FVS</th><th></th></tr>' + data.map(u => '<tr><td><b>' + esc(u.nome || '—') + '</b><div class="hint">' + esc(u.email) + '</div></td>'

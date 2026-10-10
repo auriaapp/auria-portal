@@ -9817,7 +9817,7 @@ async function segPiscarCaixas(){
 /* app_obra_its.js */
 // ── App Obra · ITs do grupo e padrões de segurança (backlog 187) ─────────────
 //  A obra PESQUISA e ABRE as ITs vigentes do grupo (Biblioteca de ITs mantida
-//  pelos setores de Segurança e Qualidade em padroes_grupo.html). PDF no R2 —
+//  pelo setor de Qualidade em padroes_grupo.html). PDF no R2 —
 //  só por link temporário (cde-r2 confere se a pessoa é do grupo).
 //  Também lê os padrões de Segurança do grupo: lista de EPIs e tipos de risco
 //  extras passam a valer nas zonas (sem o grupo salvar, fica o padrão Auria).
@@ -9836,7 +9836,7 @@ async function itsPainel(busca){
   if (!ITS_OBRA) await itsCarregar();
   const q = (busca || '').toLowerCase();
   const lista = ITS_OBRA.filter(i => !q || (i.codigo + ' ' + i.titulo + ' ' + (i.palavras || '') + ' ' + (IT_TEMA[i.tema] || '')).toLowerCase().includes(q));
-  segOv('<div class="hd"><b>Instruções Técnicas do grupo</b><p>Sempre na revisão vigente. Mantidas pelos setores de Segurança e Qualidade.</p></div>'
+  segOv('<div class="hd"><b>Instruções Técnicas do grupo</b><p>Sempre na revisão vigente, mantidas pelo setor de Qualidade. Para levar à obra, emita a cópia controlada.</p></div>'
     + '<div style="padding:10px 14px 0"><input id="itsBusca" type="search" placeholder="Buscar por código, título, tema ou palavra" value="' + esc(busca || '') + '" '
     + 'oninput="clearTimeout(window._itsT);window._itsT=setTimeout(()=>{itsPainel(this.value);setTimeout(()=>{const b=$(\'itsBusca\');if(b){b.focus();b.setSelectionRange(b.value.length,b.value.length)}},0)},200)" '
     + 'style="width:100%;padding:9px 11px;border:1px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:13px"></div>'
@@ -9844,7 +9844,7 @@ async function itsPainel(busca){
         + (i.vig && i.vig.arquivo_path ? ' onclick="itsAbrirIt(\'' + i.id + '\')"' : '') + '>'
         + '<div class="cod">' + esc(i.codigo) + (i.vig ? ' · rev. ' + esc(i.vig.revisao) : '') + ' <span class="seg-chip" style="--c:#1E3A5F">' + esc(IT_TEMA[i.tema] || '') + '</span></div>'
         + '<div class="t">' + esc(i.titulo) + '</div>'
-        + '<div class="m">' + (i.vig && i.vig.arquivo_path ? 'Toque para abrir o PDF' : 'Sem arquivo publicado') + '</div></div>').join('')
+        + '<div class="m">' + (i.vig && i.vig.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(i.vig.arquivo_path)) ? 'Toque para abrir' : 'Toque para baixar a cópia controlada (.' + AuriaIT.extDe(i.vig.arquivo_path) + ')') : 'Sem arquivo publicado') + '</div></div>').join('')
       : '<div class="hint" style="padding:12px">' + (ITS_OBRA.length ? 'Nenhuma IT encontrada.' : 'O grupo ainda não cadastrou ITs.') + '</div>') + '</div>'
     + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
 }
@@ -9854,6 +9854,13 @@ async function itsPainel(busca){
 async function itsAbrirIt(id){
   const i = (ITS_OBRA || []).find(x => x.id === id); if (!i || !i.vig) return;
   segFechar();
+  // Não-PDF: planilha abre no leitor só-leitura; outros formatos só pela cópia controlada.
+  const ext = AuriaIT.extDe(i.vig.arquivo_path);
+  if (ext !== 'pdf'){
+    if (AuriaIT.podeVer(ext)) AuriaIT.ver(sb, i.vig.id, { ext, codigo: i.codigo + ' · rev. ' + i.vig.revisao, titulo: i.titulo });
+    else itsCopia(id);
+    return;
+  }
   const info = esc(i.codigo) + ' · rev. ' + esc(i.vig.revisao) + ' — ' + esc(i.titulo);
   segBarraInfo('Abrindo ' + info + '…', '');
   try {

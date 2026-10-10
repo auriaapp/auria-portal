@@ -203,3 +203,16 @@ end $$;
 drop trigger if exists trg_it_nova_revisao on public.grupo_it_revisao_auria;
 create trigger trg_it_nova_revisao after insert on public.grupo_it_revisao_auria
   for each row execute function public.notif_it_nova_revisao();
+
+-- 2026-10-10 (2ª etapa): biblioteca só com a Qualidade (gerente/segurança deixam de editar 'its')
+create or replace function public.grupo_pode_editar(p_grupo uuid, p_secao text)
+ returns boolean language sql stable security definer set search_path to 'public' as $function$
+  select coalesce(public.minha_role_auria(),'') = 'super_admin'
+      or ( public.minha_empresa() = p_grupo and (
+             (public.minha_role_auria() = 'gerente' and p_secao <> 'its')
+          or ( public.minha_role_auria() = 'setor' and exists (
+                 select 1 from public.usuarios_auria u where u.id = auth.uid()
+                    and ( (p_secao <> 'its' and u.setor_area = p_secao)
+                       or (p_secao = 'its' and u.setor_area = 'qualidade') ) ) ) ) );
+$function$;
+update public.grupo_it_auria set ativo = false where codigo = 'IT - TESTE';
