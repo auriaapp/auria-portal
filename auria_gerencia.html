@@ -2630,7 +2630,14 @@ async function gdAcessosConvidar(){
       const r=await sb.functions.invoke('invite-setor',{ body:{ email, nome, empresa_nome:'' } });
       if(r.error) throw r.error;
       const uid=r.data&&r.data.user_id; if(!uid) throw new Error('Convite enviado, mas sem id do usuário — tente de novo.');
-      const ins=await sb.from('cde_acesso_auria').upsert({ empreendimento_id:AC_EMP.id, usuario_id:uid, todas_disciplinas:true, download:true, criado_por:USER.id },{ onConflict:'empreendimento_id,usuario_id' });
+      // O índice único (empreendimento_id, usuario_id) é PARCIAL (usuario_id not null),
+      // e o upsert do PostgREST não casa ON CONFLICT com índice parcial → atualiza ou insere.
+      const ex=await sb.from('cde_acesso_auria').select('id').eq('empreendimento_id',AC_EMP.id).eq('usuario_id',uid).maybeSingle();
+      if(ex.error) throw ex.error;
+      const lin={ todas_disciplinas:true, download:true, criado_por:USER.id };
+      const ins = ex.data
+        ? await sb.from('cde_acesso_auria').update(lin).eq('id',ex.data.id)
+        : await sb.from('cde_acesso_auria').insert(Object.assign({ empreendimento_id:AC_EMP.id, usuario_id:uid }, lin));
       if(ins.error) throw ins.error;
       showToast(r.data.ja_existia?'Acesso concedido (já tinha conta).':'Convite enviado e acesso concedido.','green');
     }
