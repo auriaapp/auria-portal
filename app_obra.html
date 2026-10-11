@@ -9824,12 +9824,16 @@ async function segPiscarCaixas(){
 //  extras passam a valer nas zonas (sem o grupo salvar, fica o padrão Auria).
 var ITS_OBRA = null, SEG_PADRAO_GRUPO = null;
 
+let ITS_SEM_ACESSO = false;
 async function itsCarregar(){
   if (!EMP) return [];
   const { data, error } = await sb.from('grupo_it_auria').select('id,codigo,titulo,tema,palavras,ativo,grupo_it_revisao_auria(id,revisao,arquivo_path,publicado_em,vigente)')
     .eq('grupo_id', EMP.empresa_id).eq('ativo', true).order('codigo');
   if (error){ console.warn('ITs:', error.message || error); ITS_OBRA = []; return ITS_OBRA; }
   ITS_OBRA = (data || []).map(i => Object.assign(i, { vig: (i.grupo_it_revisao_auria || []).find(r => r.vigente) || null }));
+  // lista vazia pode ser "sem permissão" (RLS) — pergunta ao banco para avisar certo
+  ITS_SEM_ACESSO = false;
+  if (!ITS_OBRA.length){ try { const a = await sb.rpc('it_meu_acesso', { p_grupo: EMP.empresa_id }); ITS_SEM_ACESSO = a.data === false; } catch (_){} }
   return ITS_OBRA;
 }
 const IT_TEMA = { seguranca:'Segurança', qualidade:'Qualidade', execucao:'Execução', meio_ambiente:'Meio ambiente', outro:'Outro' };
@@ -9846,7 +9850,7 @@ async function itsPainel(busca){
         + '<div class="cod">' + esc(i.codigo) + (i.vig ? ' · rev. ' + esc(i.vig.revisao) : '') + ' <span class="seg-chip" style="--c:#1E3A5F">' + esc(IT_TEMA[i.tema] || '') + '</span></div>'
         + '<div class="t">' + esc(i.titulo) + '</div>'
         + '<div class="m">' + (i.vig && i.vig.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(i.vig.arquivo_path)) ? 'Toque para abrir' : 'Toque para baixar a cópia controlada (.' + AuriaIT.extDe(i.vig.arquivo_path) + ')') : 'Sem arquivo publicado') + '</div></div>').join('')
-      : '<div class="hint" style="padding:12px">' + (ITS_OBRA.length ? 'Nenhuma IT encontrada.' : 'O grupo ainda não cadastrou ITs.') + '</div>') + '</div>'
+      : '<div class="hint" style="padding:12px">' + (ITS_OBRA.length ? 'Nenhuma IT encontrada.' : ITS_SEM_ACESSO ? 'Você não tem acesso à biblioteca normativa deste grupo. Fale com o gestor da obra.' : 'O grupo ainda não cadastrou ITs.') + '</div>') + '</div>'
     + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
 }
 // Abre a IT NO QUADRO do App Obra — o mesmo das pranchas (zoom, arrastar,

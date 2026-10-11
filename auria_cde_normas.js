@@ -170,9 +170,11 @@
     NORMAS = (data || []).map(i => Object.assign(i, { vig: (i.grupo_it_revisao_auria || []).find(r => r.vigente) || null }))
       .filter(i => i.vig && i.vig.arquivo_path)
       .sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }));
+    SEM_ACESSO = false;
+    if (!NORMAS.length){ try { const a = await sb.rpc('it_meu_acesso', { p_grupo: GRUPO_ID }); SEM_ACESSO = a.data === false; } catch (_){} }
     try { SOLS = await AuriaIT.solicitacoesAbertas(sb, NORMAS.map(i => i.id)); } catch (_){ SOLS = {}; }
   }
-  let SOLS = {};
+  let SOLS = {}, SEM_ACESSO = false;
   const $o = s => PAINEL.querySelector(s);
   async function buscar(){
     const q = F.q.trim(); TERMO = q;
@@ -204,7 +206,7 @@
   }
   function lista(){
     const q = F.q.trim();
-    if (!RES.length){ $o('.ls').innerHTML = '<div class="vz">' + (q.length >= 2 ? 'Nenhuma norma com “' + esc(q) + '”. Tente outra palavra ou só o começo dela (ex.: “compact”).' : 'Nenhum documento neste filtro.') + '</div>'; $o('.pv').innerHTML = ''; return; }
+    if (!RES.length){ $o('.ls').innerHTML = '<div class="vz">' + (q.length >= 2 ? 'Nenhuma norma com “' + esc(q) + '”. Tente outra palavra ou só o começo dela (ex.: “compact”).' : (SEM_ACESSO ? 'Você não tem acesso à biblioteca normativa deste grupo. Fale com o gestor do empreendimento.' : NORMAS.length ? 'Nenhum documento neste filtro.' : 'O grupo ainda não cadastrou normas.')) + '</div>'; $o('.pv').innerHTML = ''; return; }
     let h = '', k = 0;
     if (q.length >= 2){
       const tit = RES.filter(i => i._tit), cont = RES.filter(i => !i._tit);

@@ -52,6 +52,11 @@
   header .tt b{display:block;font-size:11.5px;color:rgba(255,255,255,.78);letter-spacing:.16em;text-transform:uppercase;font-weight:600;line-height:1.3}
   header .tt span{display:block;font-size:10.5px;color:#8FA6C0;margin-top:2px}
   header .sp{flex:1}
+  /* Barra montada de uma vez: altura fixa (logo do empreend. 46px + padding) e
+     botões/logo/subtítulo invisíveis até o boot decidir quais aparecem. */
+  header{min-height:66px;box-sizing:border-box}
+  header .hbtn,header .elogo,header #hSub{transition:opacity .15s}
+  header.pend .hbtn,header.pend .elogo,header.pend #hSub{opacity:0;pointer-events:none}
   /* Logo do empreendimento no cabeçalho (item 45) — mesmo slot .elogo do painel do
      analista: com logo = branco + linha laranja; sem logo = tracejado com a sigla. */
   header .elogo{width:60px;height:46px;flex-shrink:0;border-radius:8px;background:#fff;border:1.5px solid #E8960A;
@@ -793,7 +798,7 @@
 </head>
 <body>
 
-<header>
+<header class="pend">
   <img src="logo_auria_branco.png" alt="Auria">
   <div class="tt"><b>Ambiente Comum de Dados (CDE)</b><span id="hSub">—</span></div>
   <span class="sp"></span>
@@ -814,6 +819,12 @@
 </header>
 
 <div id="load" class="load">Carregando…</div>
+<script>
+// Revela a barra superior inteira de uma vez (ver header.pend no CSS). Rede de
+// segurança: se o boot parar antes (sem padrão, sem acesso), revela em 4 s.
+function _barraPronta(){ const h=document.querySelector('header'); if(h) h.classList.remove('pend'); }
+setTimeout(_barraPronta, 4000);
+</script>
 
 <div class="main" id="main" style="display:none">
   <!-- Canvas -->
@@ -1296,11 +1307,11 @@ async function boot(){
       volta.setAttribute('href', dest[0]); volta.textContent = dest[1];
     }
   }
-  if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no seu painel.'; return; }
+  if(!EMP_ID){ $('load').textContent='Abra o CDE a partir de um empreendimento no seu painel.'; _barraPronta(); return; }
   carregarPastasAbertas();
 
   const { data: e } = await sb.from('empreendimentos_auria').select('id,nome,codigo,logo_url,cidade,estado').eq('id',EMP_ID).maybeSingle();
-  if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; return; }
+  if(!e){ $('load').textContent='Empreendimento não encontrado ou sem acesso.'; _barraPronta(); return; }
   EMP = e;
   const sigla=(e.codigo||'').trim().toUpperCase();
   $('hSub').innerHTML = (sigla?'<span class="ecod">'+sigla+'</span>· ':'') + esc(e.nome) + (e.cidade? ' · '+esc(e.cidade)+(e.estado?'/'+esc(e.estado):'') : '')
@@ -1322,7 +1333,7 @@ async function boot(){
   if(!CONV){
     $('load').innerHTML = 'Este empreendimento ainda não tem <b>padrão de codificação</b>.<br>'
       + '<a href="cde_padrao.html" style="color:var(--accent)">Defina o padrão do grupo/empresa</a> antes de enviar arquivo(s).';
-    return;
+    _barraPronta(); return;
   }
   if(!SEM_ESCRITA) $('btnReceber').style.display='';
   // Organizador de QR: mesma régua do diário (coordenação, eng. chefe, coord. de campo).
@@ -1330,6 +1341,7 @@ async function boot(){
   if(RAMO_OBRA){ const b=$('btnFilaObra'); if(b) b.style.display=''; setTimeout(filaObraCarregar, 800); }
   // App Obra (backlog 180): só para o perfil obra — o app_obra.html barra os demais papéis.
   if(RAMO_OBRA && USER_ROLE==='obra'){ const b=$('btnAppObra'); if(b) b.style.display=''; }
+  _barraPronta();
   await carregarDocs();
   await carregarGrupos();
   pedObraCarregar();          // item 147: fila de liberação para a obra (não bloqueia o boot)
