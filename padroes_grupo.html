@@ -149,6 +149,7 @@ async function boot(){
   await carregarPadroes();
   $('load').style.display = 'none'; $('app').style.display = '';
   const qa = new URLSearchParams(location.search).get('aba'); if (qa) ABA = qa;
+  if (new URLSearchParams(location.search).get('sol')) setTimeout(() => itSolicitacoes(PODE.its ? 'todas' : 'minhas'), 900);
   // embed=biblioteca: aberta dentro do App/App Obra/CDE — só a Biblioteca normativa,
   // sem cabeçalho nem as abas de Segurança/Qualidade (dados que não são desse contexto).
   if (new URLSearchParams(location.search).get('embed') === 'biblioteca'){
@@ -541,7 +542,9 @@ async function carregarITs(){
   const { data, error } = await sb.from('grupo_it_auria').select('*, grupo_it_revisao_auria(id,it_id,revisao,arquivo_path,arquivo_nome,bytes,observacao,vigente,publicado_nome,publicado_em)').eq('grupo_id', GRUPO).order('codigo');
   if (error){ ITS = []; return error; }
   ITS = (data || []).map(i => Object.assign(i, { revs: (i.grupo_it_revisao_auria || []).sort((a,b) => new Date(b.publicado_em) - new Date(a.publicado_em)) }));
+  try { SOL_AB = await AuriaIT.solicitacoesAbertas(sb, ITS.map(i => i.id)); } catch (_){ SOL_AB = {}; }
 }
+let SOL_AB = {};
 function _itOrdem(a, b){ return a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }); }
 function itRefiltrar(){
   window._itRender = true;
@@ -566,6 +569,7 @@ async function telaITs(){
     + '<select onchange="window._itTipo=this.value;itRefiltrar()" style="width:auto"><option value="">Todos os tipos</option>' + tipos.map(k => '<option' + (k === tp ? ' selected' : '') + '>' + esc(k) + '</option>').join('') + '</select>'
     + '<select onchange="window._itFam=this.value;itRefiltrar()" style="width:auto"><option value="">Grupo e Victa</option>' + Object.keys(FAM_ROT).map(k => '<option value="' + k + '"' + (k === fm ? ' selected' : '') + '>' + FAM_ROT[k] + '</option>').join('') + '</select>'
     + (PODE.its ? '<label class="chk" style="margin:0"><input type="checkbox"' + (obs ? ' checked' : '') + ' onchange="window._itObs=this.checked;itRefiltrar()"> obsoletos</label>' : '')
+    + '<button class="btn sec" onclick="itSolicitacoes(' + (PODE.its ? '\'todas\'' : '\'minhas\'') + ')">' + (PODE.its ? 'Solicitações' + (Object.keys(SOL_AB).length ? ' <b style="background:#E8762B;color:#fff;border-radius:99px;padding:0 7px;margin-left:4px">' + Object.values(SOL_AB).reduce((a, x) => a + x.n, 0) + '</b>' : '') : 'Minhas solicitações') + '</button>'
     + (PODE.its ? '<button class="btn sec" onclick="itImportar()">Importar pasta</button><button class="btn" onclick="itForm()">＋ Documento</button>' : '') + '</div>'
     + '<p class="h" style="margin:10px 0 0">' + ITS.filter(i => i.ativo).length + ' documentos vigentes. Todos os setores consultam a revisão vigente; para levar à obra, emita a <b>cópia controlada</b> — se sair revisão nova, o responsável é avisado por e-mail.'
     + (PODE.its ? ' Você mantém a biblioteca: vê o histórico de revisões e as cópias distribuídas.' : '') + '</p></div>'
@@ -573,12 +577,12 @@ async function telaITs(){
         const v = i.revs.find(r => r.vigente), venc = i.validade && i.validade < hoje;
         return '<tr' + (i.ativo ? '' : ' style="opacity:.55"') + '><td class="cod" style="white-space:nowrap">' + esc(i.codigo) + '</td><td>' + esc(i.titulo)
           + ' <span class="chip t-' + ((i.familia || 'grupo') === 'victa' ? 'seguranca' : 'qualidade') + '">' + FAM_ROT[i.familia || 'grupo'] + '</span>'
-          + (i.ativo ? '' : ' <span class="chip t-outro">obsoleto</span>') + (venc ? ' <span class="chip t-seguranca">validade vencida</span>' : '')
+          + (i.ativo ? '' : ' <span class="chip t-outro">obsoleto</span>') + (venc ? ' <span class="chip t-seguranca">validade vencida</span>' : '') + AuriaIT.chipNorma(SOL_AB[i.id])
           + (trechos && trechos[i.id] ? '<div class="hint" style="margin-top:3px">…' + esc(trechos[i.id]).replace(/«/g, '<b style="background:#FDE7D3;color:#9A3412">').replace(/»/g, '</b>') + '…</div>' : '') + '</td>'
           + '<td>' + (v ? '<b class="cod">' + esc(v.revisao) + '</b><div class="hint">' + new Date(v.publicado_em).toLocaleDateString('pt-BR') + '</div>' : '<span class="hint">—</span>') + '</td>'
           + '<td style="text-align:right;white-space:nowrap">' + (v && v.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(v.arquivo_path)) ? '<button class="btn sec" onclick="itAbrir(\'' + v.id + '\')">Abrir</button> ' : '<span class="hint" style="margin-right:6px">.' + esc(AuriaIT.extDe(v.arquivo_path)) + '</span>')
             + (i.ativo ? '<button class="btn sec" title="Emitir cópia controlada para uma obra" onclick="itCopia(\'' + i.id + '\')">Cópia controlada</button> ' : '') : '')
-          + (PODE.its ? '<button class="btn sec" onclick="itDetalhe(\'' + i.id + '\')">Revisões</button>' : '') + '</td></tr>';
+          + (PODE.its ? '<button class="btn sec" onclick="itDetalhe(\'' + i.id + '\')">Revisões</button>' : (i.ativo ? '<button class="btn sec" title="Pedir à Qualidade que revise esta norma" onclick="itSolicitar(\'' + i.id + '\')">Solicitar revisão</button>' : '')) + '</td></tr>';
       }).join('') + '</table>' : '<div class="hint" style="padding:14px">' + (trechos ? 'Nada encontrado dentro dos documentos.' : 'Nenhum documento' + (q || tp || fm ? ' no filtro' : ' cadastrado ainda') + '.') + '</div>') + '</div>';
 }
 function itAbrir(revId){
@@ -647,13 +651,63 @@ function revForm(id){
   const prox = v && /^\d+$/.test(v.revisao) ? String(+v.revisao + 1).padStart(v.revisao.length, '0') : (v ? '' : '00');
   ov('<div class="hd"><b>Publicar revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">A revisão atual' + (v ? ' (' + esc(v.revisao) + ')' : '') + ' vai para o histórico; todos passam a ver a nova, e quem tem cópia controlada da antiga recebe e-mail.</div></div><div class="bd">'
     + '<div class="g2"><div><label class="l">Revisão</label><input type="text" id="rvNum" value="' + esc(prox) + '" placeholder="Ex.: 03"></div><div><label class="l">Arquivo (PDF, planilha, Word…)</label><input type="file" id="rvArq"></div></div>'
-    + '<label class="l">O que mudou nesta revisão</label><textarea id="rvObs" rows="3"></textarea><div class="msg" id="rvMsg"></div></div>'
+    + '<label class="l">O que mudou nesta revisão</label><textarea id="rvObs" rows="3"></textarea><div id="rvSols"></div><div class="msg" id="rvMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Cancelar</button><button class="btn" id="rvOk" onclick="revPublicar(\'' + id + '\')">Publicar</button></div>');
+  sb.from('grupo_it_solicitacao_auria').select('id,numero,descricao,solicitante_nome,situacao').eq('it_id', id).in('situacao', ['aberta','em_analise']).order('numero').then(({ data }) => {
+    const el = $('rvSols'); if (!el || !(data || []).length) return;
+    el.innerHTML = '<label class="l">Esta revisão atende os pedidos</label>' + data.map(x => '<label class="chk" style="align-items:flex-start"><input type="checkbox" data-sol="' + x.id + '" checked> <span><b>nº ' + x.numero + '</b> · ' + esc(x.solicitante_nome || '') + ' — ' + esc(x.descricao) + '</span></label>').join('')
+      + '<div class="hint">Os marcados viram "Atendida" e quem pediu recebe e-mail com o número da revisão.</div>';
+  });
 }
 async function r2Url(action, path, contentType){
   const r = await sb.functions.invoke('cde-r2', { body:{ action, path, contentType } });
   if (r.error){ let m = r.error.message; try { const b = await r.error.context.json(); if (b && b.error) m = b.error; } catch (_){} throw new Error(m); }
   return r.data.url;
+}
+// ── Solicitação de revisão (218a) ──────────────────────────────────────────
+function itSolicitar(id){
+  const i = ITS.find(x => x.id === id); if (!i) return;
+  AuriaIT.solicitar(sb, { itId:i.id, codigo:i.codigo, titulo:i.titulo, aoEnviar: () => { carregarITs().then(() => { window._itRender = true; telaITs(); }); } });
+}
+// Qualidade: todas (abertas primeiro). Demais: as minhas.
+async function itSolicitacoes(modo){
+  window._solModo = modo || window._solModo || 'minhas';
+  const todas = window._solModo === 'todas' && PODE.its, filtro = window._solFiltro || 'pendentes';
+  ov('<div class="hd"><b>' + (todas ? 'Solicitações de revisão' : 'Minhas solicitações de revisão') + '</b></div><div class="bd" id="solCorpo"><div class="hint">Carregando…</div></div><div class="ft"><button class="btn sec" onclick="ovFechar();window._itRender=true;telaITs()">Fechar</button></div>');
+  $('ovBox').style.width = '820px';
+  let q = sb.from('grupo_it_solicitacao_auria').select('*').eq('grupo_id', GRUPO).order('criado_em', { ascending:false });
+  if (!todas) q = q.eq('solicitante_id', ME.id);
+  const { data, error } = await q;
+  const el = $('solCorpo'); if (!el) return;
+  if (error){ el.innerHTML = '<div class="msg err">' + esc(error.message) + '</div>'; return; }
+  const pend = s => s.situacao === 'aberta' || s.situacao === 'em_analise';
+  const lista = (data || []).filter(s => filtro === 'todas' || pend(s));
+  const itDe = id => ITS.find(x => x.id === id) || { codigo:'?', titulo:'' };
+  el.innerHTML = '<div class="row" style="gap:6px;margin:6px 0 10px">'
+    + [['pendentes','Pendentes ' + (data || []).filter(pend).length], ['todas','Todas ' + (data || []).length]].map(([k, t]) => '<button class="btn ' + (filtro === k ? '' : 'sec') + '" onclick="window._solFiltro=\'' + k + '\';itSolicitacoes()">' + t + '</button>').join('') + '</div>'
+    + (lista.length ? lista.map(s => { const i = itDe(s.it_id);
+        return '<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0">'
+          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>nº ' + s.numero + '</b> ' + AuriaIT.chipSituacao(s.situacao) + ' <span class="cod">' + esc(i.codigo) + '</span> ' + esc(i.titulo)
+          + '<span class="hint" style="margin-left:auto">' + new Date(s.criado_em).toLocaleDateString('pt-BR') + '</span></div>'
+          + '<div class="hint" style="margin-top:4px">' + esc(AuriaIT.MOTIVOS[s.motivo] || s.motivo) + (s.pagina ? ' · ' + esc(s.pagina) : '') + (todas ? ' · por ' + esc(s.solicitante_nome || '') : '') + '</div>'
+          + '<div style="margin-top:6px">' + esc(s.descricao) + '</div>'
+          + (s.resposta ? '<div style="margin-top:6px;border-left:3px solid #E8762B;padding-left:8px"><span class="hint">Qualidade' + (s.respondido_nome ? ' (' + esc(s.respondido_nome) + ')' : '') + ':</span> ' + esc(s.resposta) + '</div>' : '')
+          + (todas && pend(s) ? '<div class="row" style="gap:6px;margin-top:8px">'
+              + (s.situacao === 'aberta' ? '<button class="btn sec" onclick="solResponder(\'' + s.id + '\',\'em_analise\')">Colocar em análise</button>' : '')
+              + '<button class="btn sec" onclick="ovFechar();revForm(\'' + s.it_id + '\')">Publicar revisão que atende</button>'
+              + '<button class="btn sec" onclick="solResponder(\'' + s.id + '\',\'atendida\')">Marcar atendida</button>'
+              + '<button class="btn sec" onclick="solResponder(\'' + s.id + '\',\'recusada\')">Recusar</button></div>' : '')
+          + '</div>'; }).join('')
+      : '<div class="hint" style="padding:12px 0">' + (filtro === 'pendentes' ? 'Nenhuma solicitação pendente.' : 'Nenhuma solicitação.') + (todas ? '' : ' Para pedir, use "Solicitar revisão" na norma.') + '</div>');
+}
+async function solResponder(id, situacao){
+  let resp = '';
+  if (situacao === 'recusada'){ resp = prompt('Justificativa da recusa (vai por e-mail para quem pediu):', ''); if (resp === null) return; if (resp.trim().length < 5) return alert('Escreva a justificativa.'); }
+  else if (situacao === 'atendida'){ resp = prompt('Comentário para quem pediu (opcional):', ''); if (resp === null) return; }
+  else if (situacao === 'em_analise'){ resp = prompt('Comentário para quem pediu (opcional):', 'Estamos analisando o seu pedido.'); if (resp === null) return; }
+  const { error } = await sb.rpc('it_solicitacao_responder', { p_id:id, p_situacao:situacao, p_resposta:resp || '', p_revisao:null });
+  if (error) return alert(error.message);
+  await carregarITs(); itSolicitacoes();
 }
 // Original sem carimbo — só quem mantém a biblioteca (o R2 recusa os demais).
 async function itBaixarOriginal(path){
@@ -689,6 +743,7 @@ async function _itPublicarArquivo(itId, rev, f, obs){
   const { data:revId, error } = await sb.rpc('grupo_it_publicar', { p_it:itId, p_revisao:rev, p_path:path, p_nome:f.name, p_bytes:f.size, p_obs:obs || '' });
   if (error) throw error;
   try { const t = await AuriaIT.textoArquivo(f); await sb.rpc('it_indexar', { p_revisao: revId, p_texto: t || ' ' }); } catch (e){ console.warn('indexar:', e); }
+  return revId;
 }
 async function revPublicar(id){
   const msg = (t, ok) => { $('rvMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('rvMsg').textContent = t; };
@@ -696,7 +751,12 @@ async function revPublicar(id){
   if (!rev) return msg('Informe a revisão.');
   if (!f) return msg('Escolha o arquivo.');
   $('rvOk').disabled = true; msg('Enviando o arquivo…', true);
-  try { await _itPublicarArquivo(id, rev, f, ($('rvObs').value || '').trim()); await carregarITs(); itDetalhe(id); }
+  try {
+    const revId = await _itPublicarArquivo(id, rev, f, ($('rvObs').value || '').trim());
+    for (const cb of document.querySelectorAll('#rvSols [data-sol]:checked'))
+      await sb.rpc('it_solicitacao_responder', { p_id: cb.dataset.sol, p_situacao: 'atendida', p_resposta: 'Atendida na revisão ' + rev + '.', p_revisao: revId });
+    await carregarITs(); itDetalhe(id);
+  }
   catch (e){ $('rvOk').disabled = false; msg('Não foi possível publicar: ' + (e.message || e)); }
 }
 // Importar pasta: código/revisão/família saem do nome ("Cópia controlada - IT 003 (V)R01 Título.pdf");

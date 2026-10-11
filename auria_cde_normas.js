@@ -88,6 +88,13 @@
   function copiaControlada(it){
     AuriaIT.copia(sb, { revId: it.vig.id, codigo: it.codigo + ' rev. ' + it.vig.revisao, titulo: it.titulo, grupoId: GRUPO_ID, empId: EMP_ID });
   }
+  function solicitar(it, pagina){
+    AuriaIT.solicitar(sb, { itId: it.id, codigo: it.codigo + ' rev. ' + it.vig.revisao, titulo: it.titulo, pagina, empId: EMP_ID,
+      aoEnviar: async () => { try { SOLS = await AuriaIT.solicitacoesAbertas(sb, NORMAS.map(i => i.id)); } catch (_){} } });
+  }
+  window.cdeNormaSolicitar = function(){
+    const w = cdeAtiva(); if (w && w.DOC_SEL && w.DOC_SEL._norma) solicitar(w.DOC_SEL._it, w.V && w.V.pageNum ? 'pág. ' + w.V.pageNum : '');
+  };
   window.cdeNormaCopia = function(){
     const w = cdeAtiva(); if (w && w.DOC_SEL && w.DOC_SEL._norma) copiaControlada(w.DOC_SEL._it);
   };
@@ -106,6 +113,13 @@
       det.parentNode.insertBefore(bc, det);
     }
     if (bc) bc.style.display = norma ? '' : 'none';
+    let bs = document.getElementById('btnNormaSol');
+    if (!bs && bc){
+      bs = document.createElement('button'); bs.id = 'btnNormaSol'; bs.className = 'tb'; bs.onclick = window.cdeNormaSolicitar;
+      bs.title = 'Pedir à Qualidade que revise esta norma (vai com a página aberta)'; bs.textContent = 'Solicitar revisão';
+      bc.parentNode.insertBefore(bs, bc.nextSibling);
+    }
+    if (bs) bs.style.display = norma ? '' : 'none';
     if (norma){ const st = document.getElementById('vSt'); if (st){ st.textContent = 'NORMA'; st.style.background = '#1E3A5F'; } }
   };
   const _ap = toggleApontarCde;
@@ -156,7 +170,9 @@
     NORMAS = (data || []).map(i => Object.assign(i, { vig: (i.grupo_it_revisao_auria || []).find(r => r.vigente) || null }))
       .filter(i => i.vig && i.vig.arquivo_path)
       .sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }));
+    try { SOLS = await AuriaIT.solicitacoesAbertas(sb, NORMAS.map(i => i.id)); } catch (_){ SOLS = {}; }
   }
+  let SOLS = {};
   const $o = s => PAINEL.querySelector(s);
   async function buscar(){
     const q = F.q.trim(); TERMO = q;
@@ -184,7 +200,7 @@
   function linha(i, k){
     return '<div class="r' + (k === SEL ? ' sel' : '') + '" data-k="' + k + '"><span class="cod">' + esc(i.codigo) + ' · rev. ' + esc(i.vig.revisao) + '</span>'
       + '<span class="fam ' + ((i.familia || 'grupo') === 'victa' ? 'v">Victa' : 'g">Grupo') + '</span>'
-      + '<div class="tt">' + esc(i.titulo) + '</div>' + (i._tr[0] ? '<div class="tr">…' + marca(i._tr[0]) + '…</div>' : '') + '</div>';
+      + '<div class="tt">' + esc(i.titulo) + AuriaIT.chipNorma(SOLS[i.id]) + '</div>' + (i._tr[0] ? '<div class="tr">…' + marca(i._tr[0]) + '…</div>' : '') + '</div>';
   }
   function lista(){
     const q = F.q.trim();
@@ -211,14 +227,15 @@
     const ext = AuriaIT.extDe(i.vig.arquivo_path);
     $o('.pv').innerHTML = '<div class="cod" style="font-size:13.5px">' + esc(i.codigo) + ' · rev. ' + esc(i.vig.revisao)
       + ' <span class="fam ' + ((i.familia || 'grupo') === 'victa' ? 'v">Victa' : 'g">Grupo') + '</span> <span class="fam g">vigente</span></div>'
-      + '<h3>' + esc(i.titulo) + '</h3>'
+      + '<h3>' + esc(i.titulo) + AuriaIT.chipNorma(SOLS[i.id]) + '</h3>'
       + (i._tr.length ? '<div style="font-size:12px;color:#94A3B8;margin-bottom:8px">' + i._tr.length + ' trecho' + (i._tr.length > 1 ? 's' : '') + ' encontrado' + (i._tr.length > 1 ? 's' : '') + '</div>' + i._tr.map(t => '<p class="tc">…' + marca(t) + '…</p>').join('')
          : '<div style="font-size:13px;color:#64748B">' + (F.q.trim().length >= 2 ? 'Encontrado no código ou título.' : 'Escolha um documento ou digite para buscar dentro dos textos.') + '</div>')
       + '<div class="ac">' + (ext === 'pdf' || AuriaIT.podeVer(ext) ? '<button class="p" data-a="abrir">' + (ext === 'pdf' ? 'Abrir no canvas' : 'Abrir') + '</button>' : '<span style="font-size:12.5px;color:#64748B;align-self:center">.' + esc(ext) + ' sem visualização — baixe pela cópia controlada</span>')
-      + '<button data-a="copia">🖨 Cópia controlada</button></div>'
+      + '<button data-a="copia">🖨 Cópia controlada</button><button data-a="sol">Solicitar revisão</button></div>'
       + (ext === 'pdf' && F.q.trim().length >= 2 ? '<div style="font-size:11.5px;color:#94A3B8;margin-top:8px">Abre com as ocorrências destacadas na página (◀ ▶ entre elas).</div>' : '');
     const a = $o('.pv [data-a="abrir"]'); if (a) a.onclick = abrirSel;
     $o('.pv [data-a="copia"]').onclick = () => copiaControlada(i);
+    $o('.pv [data-a="sol"]').onclick = () => solicitar(i, '');
   }
   function abrirSel(){ const i = RES[SEL]; if (!i) return; fechar(); abrirNoCanvas(i, F.q.trim()); }
   function fechar(){ if (PAINEL) PAINEL.classList.remove('on'); }

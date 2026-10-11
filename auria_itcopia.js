@@ -170,5 +170,51 @@
     return { tipo, codigo, familia, revisao: m[2].padStart(2, '0'), titulo, duplicata: dup, ext };
   }
 
-  window.AuriaIT = { ver, bytes, copia, textoPdf, textoArquivo, lerNome, podeVer, extDe };
+  // ── Solicitação de revisão (218a) ───────────────────────────────────────
+  //  Qualquer leitor pede; a Qualidade recebe e-mail e responde
+  //  (Aberta → Em análise → Atendida/Recusada) — ver supabase_it_solicitacao.sql.
+  const MOTIVOS = { erro:'Erro no texto', desatualizado:'Procedimento desatualizado', melhoria:'Sugestão de melhoria', duvida:'Dúvida' };
+  const SITUACAO = { aberta:['Aberta','#B45309','#FEF3C7'], em_analise:['Em análise','#1D4ED8','#DBEAFE'], atendida:['Atendida','#047857','#D1FAE5'], recusada:['Recusada','#B91C1C','#FEE2E2'] };
+  function chipSituacao(s){ const x = SITUACAO[s] || [s, '#475569', '#F1F5F9']; return '<span style="display:inline-block;font-size:10.5px;font-weight:800;border-radius:99px;padding:1px 8px;background:' + x[2] + ';color:' + x[1] + '">' + x[0] + '</span>'; }
+  function solicitar(sb, op){
+    css();
+    const ov = document.createElement('div'); ov.className = 'ait-ov';
+    ov.innerHTML = '<div class="ait-bx"><div class="ait-hd"><b>Solicitar revisão — <span class="c">' + esc(op.codigo) + '</span></b>'
+      + '<p>' + esc(op.titulo || '') + '<br>O pedido vai para o setor de Qualidade, que analisa e responde por e-mail.</p></div>'
+      + '<div class="ait-bd"><label>Motivo</label><select id="aitMot">' + Object.keys(MOTIVOS).map(k => '<option value="' + k + '">' + MOTIVOS[k] + '</option>').join('') + '</select>'
+      + '<label>O que precisa mudar</label><textarea id="aitDesc" rows="4" style="width:100%;padding:9px 10px;border:1px solid #CBD5E1;border-radius:8px;font:inherit;font-size:13.5px;box-sizing:border-box" placeholder="Ex.: o item 2.3 pede slump 100±20, mas o projeto desta obra especifica 120±20."></textarea>'
+      + '<label>Página ou item (opcional)</label><input id="aitPag" value="' + esc(op.pagina || '') + '" placeholder="Ex.: pág. 3, item 2.1.4">'
+      + '<div class="ait-msg" id="aitMsg"></div></div>'
+      + '<div class="ait-ft"><button id="aitX">Cancelar</button><button class="p" id="aitOk">Enviar pedido</button></div></div>';
+    document.body.appendChild(ov);
+    const $ = id => ov.querySelector('#' + id), fechar = () => ov.remove();
+    $('aitX').onclick = fechar; ov.onclick = e => { if (e.target === ov) fechar(); };
+    const msg = (t, ok) => { $('aitMsg').className = 'ait-msg ' + (ok ? 'ok' : 'err'); $('aitMsg').textContent = t || ''; };
+    setTimeout(() => $('aitDesc').focus(), 30);
+    $('aitOk').onclick = async () => {
+      const d = $('aitDesc').value.trim();
+      if (d.length < 5) return msg('Descreva o que precisa mudar.');
+      $('aitOk').disabled = true; msg('Enviando…', true);
+      const { data, error } = await sb.rpc('it_solicitar_revisao', { p_it: op.itId, p_motivo: $('aitMot').value, p_descricao: d, p_pagina: $('aitPag').value.trim(), p_emp: op.empId || null });
+      if (error){ $('aitOk').disabled = false; return msg(error.message); }
+      msg('Pedido nº ' + data + ' enviado à Qualidade. Você recebe a resposta por e-mail.', true);
+      $('aitX').textContent = 'Fechar'; $('aitOk').style.display = 'none';
+      if (op.aoEnviar) try { op.aoEnviar(); } catch (_){}
+    };
+  }
+  // Mapa it_id → { n, em_analise } das solicitações em aberto (para a etiqueta na norma).
+  async function solicitacoesAbertas(sb, itIds){
+    if (!itIds || !itIds.length) return {};
+    const { data } = await sb.from('grupo_it_solicitacao_auria').select('it_id,situacao').in('it_id', itIds).in('situacao', ['aberta','em_analise']);
+    const m = {};
+    (data || []).forEach(s => { const x = m[s.it_id] = m[s.it_id] || { n:0, em_analise:false }; x.n++; if (s.situacao === 'em_analise') x.em_analise = true; });
+    return m;
+  }
+  function chipNorma(info){
+    if (!info) return '';
+    return info.em_analise ? ' <span title="A Qualidade está analisando uma revisão desta norma" style="display:inline-block;font-size:10.5px;font-weight:800;border-radius:99px;padding:1px 8px;background:#DBEAFE;color:#1D4ED8">Revisão em análise</span>'
+      : ' <span title="Há pedido de revisão aguardando a Qualidade" style="display:inline-block;font-size:10.5px;font-weight:800;border-radius:99px;padding:1px 8px;background:#FEF3C7;color:#B45309">' + info.n + ' pedido' + (info.n > 1 ? 's' : '') + ' de revisão</span>';
+  }
+
+  window.AuriaIT = { ver, bytes, copia, textoPdf, textoArquivo, lerNome, podeVer, extDe, solicitar, solicitacoesAbertas, chipNorma, chipSituacao, MOTIVOS, SITUACAO };
 })();
