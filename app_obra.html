@@ -9852,7 +9852,8 @@ async function itsPainel(busca){
 // Abre a IT NO QUADRO do App Obra — o mesmo das pranchas (zoom, arrastar,
 // páginas) —, como camada base em modo leitura. A IT não é prancha do
 // projeto: não tem registro em pranchas_auria, nem apontamento, nem trena.
-async function itsAbrirIt(id){
+// pg: página inicial (ex.: a tabela de critérios da FVS — fvs_modelo_auria.it_paginas).
+async function itsAbrirIt(id, pg){
   const i = (ITS_OBRA || []).find(x => x.id === id); if (!i || !i.vig) return;
   segFechar();
   // Não-PDF: planilha abre no leitor só-leitura; outros formatos só pela cópia controlada.
@@ -9868,11 +9869,12 @@ async function itsAbrirIt(id){
     if (typeof F3D_MODO !== 'undefined' && F3D_MODO) await f3dModo(false);
     // PDF vem carimbado ("cópia não controlada") pela it-copia — a obra não lê o arquivo cru.
     const pdoc = await pdfjsLib.getDocument({ data: await AuriaIT.bytes(sb, i.vig.id) }).promise;
-    const page = await pdoc.getPage(1);
+    const pIni = Math.max(1, Math.min(pdoc.numPages, parseInt(pg, 10) || 1));
+    const page = await pdoc.getPage(pIni);
     const pr = { id:null, _it:true, _ro:true, codigo:i.codigo, arquivo_nome:i.codigo + ' — ' + i.titulo, disciplina:'IT' };
-    const L = { prancha:pr, doc:pdoc, page, pageNum:1, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:i.codigo + ' · rev. ' + i.vig.revisao };
+    const L = { prancha:pr, doc:pdoc, page, pageNum:pIni, offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true, nome:i.codigo + ' · rev. ' + i.vig.revisao };
     LAYERS = [L]; setBaseShims(); F.valido = false;
-    $('pageLbl').textContent = '1 / ' + pdoc.numPages;
+    $('pageLbl').textContent = pIni + ' / ' + pdoc.numPages;
     try { mobPrancha(); } catch (_){}
     fitPage();
     $('dropHint').style.display = 'none';
@@ -10962,7 +10964,7 @@ function fvsPodeEditar(x){ return x && x.tipo === 'seguranca' ? ['seguranca','en
 async function fvsCarregar(){
   FVS_MODELOS = []; FVS_INSP = [];
   if (!EMP) return;
-  const m = await sb.from('fvs_modelo_auria').select('id,codigo,servico,etapa,nivel_local,duas_aprovacoes,it_id,itens,revisao,ativo,tipo,periodicidade_dias').eq('grupo_id', EMP.empresa_id).order('codigo');
+  const m = await sb.from('fvs_modelo_auria').select('id,codigo,servico,etapa,nivel_local,duas_aprovacoes,it_id,it_paginas,itens,revisao,ativo,tipo,periodicidade_dias').eq('grupo_id', EMP.empresa_id).eq('rascunho', false).order('codigo');
   if (m.error){ console.warn('fvs_modelo_auria indisponível:', m.error.message || m.error); return; }
   FVS_MODELOS = m.data || [];
   const i = await sb.from('fvs_inspecao_auria').select('*').eq('empreendimento_id', EMP.id).order('aberta_em', { ascending:false });
@@ -11055,7 +11057,7 @@ function fvsFicha(id){
     + '<div class="ls"><div class="seg-det">'
     + '<div class="seg-kv"><span>Local</span><b>' + esc([segPavNome(x.pavimento_id), x.local_txt].filter(Boolean).join(' › ') || '—') + '</b></div>'
     + '<div class="seg-kv"><span>Aberta</span><b>' + esc(x.aberta_nome || '') + ' · ' + new Date(x.aberta_em).toLocaleString('pt-BR') + '</b></div>'
-    + (m.it_id && typeof itsAbrirIt === 'function' ? '<div class="seg-kv"><span>IT</span><b><button class="b2 mini" onclick="segFechar();itsAbrirIt(\'' + m.it_id + '\')">' + OI.its + ' Abrir a IT do serviço</button></b></div>' : '')
+    + (m.it_id && typeof itsAbrirIt === 'function' ? '<div class="seg-kv"><span>IT</span><b><button class="b2 mini" onclick="segFechar();itsAbrirIt(\'' + m.it_id + '\',' + ((m.it_paginas || [])[0] || 1) + ')">' + OI.its + ' Abrir a IT do serviço' + ((m.it_paginas || []).length ? ' (pág. ' + m.it_paginas[0] + ')' : '') + '</button></b></div>' : '')
     + '<table class="fvs-tab"><tr><th>#</th><th>Item</th><th>Método</th><th>Tolerância</th></tr>' + (x.itens || []).map((t, i) => '<tr><td>' + (i+1) + '</td><td>' + esc(t.item) + (t.exige_foto ? ' <span class="fmini">foto</span>' : '') + '</td><td>' + esc(t.metodo || '') + '</td><td>' + esc(t.tolerancia || '') + '</td></tr>').join('') + '</table>'
     + '<div class="hint" style="padding:8px 0">O preenchimento item a item (conforme / não conforme / não se aplica, com foto) e a aprovação entram na próxima etapa.</div>'
     + '</div></div><div class="ft"><button class="b2" onclick="fvsPainel()">Voltar à matriz</button></div>');
@@ -11121,7 +11123,7 @@ function fvsFicha(id){
     + (x.situacao === 'reprovada' ? '<div class="fvs-rep"><b>' + (x.reprovado_origem === 'qualidade' ? 'Contestada pela Qualidade' : 'Reprovada') + '</b> · ' + esc(x.reprovado_nome || '') + ' · ' + (x.reprovado_em ? new Date(x.reprovado_em).toLocaleString('pt-BR') : '')
         + (x.reprovado_motivo ? '<div>' + esc(x.reprovado_motivo) + '</div>' : '') + '</div>' : '')
     + (x.aprov1_nome && x.situacao === 'aguardando' ? '<div class="seg-kv"><span>1ª aprovação</span><b>' + esc(x.aprov1_nome) + ' (' + (x.aprov1_nivel === 'eng_chefe' ? 'eng. chefe' : 'coord. de campo') + ') — falta o outro nível</b></div>' : '')
-    + (m.it_id && typeof itsAbrirIt === 'function' ? '<div class="seg-kv"><span>IT</span><b><button class="b2 mini" onclick="segFechar();itsAbrirIt(\'' + m.it_id + '\')">' + OI.its + ' Abrir a IT do serviço</button></b></div>' : '')
+    + (m.it_id && typeof itsAbrirIt === 'function' ? '<div class="seg-kv"><span>IT</span><b><button class="b2 mini" onclick="segFechar();itsAbrirIt(\'' + m.it_id + '\',' + ((m.it_paginas || [])[0] || 1) + ')">' + OI.its + ' Abrir a IT do serviço' + ((m.it_paginas || []).length ? ' (pág. ' + m.it_paginas[0] + ')' : '') + '</button></b></div>' : '')
     + (editavel ? '<div class="fvs-prog"><span style="width:' + Math.round(100 * feitos / Math.max(1, FVS_RASC.length)) + '%"></span></div><div class="hint" style="padding:2px 0 6px" id="fvsProgTx">' + feitos + ' de ' + FVS_RASC.length + ' itens verificados</div>' : '')
     + '<div class="fvs-lista">' + (x.itens || []).map((t, i) => fvsItemHtml(t, i, editavel)).join('') + '</div>'
     + '<div class="seg-kv" style="border:none;margin-top:8px"><span>Histórico</span><b></b></div><div class="prot-hist" id="fvsHist"><div class="hint">Carregando…</div></div>'
