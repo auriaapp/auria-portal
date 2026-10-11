@@ -661,6 +661,23 @@ async function itBaixarOriginal(path){
   catch (e){ alert('Não foi possível baixar: ' + (e.message || e)); }
 }
 // Sobe o arquivo, publica a revisão e indexa o texto (busca no conteúdo) — uma vez só.
+async function _itSubir(itId, f){
+  // ".." no caminho é recusado pela regra do armazenamento (ex.: "Sapatas..pdf")
+  const nome = f.name.replace(/[^\w.\-]+/g, '_').replace(/\.{2,}/g, '.');
+  const path = GRUPO + '/_its/' + itId + '/' + Date.now() + '_' + nome;
+  const ct = f.type || 'application/octet-stream';
+  const url = await r2Url('upload', path, ct);
+  const up = await fetch(url, { method:'PUT', headers:{ 'content-type':ct }, body:f });
+  if (!up.ok) throw new Error('Falha no envio (' + up.status + ').');
+  return path;
+}
+// Correção: troca o arquivo da revisão VIGENTE (sem nova revisão, sem e-mail).
+async function _itTrocarArquivo(itId, revId, f, motivo){
+  const path = await _itSubir(itId, f);
+  const { error } = await sb.rpc('it_trocar_arquivo', { p_revisao:revId, p_path:path, p_nome:f.name, p_bytes:f.size, p_motivo:motivo || '' });
+  if (error) throw error;
+  try { const t = await AuriaIT.textoArquivo(f); await sb.rpc('it_indexar', { p_revisao: revId, p_texto: t || ' ' }); } catch (e){ console.warn('indexar:', e); }
+}
 async function _itPublicarArquivo(itId, rev, f, obs){
   // ".." no caminho é recusado pela regra do armazenamento (ex.: "Sapatas..pdf")
   const nome = f.name.replace(/[^\w.\-]+/g, '_').replace(/\.{2,}/g, '.');
@@ -687,7 +704,9 @@ async function revPublicar(id){
 let _IMP = [];
 function itImportar(){
   ov('<div class="hd"><b>Importar pasta de documentos</b><div class="hint" style="margin-top:4px">Escolha os arquivos (pode selecionar todos de uma vez; PDF, planilha, Word…). Arquivo cujo nome não segue o padrão fica de fora — cadastre-o em "＋ Documento". Código, revisão e família — (V) = Victa — saem do nome do arquivo. Documento que já existe só ganha revisão se o número for diferente da vigente.</div></div><div class="bd">'
-    + '<input type="file" id="impArq" multiple onchange="itImportarPrevia()"><div id="impPrev" style="margin-top:10px"></div><div class="msg" id="impMsg"></div></div>'
+    + '<input type="file" id="impArq" multiple onchange="itImportarPrevia()">'
+    + '<label class="chk" style="margin-top:10px"><input type="checkbox" id="impTroca" onchange="itImportarPrevia()"> <span><b>Corrigir arquivos da mesma revisão</b> — quando a revisão do arquivo é igual à vigente, troca o arquivo (ex.: versão sem carimbo de outro sistema). Não cria revisão, não torna cópias obsoletas e não envia e-mail.</span></label>'
+    + '<div id="impPrev" style="margin-top:10px"></div><div class="msg" id="impMsg"></div></div>'
     + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Fechar</button><button class="btn" id="impOk" disabled onclick="itImportarRodar()">Importar</button></div>');
 }
 function itImportarPrevia(){
@@ -699,11 +718,12 @@ function itImportarPrevia(){
     if (vistos[r.codigo.toUpperCase()]){ _IMP.push({ f, r, pula:'duplicata' }); return; }
     vistos[r.codigo.toUpperCase()] = 1;
     const ex = ITS.find(i => i.codigo.toUpperCase() === r.codigo.toUpperCase()), v = ex && ex.revs.find(x => x.vigente);
-    _IMP.push({ f, r, ex, pula: v && v.revisao === r.revisao ? 'já está nesta revisão' : '' });
+    const troca = !!(v && v.revisao === r.revisao && $('impTroca') && $('impTroca').checked);
+    _IMP.push({ f, r, ex, v, troca, pula: v && v.revisao === r.revisao && !troca ? 'já está nesta revisão' : '' });
   });
   const vai = _IMP.filter(x => x.r && !x.pula && !x.erro);
   $('impPrev').innerHTML = '<div class="hint" style="margin-bottom:6px"><b>' + vai.length + '</b> a importar · ' + (_IMP.length - vai.length) + ' ignorados</div><div style="max-height:300px;overflow:auto"><table><tr><th>Código</th><th>Rev.</th><th>Título</th><th></th></tr>'
-    + _IMP.map(x => '<tr' + (x.pula || x.erro ? ' style="opacity:.5"' : '') + '><td class="cod">' + esc(x.r ? x.r.codigo : '?') + '</td><td class="cod">' + esc(x.r ? x.r.revisao : '') + '</td><td>' + esc(x.r ? x.r.titulo : x.f.name) + '</td><td class="hint">' + esc(x.erro || x.pula || (x.ex ? 'nova revisão' : 'novo')) + '</td></tr>').join('') + '</table></div>';
+    + _IMP.map(x => '<tr' + (x.pula || x.erro ? ' style="opacity:.5"' : '') + '><td class="cod">' + esc(x.r ? x.r.codigo : '?') + '</td><td class="cod">' + esc(x.r ? x.r.revisao : '') + '</td><td>' + esc(x.r ? x.r.titulo : x.f.name) + '</td><td class="hint">' + esc(x.erro || x.pula || (x.troca ? 'corrigir arquivo' : x.ex ? 'nova revisão' : 'novo')) + '</td></tr>').join('') + '</table></div>';
   $('impOk').disabled = !vai.length;
 }
 async function itImportarRodar(){
@@ -715,11 +735,13 @@ async function itImportarRodar(){
     + '<div style="height:8px;background:#E2E8F0;border-radius:99px;overflow:hidden"><div id="impBar" style="height:100%;width:0;background:#E8762B;transition:width .25s"></div></div>'
     + '<div class="hint" style="margin-top:8px">Não feche esta janela até terminar.</div></div>';
   $('impMsg').textContent = '';
-  let novos = 0, revs = 0; const falhas = [];
+  let novos = 0, revs = 0, trocas = 0; const falhas = [];
   for (let k = 0; k < vai.length; k++){
     const x = vai[k];
     $('impPasso').textContent = 'Enviando ' + (k + 1) + ' de ' + vai.length + ' — ' + x.r.codigo;
     try {
+      if (x.troca){ await _itTrocarArquivo(x.ex.id, x.v.id, x.f, 'arquivo substituído na importação'); trocas++; }
+      else {
       let itId = x.ex && x.ex.id;
       if (!itId){
         const r = await sb.from('grupo_it_auria').insert({ grupo_id:GRUPO, codigo:x.r.codigo, titulo:x.r.titulo, tipo:x.r.tipo, familia:x.r.familia, tema: x.r.tipo === 'IT' ? 'execucao' : 'qualidade' }).select('id').single();
@@ -727,17 +749,18 @@ async function itImportarRodar(){
       }
       await _itPublicarArquivo(itId, x.r.revisao, x.f, x.ex ? 'Importado da pasta' : 'Carga inicial');
       if (x.ex) revs++; else novos++;
+      }
     } catch (e){ falhas.push({ cod:x.r.codigo, msg:(e.message || String(e)) }); }
     const pct = Math.round((k + 1) / vai.length * 100);
     $('impBar').style.width = pct + '%'; $('impPct').textContent = pct + '%';
   }
   await carregarITs();
   // Conclusão: quadro no lugar da lista + botão "Concluir" que fecha e atualiza.
-  const okT = novos + revs;
+  const okT = novos + revs + trocas;
   $('impPrev').innerHTML = '<div style="border:1px solid ' + (falhas.length ? '#F0B25B;background:#FEF6E7' : '#86C9A4;background:#E6F4EC') + ';border-radius:10px;padding:14px 16px;margin:6px 0">'
     + '<div style="font-size:15px;font-weight:700;color:' + (falhas.length ? '#7A4E05' : '#14532D') + '">' + (falhas.length ? '⚠ Importação concluída com ' + falhas.length + ' falha' + (falhas.length > 1 ? 's' : '') : '✓ Importação concluída') + '</div>'
     + '<div style="margin-top:8px;font-size:13px;line-height:1.7">'
-    + '<b>' + okT + '</b> arquivo' + (okT === 1 ? '' : 's') + ' publicado' + (okT === 1 ? '' : 's') + ' · ' + novos + ' documento' + (novos === 1 ? '' : 's') + ' novo' + (novos === 1 ? '' : 's') + ' · ' + revs + ' revis' + (revs === 1 ? 'ão' : 'ões') + ' nova' + (revs === 1 ? '' : 's') + '<br>'
+    + '<b>' + okT + '</b> arquivo' + (okT === 1 ? '' : 's') + ' publicado' + (okT === 1 ? '' : 's') + ' · ' + novos + ' documento' + (novos === 1 ? '' : 's') + ' novo' + (novos === 1 ? '' : 's') + ' · ' + revs + ' revis' + (revs === 1 ? 'ão' : 'ões') + ' nova' + (revs === 1 ? '' : 's') + (trocas ? ' · ' + trocas + ' arquivo' + (trocas === 1 ? '' : 's') + ' corrigido' + (trocas === 1 ? '' : 's') + ' (mesma revisão)' : '') + '<br>'
     + ign + ' ignorado' + (ign === 1 ? '' : 's') + ' (já na mesma revisão, duplicata ou nome fora do padrão)<br>'
     + 'Biblioteca agora com <b>' + ITS.filter(i => i.ativo).length + '</b> documentos vigentes; o texto já entra na busca <b>Aa</b>.</div>'
     + (falhas.length ? '<div style="margin-top:10px;font-size:12.5px"><b>Não entraram:</b><ul style="margin:4px 0 0 18px;padding:0">' + falhas.map(f => '<li><span class="cod">' + esc(f.cod) + '</span> — ' + esc(f.msg) + '</li>').join('') + '</ul></div>' : '')
