@@ -11636,7 +11636,7 @@ function concPainel(){
   const outras = CONCS.filter(c => !['planejada','liberada','em_andamento'].includes(c.situacao));
   const card = c => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + CONC_SIT[c.situacao].cor + '!important" onclick="concDetalhe(\'' + c.id + '\')">'
     + '<div class="cod">' + esc(c.codigo) + ' <span class="seg-chip" style="--c:' + chipCor(CONC_SIT[c.situacao].cor) + '">' + CONC_SIT[c.situacao].rot + '</span> '
-    + esc(segPavNome(c.pavimento_id) || '') + '</div>'
+    + esc(concLocal(c) || '') + '</div>'
     + '<div class="t">' + esc(c.descricao || 'Concretagem') + '</div>'
     + '<div class="m">' + concData(c.data_prevista) + ' · ' + concM3(c.volume_previsto) + ' · ' + c.n_pecas + ' peça(s)' + (c.fck_mpa ? ' · C' + c.fck_mpa : '')
     + (c.liberacao && c.liberacao.justificativa ? ' · <b style="color:#B45309">liberada sem FVS</b>' : '') + '</div></div>';
@@ -11650,7 +11650,7 @@ function concPainel(){
 function concNova(){
   if (!concPodePlanejar()) return;
   const am = new Date(Date.now() + 86400000), p = n => String(n).padStart(2,'0');
-  CONC_RASC = { pavimento_id:'', descricao:'Laje e vigas', data_prevista:am.getFullYear() + '-' + p(am.getMonth()+1) + '-' + p(am.getDate()),
+  CONC_RASC = { pavimento_id:'', trecho:'', descricao:'Laje e vigas', data_prevista:am.getFullYear() + '-' + p(am.getMonth()+1) + '-' + p(am.getDate()),
                 fck_mpa:'', slump_mm:100, slump_tol_mm:20, agressividade:'II', fornecedor:'', bomba:'', elementos:[], n_pecas:0, volume_previsto:null, volume_por_classe:null };
   concForm();
 }
@@ -11662,9 +11662,27 @@ function concLerForm(){
   if (!$('ccPav') || !CONC_RASC) return;
   const r = CONC_RASC, n = id => { const v = parseInt($(id).value, 10); return isFinite(v) ? v : null; };
   const pav = $('ccPav').value; if (pav !== r.pavimento_id){ r.elementos = []; r.n_pecas = 0; r.volume_previsto = null; r.volume_por_classe = null; }
-  r.pavimento_id = pav; r.descricao = $('ccDesc').value; r.data_prevista = $('ccData').value;
+  r.pavimento_id = pav; r.trecho = $('ccTrecho') ? $('ccTrecho').value.trim() : (r.trecho || ''); r.descricao = $('ccDesc').value; r.data_prevista = $('ccData').value;
   r.fck_mpa = n('ccFck'); r.slump_mm = n('ccSl'); r.slump_tol_mm = n('ccTol'); r.agressividade = $('ccAgr').value;
   r.fornecedor = $('ccForn').value; r.bomba = $('ccBomba').value;
+}
+// Trecho do pavimento: a obra concreta o pavimento em trechos (1, 2…) conforme o
+// planejamento. Botões rápidos + campo livre; sugere o próximo trecho ainda não
+// usado naquele pavimento. Vazio = pavimento inteiro.
+function concLocal(c){
+  const pav = segPavNome(c.pavimento_id) || '';
+  return pav + (c.trecho ? (pav ? ' · ' : '') + c.trecho : '');
+}
+function concTrechoHtml(r){
+  const usados = (CONCS || []).filter(c => c.pavimento_id && c.pavimento_id === r.pavimento_id && c.id !== r._editId && c.situacao !== 'cancelada').map(c => c.trecho).filter(Boolean);
+  let prox = 1; while (usados.includes('Trecho ' + prox)) prox++;
+  const op = ['', 'Trecho 1', 'Trecho 2', 'Trecho 3', 'Trecho 4'];
+  if (!op.includes('Trecho ' + prox)) op.push('Trecho ' + prox);
+  return '<label>Trecho do pavimento</label><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">'
+    + op.map(t => '<button type="button" class="b2" style="padding:5px 10px;font-size:12px' + ((r.trecho || '') === t ? ';background:#E8762B;color:#fff;border-color:#E8762B' : '') + '"'
+      + ' onclick="concLerForm();CONC_RASC.trecho=\'' + t + '\';concForm()">' + (t || 'Pavimento inteiro') + (usados.includes(t) ? ' ✓' : '') + '</button>').join('')
+    + '<input id="ccTrecho" value="' + esc(r.trecho || '') + '" placeholder="ou digite (ex.: Trecho 2A, Rampa)" maxlength="40" style="flex:1;min-width:150px">'
+    + '</div>' + (usados.length ? '<div class="hint" style="margin:4px 0 0">Já planejados neste pavimento: ' + usados.map(esc).join(', ') + ' (✓). Sugerido: Trecho ' + prox + '.</div>' : '');
 }
 function concForm(){
   const r = CONC_RASC, x = r._editId;
@@ -11674,7 +11692,8 @@ function concForm(){
     + '<div class="seg-form">'
     + '<div class="seg-g2"><div><label>Pavimento</label><select id="ccPav"><option value="">—</option>' + pavs.map(p => '<option value="' + p.id + '"' + (r.pavimento_id === p.id ? ' selected' : '') + '>' + esc(cdePavLabel(p)) + '</option>').join('') + '</select></div>'
     + '<div><label>Data prevista</label><input id="ccData" type="date" value="' + esc(r.data_prevista || '') + '"></div></div>'
-    + '<label>Descrição</label><input id="ccDesc" maxlength="120" value="' + esc(r.descricao || '') + '" placeholder="Ex.: laje e vigas — trecho 1">'
+    + concTrechoHtml(r)
+    + '<label>Descrição</label><input id="ccDesc" maxlength="120" value="' + esc(r.descricao || '') + '" placeholder="Ex.: laje e vigas">'
     + '<div class="seg-geom"><b>' + (r.n_pecas ? r.n_pecas + ' peça(s) · ' + concM3(r.volume_previsto) : 'Nenhuma peça selecionada') + '</b>'
     + (cls ? '<div class="hint" style="margin:2px 0 6px">' + cls + '</div>' : '')
     + '<div><button class="b2" onclick="concLerForm();concPecas3D()">' + OI.cubo + ' ' + (r.n_pecas ? 'Ajustar' : 'Selecionar') + ' peças no 3D</button></div></div>'
@@ -11694,7 +11713,7 @@ async function concSalvar(){
   if (!r.data_prevista) return msg('Informe a data prevista.');
   const b = $('segOk'); b.disabled = true;
   try {
-    const row = { pavimento_id:r.pavimento_id, descricao:(r.descricao || '').trim() || null, data_prevista:r.data_prevista, elementos:r.elementos || [], n_pecas:r.n_pecas || 0,
+    const row = { pavimento_id:r.pavimento_id, trecho:(r.trecho || '').trim() || null, descricao:(r.descricao || '').trim() || null, data_prevista:r.data_prevista, elementos:r.elementos || [], n_pecas:r.n_pecas || 0,
                   volume_previsto:r.volume_previsto, volume_por_classe:r.volume_por_classe, fck_mpa:r.fck_mpa, slump_mm:r.slump_mm, slump_tol_mm:r.slump_tol_mm,
                   agressividade:r.agressividade, fornecedor:(r.fornecedor || '').trim() || null, bomba:(r.bomba || '').trim() || null };
     let id = r._editId;
@@ -11753,11 +11772,11 @@ async function concPintar(enquadrar){
 }
 async function concBarra(){
   const r = CONC_RASC, n = (r.elementos || []).reduce((s, g) => s + g.ids.length, 0);
-  segBarraInfo('<b>' + esc(segPavNome(r.pavimento_id)) + '</b> · ' + n + ' peça(s) em <span style="color:#E8960A">laranja</span> · toque numa peça para tirar/pôr · calculando volume…',
+  segBarraInfo('<b>' + esc(concLocal(r)) + '</b> · ' + n + ' peça(s) em <span style="color:#E8960A">laranja</span> · toque numa peça para tirar/pôr · calculando volume…',
     '<button class="ok" onclick="concPecasOk()">Concluir</button><button onclick="concPecasCancelar()">Cancelar</button>');
   const vol = await concVolume();
   if (CONC_MODO !== 'pecas') return;
-  segBarraInfo('<b>' + esc(segPavNome(r.pavimento_id)) + '</b> · ' + n + ' peça(s) · <b>' + concM3(vol.total) + '</b>'
+  segBarraInfo('<b>' + esc(concLocal(r)) + '</b> · ' + n + ' peça(s) · <b>' + concM3(vol.total) + '</b>'
     + (vol.semValor ? ' (' + vol.semValor + ' sem volume)' : '') + (r.fck_mpa ? ' · C' + r.fck_mpa + ' (do modelo)' : '') + ' · toque numa peça para tirar/pôr',
     '<button class="ok" onclick="concPecasOk()">Concluir</button><button onclick="concPecasCancelar()">Cancelar</button>');
 }
@@ -11830,7 +11849,7 @@ async function concDetalhe(id){
   if (c.situacao === 'planejada' && concPodeLiberar()) acoes += '<button class="b1" onclick="concLiberarForm(\'' + id + '\',' + !!(fvs && fvs.ok) + ')">Liberar</button>';
   if (['planejada','liberada'].includes(c.situacao) && concPodeLiberar()) acoes += '<button class="b2" onclick="concCancelarForm(\'' + id + '\')">Cancelar</button>';
   segOv('<div class="hd"><b>' + esc(c.codigo) + ' — ' + esc(c.descricao || 'Concretagem') + '</b><p><span class="seg-chip" style="--c:' + chipCor(CONC_SIT[c.situacao].cor) + '">' + CONC_SIT[c.situacao].rot + '</span> '
-      + esc(segPavNome(c.pavimento_id) || '') + ' · ' + concData(c.data_prevista) + '</p></div>'
+      + esc(concLocal(c) || '') + ' · ' + concData(c.data_prevista) + '</p></div>'
     + '<div class="ls"><div class="seg-det">'
     + '<div class="seg-kv"><span>Peças</span><b>' + c.n_pecas + ' · ' + concM3(c.volume_previsto) + (cls ? '<div class="hint">' + cls + '</div>' : '')
     + (c.n_pecas ? ' <button class="b2 mini" onclick="concVer3D(\'' + id + '\')">' + OI.cubo + ' Ver no 3D</button>' : '') + '</b></div>'
@@ -11885,7 +11904,7 @@ async function concCancelar(id){
   const _m = obraModulosHtml;
   obraModulosHtml = function(){
     const prox = CONCS.filter(c => ['planejada','liberada','em_andamento'].includes(c.situacao)).sort((a, b) => String(a.data_prevista).localeCompare(String(b.data_prevista)))[0];
-    const sub = prox ? 'próxima: ' + (segPavNome(prox.pavimento_id) || prox.codigo) + ' · ' + concData(prox.data_prevista) : 'planejar pelas peças do modelo';
+    const sub = prox ? 'próxima: ' + (concLocal(prox) || prox.codigo) + ' · ' + concData(prox.data_prevista) : 'planejar pelas peças do modelo';
     return _m().replace(/(onclick="obraModulo\('concretagem'\)"[\s\S]*?<span>)carregando…(<\/span>)/, '$1' + esc(sub) + '$2');
   };
   const _o = obraModulo;
@@ -11979,7 +11998,7 @@ function camForm(){
   const r = CAM_RASC, c = CONCS.find(x => x.id === r.concretagem_id), x = r._editId;
   const n = (r.pecas || []).reduce((s, g) => s + g.ids.length, 0), av = camAvisos();
   const hora = (id, v, rot) => '<div><label>' + rot + '</label><div class="cam-hora"><input id="' + id + '" type="time" value="' + _hm(v) + '" onchange="camLer();camForm()"><button class="b2 mini" onclick="$(\'' + id + '\').value=_hm(new Date().toISOString());camLer();camForm()">agora</button></div></div>';
-  segOv('<div class="hd"><b>' + (x ? 'Caminhão ' + r.seq : 'Novo caminhão') + ' — ' + esc(c.codigo) + '</b><p>' + esc(segPavNome(c.pavimento_id) || '') + ' · C' + (c.fck_mpa || '—') + ' · slump ' + (c.slump_mm != null ? c.slump_mm + ' ± ' + (c.slump_tol_mm || 0) + ' mm' : '—') + '</p></div>'
+  segOv('<div class="hd"><b>' + (x ? 'Caminhão ' + r.seq : 'Novo caminhão') + ' — ' + esc(c.codigo) + '</b><p>' + esc(concLocal(c) || '') + ' · C' + (c.fck_mpa || '—') + ' · slump ' + (c.slump_mm != null ? c.slump_mm + ' ± ' + (c.slump_tol_mm || 0) + ' mm' : '—') + '</p></div>'
     + '<div class="seg-form">'
     + '<div class="seg-g2"><div><label>Nota fiscal</label><input id="kmNf" inputmode="numeric" value="' + esc(r.nf || '') + '"></div><div><label>Placa</label><input id="kmPl" value="' + esc(r.placa || '') + '" style="text-transform:uppercase"></div></div>'
     + '<div class="seg-g2"><div><label>Volume (m³)</label><input id="kmVol" inputmode="decimal" value="' + esc(r.volume_m3 == null ? '' : r.volume_m3) + '" placeholder="Ex.: 8"></div><div><label>Slump medido (mm)</label><input id="kmSl" inputmode="numeric" value="' + esc(r.slump_mm == null ? '' : r.slump_mm) + '" onchange="camLer();camForm()"></div></div>'
@@ -12187,7 +12206,7 @@ const _hoje = () => new Date().toISOString().slice(0, 10);
     const ls = document.querySelector('#segOv .ls'); if (!ls) return;
     let h = '';
     if (CONC_ALERTAS.length) h += '<div class="seg-dia" style="color:#C0392B">Resistência abaixo do fck</div>' + CONC_ALERTAS.map(a => { const c = CONCS.find(x => x.id === a.concretagem_id) || {};
-      return '<div class="it seg-it fvs-card" style="cursor:pointer" onclick="concDetalhe(\'' + a.concretagem_id + '\')"><div class="cod">' + esc(c.codigo || '') + ' <span class="seg-chip" style="--c:#C0392B">' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</span></div><div class="m">' + esc(segPavNome(c.pavimento_id) || '') + '</div></div>'; }).join('');
+      return '<div class="it seg-it fvs-card" style="cursor:pointer" onclick="concDetalhe(\'' + a.concretagem_id + '\')"><div class="cod">' + esc(c.codigo || '') + ' <span class="seg-chip" style="--c:#C0392B">' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</span></div><div class="m">' + esc(concLocal(c) || '') + '</div></div>'; }).join('');
     if (CPS_PEND.length) h += '<div class="seg-dia">Rupturas até ' + new Date(Date.now() + 7 * 86400000).toLocaleDateString('pt-BR') + '</div>' + CPS_PEND.map(p => { const c = CONCS.find(x => x.id === p.concretagem_id) || {}, at = p.romper_em < _hoje();
       return '<div class="it seg-it" style="cursor:pointer;border-left-color:' + (at ? '#C0392B' : '#E8960A') + '!important" onclick="concDetalhe(\'' + p.concretagem_id + '\')"><div class="cod">' + esc(p.ident) + ' · ' + p.idade_dias + ' d · ' + esc(c.codigo || '') + '</div><div class="m">' + (at ? '<b style="color:#C0392B">atrasada</b> — ' : '') + 'romper em ' + concData(p.romper_em) + '</div></div>'; }).join('');
     if (h) ls.insertAdjacentHTML('afterbegin', h);
@@ -12333,7 +12352,7 @@ function concPend(){ return CONC_ALERTAS.filter(a => !OBRA_LIDOS.has(concChave(a
 function concAvisoHtml(a){
   const c = CONCS.find(x => x.id === a.concretagem_id) || {};
   return '<div class="it seg-it fvs-card"><div class="cod">' + esc(c.codigo || '') + ' <span class="seg-chip" style="--c:#C0392B">' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</span> <span style="font-weight:600;color:#334155">concreto abaixo do fck</span></div>'
-    + '<div class="t">' + esc(segPavNome(c.pavimento_id) || '') + ' · ' + esc(c.descricao || '') + '</div>'
+    + '<div class="t">' + esc(concLocal(c) || '') + ' · ' + esc(c.descricao || '') + '</div>'
     + '<div class="bt"><button class="b2" onclick="obraFecharAvisos();cpMapa3D(\'' + a.concretagem_id + '\')">Ver peças no 3D</button>'
     + '<button class="b1" onclick="obraConfirmar([\'' + concChave(a) + '\'])">Li e estou ciente</button></div></div>';
 }
@@ -12343,7 +12362,7 @@ function concAvisoHtml(a){
     const h = _l(); if (!CONC_ALERTAS.length) return h;
     return h + '<div class="ap-sec obra-grp">Concretagem</div>' + CONC_ALERTAS.map(a => { const c = CONCS.find(x => x.id === a.concretagem_id) || {}, lido = OBRA_LIDOS.has(concChave(a));
       return '<div class="ap-card seg-card fvs-card" onclick="obraConfirmar([\'' + concChave(a) + '\']).then(()=>cpMapa3D(\'' + a.concretagem_id + '\'))"><div class="t"><span class="obra-orig">Concretagem:</span> ' + esc(c.codigo || '') + ' — ' + a.exemplar_mpa + ' MPa &lt; C' + a.fck_mpa + '</div>'
-        + '<div class="m">' + esc(segPavNome(c.pavimento_id) || '') + (!lido ? ' <span class="seg-chip" style="--c:#B45309">não lido</span>' : '') + '</div></div>'; }).join('');
+        + '<div class="m">' + esc(concLocal(c) || '') + (!lido ? ' <span class="seg-chip" style="--c:#B45309">não lido</span>' : '') + '</div></div>'; }).join('');
   };
   const _c = obraContagens;
   obraContagens = function(){ _c(); const e = $('obraNProj'); if (e) e.textContent = (+e.textContent || 0) + CONC_ALERTAS.length; };
@@ -12830,7 +12849,7 @@ async function rdoRegistros(iso){
   const dentro = t => t && t >= a && t < b;
   const q = async (tab, sel, f) => { try { let x = sb.from(tab).select(sel).eq('empreendimento_id', E); x = f ? f(x) : x; const r = await x; return r.error ? [] : (r.data || []); } catch (_){ return []; } };
   R.dds = await q('seg_dds_auria', 'tema,ministrado_por,participantes,empresas', x => x.eq('data', iso));
-  const concs = await q('conc_concretagem_auria', 'id,codigo,descricao,pavimento_id,volume_previsto,fck_mpa,situacao', x => x.eq('data_realizada', iso));
+  const concs = await q('conc_concretagem_auria', 'id,codigo,descricao,pavimento_id,trecho,volume_previsto,fck_mpa,situacao', x => x.eq('data_realizada', iso));
   R.conc = [];
   for (const c of concs){
     const k = await q('conc_caminhao_auria', 'aceito,volume_m3,cps_moldados', x => x.eq('concretagem_id', c.id));
@@ -12857,7 +12876,7 @@ async function rdoRegistros(iso){
 function rdoRegLinhas(){
   const R = RDOO.reg || {}, L = [];
   (R.dds || []).forEach(d => L.push(['DDS', d.tema + (d.participantes ? ' — ' + d.participantes + ' participantes' : '') + (d.ministrado_por ? ' (' + d.ministrado_por + ')' : '')]));
-  (R.conc || []).forEach(c => L.push(['Concretagem', c.codigo + ' ' + (segPavNome(c.pavimento_id) || '') + ' — ' + (c.descricao || '') + ': ' + c.m3.toLocaleString('pt-BR', { maximumFractionDigits:1 }) + ' m³ em ' + c.cam_ac + ' caminhão(ões)' + (c.cam_rec ? ', ' + c.cam_rec + ' recusado(s)' : '') + (c.cps ? ', ' + c.cps + ' CP moldados' : '') + (c.fck_mpa ? ' · C' + c.fck_mpa : '')]));
+  (R.conc || []).forEach(c => L.push(['Concretagem', c.codigo + ' ' + (concLocal(c) || '') + ' — ' + (c.descricao || '') + ': ' + c.m3.toLocaleString('pt-BR', { maximumFractionDigits:1 }) + ' m³ em ' + c.cam_ac + ' caminhão(ões)' + (c.cam_rec ? ', ' + c.cam_rec + ' recusado(s)' : '') + (c.cps ? ', ' + c.cps + ' CP moldados' : '') + (c.fck_mpa ? ' · C' + c.fck_mpa : '')]));
   (R.fvs || []).forEach(f => L.push(['FVS', f.codigo + ' ' + f.servico + (f.local ? ' (' + f.local + ')' : '') + ' — ' + f.ev + (f.nc ? ', ' + f.nc + ' item(ns) não conforme(s)' : '')]));
   (R.insp || []).forEach(f => L.push(['Inspeção de segurança', f.codigo + ' ' + f.servico + (f.local ? ' (' + f.local + ')' : '') + ' — ' + f.ev + (f.nc ? ', ' + f.nc + ' não conformidade(s)' : '')]));
   (R.alertas || []).forEach(x => L.push([x.nivel === 'interdicao' ? 'Interdição' : 'Alerta de segurança', x.codigo + ' — ' + x.titulo]));
