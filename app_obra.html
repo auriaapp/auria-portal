@@ -4340,13 +4340,30 @@ function abrirCronograma(){
   $('painelFrame').src=url;
   $('painelModal').style.display='flex';
 }
-// Agenda: página própria (agenda.html), como no desktop — não o painel do analista.
-function abrirAgenda(date){
-  const url='agenda.html'+(date?('?date='+encodeURIComponent(date)):'');
-  window._painelURL=url;
-  $('painelModalT').textContent='Agenda';
-  $('painelFrame').src=url;
-  $('painelModal').style.display='flex';
+// Agenda do dia (App Obra): agenda.html é da coordenação e devolve o perfil obra
+// para fora — aqui o clique no calendário lista o dia no próprio app:
+// apontamentos com prazo na data + concretagens previstas/realizadas.
+async function abrirAgenda(date){
+  if (!date){ const t = new Date(); date = t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0') + '-' + String(t.getDate()).padStart(2,'0'); }
+  if (!CONCS.length){ try { await concCarregar(); } catch (_){} }
+  const [y, m, d] = date.split('-').map(Number);
+  const mesmo = x => x && x.getFullYear() === y && x.getMonth() === m - 1 && x.getDate() === d;
+  const apts = APTS.map((a, i) => ({ a, i })).filter(o => mesmo(_parseData(o.a.prazo_min)));
+  const concs = CONCS.filter(c => c.data_prevista === date || c.data_realizada === date);
+  const dia = new Date(y, m - 1, d).toLocaleDateString('pt-BR', { weekday:'long', day:'2-digit', month:'long' });
+  const itA = o => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + corPrio(o.a.prioridade) + '!important" onclick="segFechar();abrirAptIdx(' + o.i + ')">'
+    + '<div class="cod">' + esc(o.a.id) + ' <span class="seg-chip" style="--c:' + chipCor(corStatus(o.a.status)) + '">' + esc(o.a.status || '—') + '</span>' + (estaAtrasado(o.a) ? ' <b style="color:#C0392B">atrasado</b>' : '') + '</div>'
+    + '<div class="t">' + esc(o.a.titulo || 'Sem título') + '</div>'
+    + '<div class="m">' + esc(discFullName(o.a.disciplina) || '') + (o.a.local_txt ? ' · ' + esc(o.a.local_txt) : '') + '</div></div>';
+  const itC = c => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + CONC_SIT[c.situacao].cor + '!important" onclick="concDetalhe(\'' + c.id + '\')">'
+    + '<div class="cod">' + esc(c.codigo) + ' <span class="seg-chip" style="--c:' + chipCor(CONC_SIT[c.situacao].cor) + '">' + CONC_SIT[c.situacao].rot + '</span> ' + esc(concLocal(c) || '') + '</div>'
+    + '<div class="t">' + esc(c.descricao || 'Concretagem') + '</div><div class="m">' + concM3(c.volume_previsto) + '</div></div>';
+  segOv('<div class="hd"><b>Agenda — ' + esc(dia) + '</b><p>Prazos de apontamentos e concretagens deste dia.</p></div>'
+    + '<div class="ls">'
+    + (apts.length ? '<div class="seg-dia">Apontamentos com prazo</div>' + apts.map(itA).join('') : '')
+    + (concs.length ? '<div class="seg-dia">Concretagens</div>' + concs.map(itC).join('') : '')
+    + (!apts.length && !concs.length ? '<div class="hint" style="padding:12px">Nada marcado para este dia.</div>' : '')
+    + '</div><div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
 }
 // Kanban: página própria (kanban.html).
 function abrirKanban(){
@@ -11716,7 +11733,7 @@ function concForm(){
     + '<div class="seg-g2"><div><label>Concreteira</label><input id="ccForn" value="' + esc(r.fornecedor || '') + '"></div>'
     + '<div><label>Bomba</label><input id="ccBomba" value="' + esc(r.bomba || '') + '" placeholder="Ex.: lança 36 m"></div></div>'
     + '<div id="segMsg" class="seg-msg"></div></div>'
-    + '<div class="ft"><button class="b2" onclick="' + (x ? 'concDetalhe(\'' + x + '\')' : 'concPainel()') + '">Voltar</button><button class="b1" id="segOk" onclick="concSalvar()">' + (x ? 'Salvar' : 'Planejar') + '</button></div>');
+    + '<div class="ft"><button class="b2" onclick="' + (x ? 'concDetalhe(\'' + x + '\')' : 'concDescartar()') + '">' + (x ? 'Voltar' : 'Descartar') + '</button><button class="b1" id="segOk" onclick="concSalvar()">' + (x ? 'Salvar' : 'Planejar') + '</button></div>');
 }
 async function concSalvar(){
   concLerForm();
@@ -11858,6 +11875,7 @@ async function concDetalhe(id){
   const cls = c.volume_por_classe ? Object.entries(c.volume_por_classe).map(([k, v]) => esc(CONC_CLS_ROT[k] || k) + ' ' + concM3(v)).join(' · ') : '';
   let acoes = '';
   if (c.situacao === 'planejada' && concPodePlanejar()) acoes += '<button class="b2" onclick="concEditar(\'' + id + '\')">Editar</button>';
+  if (c.situacao === 'planejada' && !c.liberado_em && (c.criado_por === USER.id || concPodeLiberar())) acoes += '<button class="b2" style="color:#B91C1C" onclick="concExcluir(\'' + id + '\')">Excluir</button>';
   if (c.situacao === 'planejada' && concPodeLiberar()) acoes += '<button class="b1" onclick="concLiberarForm(\'' + id + '\',' + !!(fvs && fvs.ok) + ')">Liberar</button>';
   if (['planejada','liberada'].includes(c.situacao) && concPodeLiberar()) acoes += '<button class="b2" onclick="concCancelarForm(\'' + id + '\')">Cancelar</button>';
   segOv('<div class="hd"><b>' + esc(c.codigo) + ' — ' + esc(c.descricao || 'Concretagem') + '</b><p><span class="seg-chip" style="--c:' + chipCor(CONC_SIT[c.situacao].cor) + '">' + CONC_SIT[c.situacao].rot + '</span> '
@@ -11896,6 +11914,20 @@ async function concLiberar(id, just){
     await concCarregar(); try { renderSideRight(); } catch (_){}
     concDetalhe(id);
   } catch (e){ const m = $('segMsg'); if (m) m.textContent = e.message || e; }
+}
+function concDescartar(){
+  if (!confirm('Descartar este planejamento? Nada foi salvo.')) return;
+  CONC_RASC = null; concPainel();
+}
+// Excluir de vez: só planejada e nunca liberada (o banco confere — conc_excluir).
+async function concExcluir(id){
+  const c = CONCS.find(x => x.id === id); if (!c) return;
+  if (!confirm('Excluir ' + c.codigo + ' de vez? Isto não fica no histórico.')) return;
+  try {
+    const { error } = await sb.rpc('conc_excluir', { p_id:id }); if (error) throw error;
+    await concCarregar(); try { renderSideRight(); } catch (_){}
+    concPainel();
+  } catch (e){ const m = $('segMsg'); if (m) m.textContent = 'Não foi possível excluir: ' + (e.message || e); }
 }
 function concCancelarForm(id){
   const c = CONCS.find(x => x.id === id);
