@@ -700,10 +700,17 @@ function itImportarPrevia(){
 }
 async function itImportarRodar(){
   const vai = _IMP.filter(x => x.r && !x.pula && !x.erro);
-  const msg = (t, ok) => { $('impMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('impMsg').textContent = t; };
-  $('impOk').disabled = true; let ok = 0; const falhas = [];
-  for (const x of vai){
-    msg('Importando ' + (ok + falhas.length + 1) + ' de ' + vai.length + ' — ' + x.r.codigo + '…', true);
+  const ign = _IMP.length - vai.length;
+  $('impOk').disabled = true; $('impArq').disabled = true;
+  // Progresso: barra + documento atual (a lista some enquanto envia).
+  $('impPrev').innerHTML = '<div style="padding:14px 2px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><b id="impPasso">Preparando…</b><span id="impPct" class="cod">0%</span></div>'
+    + '<div style="height:8px;background:#E2E8F0;border-radius:99px;overflow:hidden"><div id="impBar" style="height:100%;width:0;background:#E8762B;transition:width .25s"></div></div>'
+    + '<div class="hint" style="margin-top:8px">Não feche esta janela até terminar.</div></div>';
+  $('impMsg').textContent = '';
+  let novos = 0, revs = 0; const falhas = [];
+  for (let k = 0; k < vai.length; k++){
+    const x = vai[k];
+    $('impPasso').textContent = 'Enviando ' + (k + 1) + ' de ' + vai.length + ' — ' + x.r.codigo;
     try {
       let itId = x.ex && x.ex.id;
       if (!itId){
@@ -711,11 +718,23 @@ async function itImportarRodar(){
         if (r.error) throw r.error; itId = r.data.id;
       }
       await _itPublicarArquivo(itId, x.r.revisao, x.f, x.ex ? 'Importado da pasta' : 'Carga inicial');
-      ok++;
-    } catch (e){ falhas.push(x.r.codigo + ': ' + (e.message || e)); }
+      if (x.ex) revs++; else novos++;
+    } catch (e){ falhas.push({ cod:x.r.codigo, msg:(e.message || String(e)) }); }
+    const pct = Math.round((k + 1) / vai.length * 100);
+    $('impBar').style.width = pct + '%'; $('impPct').textContent = pct + '%';
   }
   await carregarITs();
-  msg(ok + ' importado(s).' + (falhas.length ? ' Falharam: ' + falhas.join(' · ') : ''), !falhas.length);
+  // Conclusão: quadro no lugar da lista + botão "Concluir" que fecha e atualiza.
+  const okT = novos + revs;
+  $('impPrev').innerHTML = '<div style="border:1px solid ' + (falhas.length ? '#F0B25B;background:#FEF6E7' : '#86C9A4;background:#E6F4EC') + ';border-radius:10px;padding:14px 16px;margin:6px 0">'
+    + '<div style="font-size:15px;font-weight:700;color:' + (falhas.length ? '#7A4E05' : '#14532D') + '">' + (falhas.length ? '⚠ Importação concluída com ' + falhas.length + ' falha' + (falhas.length > 1 ? 's' : '') : '✓ Importação concluída') + '</div>'
+    + '<div style="margin-top:8px;font-size:13px;line-height:1.7">'
+    + '<b>' + okT + '</b> arquivo' + (okT === 1 ? '' : 's') + ' publicado' + (okT === 1 ? '' : 's') + ' · ' + novos + ' documento' + (novos === 1 ? '' : 's') + ' novo' + (novos === 1 ? '' : 's') + ' · ' + revs + ' revis' + (revs === 1 ? 'ão' : 'ões') + ' nova' + (revs === 1 ? '' : 's') + '<br>'
+    + ign + ' ignorado' + (ign === 1 ? '' : 's') + ' (já na mesma revisão, duplicata ou nome fora do padrão)<br>'
+    + 'Biblioteca agora com <b>' + ITS.filter(i => i.ativo).length + '</b> documentos vigentes; o texto já entra na busca <b>Aa</b>.</div>'
+    + (falhas.length ? '<div style="margin-top:10px;font-size:12.5px"><b>Não entraram:</b><ul style="margin:4px 0 0 18px;padding:0">' + falhas.map(f => '<li><span class="cod">' + esc(f.cod) + '</span> — ' + esc(f.msg) + '</li>').join('') + '</ul></div>' : '')
+    + '</div>';
+  const b = $('impOk'); b.disabled = false; b.textContent = 'Concluir'; b.onclick = () => { ovFechar(); telaITs(); };
 }
 
 // ── Responsáveis (gestão) ───────────────────────────────────────────────────
