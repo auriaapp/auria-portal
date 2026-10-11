@@ -389,21 +389,29 @@ async function carregarFvsModelos(){
   const { data, error } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).eq('tipo', 'fvs').order('codigo');
   FVS_MODS = error ? [] : (data || []); return error;
 }
+function fvsSo(k){ const v = k === 1 ? 'validar' : 'rascunho'; window._fvsSo = window._fvsSo === v ? '' : v; telaQualidade(); }
 async function telaQualidade(){
   $('corpo').innerHTML = '<div class="hint">Carregando modelos…</div>';
   const e = await carregarFvsModelos();
   if (!ITS.length) await carregarITs();
   const q = (window._fvsBusca || '').toLowerCase(), et = window._fvsEtapa || '', ina = !!window._fvsIna;
-  const lista = FVS_MODS.filter(m => (ina || m.ativo) && (!et || m.etapa === et) && (!q || (m.codigo + ' ' + m.servico).toLowerCase().includes(q)));
+  const so = window._fvsSo || '';   // '' | 'validar' | 'rascunho'
+  const lista = FVS_MODS.filter(m => (ina || m.ativo) && (!et || m.etapa === et) && (!q || (m.codigo + ' ' + m.servico).toLowerCase().includes(q))
+    && (so !== 'validar' || m.validar_nota || m.revisar_it_rev) && (so !== 'rascunho' || m.rascunho));
+  const nVal = FVS_MODS.filter(m => m.ativo && (m.validar_nota || m.revisar_it_rev)).length, nRas = FVS_MODS.filter(m => m.ativo && m.rascunho).length;
   $('corpo').innerHTML = aviso(PODE.qualidade, 'setor de Qualidade e gestão do grupo')
     + '<div class="card"><h3>Biblioteca de modelos de FVS</h3><p class="h">Cada modelo vira uma ficha na obra (serviço × local). Ao abrir a ficha, a obra recebe uma <b>cópia</b> dos itens — mudar o modelo vale para as próximas fichas, não para as já abertas. Mudar os itens sobe a revisão.</p>'
     + (e ? '<div class="msg err">Não foi possível ler os modelos: ' + esc(e.message) + '</div>' : '')
     + '<div class="row" style="flex-wrap:wrap;gap:8px"><input type="text" id="fvsBusca" placeholder="Buscar código ou serviço" value="' + esc(window._fvsBusca || '') + '" oninput="window._fvsBusca=this.value;clearTimeout(window._fvsT);window._fvsT=setTimeout(fvsRefiltrar,300)" style="max-width:260px">'
     + '<select onchange="window._fvsEtapa=this.value;telaQualidade()" style="max-width:180px"><option value="">Todas as etapas</option>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === et ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select>'
+    + (PODE.qualidade && (nVal || nRas) ? '<button class="btn ' + (so === 'validar' ? '' : 'sec') + '" title="Modelos com alerta para a Qualidade validar" onclick="fvsSo(1)">⚠ Validar ' + nVal + '</button>'
+        + '<button class="btn ' + (so === 'rascunho' ? '' : 'sec') + '" title="Ainda não publicados para a obra" onclick="fvsSo(2)">Rascunhos ' + nRas + '</button>' : '')
     + '<label class="chk" style="margin:0"><input type="checkbox"' + (ina ? ' checked' : '') + ' onchange="window._fvsIna=this.checked;telaQualidade()"> mostrar inativos</label><span style="flex:1"></span>'
     + (PODE.qualidade ? (FVS_MODS.length ? '' : '<button class="btn sec" onclick="fvsImportarPartida()">Importar modelos de partida do Auria</button>') + '<button class="btn" onclick="fvsForm()">＋ Modelo</button>' : '') + '</div>'
     + (lista.length ? '<table style="margin-top:12px"><tr><th>Código</th><th>Serviço</th><th>Etapa</th><th>Local</th><th>Itens</th><th>Rev.</th><th></th></tr>' + lista.map(m => '<tr' + (m.ativo ? '' : ' style="opacity:.55"') + '>'
         + '<td class="cod">' + esc(m.codigo) + '</td><td>' + esc(m.servico) + (m.duas_aprovacoes ? ' <span class="chip t-seguranca">2 aprovações</span>' : '') + (m.ativo ? '' : ' <span class="chip">inativo</span>') + (m.rascunho ? ' <span class="chip t-seguranca" title="Extraído das ITs — a obra ainda não vê. Confira e publique.">rascunho</span>' : '')
+        + (m.validar_nota ? ' <span class="chip" style="background:#FEF3C7;color:#B45309" title="' + esc(m.validar_nota) + '">⚠ validar</span>' : '')
+        + (m.origem === 'construpoint' ? ' <span class="chip t-outro" title="Itens vindos do sistema anterior">importado</span>' : '')
         + (m.revisar_it_rev ? ' <span class="chip" style="background:#FEE2E2;color:#B91C1C" title="A IT de origem foi revisada — confira se os critérios continuam valendo e salve">revisar · IT rev. ' + esc(m.revisar_it_rev) + '</span>' : '') + '</td>'
         + '<td>' + ETAPA_ROT[m.etapa] + '</td><td>' + NIVEL_ROT[m.nivel_local] + '</td><td>' + (m.itens || []).length + '</td><td class="cod">' + String(m.revisao).padStart(2,'0') + '</td>'
         + '<td style="text-align:right"><button class="btn sec" onclick="fvsForm(\'' + m.id + '\')">' + (PODE.qualidade ? 'Editar' : 'Ver') + '</button></td></tr>').join('') + '</table>'
@@ -491,6 +499,7 @@ function fvsForm(id){
     + '<div><label class="l">IT de referência</label><select id="fmIt"' + dis + '><option value="">—</option>' + ITS.filter(i => i.ativo).map(i => '<option value="' + i.id + '"' + (i.id === m.it_id ? ' selected' : '') + '>' + esc(i.codigo + ' — ' + i.titulo) + '</option>').join('') + '</select></div></div>'
     + '<label class="chk"><input type="checkbox" id="fmDuas"' + (m.duas_aprovacoes ? ' checked' : '') + dis + '> Exige 2 aprovações (coord. de campo e eng. chefe)</label>'
     + (id ? '<label class="chk"><input type="checkbox" id="fmAtivo"' + (m.ativo ? ' checked' : '') + dis + '> Ativo (inativo não aparece para abrir novas fichas)</label>' : '')
+    + (id && m.validar_nota ? '<div class="ro" style="display:block;margin-top:10px">⚠ <b>Validar:</b> ' + esc(m.validar_nota) + '<br><span style="font-size:12px">O alerta sai quando você salvar o modelo conferido.</span></div>' : '')
     + (id && m.revisar_it_rev ? '<div class="ro" style="display:block;margin-top:10px">A IT de origem passou para a <b>rev. ' + esc(m.revisar_it_rev) + '</b>. Confira os itens com a IT e salve — a marca "revisar" sai ao salvar.</div>' : '')
     + (id && m.rascunho ? '<label class="chk"><input type="checkbox" id="fmPublicar"' + dis + '> <span><b>Conferido — publicar para a obra</b> (hoje é rascunho extraído da IT' + ((m.it_paginas || []).length ? ', págs. ' + m.it_paginas.join(', ') : '') + ')</span></label>' : '')
     + '<label class="l" style="margin-top:12px">Itens de verificação</label><div id="fmItens"></div>'
@@ -526,7 +535,7 @@ async function fvsSalvar(id){
   if (!itens.length) return msg('O modelo precisa de pelo menos um item.');
   $('fmOk').disabled = true;
   let r;
-  if (id){ row.ativo = $('fmAtivo').checked; if ($('fmPublicar') && $('fmPublicar').checked) row.rascunho = false; const _m = FVS_MODS.find(x => x.id === id); if (_m && _m.revisar_it_rev){ row.revisar_it_rev = null; row.revisar_desde = null; } r = await sb.from('fvs_modelo_auria').update(row).eq('id', id); }
+  if (id){ row.ativo = $('fmAtivo').checked; if ($('fmPublicar') && $('fmPublicar').checked) row.rascunho = false; const _m = FVS_MODS.find(x => x.id === id); if (_m && _m.revisar_it_rev){ row.revisar_it_rev = null; row.revisar_desde = null; } if (_m && _m.validar_nota) row.validar_nota = null; r = await sb.from('fvs_modelo_auria').update(row).eq('id', id); }
   else {
     const cod = ($('fmCod').value || '').trim().toUpperCase();
     if (cod.length < 3){ $('fmOk').disabled = false; return msg('Escreva o código.'); }
