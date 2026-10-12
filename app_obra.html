@@ -1750,7 +1750,33 @@ async function boot(){
     abrirDoCDE(_cdeDoc, _cdeRev)
       .then(()=>{ if(_apt) focarApontamento(_apt); })
       .catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e)));
+  }else if(EMP){
+    obraAbrirPrincipal().catch(e=>console.warn('modelo principal:', e.message||e));
   }
+}
+
+// ── Modelo principal da obra (backlog 220/221) ─────────────────────────────
+// Definido pela coordenação no CDE (obra_modelo_auria): o App Obra entra direto
+// nele + complementares, e o de-para pav_map (andar do IFC → pavimento) é a base
+// de pavimento da FVS, alertas, concretagem e IA.
+var OBRA_MODELO=null;
+async function obraModeloCarregar(){
+  OBRA_MODELO=null; if(!EMP) return null;
+  try{ const { data } = await sb.from('obra_modelo_auria').select('*').eq('empreendimento_id',EMP.id).maybeSingle(); OBRA_MODELO=data||null; }catch(_){}
+  return OBRA_MODELO;
+}
+async function obraAbrirPrincipal(){
+  const m = OBRA_MODELO || await obraModeloCarregar();
+  if(!m || !m.principal_doc_id) return;
+  const lista = await f3dModelosDoCde();
+  const ids = [m.principal_doc_id].concat(m.complementares||[])
+    .map(d=>(lista.find(x=>x.documentoId===d)||{}).arquivoId).filter(Boolean);
+  if(ids.length) await f3dModo(true, ids);
+}
+// Pavimento de um andar do IFC pelo de-para conferido (undefined = não está no de-para).
+function obraPavDoAndar(nome){
+  const mp = OBRA_MODELO && OBRA_MODELO.pav_map; if(!mp || !(nome in mp)) return undefined;
+  const id = mp[nome]; return id ? ((CDE_PAVS||[]).find(p=>p.id===id) || null) : null;
 }
 
 // Abre várias pranchas do CDE JUNTAS, numa única análise: a primeira como
@@ -1805,6 +1831,7 @@ function trocarEmp(){
   renderCamadas();
   carregarApts();
   carregarCdePavs().then(obraRenderPavs);
+  FVS3D_MAPA = null; obraModeloCarregar();
 }
 
 // Pavimentos CADASTRADOS pelo gestor (mesma fonte do upload/F2: cde_pavimento_auria).
@@ -11492,7 +11519,7 @@ function fvs3dParear(nomesModelo){
 }
 var FVS3D_MAPA = null;   // { chave, dono: [Map(id → pavId)], semPar: [nomes] }
 async function fvs3dMapa(){
-  const chave = F3D.modelos.map(m => m.arquivoId).join('|') + '#' + (CDE_PAVS || []).length;
+  const chave = F3D.modelos.map(m => m.arquivoId).join('|') + '#' + (CDE_PAVS || []).length + '#' + (OBRA_MODELO ? OBRA_MODELO.atualizado_em : '');
   if (FVS3D_MAPA && FVS3D_MAPA.chave === chave) return FVS3D_MAPA;
   const ESP = new Set(['IFCPROJECT','IFCSITE','IFCBUILDING','IFCBUILDINGSTOREY','IFCSPACE']);
   const dono = [], semPar = new Set();
@@ -11517,7 +11544,7 @@ async function fvs3dMapa(){
     }
     const lista = storeys.map((s, k) => ({ s, nome:nm[s.id] || '', z:elev[s.id] != null ? elev[s.id] : k })).sort((a, b) => a.z - b.z);
     const par = fvs3dParear(lista.map(x => x.nome));
-    lista.forEach((x, k) => { const pc = par[k]; if (!pc){ if (x.nome) semPar.add(x.nome); return; } x.s.ids.forEach(id => mapa.set(id, pc.id)); });
+    lista.forEach((x, k) => { const dp = obraPavDoAndar(x.nome), pc = dp !== undefined ? dp : par[k]; if (!pc){ if (x.nome) semPar.add(x.nome); return; } x.s.ids.forEach(id => mapa.set(id, pc.id)); });
   }
   FVS3D_MAPA = { chave, dono, semPar:[...semPar] };
   return FVS3D_MAPA;

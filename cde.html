@@ -1069,6 +1069,15 @@ setTimeout(_barraPronta, 4000);
     <div class="modal-f"><span class="msg" id="recodMsg"></span><span style="flex:1"></span><button class="btn sec" onclick="recodFechar()">Cancelar</button><button class="btn pri" id="recodGo" onclick="recodAplicar()" disabled>Aplicar</button></div>
   </div>
 </div>
+<div class="ov" id="ovModPrinc" onclick="if(event.target===this)mpFechar()">
+  <div class="modal" style="width:min(760px,100%)">
+    <div class="modal-h">
+      <div style="flex:1"><b>Modelo principal da obra</b><div class="cod" id="mpCod"></div></div>
+      <button class="x" onclick="mpFechar()">×</button>
+    </div>
+    <div class="modal-b" id="mpBody"></div>
+  </div>
+</div>
 <div class="ov" id="ovLink" onclick="if(event.target===this)fecharVincular()">
   <div class="modal">
     <div class="modal-h">
@@ -1547,7 +1556,7 @@ async function carregarDocs(){
   const ids = (docs||[]).map(d=>d.id);
   let revs=[], arqs=[];
   // pavimentos e pranchas vinculadas não dependem das revisões: já saem em paralelo
-  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas(), carregarFederacoes()]);
+  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas(), carregarFederacoes(), mpCarregarCfg()]);
   if(ids.length){
     // 'motivo' (item 110) é coluna nova: sem o SQL rodado, cai para a lista sem ela.
     const RCOLS='id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas';
@@ -1682,6 +1691,80 @@ async function confirmarVinculo(pranchaId){
     const m=(e&&e.message)||String(e);
     alert(/duplicate|unique/i.test(m) ? 'Este documento já tem uma prancha vinculada.' : 'Erro ao vincular: '+m);
   }
+}
+// ── Modelo principal da obra (backlog 220/221) ─────────────────────────────
+// A coordenação escolhe o IFC que o App Obra abre direto (ex.: estrutura da torre),
+// os complementares (fundação, contenção, edícula) e confere o de-para
+// "andar do IFC → pavimento cadastrado". Grava em obra_modelo_auria (RPC obra_modelo_salvar).
+let MP_CFG=null, MP={ doc:null, andares:[], sel:{} };
+async function mpCarregarCfg(){
+  try{ const { data } = await sb.from('obra_modelo_auria').select('*').eq('empreendimento_id',EMP_ID).maybeSingle(); MP_CFG=data||null; }catch(_){ MP_CFG=null; }
+  return MP_CFG;
+}
+function mpFechar(){ $('ovModPrinc').classList.remove('on'); }
+function _mpIfcs(){ return DOCS.filter(d=>((d.atual&&d.atual.arqs)||[]).some(a=>(a.extensao||'').toLowerCase()==='ifc' && a.frag_status==='pronto')); }
+async function mpAbrir(docId){
+  const d=DOCS.find(x=>x.id===docId); if(!d) return;
+  MP.doc=d; MP.andares=[]; MP.sel={};
+  $('mpCod').textContent=d.codigo;
+  $('mpBody').innerHTML='<div style="padding:20px;color:var(--mut)">Abrindo o modelo para ler os andares…</div>';
+  $('ovModPrinc').classList.add('on');
+  await mpCarregarCfg();
+  // o modelo precisa estar carregado numa janela 3D para ler os andares
+  await openDocInWindow(docId);
+  let w=null;
+  for(let k=0;k<240;k++){
+    w=WIN_STATE.list.find(x=>!x.isCmp && !x.isFed && x.DOC_SEL && x.DOC_SEL.id===docId);
+    if(w && w.B3 && w.B3.modelos && w.B3.modelos.length) break;
+    await new Promise(r=>setTimeout(r,500));
+    if(!$('ovModPrinc').classList.contains('on')) return;
+  }
+  if(!(w && w.B3 && w.B3.modelos && w.B3.modelos.length)){ $('mpBody').innerHTML='<div style="padding:20px;color:var(--err)">Não foi possível carregar o modelo 3D.</div>'; return; }
+  const lst=[]; for(const x of w.B3.modelos){ try{ (await AuriaAndares.ler(x.model)).forEach(a=>lst.push(a)); }catch(_){} }
+  MP.andares=lst;
+  const mesmo = MP_CFG && MP_CFG.principal_doc_id===docId;
+  const salvo = mesmo ? (MP_CFG.pav_map||{}) : {};
+  const sug = AuriaAndares.parear(lst.map(a=>a.nome), PAVS);
+  lst.forEach((a,i)=>{ MP.sel[a.nome] = (a.nome in salvo) ? salvo[a.nome] : (sug[i] ? sug[i].id : ''); });
+  mpRender(mesmo ? (MP_CFG.complementares||[]) : []);
+}
+function mpRender(comps){
+  const d=MP.doc, outros=_mpIfcs().filter(x=>x.id!==d.id);
+  const pavs=(PAVS||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista');
+  const opt=sel=>'<option value="">— sem pavimento —</option>'+pavs.map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${esc((p.codigo||'').toUpperCase())} — ${esc(p.nome||'')}</option>`).join('');
+  const ok=MP.andares.filter(a=>MP.sel[a.nome]).length;
+  $('mpBody').innerHTML=`
+    <div class="lk-hint">O <b>App Obra</b> abre direto neste modelo, e os pavimentos de FVS, alertas, concretagem e IA passam a seguir o de-para abaixo.
+      Na fase de estrutura, escolha o modelo da torre; fundação, contenção e edículas entram como complementares (abrem juntos).</div>
+    <div style="margin:12px 0 4px;font-weight:700">Complementares <span style="font-weight:400;color:var(--mut)">(abrem junto com o principal)</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px 14px">${outros.length?outros.map(o=>`<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" class="mpComp" value="${o.id}"${comps.includes(o.id)?' checked':''}><span class="cod" style="display:inline">${esc(o.codigo)}</span></label>`).join(''):'<span style="color:var(--mut);font-size:12px">Nenhum outro IFC convertido neste empreendimento.</span>'}</div>
+    <div style="margin:14px 0 4px;font-weight:700">Andares do modelo → pavimentos do empreendimento <span style="font-weight:400;color:var(--mut)">(${ok} de ${MP.andares.length} ligados · sugestão automática, confira)</span></div>
+    ${pavs.length?'':'<div style="color:var(--err);font-size:12px;margin-bottom:6px">O empreendimento não tem pavimentos cadastrados — cadastre na gestão antes.</div>'}
+    <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr style="position:sticky;top:0;background:var(--panel)"><th style="text-align:left;padding:6px 8px">Andar no IFC</th><th style="text-align:right;padding:6px 8px">Cota</th><th style="text-align:right;padding:6px 8px">Peças</th><th style="text-align:left;padding:6px 8px">Pavimento</th></tr>
+        ${MP.andares.slice().reverse().map(a=>`<tr style="border-top:1px solid var(--line)">
+          <td style="padding:4px 8px" class="cod">${esc(a.nome||'(sem nome)')}</td>
+          <td style="padding:4px 8px;text-align:right;color:var(--mut)">${isFinite(a.z)?(+a.z).toFixed(2):''}</td>
+          <td style="padding:4px 8px;text-align:right;color:var(--mut)">${a.ids.length}</td>
+          <td style="padding:4px 8px"><select data-andar="${esc(a.nome)}" onchange="MP.sel[this.dataset.andar]=this.value" style="width:100%">${opt(MP.sel[a.nome])}</select></td></tr>`).join('')}
+      </table></div>
+    <div id="mpMsg" style="color:var(--err);font-size:12px;margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      ${MP_CFG && MP_CFG.principal_doc_id===d.id?'<button class="hbtn" style="background:transparent;color:var(--err);border-color:var(--line)" onclick="mpSalvar(true)">Deixar de ser principal</button>':''}
+      <button class="hbtn" style="background:transparent;color:var(--txt);border-color:var(--line)" onclick="mpFechar()">Cancelar</button>
+      <button class="hbtn pri" id="mpOk" onclick="mpSalvar(false)">Salvar como modelo principal</button></div>`;
+}
+async function mpSalvar(limpar){
+  const b=$('mpOk'); if(b) b.disabled=true;
+  const comps=[...document.querySelectorAll('.mpComp:checked')].map(x=>x.value);
+  const mapa={}; MP.andares.forEach(a=>{ mapa[a.nome]=MP.sel[a.nome]||null; });
+  const { error } = await sb.rpc('obra_modelo_salvar', limpar
+    ? { p_emp:EMP_ID, p_principal:null, p_complementares:[], p_pav_map:{} }
+    : { p_emp:EMP_ID, p_principal:MP.doc.id, p_complementares:comps, p_pav_map:mapa });
+  if(error){ $('mpMsg').textContent=error.message||String(error); if(b) b.disabled=false; return; }
+  await mpCarregarCfg(); mpFechar(); renderNav();
+  _cdeToast(limpar ? 'Modelo principal removido.' : MP.doc.codigo+' agora é o modelo principal da obra.');
 }
 function fecharVincular(){ $('ovLink').classList.remove('on'); LK_DOC_ID=null; LK_CAND=[]; }
 
@@ -2925,6 +3008,7 @@ function docMenuOpen(ev,id){
   if(byExt.ifc && !SEM_ESCRITA && byExt.ifc.frag_status==='pronto'){
     if(!byExt.pdf) rows.push('<div class="dm-sep"></div>');
     rows.push(`<button onclick="docMenuAct('${id}','','appbim')"><span class="mi">${DM_IC.cubo}</span>Analisar no App (3D)</button>`);
+    rows.push(`<button onclick="docMenuAct('${id}','','modprinc')"><span class="mi">★</span>${MP_CFG && MP_CFG.principal_doc_id===id ? 'Modelo principal da obra ✓' : 'Definir como modelo principal da obra'}</button>`);
   }
   const revsComPdf=((d.revs)||[]).filter(r=>(r.arqs||[]).some(a=>(a.extensao||'').toLowerCase()==='pdf')).length;
   if(revsComPdf>=2){
@@ -2952,6 +3036,7 @@ async function docMenuAct(id,ext,mode){
   if(mode==='rev'){ await openDocInWindow(id); renderNav(); abrirDetalhes(); return; }
   if(mode==='app'){ await openDocInWindow(id); abrirNoApp(); return; }
   if(mode==='appbim'){ abrirBimNoApp([id]); return; }
+  if(mode==='modprinc'){ mpAbrir(id); return; }
   if(mode==='link'){ abrirVincular(id); return; }
   if(mode==='cmp'){ abrirComparar(id); return; }
   if(mode==='qrimp'){ baixarPranchaComQr(id); return; }
@@ -7991,6 +8076,7 @@ boot();
 </script>
 <script src="auria_planilha.js"></script>
 <script src="auria_word.js"></script>
+<script src="auria_andares.js"></script>
 <script src="auria_itcopia.js"></script>
 <script src="auria_cde_normas.js"></script>
 <script src="auria_valida.js"></script>
