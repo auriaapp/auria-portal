@@ -6498,6 +6498,35 @@ async function f3dClique(ev){
   // da IA (F3D_SEL_CTX) precisa ser gravado mesmo com o painel fechado.
   f3dProps(hit, m).catch(e=>console.warn('props:', e));
 }
+// Volume da peça para o painel de propriedades (o TQS não exporta Qto de volume):
+// volume da MALHA 3D (Fragments getItemsVolume — mesmo número da concretagem e da IA).
+// Laje nervurada do TQS = várias IfcSlab com o MESMO nome no MESMO andar (camadas
+// empilhadas): mostra a peça e a laje inteira (soma das camadas), como no Auria BIM.
+async function f3dVolumePeca(m, id, data){
+  const md=m && m.model; if(!md) return null;
+  let v=0; try{ v=+(await md.getItemsVolume([id]))||0; }catch(_){ return null; }
+  if(!(v>0)) return null;
+  const out={ v };
+  const cat=String((data&&data._category&&data._category.value)||'').toUpperCase();
+  const nome=String((data&&data.Name&&data.Name.value)||'');
+  if(/SLAB/.test(cat) && nome && window.AuriaAndares){
+    try{
+      if(!md._lajeIdx){
+        const and=await AuriaAndares.ler(md); const andDe=new Map(); and.forEach((a,k)=>a.ids.forEach(x=>andDe.set(x,k)));
+        let ids=[]; try{ ids=Object.values(await md.getItemsOfCategories([/^IFCSLAB$/])||{}).flat(); }catch(_){}
+        const nm=new Map(); for(let p=0;p<ids.length;p+=500){ let da=[]; try{ da=await md.getItemsData(ids.slice(p,p+500),{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+          (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) nm.set(lid, String((d.Name&&d.Name.value)||'')); }); }
+        md._lajeIdx={ andDe, nm, ids };
+      }
+      const L=md._lajeIdx, k=L.andDe.get(id);
+      const irmas=L.ids.filter(x=>L.nm.get(x)===nome && L.andDe.get(x)===k);
+      if(irmas.length>1){ let t=0; try{ t=+(await md.getItemsVolume(irmas))||0; }catch(_){} if(t>0){ out.laje=t; out.camadas=irmas.length; } }
+    }catch(_){}
+  }
+  // fck pelo material ("Concreto C50") ou propriedade com C25..C90
+  try{ const txt=JSON.stringify(data||{}); const mm=txt.match(/\bC\s?(2[05]|3[05]|4[05]|5[05]|60|70|80|90)\b/); if(mm) out.fck=+mm[1]; }catch(_){}
+  return out;
+}
 async function f3dProps(hit, m){
   const el=$('bimPropsBody');
   const showPanel = F3D_PROPS && !!el;   // captura contexto sempre; renderiza painel só se aberto
@@ -6517,8 +6546,10 @@ async function f3dProps(hit, m){
     // caixa ORIENTADA (dimensões reais) — cai na caixa alinhada se a geometria não vier
     try{ const dim=B3&&B3.dimOrientadas ? await B3.dimOrientadas(m.model, hit.localId) : null;
       if(dim && isFinite(dim.altura)) cx={ min:{x:0,y:0,z:0}, max:{x:dim.comprimento,y:dim.altura,z:dim.largura}, orientado:true }; }catch(_){}
-    F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx);   // sempre → contexto da IA
-    if(showPanel) el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx);
+    const vol = await f3dVolumePeca(m, hit.localId, dados && dados[0]);
+    F3D_SEL_CTX = f3dSelResumoTexto(dados && dados[0], m, cx)
+      + (vol ? ('\nVolume (malha 3D): '+vol.v.toFixed(3)+' m³'+(vol.laje?('; laje inteira ('+vol.camadas+' camadas): '+vol.laje.toFixed(3)+' m³'):'')+(vol.fck?('; fck '+vol.fck+' MPa'):'')) : '');
+    if(showPanel) el.innerHTML = f3dPropsHtml(dados && dados[0], m, cx, vol);
   }catch(e){
     if(showPanel) el.innerHTML='<div class="bp-empty">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
   }
@@ -6528,7 +6559,7 @@ async function f3dProps(hit, m){
 // do IFC). Percorrer genericamente evita depender dos nomes exatos de relação,
 // que variam com o exportador — o que não for reconhecido simplesmente não
 // aparece, em vez de quebrar o painel.
-function f3dPropsHtml(data, m, cx){
+function f3dPropsHtml(data, m, cx, vol){
   const fmtD=(d)=> !isFinite(d) ? '—' : (d<1 ? (d*100).toFixed(1).replace('.',',')+' cm' : d.toFixed(d<10?3:2).replace('.',',')+' m');
   const val=(v)=>{
     if(v===null||v===undefined||v==='') return '—';
@@ -6603,6 +6634,14 @@ function f3dPropsHtml(data, m, cx){
   // da relação (HasAssociations) nem uma classe IFC crua.
   if(mG.length){ const mn=mG[0].nome; if(mn && !/^(ifc|hasassociations)/i.test(mn)) ident.push(['Material', mn]); }
   out += cat('Identificação', linhas(ident));
+  // Volume pela malha 3D (sempre que a peça tem volume) — vem antes das quantidades do IFC.
+  if(vol && vol.v>0){
+    const f3=x=>x.toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})+' m³';
+    const lv=[['Volume (malha 3D)', f3(vol.v)]];
+    if(vol.laje) lv.push(['Volume da laje inteira ('+vol.camadas+' camadas)', f3(vol.laje)]);
+    if(vol.fck) lv.push(['fck (material)', vol.fck+' MPa']);
+    out += cat('Volume', linhas(lv));
+  }
   out += cat('Quantidades',  qG.map(g=>linhas(g.ls)).join(''));
   // Reserva: modelo sem quantidades → calcula dimensões da caixa 3D (Altura =
   // eixo vertical; horizontais maior→Comprimento, menor→Largura). Volume/área
