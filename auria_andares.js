@@ -41,6 +41,10 @@
     // código exato do pavimento no nome do andar (ex.: "10T", "SS1")
     nomes.forEach((nm, i) => { if (res[i]) return; const n = norm(nm).replace(/\s/g, '');
       const p = pavs.find(p => p.codigo && norm(p.codigo).replace(/\s/g, '') === n); if (p) res[i] = p; });
+    // subnível do Revit ("TÉRREO_(P.A_0,09)", "2º PAVIMENTO_(P.A_0,07)") = mesmo pavimento do andar-base
+    const base = n => norm(n).replace(/_?\(P\.?A[^)]*\)/g, '').replace(/^\S*_\d+_/, '').trim();
+    nomes.forEach((nm, i) => { if (res[i]) return; const b0 = base(nm); if (!b0 || b0 === norm(nm)) return;
+      const k = nomes.findIndex((x, j) => res[j] && norm(x) === b0); if (k >= 0) res[i] = res[k]; });
     const marcos = [[-1, -1]].concat(anc, [[nomes.length, pavs.length]]);
     for (let k = 0; k + 1 < marcos.length; k++){
       const [i0, j0] = marcos[k], [i1, j1] = marcos[k + 1];
@@ -69,7 +73,9 @@
         nm[lid] = String((d.Name && d.Name.value) || (d.LongName && d.LongName.value) || '');
         elev[lid] = d.Elevation && isFinite(+d.Elevation.value) ? +d.Elevation.value : null; });
     }
-    return storeys.map((s, k) => ({ id:s.id, ids:s.ids, nome:nm[s.id] || '', z:elev[s.id] != null ? elev[s.id] : k })).sort((a, b) => a.z - b.z);
+    const vistos = new Set();   // a estrutura espacial às vezes repete o mesmo andar
+    return storeys.filter(s => !vistos.has(s.id) && vistos.add(s.id))
+      .map((s, k) => ({ id:s.id, ids:s.ids, nome:nm[s.id] || '', z:elev[s.id] != null ? elev[s.id] : k })).sort((a, b) => a.z - b.z);
   }
   window.AuriaAndares = { norm, chave, parear, ler, ordemFisica };
 })();
