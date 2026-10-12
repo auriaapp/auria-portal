@@ -4657,7 +4657,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12c').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -6523,8 +6523,11 @@ async function f3dVolumePeca(m, id, data){
       if(irmas.length>1){ let t=0; try{ t=+(await md.getItemsVolume(irmas))||0; }catch(_){} if(t>0){ out.laje=t; out.camadas=irmas.length; } }
     }catch(_){}
   }
-  // fck pelo material ("Concreto C50") ou propriedade com C25..C90
-  try{ const txt=JSON.stringify(data||{}); const mm=txt.match(/\bC\s?(2[05]|3[05]|4[05]|5[05]|60|70|80|90)\b/); if(mm) out.fck=+mm[1]; }catch(_){}
+  // fck pelo material ("Concreto C50") — percorre sem JSON (os dados têm referência circular)
+  try{ const vis=new WeakSet(); let mat=null;
+    const w=o=>{ if(mat||!o||typeof o!=='object'||vis.has(o)) return; vis.add(o);
+      for(const [k,v] of Object.entries(o)){ if(v&&typeof v==='object'&&'value' in v&&typeof v.value!=='object'){ const sv=String(v.value); if(/concret/i.test(sv) && /\bC\s?\d{2}\b/.test(sv)){ mat=sv; return; } } else w(v); } };
+    w(data); const mm=mat && mat.match(/\bC\s?(\d{2})\b/); if(mm) out.fck=+mm[1]; }catch(_){}
   return out;
 }
 async function f3dProps(hit, m){

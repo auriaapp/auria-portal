@@ -1003,6 +1003,8 @@ function _bateTermos(d, termosLc){
   const nome=_nomeEl(d), txt=_norm(_textoBusca(d));
   return termosLc.some(t=>{ t=_norm(t);
     if(t==='@fire'){ const v=_achaValorQualquer(d, FIRE_RX); return v!=null && !/^(0|0h|nao|n[aã]o|nenhum|none|n\/a|na|false|sem|-)$/i.test(_norm(String(v))); }
+    // classe do concreto ("c40"): está no MATERIAL (TQS: "Concreto C80"), não no nome da peça
+    if(/^c\d{2}$/.test(t)){ if(txt.includes(t)) return true; const mv=_achaValorQualquer(d, /material/i); return mv!=null && _norm(String(mv)).replace(/\s+/g,'').includes(t); }
     return t[0]==='=' ? nome===t.slice(1) : txt.includes(t);
   });
 }
@@ -1333,7 +1335,7 @@ export async function acharElementos(V, regexes, termos, pavim){
           else { const cache=await _pavimMapModelo(V, x, ids, 'Filtrando'); for(const id of ids){ if(_batePavim(cache.get(id)||'', pavN)) okd.push(id); } }
         }
       } else {
-        let dados=[]; const precisaPset = pavN || termosLc.includes('@fire');
+        let dados=[]; const precisaPset = pavN || termosLc.includes('@fire') || termosLc.some(t=>/^c\d{2}$/.test(t));
         if(precisaPset){ dados=await _lerPsetsEmLotes(V, x.model, ids, 'Filtrando'); }
         else { try{ dados=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
         (dados||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
