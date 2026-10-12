@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — QR dos pavimentos</title>
+<link rel="icon" href="logo_symbol.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="auria_andares.js?v=3"></script>
+<style>
+  :root{--navy:#0B1220;--navy2:#152036;--accent:#E8960A;--line:#E2E8F0;--mut:#64748B;--txt:#0F172A;--bg:#F1F5F9;--panel:#fff;
+        --mono:ui-monospace,"Cascadia Mono",Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",system-ui,Arial,sans-serif;background:var(--bg);color:var(--txt)}
+  header{background:linear-gradient(90deg,var(--navy),var(--navy2));color:#fff;padding:10px 18px;display:flex;align-items:center;gap:20px;min-height:66px}
+  header img.lg{height:22px}
+  header .tt{border-left:2px solid var(--accent);padding-left:12px}
+  header .tt b{display:block}
+  header .sp{flex:1}
+  .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;text-decoration:none;font-family:inherit}
+  main{max-width:1100px;margin:0 auto;padding:18px 16px 40px}
+  .faixa{background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:12px;padding:12px 14px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px}
+  .faixa .cod{font-family:var(--mono);font-weight:700;color:#1E3A5F}
+  .faixa .k{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;display:block}
+  .acoes{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 10px;align-items:center}
+  .b1,.b2{border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--line)}
+  .b1{background:var(--accent);border-color:var(--accent);color:#231703}
+  .b2{background:#fff;color:var(--txt)}
+  .b1:disabled{opacity:.5;cursor:default}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+  .seg button{border:0;background:none;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--mut)}
+  .seg button.on{background:#1E3A5F;color:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);padding:9px 10px;background:#F8FAFC;border-bottom:1px solid var(--line)}
+  td{padding:8px 10px;border-top:1px solid var(--line);vertical-align:middle}
+  tr.sel td{background:#FFF7EB}
+  td.cod{font-family:var(--mono);font-weight:700;color:#1E3A5F;white-space:nowrap}
+  .chip{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 8px}
+  .chip.ok{background:#DCFCE7;color:#166534}.chip.no{background:#F1F5F9;color:var(--mut)}
+  .mini{font-size:12px;padding:4px 9px;border-radius:7px;border:1px solid var(--line);background:#fff;cursor:pointer;font-family:inherit;font-weight:600;color:var(--txt);text-decoration:none}
+  .msg{padding:14px;border-radius:10px;background:#FEF3C7;color:#92400E;font-size:13px;margin:12px 0}
+  .hint{color:var(--mut);font-size:12px}
+  @media (max-width:640px){ td.nm{display:none} header{gap:10px} }
+</style>
+</head>
+<body>
+<header>
+  <img class="lg" src="logo_auria_branco.png" alt="Auria">
+  <div class="tt"><b>QR dos pavimentos</b><span id="hSub">—</span></div>
+  <span class="sp"></span>
+  <a class="hbtn" id="lnkVolta" href="#">← Voltar</a>
+</header>
+<main>
+  <div id="cont"><div class="hint" style="padding:20px">Carregando…</div></div>
+</main>
+<script>
+const SUPA_URL='https://sabzccokueowpromwxdg.supabase.co';
+const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE';
+const sb=window.supabase.createClient(SUPA_URL,SUPA_KEY);
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const QS=new URLSearchParams(location.search), EMP_ID=QS.get('emp'), DE=QS.get('de')||'obra';
+let EMP=null, PAVS=[], QRS={}, MODELO=null, PODE=false, SEL=new Set(), NPP=1;
+const linkDe=t=>location.origin+location.pathname.replace(/[^/]*$/,'')+'v.html?q='+t;
+
+async function boot(){
+  $('lnkVolta').href = DE==='cde' ? 'cde.html?emp='+encodeURIComponent(EMP_ID) : 'app_obra.html?emp='+encodeURIComponent(EMP_ID);
+  $('lnkVolta').textContent = DE==='cde' ? '← CDE' : '← App Obra';
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ location.replace('./?next='+encodeURIComponent(location.pathname.replace(/^\//,'')+location.search)); return; }
+  if(!EMP_ID){ $('cont').innerHTML='<div class="msg">Abra esta página a partir do App Obra ou do CDE de um empreendimento.</div>'; return; }
+  const [e, pv, qr, om, pode] = await Promise.all([
+    sb.from('empreendimentos_auria').select('id,nome,codigo,logo_url').eq('id',EMP_ID).maybeSingle(),
+    sb.from('cde_pavimento_auria').select('id,codigo,nome,tipo,ordem').eq('empreendimento_id',EMP_ID).eq('ativo',true),
+    sb.from('obra_qr_pav_auria').select('pavimento_id,token,fonte,criado_em').eq('empreendimento_id',EMP_ID).eq('fonte','principal').eq('ativo',true),
+    sb.from('obra_modelo_auria').select('principal_doc_id,complementares,atualizado_em').eq('empreendimento_id',EMP_ID).maybeSingle(),
+    sb.rpc('obra_qr_pode',{ p_emp:EMP_ID })
+  ]);
+  EMP=e.data; if(!EMP){ $('cont').innerHTML='<div class="msg">Empreendimento não encontrado ou sem acesso.</div>'; return; }
+  $('hSub').textContent=(EMP.codigo?EMP.codigo+' · ':'')+EMP.nome;
+  PODE=pode.data===true;
+  const lista=(pv.data||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista');
+  PAVS=AuriaAndares.ordemFisica(lista).reverse();            // de cima para baixo, como o prédio
+  QRS={}; (qr.data||[]).forEach(q=>{ QRS[q.pavimento_id]=q; });
+  MODELO=om.data||null;
+  if(MODELO && MODELO.principal_doc_id){
+    const { data:d } = await sb.from('cde_documento_auria').select('codigo').eq('id',MODELO.principal_doc_id).maybeSingle();
+    MODELO.codigo=d&&d.codigo;
+  }
+  render();
+}
+function render(){
+  const semModelo = !(MODELO && MODELO.principal_doc_id);
+  const nQr=PAVS.filter(p=>QRS[p.id]).length;
+  let h='<div class="faixa">'
+    +'<div><span class="k">Modelo dos QRs</span>'+(semModelo?'<b style="color:#B45309">nenhum modelo principal definido</b>':'<span class="cod">'+esc(MODELO.codigo||'—')+'</span>'+((MODELO.complementares||[]).length?' + '+MODELO.complementares.length+' complementar(es)':''))+'</div>'
+    +'<div><span class="k">Pavimentos</span><b>'+PAVS.length+'</b></div>'
+    +'<div><span class="k">Com QR</span><b>'+nQr+'</b></div>'
+    +'<div class="hint" style="flex:1;min-width:220px">Cada QR abre, <b>sem login</b>, o 3D só daquele pavimento, sempre na <b>revisão liberada</b> mais recente — revisão nova não exige reimprimir. Os QRs antigos do Auria BIM continuam funcionando.</div>'
+    +'</div>';
+  if(semModelo) h+='<div class="msg">Defina o <b>modelo principal da obra</b> no CDE (menu ⋮ do IFC da estrutura → ★ Definir como modelo principal). Sem ele o QR não tem o que mostrar.</div>';
+  if(!PODE) h+='<div class="msg">Você pode ver e imprimir os QRs existentes. Gerar novos é com o eng. chefe, o coord. de campo ou a coordenação de projetos.</div>';
+  h+='<div class="acoes">'
+    +'<button class="b2" onclick="selTodos()">'+(SEL.size===PAVS.length&&PAVS.length?'Desmarcar todos':'Marcar todos')+'</button>'
+    +(PODE?'<button class="b1" id="btGerar" onclick="gerar()" '+(SEL.size&&!semModelo?'':'disabled')+'>Gerar QR dos marcados</button>':'')
+    +'<span class="seg">'+[1,2,4].map(n=>'<button class="'+(NPP===n?'on':'')+'" onclick="NPP='+n+';render()">'+n+' por A4</button>').join('')+'</span>'
+    +'<button class="b1" onclick="imprimir()" '+(PAVS.some(p=>SEL.has(p.id)&&QRS[p.id])?'':'disabled')+'>Imprimir marcados</button>'
+    +'<span class="hint">'+SEL.size+' marcado(s)</span></div>';
+  h+='<table><tr><th style="width:34px"></th><th>Pavimento</th><th class="nm">Nome</th><th>QR</th><th></th></tr>'
+    + PAVS.map(p=>{ const q=QRS[p.id], on=SEL.has(p.id);
+        return '<tr class="'+(on?'sel':'')+'"><td><input type="checkbox" '+(on?'checked':'')+' onchange="toggle(\''+p.id+'\')"></td>'
+          +'<td class="cod">'+esc((p.codigo||'').toUpperCase())+'</td><td class="nm">'+esc(p.nome||'')+'</td>'
+          +'<td>'+(q?'<span class="chip ok">gerado</span>':'<span class="chip no">sem QR</span>')+'</td>'
+          +'<td style="text-align:right;white-space:nowrap">'+(q?'<a class="mini" href="'+esc(linkDe(q.token))+'" target="_blank">Abrir</a> <button class="mini" onclick="copiar(\''+q.token+'\')">Copiar link</button>':'')+'</td></tr>'; }).join('')
+    +'</table>';
+  $('cont').innerHTML=h;
+}
+function toggle(id){ SEL.has(id)?SEL.delete(id):SEL.add(id); render(); }
+function selTodos(){ if(SEL.size===PAVS.length) SEL.clear(); else PAVS.forEach(p=>SEL.add(p.id)); render(); }
+async function copiar(t){ try{ await navigator.clipboard.writeText(linkDe(t)); alert('Link copiado.'); }catch(_){ prompt('Copie o link:', linkDe(t)); } }
+async function gerar(){
+  const ids=[...SEL]; if(!ids.length) return;
+  const b=$('btGerar'); if(b){ b.disabled=true; b.textContent='Gerando…'; }
+  const { data, error } = await sb.rpc('obra_qr_pav_garantir', { p_emp:EMP_ID, p_pavs:ids, p_fonte:'principal' });
+  if(error){ alert('Não foi possível gerar: '+(error.message||error)); render(); return; }
+  (data||[]).forEach(r=>{ QRS[r.pavimento_id]={ pavimento_id:r.pavimento_id, token:r.token }; });
+  render();
+}
+async function imprimir(){
+  const alvo=PAVS.filter(p=>SEL.has(p.id)&&QRS[p.id]); if(!alvo.length) return;
+  const w=window.open('','_blank'); if(!w){ alert('Libere pop-ups para imprimir.'); return; }
+  w.document.write('<p style="font-family:sans-serif;padding:20px">Montando a folha…</p>');
+  const QRmod=await import('https://esm.sh/qrcode@1.5.4'); const QR=QRmod.default||QRmod;
+  const imgs=await Promise.all(alvo.map(p=>QR.toDataURL(linkDe(QRS[p.id].token),{ margin:1, width:700, errorCorrectionLevel:'M' })));
+  const cols=NPP===1?1:2, rows=NPP===4?2:(NPP===2?2:1), cw=NPP===1?150:(NPP===2?120:80);
+  const logo=EMP.logo_url?'<img class="el" src="'+esc(EMP.logo_url)+'">':'';
+  const cards=alvo.map((p,i)=>'<div class="c"><div class="top"><img class="al" src="'+location.origin+location.pathname.replace(/[^/]*$/,'')+'logo_full.png">'+logo+'</div>'
+    +'<div class="pc">'+esc((p.codigo||'').toUpperCase())+'</div><div class="pn">'+esc(p.nome||'')+'</div>'
+    +'<img class="qr" src="'+imgs[i]+'"><div class="em">'+esc(EMP.nome)+'</div>'
+    +'<div class="lg">Aponte a câmera do celular — abre o modelo 3D deste pavimento (revisão liberada).</div></div>').join('');
+  w.document.open(); w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR dos pavimentos — '+esc(EMP.nome)+'</title><style>'
+    +'@page{size:A4 '+(NPP===2?'landscape':'portrait')+';margin:10mm}body{margin:0;font-family:Segoe UI,Arial,sans-serif;color:#0F172A}'
+    +'.g{display:grid;grid-template-columns:repeat('+cols+',1fr);grid-auto-rows:'+(NPP===2?'185mm':(NPP===4?'135mm':'275mm'))+';gap:6mm}'
+    +'.c{border:1.5px solid #E8960A;border-radius:6mm;padding:6mm;display:flex;flex-direction:column;align-items:center;justify-content:center;break-inside:avoid;page-break-inside:avoid}'
+    +'.top{display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:3mm}.al{height:9mm}.el{max-height:12mm;max-width:40mm;object-fit:contain}'
+    +'.pc{font-family:Consolas,monospace;font-weight:800;font-size:'+(NPP===4?'16':'26')+'mm;color:#1E3A5F;line-height:1}'
+    +'.pn{font-size:'+(NPP===4?'4.5':'6')+'mm;font-weight:600;margin:2mm 0 4mm;text-align:center}'
+    +'.qr{width:'+cw*0.62+'mm;height:'+cw*0.62+'mm}.em{font-size:4mm;font-weight:700;margin-top:3mm;text-transform:uppercase;letter-spacing:.08em}'
+    +'.lg{font-size:3.2mm;color:#64748B;margin-top:2mm;text-align:center}</style></head><body><div class="g">'+cards+'</div>'
+    +'<script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script></body></html>');
+  w.document.close();
+}
+boot();
+</script>
+</body>
+</html>
