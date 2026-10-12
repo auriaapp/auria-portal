@@ -8,7 +8,7 @@
 (function(){
   const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[º°ª]/g, '').replace(/\s+/g, ' ').trim();
   const SIN = [ ['SUBSOLO','SUB','SS'], ['SOBRESSOLO','SOBRE','SB'], ['TERREO','TER'], ['LAZER','LAZ'], ['ROOFTOP','ROOF','ROF'],
-                ['CASA DE MAQUINAS','CMAQ','CMQ','MAQUINAS'], ['COBERTURA','COB','HELIPONTO'], ['FUNDACAO','FUND'], ['MEZANINO','MEZ'], ['PILOTIS','PIL'], ['GARAGEM','GAR'] ];
+                ['CASA DE MAQUINAS','CMAQ','CMQ','MAQUINAS'], ['COBERTURA','COB','HELIPONTO','TOPO'], ['FUNDACAO','FUND'], ['MEZANINO','MEZ'], ['PILOTIS','PIL'], ['GARAGEM','GAR'] ];
   function chave(nome){
     const n = norm(nome); if (!n) return null;
     if (/^[A-Z]+\d*-\d{2,}$/.test(n.replace(/\s/g, ''))) return null;           // repetição do TQS (TIPO1-001)
@@ -17,8 +17,21 @@
     if (/PAV|TIPO|ANDAR/.test(n) && nn) return 'PAV#' + nn;
     return null;
   }
+  // Posição física pela chave (o cadastro do empreendimento nem sempre está em ordem
+  // de subsolo → topo: no PINI vinha 1PV, 02T…47T, CMQ, LAZ, ROF, SB1…, SS1…, TER).
+  const RANK = { FUNDACAO:-1000, SUBSOLO:-10, TERREO:0, PILOTIS:1, GARAGEM:1.5, SOBRESSOLO:2, MEZANINO:6, LAZER:8, PAV:100, ROOFTOP:900, 'CASA DE MAQUINAS':950, COBERTURA:990 };
+  function rank(p){
+    const c = chave(p.nome) || chave(p.codigo); if (!c) return null;
+    const [g, n] = c.split('#'), k = parseInt(n, 10) || 0, b = RANK[g]; if (b == null) return null;
+    return g === 'SUBSOLO' ? b * (k || 1) : g === 'SOBRESSOLO' ? b + k * 0.1 : g === 'PAV' ? b + k : b;
+  }
+  function ordemFisica(pavs){
+    const r = pavs.map((p, i) => ({ p, i, r: rank(p) }));
+    if (r.filter(x => x.r != null).length < 2) return pavs;          // sem como ordenar: mantém o cadastro
+    return r.sort((a, b) => (a.r == null ? 1e9 + a.i : a.r) - (b.r == null ? 1e9 + b.i : b.r)).map(x => x.p);
+  }
   function parear(nomes, pavsTodos){
-    const pavs = (pavsTodos || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista');
+    const pavs = ordemFisica((pavsTodos || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista'));
     const chP = pavs.map(p => chave(p.nome) || chave(p.codigo));
     const chM = nomes.map(chave);
     const res = new Array(nomes.length).fill(null);
@@ -58,5 +71,5 @@
     }
     return storeys.map((s, k) => ({ id:s.id, ids:s.ids, nome:nm[s.id] || '', z:elev[s.id] != null ? elev[s.id] : k })).sort((a, b) => a.z - b.z);
   }
-  window.AuriaAndares = { norm, chave, parear, ler };
+  window.AuriaAndares = { norm, chave, parear, ler, ordemFisica };
 })();
