@@ -3962,8 +3962,27 @@ function _algumPerto(tokens, alvos){
 // Mapeia perguntas estruturadas em PT → uma diretiva. Retorna {tipo,arg} ou
 // null (aí a pergunta vai para a IA externa). Conservador de propósito: só
 // dispara quando reconhece uma CLASSE + uma INTENÇÃO clara.
+// Pavimento do CADASTRO citado na pergunta ("10º pavimento", "10T", "subsolo 2", "térreo")
+// → nome do andar no IFC pelo de-para do modelo principal (OBRA_MODELO.pav_map). Assim
+// "isolar o 10º pavimento" vira "isolar pavimento tipo1-009" e o resto do interpretador
+// (que casa pelo nome do andar do IFC) funciona. Sem de-para, a pergunta segue igual.
+function obraTraduzPav(s){
+  const mp = OBRA_MODELO && OBRA_MODELO.pav_map; if(!mp || !window.AuriaAndares) return s;
+  const pavs = (CDE_PAVS||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista');
+  const chaveDe = p => AuriaAndares.chave(p.nome) || AuriaAndares.chave(p.codigo);
+  let alvo=null, trecho=null, m;
+  if((m = s.match(/(\d+)\s*[ºo°ª]?\s*(?:pavimento|pavto\.?|pav\.?|andar)(?:\s+tipo)?/)) || (m = s.match(/(?:pavimento|pavto\.?|pav\.?|andar)\s+(?:tipo\s+)?(\d+)\b/))){
+    alvo = pavs.find(p=>chaveDe(p)==='PAV#'+parseInt(m[1],10)); trecho=m[0]; }
+  if(!alvo && (m = s.match(/\b(?:subsolo|sobressolo|sobre)\s*\d+|\b(?:t[ée]rreo|lazer|rooftop|cobertura|heliponto|casa de m[áa]quinas|mezanino|pilotis|garagem)\b/))){
+    const k=AuriaAndares.chave(m[0]); alvo = k ? pavs.find(p=>chaveDe(p)===k) : null; trecho=m[0]; }
+  if(!alvo){ for(const p of pavs){ const c=String(p.codigo||'').trim().toLowerCase(); if(c.length>=2 && new RegExp('(^|[^a-z0-9])'+c.replace(/[^a-z0-9]/g,'')+'($|[^a-z0-9])').test(s)){ alvo=p; trecho=c; break; } } }
+  if(!alvo) return s;
+  const andares = Object.keys(mp).filter(n=>mp[n]===alvo.id);
+  if(andares.length!==1) return s;
+  return s.replace(trecho, 'pavimento '+andares[0].toLowerCase()).replace(/\b(do|no|o|a|da|na)\s+pavimento\s+pavimento\b/,'pavimento');
+}
 function f3dRegras(q){
-  const s=(q||'').toLowerCase().trim(); if(!s) return null;
+  const s=obraTraduzPav((q||'').toLowerCase().trim()); if(!s) return null;
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque|limpar (as )?cores|tirar (as )?cores|retornar( [àa]s)? cores|cores originais|remover (as )?cores|sem cores|modelo normal|resetar (as )?cores/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
