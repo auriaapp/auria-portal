@@ -3649,7 +3649,7 @@ function f3dRegras(q){
   }
   // 3) soma de quantitativo (filtro = código exato + texto residual)
   // "volume/área das lajes do 10º" sem dizer "total" também é SOMA (só não é quando pede contar/destacar)
-  if(propVal && (querSoma || (!querConta && !/(destac|mostr|isol|selecion|pint|color|onde)/.test(s)))) return {tipo:'somar', arg: cls+' | '+filtroArg+' | '+propVal};
+  if(propVal && (querSoma || (!querConta && !/(destac|mostr|isol|selecion|pint|color|onde)/.test(s)))) return {tipo:'somar', arg: cls+' | '+filtroArg+' | '+propVal+(pavim?(' | '+pavim):'')};
   // 4) contar (com filtro e/ou pavimento = contagem filtrada)
   if(querConta) return (filtros.length||pavim) ? {tipo:'contarfiltro', arg: cls+' | '+filtroArg+' | '+(pavim||'')} : {tipo:'contar', arg: cls};
   // 5) destacar/localizar (filtro = código exato + texto; pavimento = 3º campo)
@@ -4019,7 +4019,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-09-18a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -6119,14 +6119,16 @@ async function f3dExecSomar(arg){
   const classes=(parts[0]||'').split(',').map(c=> c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean);
   if(!classes.length) return { msg:'Não entendi o que somar.' };
   // A propriedade é o ÚLTIMO campo; o do meio (se houver 3) é o filtro.
-  const prop=(parts[parts.length-1]||'').trim();
+  // CLASSE | filtro | propriedade [| pavimento]
+  const prop=(parts.length>=4 ? parts[2] : parts[parts.length-1]||'').trim();
+  const pavim=(parts.length>=4 ? parts[3] : '').trim();
   const termos=(parts.length>=3?(parts[1]||''):'').split(',').map(t=>t.trim()).filter(Boolean);
   const regexes=classes.map(c=> new RegExp('^'+c+'$','i'));
   const rot=_rotuloClasse(classes[0]);
   const un = /[áa]rea/i.test(prop)?'m²' : /vol/i.test(prop)?'m³' : /larg|width|alt|height|comp|length|per[íi]m|esp|thick/i.test(prop)?'m' : '';
   f3dDica('Somando…');
   try{
-    const r=await B3.somarPropriedade(F3D, regexes, termos, prop);
+    const r=await B3.somarPropriedade(F3D, regexes, termos, prop, pavim);
     f3dDica('');
     if(!r.n) return { msg:'Não encontrei '+rot+(termos.length?(' com o filtro "'+termos.join(', ')+'"'):'')+' no modelo.' };
     const usados=(r.comValor||0)+(r.calculados||0);
@@ -6136,7 +6138,7 @@ async function f3dExecSomar(arg){
     const fonte = r.nomes.length?(' · fonte: '+r.nomes.slice(0,3).join(', ')):'';
     const parcial = usados<r.n?(' — '+usados+' de '+r.n+' com valor'):'';
     const calc = r.calculados?(' · '+r.calculados+' calculado(s) da geometria (estimativa)'):'';
-    return { msg:'**Σ '+prop+filtro+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
+    return { msg:'**Σ '+prop+filtro+(pavim?(' no pavimento '+pavim):'')+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
 }
 // Round 3: COLORIR um grupo de uma cor (sem esconder o resto).

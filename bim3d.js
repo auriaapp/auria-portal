@@ -2357,16 +2357,22 @@ export async function somarPorNome(V, porMod, termoProp){
 // SOMA uma quantidade (área/volume/comprimento) sobre um subconjunto filtrado.
 // `termos` (opcional) filtra por texto nos atributos (ex.: "ACM"); `termoProp` é
 // o que somar. Lê Psets só do subconjunto filtrado (bounded).
-export async function somarPropriedade(V, regexes, termos, termoProp){
+export async function somarPropriedade(V, regexes, termos, termoProp, pavim){
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const rx=_termoRegex(termoProp);
   const tp=(termoProp||'').toLowerCase();
   const ehArea=/[áa]rea/.test(tp), ehComp=/larg|width|alt|height|comp|length/.test(tp), ehVol=/vol/.test(tp);
   let n=0, comValor=0, calculados=0, soma=0; const nomes=new Set();
-  for(const x of V.modelos){
-    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+  // Pavimento pedido ("volume das lajes do 10º"): o conjunto vem do mesmo achador
+  // do destacar/contar (classe + filtro + pavimento) — antes a soma ignorava o andar.
+  const porPav = (pavim && String(pavim).trim()) ? await acharElementos(V, regexes, termos, pavim) : null;
+  const ehLaje = (regexes||[]).some(r=>/SLAB|ROOF/i.test(String(r&&r.source||r)));
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    let ids=[];
+    if(porPav){ ids=(porPav[mi]||[]).slice(); }
+    else { try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){} }
     if(!ids.length) continue;
-    if(termosLc.length){                          // filtro por texto (atributos, leve)
+    if(termosLc.length && !porPav){                          // filtro por texto (atributos, leve)
       let da=[]; try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){}
       const ok=[]; (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; if(_bateTermos(d, termosLc)) ok.push(lid); });
       ids=ok;
@@ -2380,13 +2386,21 @@ export async function somarPropriedade(V, regexes, termos, termoProp){
       if(r && typeof r.val==='number'){ soma+=r.val; comValor++; nomes.add(r.nome); }
       else faltam.push(ids[i]);
     });
-    // Reserva GEOMÉTRICA (só área/comprimento; volume NUNCA — regra do TQS
-    // nervurado). Área ≈ maior horizontal × altura (face de parede).
+    // VOLUME sem propriedade: volume da MALHA da peça (Fragments getItemsVolume —
+    // mesmo cálculo da concretagem; exato p/ a geometria, inclusive laje nervurada
+    // exportada em camadas, que são somadas peça a peça).
+    if(faltam.length && ehVol){
+      for(let p=0;p<faltam.length;p+=500){ const lote=faltam.slice(p,p+500);
+        let v=0; try{ v=+(await x.model.getItemsVolume(lote))||0; }catch(_){ v=0; }
+        if(v>0){ soma+=v; calculados+=lote.length; nomes.add('malha 3D'); } }
+    }
+    // Reserva GEOMÉTRICA de área/comprimento pela caixa. Laje/cobertura = face
+    // horizontal (x·z); parede = maior horizontal × altura.
     if(faltam.length && (ehArea||ehComp) && !ehVol){
       let boxes=[]; try{ boxes=await x.model.getBoxes(faltam); }catch(_){}
       (boxes||[]).forEach(b=>{ if(!b||!b.min||!b.max||!isFinite(b.max.y)) return;
         const dy=b.max.y-b.min.y, hd=[b.max.x-b.min.x, b.max.z-b.min.z].sort((a,b)=>b-a);
-        const val = ehArea ? (hd[0]*dy) : hd[0];
+        const val = ehArea ? (ehLaje ? hd[0]*hd[1] : hd[0]*dy) : hd[0];
         if(isFinite(val)){ soma+=val; calculados++; nomes.add('geometria'); }
       });
     }
