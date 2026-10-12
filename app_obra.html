@@ -1003,7 +1003,7 @@ svg.ci{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.5;str
         <div class="obra-tabs" id="obraTabs">
           <button data-t="novidades" onclick="obraTab('novidades')">Novidades<b id="obraNNov">0</b></button>
           <button data-t="obra" class="on" onclick="obraTab('obra')">Da obra<b id="obraNObra">0</b></button>
-          <button data-t="alertas" onclick="obraTab('alertas')">Alertas<b id="obraNProj">0</b></button>
+          <button data-t="alertas" onclick="obraTab('alertas')" title="Apontamentos da coordenação e alertas para a obra">Coordenação<b id="obraNProj">0</b></button>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <label style="flex:1">Apontamentos</label>
@@ -4355,7 +4355,7 @@ async function abrirAgenda(date){
   const concs = CONCS.filter(c => c.data_prevista === date || c.data_realizada === date);
   const dia = new Date(y, m - 1, d).toLocaleDateString('pt-BR', { weekday:'long', day:'2-digit', month:'long' });
   const itA = o => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + corPrio(o.a.prioridade) + '!important" onclick="segFechar();clicarAptLista(' + o.i + ')">'
-    + '<div class="cod">' + esc(o.a.id) + ' <span class="seg-chip" style="--c:' + chipCor(corStatus(o.a.status)) + '">' + esc(o.a.status || '—') + '</span>' + (estaAtrasado(o.a) ? ' <b style="color:#C0392B">atrasado</b>' : '') + '</div>'
+    + '<div class="cod">' + esc(o.a.id) + ' <span class="seg-chip" style="--c:' + chipCor(corStatus(o.a.status)) + '">' + esc(o.a.status || '—') + '</span>' + ' <span class="seg-chip" style="--c:' + (obraDaObra(o.a) ? '#E8762B' : '#1E3A5F') + '">' + (obraDaObra(o.a) ? 'Obra' : 'Coordenação') + '</span>' + (estaAtrasado(o.a) ? ' <b style="color:#C0392B">atrasado</b>' : '') + '</div>'
     + '<div class="t">' + esc(o.a.titulo || 'Sem título') + '</div>'
     + '<div class="m">' + esc(discFullName(o.a.disciplina) || '') + (o.a.local_txt ? ' · ' + esc(o.a.local_txt) : '') + '</div></div>';
   const itC = c => '<div class="it seg-it" style="cursor:pointer;border-left-color:' + CONC_SIT[c.situacao].cor + '!important" onclick="concDetalhe(\'' + c.id + '\')">'
@@ -4431,7 +4431,8 @@ function renderSideRight(){
   const atras=APTS.filter(a=>estaAtrasado(a)).length;
   const resol=APTS.filter(a=>a.status==='Resolvido').length;
   const tile=(l,v,c)=>'<div class="sr-tile"><div style="font-size:20px;font-weight:800;color:'+c+';line-height:1">'+v+'</div><div style="font-size:9.5px;color:var(--mut);margin-top:2px">'+l+'</div></div>';
-  const counts='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+tile('Abertos',abertos,'#3B82F6')+tile('Atraso',atras,'#E67E22')+tile('Resolv.',resol,'#27AE60')+'</div>';
+  const abObra=APTS.filter(a=>a.status!=='Resolvido'&&obraDaObra(a)).length;
+  const counts='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+tile('Abertos<br>'+abObra+' obra · '+(abertos-abObra)+' coord.',abertos,'#3B82F6')+tile('Atraso',atras,'#E67E22')+tile('Resolv.',resol,'#27AE60')+'</div>';
   el.innerHTML=counts
     +'<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.03em;margin-top:6px;text-transform:uppercase">'+new Date().toLocaleDateString('pt-BR',{month:'long',year:'numeric'})+'</div>'+_sideCalendar()
     +'<div style="font-size:10px;color:var(--mut);font-weight:800;letter-spacing:.03em;margin-top:6px">PRÓXIMOS PRAZOS</div>'+_sideProximos()
@@ -8635,6 +8636,9 @@ var _obraVisitaFeita = {};
 
 function obraDaObra(a){ return String(a && a.criado_por_papel || '').toLowerCase() === 'obra'; }
 function obraDeProjeto(a){ return !obraDaObra(a) && (a.visibilidade || 'Público') === 'Público'; }
+// Da coordenação = tudo que não foi aberto pela obra e que ela pode ler (Público, ou
+// Projeto quando a matriz dá "Ler ap."). Aviso de leitura continua só p/ Público.
+function obraDaCoord(a){ return !obraDaObra(a) && a.visibilidade !== 'Coordenação'; }
 function obraTs(a){ const t = Date.parse(a && a.atualizado_em || ''); return isNaN(t) ? 0 : t; }
 function obraNovo(a){ return (obraDaObra(a) || obraDeProjeto(a)) && OBRA_PREV > 0 && obraTs(a) > OBRA_PREV; }
 
@@ -8642,7 +8646,7 @@ function obraNaAba(a){
   // Retirado sai das listas ativas (continua no banco e no histórico).
   if (a.status === 'Retirado' && !($('obraVerRet') && $('obraVerRet').checked)) return false;
   if (OBRA_TAB === 'novidades') return obraNovo(a);
-  if (OBRA_TAB === 'alertas')   return obraDeProjeto(a);
+  if (OBRA_TAB === 'alertas')   return obraDaCoord(a);
   return obraDaObra(a);
 }
 function obraNoPav(a){
@@ -8661,7 +8665,7 @@ function obraContagens(){
   const set = (id, n) => { const e = $(id); if (e) e.textContent = n; };
   set('obraNNov',  APTS.filter(obraNovo).length);
   set('obraNObra', APTS.filter(obraDaObra).length);
-  set('obraNProj', APTS.filter(obraDeProjeto).length + segAtivos().length);
+  set('obraNProj', APTS.filter(obraDaCoord).length + segAtivos().length);
   const b = $('obraNProj'); if (b) b.classList.toggle('interd', segAtivos().some(x => x.nivel === 'interdicao'));
 }
 
@@ -9634,7 +9638,7 @@ function segZonasPend(){ return segZonasAviso().filter(z => !OBRA_LIDOS.has('zon
   obraContagens = function(){
     _c();
     const e = $('obraNProj'); if (!e) return;
-    e.textContent = APTS.filter(obraDeProjeto).length + segAtivos().length + segZonasAviso().length;
+    e.textContent = APTS.filter(obraDaCoord).length + segAtivos().length + segZonasAviso().length;
   };
   const _p = segPendentes;
   segPendentes = function(){ return _p(); };       // alertas; zonas contam à parte (segZonasPend)
