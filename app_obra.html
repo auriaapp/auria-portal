@@ -3986,6 +3986,7 @@ function f3dRegras(q){
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque|limpar (as )?cores|tirar (as )?cores|retornar( [àa]s)? cores|cores originais|remover (as )?cores|sem cores|modelo normal|resetar (as )?cores/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
+  { const ci=clashIntencao(s); if(ci) return ci; }
   if(/^diag\b.*(pavim|faixa|n[íi]vel|andar)/.test(s)) return {tipo:'diagpav'};   // dump das faixas de pavimento
   // cor pedida ("… de vermelho") — pode vir SEM classe ("colorir o modelo de branco").
   //  Chaves SEM acento; a busca normaliza (lilás→lilas, salmão→salmao).
@@ -4201,6 +4202,78 @@ async function f3dVolumePorPav(classes, prop){
     + '<tr style="border-top:2px solid var(--line);font-weight:700"><td style="padding:3px 6px">Total</td><td style="text-align:right;padding:3px 6px">'+nPec+'</td><td style="text-align:right;padding:3px 6px">'+f(total)+'</td></tr></table>';
   return { msg:'Volume de concreto por pavimento — total '+f(total)+' m³ ('+nPec+' peças, volume da malha 3D).', html };
 }
+// ── Pavimento do CADASTRO citado no texto ("10º pavimento", "10T", "subsolo 2", "térreo") ──
+function pavDoTexto(s){
+  if(!window.AuriaAndares) return null;
+  s=String(s||'').toLowerCase();
+  const pavs=(CDE_PAVS||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista');
+  const chaveDe=p=>AuriaAndares.chave(p.nome)||AuriaAndares.chave(p.codigo);
+  let m;
+  if((m=s.match(/(\d+)\s*[ºo°ª]?\s*(?:pavimento|pavto\.?|pav\.?|andar)/)) || (m=s.match(/(?:pavimento|pavto\.?|pav\.?|andar)\s+(?:tipo\s+)?(\d+)\b/))){
+    const p=pavs.find(p=>chaveDe(p)==='PAV#'+parseInt(m[1],10)); if(p) return { pav:p, trecho:m[0] }; }
+  if((m=s.match(/\b(?:subsolo|sobressolo|sobre)\s*\d+|\b(?:t[ée]rreo|lazer|rooftop|cobertura|heliponto|casa de m[áa]quinas|mezanino|pilotis|garagem)\b/))){
+    const k=AuriaAndares.chave(m[0]); const p=k?pavs.find(p=>chaveDe(p)===k):null; if(p) return { pav:p, trecho:m[0] }; }
+  for(const p of pavs){ const c=String(p.codigo||'').trim().toLowerCase(); if(c.length>=2 && new RegExp('(^|[^a-z0-9])'+c.replace(/[^a-z0-9]/g,'')+'($|[^a-z0-9])').test(s)) return { pav:p, trecho:c }; }
+  return null;
+}
+// ids de cada modelo aberto que estão no pavimento p (cadastro): pareia os andares
+// DE CADA MODELO com o cadastro (cada disciplina nomeia os andares do seu jeito).
+async function idsDoPavimento(pav){
+  const out={};
+  for(let mi=0; mi<F3D.modelos.length; mi++){
+    const md=F3D.modelos[mi].model; if(!md) continue;
+    const and=await AuriaAndares.ler(md); if(!and.length) continue;
+    const mp=(typeof OBRA_MODELO!=='undefined' && OBRA_MODELO && OBRA_MODELO.pav_map) || {};
+    const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[]);
+    const set=new Set();
+    and.forEach((a,k)=>{ const id=(a.nome in mp) ? mp[a.nome] : (sug[k]&&sug[k].id); if(id===pav.id) a.ids.forEach(x=>set.add(x)); });
+    out[mi]=set;
+  }
+  return out;
+}
+// ── CLASH pela IA: "clash entre tubulações e portas no 10º pavimento" ──
+const CLASH_IA_CLS=[
+  [/tubula|tubo|cano|hidr[áa]ulic|esgoto|pluvial|[áa]gua fria|[áa]gua quente/, 'IFCPIPESEGMENT,IFCPIPEFITTING,IFCFLOWSEGMENT,IFCFLOWFITTING', 'tubulações'],
+  [/eletroduto|eletrocalha|leito|perfilado|cabo/, 'IFCCABLECARRIERSEGMENT,IFCCABLECARRIERFITTING,IFCCABLESEGMENT', 'eletrocalhas/eletrodutos'],
+  [/duto|ar.?condicionado|climatiza/, 'IFCDUCTSEGMENT,IFCDUCTFITTING', 'dutos'],
+  [/sprinkler|chuveiro autom/, 'IFCFIRESUPPRESSIONTERMINAL', 'sprinklers'],
+  [/porta/, 'IFCDOOR', 'portas'], [/janela|esquadria/, 'IFCWINDOW', 'janelas'],
+  [/viga/, 'IFCBEAM', 'vigas'], [/pilar|coluna/, 'IFCCOLUMN', 'pilares'], [/laje/, 'IFCSLAB', 'lajes'],
+  [/parede|alvenaria|vedac/, 'IFCWALL,IFCWALLSTANDARDCASE', 'paredes'], [/escada/, 'IFCSTAIR,IFCSTAIRFLIGHT', 'escadas'],
+  [/forro/, 'IFCCOVERING', 'forros'], [/estrutura/, 'IFCCOLUMN,IFCBEAM,IFCSLAB,IFCMEMBER', 'estrutura']];
+function clashIntencao(s){
+  if(!/(clash|conflit|interfer|colis|batend|bate com|choque)/.test(s)) return null;
+  const hits=[]; CLASH_IA_CLS.forEach(([rx,c,l])=>{ const i=s.search(rx); if(i>=0) hits.push({i,c,l}); });
+  hits.sort((a,b)=>a.i-b.i);
+  if(hits.length<2) return {tipo:'aviso', arg:'Para verificar conflitos, diga os dois grupos. Ex.: "clash entre tubulações e vigas no 10º pavimento" ou "conflitos entre dutos e estrutura no modelo inteiro".'};
+  return {tipo:'clashia', arg: hits[0].c+' | '+hits[1].c+' | '+hits[0].l+' | '+hits[1].l};
+}
+async function f3dExecClashIA(arg, textoOriginal){
+  if(!F3D||!B3||!F3D.modelos||!F3D.modelos.length) return { msg:'Abra os modelos 3D primeiro (ex.: estrutura + hidráulica).' };
+  const [a,b,la,lb]=(arg||'').split('|').map(x=>x.trim());
+  const rx=c=>c.split(',').map(x=>new RegExp('^'+x.trim()+'$','i'));
+  const pv=pavDoTexto(textoOriginal);
+  f3dDica('Verificando conflitos…');
+  const r=await B3.clashCandidatos(F3D, rx(a), rx(b), 0.01);
+  if(r.vazioA||r.vazioB) return { msg:'Não há '+(r.vazioA?la:lb)+' nos modelos abertos. Abra o modelo dessa disciplina (menu Modelos BIM) e repita.' };
+  let pares=r.pares||[], n=r.nPares, aviso='';
+  if(pv){
+    f3dDica('Filtrando o pavimento '+(pv.pav.codigo||'')+'…');
+    const noPav=await idsDoPavimento(pv.pav);
+    const em=(mi,id)=>noPav[mi] && noPav[mi].has(id);
+    if(r.nPares>pares.length) aviso=' (filtrado dos primeiros '+pares.length+' de '+r.nPares+' do modelo — use menos disciplinas para ver todos)';
+    pares=pares.filter(p=>em(p.aMi,p.aId)||em(p.bMi,p.bId)); n=pares.length;
+  }
+  const onde=pv?(' no pavimento '+(pv.pav.codigo||'').toUpperCase()+' — '+(pv.pav.nome||'')):' no modelo inteiro';
+  if(!n) return { msg:'✓ Nenhum conflito entre '+la+' e '+lb+onde+'.'+aviso };
+  const porA={}, porB={}; pares.forEach(p=>{ (porA[p.aMi]=porA[p.aMi]||[]).push(p.aId); (porB[p.bMi]=porB[p.bMi]||[]).push(p.bId); });
+  await B3.mostrarClash(F3D, porA, porB); f3dBotaoVoltar(true);
+  CLASH_PARES=pares;
+  const html='<div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px">'
+    + pares.slice(0,60).map((p,i)=>'<div style="padding:4px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--line)" onclick="f3dClashZoom('+i+')">'+(i+1)+'. <span style="color:#ef4444">'+esc(p.aNome||'')+'</span> × <span style="color:#0891b2">'+esc(p.bNome||'')+'</span></div>').join('')
+    + '</div>'+(pares.length>60?'<div style="font-size:10px;color:var(--mut)">Mostrando 60 de '+pares.length+'.</div>':'');
+  return { msg:'⚔ **'+n+' conflito(s)** entre '+la+' (vermelho) e '+lb+' (azul)'+onde+aviso+'. Clique num item para dar zoom; ↩ no topo volta.', html };
+}
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
 async function execDiretiva(tipo, arg, cor){
   let out;
@@ -4272,6 +4345,7 @@ async function execDiretiva(tipo, arg, cor){
         r=await f3dVolumePorPav((pp[0]||'').split(',').map(c=>c.trim().replace(/[^A-Za-z0-9_]/g,'')).filter(Boolean), pp[2]);
       if(!r) r=await f3dExecTabela(arg);
       out={content:r.msg||'', html:r.html}; }
+    else if(tipo==='clashia'){ const r=await f3dExecClashIA(arg, (window._iaUltimaPergunta||'')); out={content:r.msg||'', html:r.html}; }
     else if(tipo==='somar'){       const r=await f3dExecSomar(arg);       out={content:r.msg}; }
     else if(tipo==='isolarvalor'){ const r=await f3dExecIsolarValor(arg); out={content:r.msg}; }
     else if(tipo==='contar'){      const r=await f3dExecContar(arg);      out={content:r.msg||'', html:r.html}; }
@@ -4312,6 +4386,7 @@ async function iaEnviar(){
   // ── REGRAS LOCAIS primeiro (sem IA externa) ──────────────────────────────
   // Se a pergunta é uma consulta estruturada reconhecível (contar/somar/tabela/
   // destacar), resolvemos NÓS, direto no modelo. Só cai na IA quando não bate.
+  window._iaUltimaPergunta = pergunta;
   const _reg = f3dRegras(pergunta);
   if(_reg){
     IA_PENSANDO=true; renderIA();
