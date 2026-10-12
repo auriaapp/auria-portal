@@ -1195,6 +1195,18 @@ const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^I
 // "destacar o pavimento térreo" sem citar classe. Sem realce (cores naturais).
 export async function isolarPavimento(V, pavim){
   V._cancelar=false;
+  const pavSets=_pavSetsDe(V, pavim);
+  if(pavSets){
+    const porMod={}; let total=0;
+    for(const [mi,set] of Object.entries(pavSets)){ if(set && set.size){ porMod[mi]=[...set]; total+=set.size; } }
+    if(!total) return { n:0, naoAchou:true, disponiveis:[] };
+    for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+    for(const [mi,keep] of Object.entries(porMod)){ try{ await V.modelos[mi].model.setVisible(keep,true); }catch(_){} }
+    V._isolado=true; V._isoladoPorMod=porMod; V._ultimaSelecao=porMod; V._colorido=false; V._cores=null;
+    try{ await V.fragments.update(true); }catch(_){}
+    await enquadrarIds(V, porMod);
+    return { n:total, nomes:[V._pavRot||''] };
+  }
   const alvo=_norm(pavim||'');
   // 1) ESTRUTURA ESPACIAL primeiro (autoritativa; funciona com Pset das lajes vazio)
   const st=await _storeysMapa(V);
@@ -1294,14 +1306,19 @@ export async function isolarEstrutural(V, comParedesEstr){
 }
 // FINDER: acha os ids que casam (classe + texto/@fire + pavimento), SEM tocar no
 // visual. Reusado por isolar (destacarCategoria) e por colorir.
+// Pavimento do CADASTRO ("@pav:<id>"): o App resolve antes, em V._pavSets {mi: Set(ids)},
+// pareando os andares de CADA modelo com o cadastro (cada disciplina nomeia diferente).
+function _pavSetsDe(V, pavim){ return (typeof pavim==='string' && pavim.indexOf('@pav:')>=0 && V._pavSets) ? V._pavSets : null; }
 export async function acharElementos(V, regexes, termos, pavim){
   V._cancelar=false;
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
-  const pavN = pavim ? _norm(pavim) : '';
+  const pavSets=_pavSetsDe(V, pavim);
+  const pavN = (pavim && !pavSets) ? _norm(pavim) : '';
   const porMod={};
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi];
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
+    if(pavSets){ const st=pavSets[mi]; ids = st ? ids.filter(id=>st.has(id)) : []; }
     if(!ids.length) continue;
     if(termosLc.length || pavN){
       const okd=[];

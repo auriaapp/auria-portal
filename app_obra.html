@@ -3982,7 +3982,7 @@ function obraTraduzPav(s){
   return s.replace(trecho, 'pavimento '+andares[0].toLowerCase()).replace(/\b(do|no|o|a|da|na)\s+pavimento\s+pavimento\b/,'pavimento');
 }
 function f3dRegras(q){
-  const s=obraTraduzPav((q||'').toLowerCase().trim()); if(!s) return null;
+  const s=pavTokenizar((q||'').toLowerCase().trim()); if(!s) return null;
   // tokens normalizados (sem acento) p/ a busca por aproximação
   const tok = s.normalize('NFD').replace(/[̀-ͯ]/g,'').split(/[^a-z0-9]+/).filter(Boolean);
   if(/limpar (o )?destaque|remover (o )?destaque|mostrar tudo|voltar ao normal|desfazer destaque|limpar (as )?cores|tirar (as )?cores|retornar( [àa]s)? cores|cores originais|remover (as )?cores|sem cores|modelo normal|resetar (as )?cores/.test(s)) return {tipo:'destacar', arg:'LIMPAR'};
@@ -4274,11 +4274,25 @@ async function f3dExecClashIA(arg, textoOriginal){
     + '</div>'+(pares.length>60?'<div style="font-size:10px;color:var(--mut)">Mostrando 60 de '+pares.length+'.</div>':'');
   return { msg:'⚔ **'+n+' conflito(s)** entre '+la+' (vermelho) e '+lb+' (azul)'+onde+aviso+'. Clique num item para dar zoom; ↩ no topo volta.', html };
 }
+// Pavimento do cadastro citado na pergunta → token "pavimento @pav:<id>" (resolvido no
+// execDiretiva para os andares de cada modelo aberto). "área de piso" = área das lajes/pisos.
+function pavTokenizar(s){
+  s=String(s||'');
+  s=s.replace(/([áa]rea\s+(?:de|do|dos)\s+)pisos?\b/,'$1lajes');
+  const pv=pavDoTexto(s); if(!pv) return s;
+  return s.replace(pv.trecho, 'pavimento @pav:'+pv.pav.id).replace(/\b(do|no|o|a|da|na)\s+pavimento\s+pavimento\b/,'pavimento');
+}
 // Dispatcher único das diretivas — usado pelas REGRAS e pela IA externa.
 async function execDiretiva(tipo, arg, cor){
   let out;
   f3dProcessando(true);
+  let _pavRot=null;
   try{
+    const _pm=String(arg||'').match(/@pav:([0-9a-f-]{36})/i);
+    if(_pm && F3D){ const pav=(CDE_PAVS||[]).find(p=>p.id===_pm[1]);
+      F3D._pavSets = pav ? await idsDoPavimento(pav) : null;
+      _pavRot = pav ? ((pav.codigo||'').toUpperCase()+' — '+(pav.nome||'')) : null; F3D._pavRot=_pavRot; }
+    else if(F3D){ F3D._pavSets=null; F3D._pavRot=null; }
     if(tipo==='aviso'){ out={content: arg}; }
     else if(tipo==='somarsel'){ const r=await f3dExecSomarSel(arg); out={content:r.msg}; }
     else if(tipo==='contarsel'){
@@ -4376,6 +4390,7 @@ async function execDiretiva(tipo, arg, cor){
     f3dProcessando(false); f3dDica('');
   }
   f3dBotaoVoltar(!!(F3D && (F3D._isolado || F3D._colorido)));   // sincroniza o botão com o estado real
+  if(out && out.content) out.content=String(out.content).replace(/(?:pavimento\s+)?@pav:[0-9a-f-]{36}\??/gi, _pavRot ? ('pavimento '+_pavRot) : 'pavimento');
   return out;
 }
 async function iaEnviar(){
@@ -4637,7 +4652,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
