@@ -1313,7 +1313,10 @@ export async function isolarEstrutural(V, comParedesEstr){
 function _pavSetsDe(V, pavim){ return (typeof pavim==='string' && pavim.indexOf('@pav:')>=0 && V._pavSets) ? V._pavSets : null; }
 export async function acharElementos(V, regexes, termos, pavim){
   V._cancelar=false;
-  const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  let termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
+  // classe do concreto (c40/c80): pelo índice de material — sem ler Pset peça a peça
+  const fckT=termosLc.filter(t=>/^c\d{2}$/.test(t));
+  if(fckT.length){ for(const x of V.modelos){ try{ await _matIndice(x); }catch(_){} } termosLc=termosLc.filter(t=>!/^c\d{2}$/.test(t)); }
   const pavSets=_pavSetsDe(V, pavim);
   const pavN = (pavim && !pavSets) ? _norm(pavim) : '';
   const porMod={};
@@ -1321,6 +1324,7 @@ export async function acharElementos(V, regexes, termos, pavim){
     const x=V.modelos[mi];
     let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(regexes)||{}).flat(); }catch(_){}
     if(pavSets){ const st=pavSets[mi]; ids = st ? ids.filter(id=>st.has(id)) : []; }
+    if(fckT.length && x._matDe){ const de=x._matDe; ids=ids.filter(id=>fckT.some(t=>_matCasa(de.get(id), 'c'+t.slice(1)) || _matCasa(de.get(id), 'c '+t.slice(1)))); }
     if(!ids.length) continue;
     if(termosLc.length || pavN){
       const okd=[];
@@ -1482,6 +1486,34 @@ function _nomencl(d, id){
   if(d.Name && d.Name.value!=null) return String(d.Name.value);
   return '#'+id;
 }
+// ÍNDICE DE MATERIAL por modelo (uma vez, ~2 s no maior): parte de cada IfcMaterial*
+// (poucos) e da lista de peças associadas (AssociatedTo) — em vez de ler o material
+// peça a peça (13–18 s por filtro). x._matDe: Map(id → [nomes]); camadas incluídas.
+async function _matIndice(x){
+  if(x._matDe) return x._matDe;
+  if(x._matIdxP) return x._matIdxP;
+  x._matIdxP = (async()=>{
+    const md=x.model, de=new Map();
+    let mats=[]; try{ mats=Object.values(await md.getItemsOfCategories([/^IFCMATERIAL/])||{}).flat(); }catch(_){}
+    const nm=o=>o&&o.Name&&o.Name.value;
+    for(let p=0;p<mats.length;p+=2000){
+      let da=[]; try{ da=await md.getItemsData(mats.slice(p,p+2000),{attributesDefault:true,
+        relations:{AssociatedTo:{attributes:true,relations:false}, ForLayerSet:{attributes:true,relations:true}, MaterialLayers:{attributes:true,relations:true}, Material:{attributes:true,relations:false}},
+        relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+      (da||[]).forEach(d=>{ if(!d) return; const nomes=new Set(); if(nm(d)) nomes.add(String(nm(d)));
+        const ls=(d.ForLayerSet&&d.ForLayerSet[0]&&d.ForLayerSet[0].MaterialLayers)||d.MaterialLayers||[];
+        (Array.isArray(ls)?ls:[]).forEach(l=>{ const m=l&&l.Material&&l.Material[0]; if(nm(m)) nomes.add(String(nm(m))); });
+        if(!nomes.size) return;
+        (d.AssociatedTo||[]).forEach(el=>{ const id=el&&el._localId&&el._localId.value; if(id==null) return;
+          const a=de.get(id); if(a){ nomes.forEach(n=>{ if(!a.includes(n)) a.push(n); }); } else de.set(id,[...nomes]); }); });
+    }
+    x._matDe=de; return de;
+  })();
+  return x._matIdxP;
+}
+// Pré-aquece o índice dos modelos abertos (chamar depois de carregar).
+export async function prepararIndices(V){ for(const x of (V.modelos||[])){ try{ await _matIndice(x); }catch(_){} } }
+function _matCasa(nomes, termo){ const t=_norm(termo).replace(/\s+/g,''); return (nomes||[]).some(n=>_norm(n).replace(/\s+/g,'').includes(t)); }
 function _avaliaCond(c, ctx){
   const op=c.op, val=c.valor;
   switch(c.campo){
@@ -1496,6 +1528,7 @@ function _avaliaCond(c, ctx){
         if(ye==null||ya==null) return false; return op==='abaixo de'?ye<ya:ye>ya; }
       const hit=_batePavim(ctx.pav, _norm(val)); return op==='não é'?!hit:hit; }
     case 'material':{ const syns=_matSyn(val).map(_norm);
+      if(ctx.matDe && ctx.matDe.size){ const nomes=ctx.matDe.get(ctx.id)||[]; const hit=syns.some(t=>_matCasa(nomes,t)); return op==='não contém'?!hit:hit; }
       const mats=(ctx.d?_materiaisDe(ctx.d):[]).map(_norm);
       const hit=mats.some(m=>syns.some(s=>m.includes(s))) || (ctx.d?_bateTermos(ctx.d,_matSyn(val)):false);
       return op==='não contém'?!hit:hit; }
@@ -1545,7 +1578,10 @@ export async function filtrar(V, filtro){
   // sobreviventes. Material casa nos ATRIBUTOS (como a IA por comando) — nada de
   // HasAssociations (que lia o modelo inteiro e travava). Pset só p/ dimensão (e
   // pavimento quando não há membership).
-  const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&(pavCheap||c._idPav));
+  const temMat=conds.some(c=>c.campo==='material');
+  if(temMat){ for(const x of V.modelos){ try{ await _matIndice(x); }catch(_){} } }
+  const matOk=temMat && V.modelos.every(x=>x._matDe && x._matDe.size);
+  const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&(pavCheap||c._idPav))||(c.campo==='material'&&matOk);
   const baratas=conds.filter(ehBarata), caras=conds.filter(c=>!ehBarata(c));
   const need={pset:false,tipo:false,mat:false};
   caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento'||c.campo==='tipo') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
@@ -1573,7 +1609,7 @@ export async function filtrar(V, filtro){
     const pavOf=new Map();
     if(temPav&&st.length){ st.filter(s=>s.mi===mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nomeNorm))); }
     const volOf=new Map();
-    const ctx=(id,d)=>({ id, mi, cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn, vol: volOf.has(id)?volOf.get(id):null });
+    const ctx=(id,d)=>({ id, mi, matDe:x._matDe, cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn, vol: volOf.has(id)?volOf.get(id):null });
     // volume da malha 3D por peça (só p/ "Dimensão Volume" e só dos candidatos)
     const lerVol=async(lista)=>{ if(!querVolMalha) return; for(let p=0;p<lista.length;p+=40){ if(V._cancelar) throw new Error('CANCELADO');
       await Promise.all(lista.slice(p,p+40).map(async id=>{ try{ volOf.set(id, +(await x.model.getItemsVolume([id]))||0); }catch(_){} })); } };
@@ -2254,6 +2290,7 @@ function _rotuloValor(v, termo){
 // total da categoria. Leve (atributos-only).
 export async function contarFiltrado(V, regexes, termos, pavim){
   V._cancelar=false;
+  if((termos||[]).some(t=>/^c\d{2}$/i.test(String(t).trim()))){ const pm=await acharElementos(V, regexes, termos, pavim); let c=0; for(const a of Object.values(pm)) c+=(a?a.length:0); return c; }
   if(_pavSetsDe(V, pavim)){ const pm=await acharElementos(V, regexes, termos, pavim); let c=0; for(const a of Object.values(pm)) c+=(a?a.length:0); return c; }
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const pavN = pavim ? _norm(pavim) : '';
