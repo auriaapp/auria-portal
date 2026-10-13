@@ -2447,11 +2447,18 @@ export async function somarPorNome(V, porMod, termoProp){
 //  3) curva sem espessura: metade das faces verticais (ESTIMATIVA, inclui as bordas).
 // Peça HORIZONTAL (laje/piso/cobertura): área da face de cima.
 // Conferido no PINI: (1) e (2) batem até 0,03 m² em 11 de 12 paredes de ACM.
-function _espDoNome(nome){
-  const s=String(nome||''); let m;
-  if((m=s.match(/\((\d{1,3}(?:[.,]\d+)?)\)/))) return parseFloat(m[1].replace(',','.'))/100;            // "(17.5)" cm
-  if((m=s.match(/\b[eEL]\s*=\s*(\d{1,3}(?:[.,]\d+)?)\s*cm/i))) return parseFloat(m[1].replace(',','.'))/100;  // e=14 cm / L=19CM
-  return null;
+// Espessuras CANDIDATAS lidas do nome do tipo (m). A unidade varia entre famílias:
+// "(17.5)" e "e=14 cm" são cm; "… ACM 040" é mm (40 mm) e "… ACM 017.2" é cm (17,2 cm) —
+// por isso o número solto no fim entra nas DUAS leituras e a GEOMETRIA decide
+// (_areaPecas só aceita espessura compatível com o volume e as faces da peça).
+function _espsDoNome(nome){
+  const s=String(nome||'').replace(/:\d+\s*$/,'');   // tira o ":1295263" da instância
+  const c=[]; let m;
+  if((m=s.match(/\((\d{1,3}(?:[.,]\d+)?)\)/))) c.push(parseFloat(m[1].replace(',','.'))/100);
+  if((m=s.match(/\b[eEL]\s*=\s*(\d{1,3}(?:[.,]\d+)?)\s*cm/i))) c.push(parseFloat(m[1].replace(',','.'))/100);
+  if((m=s.match(/\b[eEL]\s*=\s*(\d{1,4}(?:[.,]\d+)?)\s*mm/i))) c.push(parseFloat(m[1].replace(',','.'))/1000);
+  if((m=s.match(/(?:^|[\s_-])(\d{2,3}(?:[.,]\d+)?)\s*$/))){ const x=parseFloat(m[1].replace(',','.')); c.push(x/1000, x/100); }
+  return c.filter(x=>isFinite(x)&&x>0.002&&x<1.5);
 }
 function _espDaProp(d){
   const v=_achaValorQualquer(d, /^(width|largura|espessura|thickness|espessura total)$/i);
@@ -2481,9 +2488,14 @@ async function _areaPecas(model, ids, dOf){
       r.n++;
       if(Aup>Av){ r.soma+=Aup; r.exatas++; continue; }                 // horizontal: face de cima
       const d=dOf&&dOf.get(id);
-      let esp=d?(_espDaProp(d)||_espDoNome(d.Name&&d.Name.value)||_espDoNome(_tipoNome(d))):null;
-      let vol=0; if(esp){ try{ vol=+(await model.getItemsVolume([id]))||0; }catch(_){} }
-      if(esp && vol>0){ const A=vol/esp; if(A<=Av/2*1.01 && A>=Av/2*0.3){ r.soma+=A; r.exatas++; continue; } }
+      const cands=d?[_espDaProp(d)].concat(_espsDoNome(d.Name&&d.Name.value), _espsDoNome(_tipoNome(d))).filter(Boolean):[];
+      if(cands.length){
+        let vol=0; try{ vol=+(await model.getItemsVolume([id]))||0; }catch(_){}
+        // compatível: área ≤ metade das faces verticais (a outra parte são bordas) e
+        // ≥ 30% dela (unidade errada erra 10×: cai fora com folga; peça pequena real fica ~60%+)
+        const ok=vol>0 ? cands.find(t=>{ const A=vol/t; return A<=Av/2*1.005 && A>=Av/2*0.3; }) : null;
+        if(ok){ r.soma+=vol/ok; r.exatas++; continue; }
+      }
       let sc=0, ss=0; tris.forEach(t=>{ const th=Math.atan2(t.z,t.x)*2; sc+=t.ar*Math.cos(th); ss+=t.ar*Math.sin(th); });
       const th=Math.atan2(ss,sc)/2, dx=Math.cos(th), dz=Math.sin(th);
       const main=tris.reduce((s,t)=>s+(Math.abs(t.x*dx+t.z*dz)>0.985?t.ar:0),0);
