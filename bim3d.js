@@ -2274,7 +2274,7 @@ export async function contarFiltrado(V, regexes, termos, pavim){
       continue;
     }
     let da=[];
-    if(pavN || termosLc.includes('@fire')){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
+    if(pavN || termosLc.includes('@fire') || termosLc.some(t=>/^c\d{2}$/.test(t))){ da=await _lerPsetsEmLotes(V, x.model, ids, 'Contando'); }
     else { try{ da=await x.model.getItemsData(ids, { attributesDefault:true, relationsDefault:{attributes:false,relations:false} }); }catch(_){} }
     (da||[]).forEach(d=>{ if(!d) return;
       if(termosLc.length && !_bateTermos(d, termosLc)) return;
