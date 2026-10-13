@@ -2431,6 +2431,75 @@ export async function somarPorNome(V, porMod, termoProp){
 // SOMA uma quantidade (área/volume/comprimento) sobre um subconjunto filtrado.
 // `termos` (opcional) filtra por texto nos atributos (ex.: "ACM"); `termoProp` é
 // o que somar. Lê Psets só do subconjunto filtrado (bounded).
+// ── ÁREA PELA MALHA 3D (precisa) ────────────────────────────────────────────
+// Usada quando o IFC não traz a área (ex.: paredes de ACM do Revit, sem Qto).
+// Peça VERTICAL (parede/painel), do mais exato ao menos exato:
+//  1) espessura conhecida (propriedade ou nome do tipo "(17.5)", "e=14 cm", "L=19CM")
+//     → área = volume da malha ÷ espessura (exato p/ espessura constante, reta OU curva,
+//     com recortes) — validada: não pode ser maior que metade das faces verticais;
+//  2) parede reta: soma dos triângulos das DUAS faces principais ÷ 2 (bordas e
+//     contornos de janela ficam de fora: são perpendiculares);
+//  3) curva sem espessura: metade das faces verticais (ESTIMATIVA, inclui as bordas).
+// Peça HORIZONTAL (laje/piso/cobertura): área da face de cima.
+// Conferido no PINI: (1) e (2) batem até 0,03 m² em 11 de 12 paredes de ACM.
+function _espDoNome(nome){
+  const s=String(nome||''); let m;
+  if((m=s.match(/\((\d{1,3}(?:[.,]\d+)?)\)/))) return parseFloat(m[1].replace(',','.'))/100;            // "(17.5)" cm
+  if((m=s.match(/\b[eEL]\s*=\s*(\d{1,3}(?:[.,]\d+)?)\s*cm/i))) return parseFloat(m[1].replace(',','.'))/100;  // e=14 cm / L=19CM
+  return null;
+}
+function _espDaProp(d){
+  const v=_achaValorQualquer(d, /^(width|largura|espessura|thickness|espessura total)$/i);
+  const x=v==null?NaN:+v; if(!isFinite(x)||x<=0) return null;
+  return x>5 ? x/1000 : x;   // mm → m quando vier em mm
+}
+async function _areaPecas(model, ids, dOf){
+  const r={ soma:0, exatas:0, estimadas:0, n:0 };
+  for(let p=0;p<ids.length;p+=150){
+    const lote=ids.slice(p,p+150);
+    let geo=[]; try{ geo=await model.getItemsGeometry(lote); }catch(_){ continue; }
+    for(let i=0;i<lote.length;i++){
+      const id=lote[i]; const tris=[]; let Aup=0, Av=0;
+      for(const m of (geo[i]||[])){
+        const e=m.transform&&m.transform.elements, P=m.positions, I=m.indices; if(!e||!P||!I) continue;
+        const tp=k=>{ const x=P[3*k],y=P[3*k+1],z=P[3*k+2]; return [e[0]*x+e[4]*y+e[8]*z+e[12], e[1]*x+e[5]*y+e[9]*z+e[13], e[2]*x+e[6]*y+e[10]*z+e[14]]; };
+        for(let t=0;t<I.length;t+=3){
+          const a=tp(I[t]),b=tp(I[t+1]),c=tp(I[t+2]);
+          const u0=b[0]-a[0],u1=b[1]-a[1],u2=b[2]-a[2], v0=c[0]-a[0],v1=c[1]-a[1],v2=c[2]-a[2];
+          const n0=u1*v2-u2*v1, n1=u2*v0-u0*v2, n2=u0*v1-u1*v0; const L=Math.hypot(n0,n1,n2); if(!L) continue;
+          const ar=L/2, ny=n1/L;
+          if(Math.abs(ny)<0.2){ const h=Math.hypot(n0,n2); tris.push({ar, x:n0/h, z:n2/h}); Av+=ar; }
+          else if(ny>0.7) Aup+=ar;
+        }
+      }
+      if(!Av && !Aup) continue;
+      r.n++;
+      if(Aup>Av){ r.soma+=Aup; r.exatas++; continue; }                 // horizontal: face de cima
+      const d=dOf&&dOf.get(id);
+      let esp=d?(_espDaProp(d)||_espDoNome(d.Name&&d.Name.value)||_espDoNome(_tipoNome(d))):null;
+      let vol=0; if(esp){ try{ vol=+(await model.getItemsVolume([id]))||0; }catch(_){} }
+      if(esp && vol>0){ const A=vol/esp; if(A<=Av/2*1.01 && A>=Av/2*0.3){ r.soma+=A; r.exatas++; continue; } }
+      let sc=0, ss=0; tris.forEach(t=>{ const th=Math.atan2(t.z,t.x)*2; sc+=t.ar*Math.cos(th); ss+=t.ar*Math.sin(th); });
+      const th=Math.atan2(ss,sc)/2, dx=Math.cos(th), dz=Math.sin(th);
+      const main=tris.reduce((s,t)=>s+(Math.abs(t.x*dx+t.z*dz)>0.985?t.ar:0),0);
+      if(main/Av>=0.6){ r.soma+=main/2; r.exatas++; }
+      else { r.soma+=Av/2; r.estimadas++; }
+    }
+    await new Promise(z=>setTimeout(z,0));
+  }
+  return r;
+}
+export async function areaMalha(V, porMod){
+  const tot={ soma:0, exatas:0, estimadas:0, n:0 };
+  for(const [mi,ids] of Object.entries(porMod||{})){
+    const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    const dOf=new Map(); for(let p=0;p<ids.length;p+=500){ let da=[]; try{ da=await x.model.getItemsData(ids.slice(p,p+500),{attributesDefault:true,relations:{IsDefinedBy:{attributes:true,relations:true}},relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+      (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); }); }
+    const r=await _areaPecas(x.model, ids, dOf);
+    tot.soma+=r.soma; tot.exatas+=r.exatas; tot.estimadas+=r.estimadas; tot.n+=r.n;
+  }
+  return tot;
+}
 export async function somarPropriedade(V, regexes, termos, termoProp, pavim){
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const rx=_termoRegex(termoProp);
@@ -2468,9 +2537,14 @@ export async function somarPropriedade(V, regexes, termos, termoProp, pavim){
         let v=0; try{ v=+(await x.model.getItemsVolume(lote))||0; }catch(_){ v=0; }
         if(v>0){ soma+=v; calculados+=lote.length; nomes.add('malha 3D'); } }
     }
-    // Reserva GEOMÉTRICA de área/comprimento pela caixa. Laje/cobertura = face
-    // horizontal (x·z); parede = maior horizontal × altura.
-    if(faltam.length && (ehArea||ehComp) && !ehVol){
+    // ÁREA sem propriedade: medida na MALHA 3D (_areaPecas — faces reais, sem caixa).
+    if(faltam.length && ehArea){
+      const dOf=new Map(); (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid!=null) dOf.set(lid,d); });
+      const ra=await _areaPecas(x.model, faltam, dOf);
+      if(ra.n){ soma+=ra.soma; calculados+=ra.n; if(ra.exatas) nomes.add('malha 3D'); if(ra.estimadas){ nomes.add('malha 3D (estimativa)'); V._areaEstimadas=(V._areaEstimadas||0)+ra.estimadas; } }
+    }
+    // Reserva pela caixa só p/ COMPRIMENTO (maior dimensão horizontal).
+    if(faltam.length && ehComp && !ehArea && !ehVol){
       let boxes=[]; try{ boxes=await x.model.getBoxes(faltam); }catch(_){}
       (boxes||[]).forEach(b=>{ if(!b||!b.min||!b.max||!isFinite(b.max.y)) return;
         const dy=b.max.y-b.min.y, hd=[b.max.x-b.min.x, b.max.z-b.min.z].sort((a,b)=>b-a);
