@@ -4150,7 +4150,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12d').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5078,6 +5078,39 @@ function fRenderSwat(){
 // Condições completas (com valor). Condição sem valor é ignorada — não conta como
 // filtro (assim "Classe é Escada" + Material vazio filtra só pela classe, rápido).
 function fCondsOk(){ return FILT.conds.filter(c=> c&&c.campo&&c.op && String(c.valor==null?'':c.valor).trim()!==''); }
+// Pavimento do filtro pelo CADASTRO (10T, "Térreo", "10º Pavto. Tipo"): cada modelo
+// aberto tem seus andares pareados com o cadastro (de-para do modelo principal quando
+// houver). Resultado guardado no F3D (recalcula se mudar modelos/cadastro/de-para).
+async function mapaIdPav(){
+  const om=(typeof OBRA_MODELO!=='undefined' && OBRA_MODELO) || null;
+  const chave=F3D.modelos.map(m=>m.arquivoId).join('|')+'#'+(CDE_PAVS||[]).length+'#'+(om?om.atualizado_em:'');
+  if(F3D._idPav && F3D._idPavChave===chave) return F3D._idPav;
+  const mp=(om && om.pav_map) || {}, out=[];
+  for(let mi=0; mi<F3D.modelos.length; mi++){
+    const md=F3D.modelos[mi].model, mapa=new Map(); out[mi]=mapa; if(!md) continue;
+    const and=await AuriaAndares.ler(md); const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[]);
+    and.forEach((a,k)=>{ const id=(a.nome in mp)?mp[a.nome]:(sug[k]&&sug[k].id); if(id) a.ids.forEach(x=>mapa.set(x,id)); });
+  }
+  F3D._idPav=out; F3D._idPavChave=chave; return out;
+}
+function pavDoValor(v){
+  const n=s=>AuriaAndares.norm(s).replace(/\s+/g,'');
+  const pavs=(CDE_PAVS||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista'), x=n(v);
+  return pavs.find(p=>n(p.codigo)===x) || pavs.find(p=>n(p.nome)===x) || ((typeof pavDoTexto==='function' && pavDoTexto(v)) || {}).pav || null;
+}
+async function fResolverPav(conds){
+  if(!window.AuriaAndares || !(CDE_PAVS||[]).length || !conds.some(c=>c.campo==='pavimento')) return conds;
+  const rank={}; AuriaAndares.ordemFisica((CDE_PAVS||[]).filter(p=>p.tipo!=='grupo'&&p.tipo!=='vista')).forEach((p,i)=>{ rank[p.id]=i; });
+  let idPav=null;
+  const out=[];
+  for(const c of conds){
+    if(c.campo!=='pavimento'){ out.push(c); continue; }
+    const pv=pavDoValor(c.valor); if(!pv){ out.push(c); continue; }   // não achou no cadastro → regra antiga (nome do andar)
+    if(!idPav) idPav=await mapaIdPav();
+    out.push(Object.assign({}, c, { _idPav:idPav, _alvo:pv.id, _rank:rank }));
+  }
+  return out;
+}
 async function fAplicar(kind){
   if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
   if(kind==='limpar'){ try{ await B3.limparFiltro(F3D); }catch(_){} $('fCount').textContent='—'; $('fMeta').textContent='Modelo restaurado.'; $('fSwat').style.display='none'; return; }
@@ -5085,7 +5118,7 @@ async function fAplicar(kind){
   if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
   f3dProcessando(true); fSpin(true,'Filtrando o modelo…'); $('fMeta').textContent='Filtrando…';
   try{
-    const porMod=await B3.filtrar(F3D, {comb:FILT.comb, conds});
+    const porMod=await B3.filtrar(F3D, {comb:FILT.comb, conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     $('fCount').textContent=n.toLocaleString('pt-BR');
     if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
@@ -5103,7 +5136,7 @@ async function fCalcular(tipo){
   const CFG={area:{termo:'area',un:'m²',lbl:'Área'},volume:{termo:'volume',un:'m³',lbl:'Volume'},comprimento:{termo:'length',un:'m',lbl:'Comprimento'}}[tipo];
   f3dProcessando(true); fSpin(true,'Calculando '+CFG.lbl.toLowerCase()+'…'); $('fMeta').textContent='Filtrando…';
   try{
-    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     $('fCount').textContent=n.toLocaleString('pt-BR');
     if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
@@ -5129,7 +5162,7 @@ async function fExportar(){
   if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
   f3dProcessando(true); fSpin(true,'Gerando planilha…');
   try{
-    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     if(!n){ f3dDica('Nenhum elemento para exportar.'); f3dProcessando(false); fSpin(false); return; }
     const rows=await B3.linhasQuantitativo(F3D, porMod);

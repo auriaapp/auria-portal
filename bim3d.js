@@ -1484,6 +1484,10 @@ function _avaliaCond(c, ctx){
     case 'classe':{ const rx=_classeRx(val); const hit=rx?rx.test(ctx.cat||''):false; return op==='não é'?!hit:hit; }
     case 'disciplina':{ const hit=ctx.disc.includes(_norm(val)); return op==='não é'?!hit:hit; }
     case 'pavimento':{
+      if(c._idPav){   // resolvido pelo App: andares de cada modelo pareados com o cadastro
+        const pv=(c._idPav[ctx.mi]||new Map()).get(ctx.id);
+        if(op==='abaixo de'||op==='acima de'){ const re=c._rank[pv], ra=c._rank[c._alvo]; if(re==null||ra==null) return false; return op==='abaixo de'?re<ra:re>ra; }
+        const hit=pv===c._alvo; return op==='não é'?!hit:hit; }
       if(op==='abaixo de'||op==='acima de'){ const ye=ctx.pavY?ctx.pavY(ctx.pav):null, ya=ctx.pavY?ctx.pavY(val):null;
         if(ye==null||ya==null) return false; return op==='abaixo de'?ye<ya:ye>ya; }
       const hit=_batePavim(ctx.pav, _norm(val)); return op==='não é'?!hit:hit; }
@@ -1491,12 +1495,14 @@ function _avaliaCond(c, ctx){
       const mats=(ctx.d?_materiaisDe(ctx.d):[]).map(_norm);
       const hit=mats.some(m=>syns.some(s=>m.includes(s))) || (ctx.d?_bateTermos(ctx.d,_matSyn(val)):false);
       return op==='não contém'?!hit:hit; }
-    case 'tipo':{ const nome=_norm(_tipoNome(ctx.d)); const b=_norm(val);
+    case 'tipo':{ const pt=ctx.d?_achaValorQualquer(ctx.d,/^tipo$/i):null; const nome=_norm(_tipoNome(ctx.d))+(pt!=null?' | '+_norm(String(pt)):''); const b=_norm(val);
+      if(pt!=null && (op==='é'?_norm(String(pt))===b:op==='começa com'?_norm(String(pt)).startsWith(b):_norm(String(pt)).includes(b))) return true;
       if(op==='começa com') return nome.startsWith(b);
       if(op==='é') return nome===b || (ctx.d?_bateTermos(ctx.d,['='+val]):false);
       return nome.includes(b) || (ctx.d?_bateTermos(ctx.d,[val]):false); }   // contém
     case 'dimensao':{ const subTermo={Altura:'height',Largura:'width',Espessura:'thickness',Comprimento:'length','Área':'area',Volume:'volume'};
-      const r=ctx.d?_achaValorProfundo(ctx.d,_termoRegex(subTermo[c.sub]||c.sub||'')):null;
+      let r=ctx.d?_achaValorProfundo(ctx.d,_termoRegex(subTermo[c.sub]||c.sub||'')):null;
+      if((!r||typeof r.val!=='number') && c.sub==='Volume' && ctx.vol!=null) r={val:ctx.vol};
       if(!r||typeof r.val!=='number') return false;
       let x=r.val; const esp=/esp/i.test(c.sub||''); if(esp) x=x*100;   // espessura: compara em cm (input em cm)
       const a=_numBR(val); if(isNaN(a)) return false;
@@ -1522,11 +1528,11 @@ export async function filtrar(V, filtro){
   const classePos=conds.filter(c=>c.campo==='classe'&&(c.op==='é'||c.op==='é um de'));
   const regexes=(comb==='all'&&classePos.length)?classePos.map(c=>_classeRx(c.valor)).filter(Boolean):CAT_VISIVEIS;
   // pavimento por MEMBERSHIP (getSpatialStructure) — barato, sem ler Pset por elemento.
-  const temPav=conds.some(c=>c.campo==='pavimento');
+  const temPav=conds.some(c=>c.campo==='pavimento' && !c._idPav);
   const st=temPav?await _storeysMapa(V):[];
   const pavCheap=st.length>0;
   let pavYFn=null;
-  if(conds.some(c=>c.campo==='pavimento'&&(c.op==='abaixo de'||c.op==='acima de'))){
+  if(conds.some(c=>c.campo==='pavimento'&&!c._idPav&&(c.op==='abaixo de'||c.op==='acima de'))){
     const fx=await _faixasPavimento(V);
     pavYFn=(nome)=>{ const f=(fx||[]).find(f=>_batePavim(_norm(f.nome),_norm(nome))); return f?f.y:null; };
   }
@@ -1535,10 +1541,11 @@ export async function filtrar(V, filtro){
   // sobreviventes. Material casa nos ATRIBUTOS (como a IA por comando) — nada de
   // HasAssociations (que lia o modelo inteiro e travava). Pset só p/ dimensão (e
   // pavimento quando não há membership).
-  const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&pavCheap);
+  const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&(pavCheap||c._idPav));
   const baratas=conds.filter(ehBarata), caras=conds.filter(c=>!ehBarata(c));
   const need={pset:false,tipo:false,mat:false};
-  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
+  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento'||c.campo==='tipo') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
+  const querVolMalha = caras.some(c=>c.campo==='dimensao'&&c.sub==='Volume');
   const relations={};
   if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
   if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
@@ -1561,17 +1568,21 @@ export async function filtrar(V, filtro){
     if(!ids.length) continue;
     const pavOf=new Map();
     if(temPav&&st.length){ st.filter(s=>s.mi===mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nomeNorm))); }
-    const ctx=(id,d)=>({ cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn });
+    const volOf=new Map();
+    const ctx=(id,d)=>({ id, mi, cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn, vol: volOf.has(id)?volOf.get(id):null });
+    // volume da malha 3D por peça (só p/ "Dimensão Volume" e só dos candidatos)
+    const lerVol=async(lista)=>{ if(!querVolMalha) return; for(let p=0;p<lista.length;p+=40){ if(V._cancelar) throw new Error('CANCELADO');
+      await Promise.all(lista.slice(p,p+40).map(async id=>{ try{ volOf.set(id, +(await x.model.getItemsVolume([id]))||0); }catch(_){} })); } };
     try{
       if(comb==='all'){
         let cand = baratas.length ? ids.filter(id=> baratas.every(c=>_avaliaCond(c, ctx(id,null)))) : ids;
         if(!cand.length) continue;
         if(!caras.length){ porMod[mi]=cand; continue; }
-        const dOf=await lerDados(x.model, cand);
+        const dOf=await lerDados(x.model, cand); await lerVol(cand);
         const ok=cand.filter(id=> caras.every(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
         if(ok.length) porMod[mi]=ok;
       } else {   // OU: precisa avaliar TODAS por elemento → lê dados (só o necessário)
-        const dOf=await lerDados(x.model, ids);
+        const dOf=await lerDados(x.model, ids); await lerVol(ids);
         const ok=ids.filter(id=> conds.some(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
         if(ok.length) porMod[mi]=ok;
       }

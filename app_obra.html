@@ -11,6 +11,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Auria App Obra</title>
 <link rel="icon" type="image/png" href="logo_symbol.png">
+<link rel="manifest" href="app_obra.webmanifest">
+<meta name="theme-color" content="#1E3A5F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Auria Obra">
+<link rel="apple-touch-icon" href="icons/obra-192.png">
 <script src="auria_busy.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
@@ -931,6 +937,169 @@ svg.ci{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.5;str
 @media (max-width:640px){ .rdo-row{flex-wrap:wrap} .rdo-row>select{flex:1 1 45%} .rdo-row>input.n{flex:0 0 80px} }
 
 </style>
+<style>
+/* ── Leitor de QR (app_obra_qr.js) ── */
+#qrCam{position:fixed;inset:0;z-index:100001;background:#000;display:none;flex-direction:column;align-items:center;justify-content:center}
+#qrCam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#qrCam .qrc-mira{position:relative;width:min(70vw,300px);aspect-ratio:1;border:3px solid #E8960A;border-radius:18px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
+#qrCam .qrc-txt{position:relative;margin-top:18px;color:#fff;font:600 14px Segoe UI,system-ui,sans-serif;text-align:center;padding:0 16px}
+#qrCam .qrc-x{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:#1E3A5F;color:#fff;border:1px solid #E8960A;border-radius:10px;padding:12px 26px;font-weight:700;min-height:44px}
+#qrView{position:fixed;inset:0;z-index:100000;background:#fff;display:none;flex-direction:column}
+#qrView .qrv-h{display:flex;align-items:center;gap:8px;padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top));background:#1E3A5F;color:#fff}
+#qrView .qrv-h b{flex:1;font-size:14px}
+#qrView .qrv-h button{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35);border-radius:8px;padding:6px 12px;min-height:38px;font-weight:600}
+#qrView iframe{flex:1;border:0;width:100%}
+
+</style>
+<script>
+/* app_obra_qr.js */
+// ── Leitor de QR do App Obra (fase M1 do app móvel, 2026-10-12) ──────────
+//  Lê o QR das pranchas/modelos (v.html?p= / ?f= / ?q=) e abre DENTRO do app,
+//  numa camada por cima — sem sair para o navegador.
+//  Três motores, do melhor para o pior:
+//   1. App Android/iOS (Capacitor): plugin nativo ML Kit (BarcodeScanner).
+//   2. Navegador com BarcodeDetector (Chrome Android).
+//   3. jsQR (iPhone/Safari como PWA, desktop) — lê os quadros da câmera.
+//  Só abre endereços do próprio Auria; QR de fora mostra o texto e não navega.
+var QR_HOSTS = ['auria.solutions', 'www.auria.solutions', location.host];
+
+function qrAuria(txt){
+  try {
+    const u = new URL(String(txt || '').trim(), location.origin);
+    if (!/^https?:$/.test(u.protocol) || QR_HOSTS.indexOf(u.host) < 0) return null;
+    // Mesmo domínio que o app → caminho relativo (mantém a sessão e o cache).
+    return u.pathname + u.search + u.hash;
+  } catch (_){ return null; }
+}
+
+function qrAbrir(txt){
+  const alvo = qrAuria(txt);
+  if (!alvo){ alert('Este QR não é do Auria:\n\n' + String(txt || '').slice(0, 300)); return; }
+  let ov = document.getElementById('qrView');
+  if (!ov){
+    ov = document.createElement('div'); ov.id = 'qrView';
+    ov.innerHTML = '<div class="qrv-h"><b id="qrvTit">Prancha</b>' +
+      '<button onclick="qrScan()" title="Ler outro QR">📷 Outro</button>' +
+      '<button onclick="qrFecharView()" title="Fechar">✕</button></div>' +
+      '<iframe id="qrvIf" allow="fullscreen; xr-spatial-tracking"></iframe>';
+    document.body.appendChild(ov);
+  }
+  document.getElementById('qrvTit').textContent = /[?&]f=/.test(alvo) ? 'Modelo federado' : 'Prancha / modelo';
+  document.getElementById('qrvIf').src = alvo;
+  ov.style.display = 'flex';
+}
+function qrFecharView(){
+  const ov = document.getElementById('qrView'); if (!ov) return;
+  ov.style.display = 'none'; document.getElementById('qrvIf').src = 'about:blank';  // libera WebGL/memória
+}
+
+// ── Motor 1: nativo ──
+function qrNativo(){
+  const C = window.Capacitor;
+  return C && C.isNativePlatform && C.isNativePlatform() && C.Plugins && C.Plugins.BarcodeScanner || null;
+}
+
+async function qrScan(){
+  const nat = qrNativo();
+  if (nat){
+    try {
+      const perm = await nat.requestPermissions();
+      if (perm && perm.camera && perm.camera !== 'granted' && perm.camera !== 'limited'){
+        alert('Permita o uso da câmera nas configurações do aparelho para ler o QR.'); return;
+      }
+      const r = await nat.scan({ formats: ['QR_CODE'] });
+      const v = r && r.barcodes && r.barcodes[0] && (r.barcodes[0].rawValue || r.barcodes[0].displayValue);
+      if (v) qrAbrir(v);
+      return;
+    } catch (e){ if (!/cancel/i.test(String(e && e.message))) console.warn('scanner nativo falhou, uso o web', e); else return; }
+  }
+  qrScanWeb();
+}
+
+// ── Motores 2 e 3: câmera do navegador ──
+var _qrStream = null, _qrLoop = 0;
+function qrJsQR(){
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  return new Promise((ok, falha) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+    s.onload = () => ok(window.jsQR); s.onerror = falha;
+    document.head.appendChild(s);
+  });
+}
+
+async function qrScanWeb(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    alert('Este navegador não dá acesso à câmera. Abra pelo app ou pelo Chrome/Safari atualizado.'); return;
+  }
+  let ov = document.getElementById('qrCam');
+  if (!ov){
+    ov = document.createElement('div'); ov.id = 'qrCam';
+    ov.innerHTML = '<video id="qrVid" playsinline muted></video><div class="qrc-mira"></div>' +
+      '<div class="qrc-txt">Aponte para o QR da prancha ou do modelo</div>' +
+      '<button class="qrc-x" onclick="qrPararCam()">Cancelar</button>';
+    document.body.appendChild(ov);
+  }
+  ov.style.display = 'flex';
+  const vid = document.getElementById('qrVid');
+  try {
+    _qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch (e){ qrPararCam(); alert('Sem acesso à câmera: ' + (e && e.message || e)); return; }
+  vid.srcObject = _qrStream; await vid.play().catch(()=>{});
+
+  let det = null, jsqr = null;
+  if ('BarcodeDetector' in window){
+    try { if ((await BarcodeDetector.getSupportedFormats()).indexOf('qr_code') >= 0) det = new BarcodeDetector({ formats: ['qr_code'] }); } catch (_){}
+  }
+  if (!det){ try { jsqr = await qrJsQR(); } catch (_){ qrPararCam(); alert('Não consegui carregar o leitor de QR. Verifique a conexão.'); return; } }
+
+  const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
+  const id = ++_qrLoop;
+  async function quadro(){
+    if (id !== _qrLoop || !_qrStream) return;
+    if (vid.readyState >= 2 && vid.videoWidth){
+      let v = null;
+      try {
+        if (det){ const r = await det.detect(vid); v = r[0] && r[0].rawValue; }
+        else {
+          const k = Math.min(1, 800 / Math.max(vid.videoWidth, vid.videoHeight));  // jsQR é lento em 4K
+          cv.width = vid.videoWidth * k | 0; cv.height = vid.videoHeight * k | 0;
+          cx.drawImage(vid, 0, 0, cv.width, cv.height);
+          const r = jsqr(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
+          v = r && r.data;
+        }
+      } catch (_){}
+      if (v){ if (navigator.vibrate) navigator.vibrate(60); qrPararCam(); qrAbrir(v); return; }
+    }
+    setTimeout(quadro, det ? 120 : 200);
+  }
+  quadro();
+}
+
+function qrPararCam(){
+  _qrLoop++;
+  if (_qrStream){ _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
+  const ov = document.getElementById('qrCam'); if (ov) ov.style.display = 'none';
+}
+
+// Botão no cabeçalho (entra antes do "← CDE").
+(function(){
+  function por(){
+    const h = document.querySelector('#app > header'); if (!h || document.getElementById('btnQR')) return;
+    const b = document.createElement('button');
+    b.id = 'btnQR'; b.className = 'btn-logout'; b.title = 'Ler QR de prancha ou modelo';
+    b.textContent = '📷 QR'; b.onclick = qrScan;
+    const cde = h.querySelector('button[onclick^="voltarPortal"]');
+    h.insertBefore(b, cde || h.querySelector('.who'));
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', por); else por();
+  // App aberto por link do QR (Android "abrir com o app"): ?qr=<url>
+  const q = new URLSearchParams(location.search).get('qr');
+  if (q) window.addEventListener('load', () => setTimeout(() => qrAbrir(q), 800));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape'){ qrPararCam(); qrFecharView(); } });
+})();
+
+</script>
 </head>
 <body>
 <div id="loading">Carregando…</div>
@@ -4657,7 +4826,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12d').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5585,6 +5754,39 @@ function fRenderSwat(){
 // Condições completas (com valor). Condição sem valor é ignorada — não conta como
 // filtro (assim "Classe é Escada" + Material vazio filtra só pela classe, rápido).
 function fCondsOk(){ return FILT.conds.filter(c=> c&&c.campo&&c.op && String(c.valor==null?'':c.valor).trim()!==''); }
+// Pavimento do filtro pelo CADASTRO (10T, "Térreo", "10º Pavto. Tipo"): cada modelo
+// aberto tem seus andares pareados com o cadastro (de-para do modelo principal quando
+// houver). Resultado guardado no F3D (recalcula se mudar modelos/cadastro/de-para).
+async function mapaIdPav(){
+  const om=(typeof OBRA_MODELO!=='undefined' && OBRA_MODELO) || null;
+  const chave=F3D.modelos.map(m=>m.arquivoId).join('|')+'#'+(CDE_PAVS||[]).length+'#'+(om?om.atualizado_em:'');
+  if(F3D._idPav && F3D._idPavChave===chave) return F3D._idPav;
+  const mp=(om && om.pav_map) || {}, out=[];
+  for(let mi=0; mi<F3D.modelos.length; mi++){
+    const md=F3D.modelos[mi].model, mapa=new Map(); out[mi]=mapa; if(!md) continue;
+    const and=await AuriaAndares.ler(md); const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[]);
+    and.forEach((a,k)=>{ const id=(a.nome in mp)?mp[a.nome]:(sug[k]&&sug[k].id); if(id) a.ids.forEach(x=>mapa.set(x,id)); });
+  }
+  F3D._idPav=out; F3D._idPavChave=chave; return out;
+}
+function pavDoValor(v){
+  const n=s=>AuriaAndares.norm(s).replace(/\s+/g,'');
+  const pavs=(CDE_PAVS||[]).filter(p=>p.tipo!=='grupo' && p.tipo!=='vista'), x=n(v);
+  return pavs.find(p=>n(p.codigo)===x) || pavs.find(p=>n(p.nome)===x) || ((typeof pavDoTexto==='function' && pavDoTexto(v)) || {}).pav || null;
+}
+async function fResolverPav(conds){
+  if(!window.AuriaAndares || !(CDE_PAVS||[]).length || !conds.some(c=>c.campo==='pavimento')) return conds;
+  const rank={}; AuriaAndares.ordemFisica((CDE_PAVS||[]).filter(p=>p.tipo!=='grupo'&&p.tipo!=='vista')).forEach((p,i)=>{ rank[p.id]=i; });
+  let idPav=null;
+  const out=[];
+  for(const c of conds){
+    if(c.campo!=='pavimento'){ out.push(c); continue; }
+    const pv=pavDoValor(c.valor); if(!pv){ out.push(c); continue; }   // não achou no cadastro → regra antiga (nome do andar)
+    if(!idPav) idPav=await mapaIdPav();
+    out.push(Object.assign({}, c, { _idPav:idPav, _alvo:pv.id, _rank:rank }));
+  }
+  return out;
+}
 async function fAplicar(kind){
   if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
   if(kind==='limpar'){ try{ await B3.limparFiltro(F3D); }catch(_){} $('fCount').textContent='—'; $('fMeta').textContent='Modelo restaurado.'; $('fSwat').style.display='none'; return; }
@@ -5592,7 +5794,7 @@ async function fAplicar(kind){
   if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
   f3dProcessando(true); fSpin(true,'Filtrando o modelo…'); $('fMeta').textContent='Filtrando…';
   try{
-    const porMod=await B3.filtrar(F3D, {comb:FILT.comb, conds});
+    const porMod=await B3.filtrar(F3D, {comb:FILT.comb, conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     $('fCount').textContent=n.toLocaleString('pt-BR');
     if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
@@ -5610,7 +5812,7 @@ async function fCalcular(tipo){
   const CFG={area:{termo:'area',un:'m²',lbl:'Área'},volume:{termo:'volume',un:'m³',lbl:'Volume'},comprimento:{termo:'length',un:'m',lbl:'Comprimento'}}[tipo];
   f3dProcessando(true); fSpin(true,'Calculando '+CFG.lbl.toLowerCase()+'…'); $('fMeta').textContent='Filtrando…';
   try{
-    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     $('fCount').textContent=n.toLocaleString('pt-BR');
     if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
@@ -5636,7 +5838,7 @@ async function fExportar(){
   if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
   f3dProcessando(true); fSpin(true,'Gerando planilha…');
   try{
-    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds});
+    const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
     if(!n){ f3dDica('Nenhum elemento para exportar.'); f3dProcessando(false); fSpin(false); return; }
     const rows=await B3.linhasQuantitativo(F3D, porMod);
