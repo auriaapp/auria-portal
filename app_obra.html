@@ -5833,6 +5833,11 @@ async function fCalcular(tipo){
     const lista=await B3.somarPorNome(F3D, porMod, CFG.termo);
     // Volume sem propriedade no IFC (ex.: TQS): volume da MALHA 3D das peças — mesmo
     // cálculo da concretagem, da IA e do painel de propriedades.
+    // Área sem propriedade no IFC (ex.: paredes de ACM do Revit): medida na MALHA 3D.
+    if(tipo==='area' && !lista.length && B3.areaMalha){
+      const ra=await B3.areaMalha(F3D, porMod);
+      if(ra.n) lista.push({ nome: ra.estimadas ? ('malha 3D — '+ra.estimadas+' estimada(s)') : 'malha 3D', soma:ra.soma, n:ra.n });
+    }
     if(tipo==='volume' && !lista.length){
       let v=0; for(const [mi,ids] of Object.entries(porMod)){ const md=F3D.modelos[mi]&&F3D.modelos[mi].model; if(!md||!ids||!ids.length) continue;
         for(let p=0;p<ids.length;p+=500){ try{ v+=+(await md.getItemsVolume(ids.slice(p,p+500)))||0; }catch(_){} } }
@@ -7038,7 +7043,8 @@ async function f3dExecSomar(arg){
     const filtro = termos.length?(' ('+termos.join('/')+')'):'';
     const fonte = r.nomes.length?(' · fonte: '+r.nomes.slice(0,3).join(', ')):'';
     const parcial = usados<r.n?(' — '+usados+' de '+r.n+' com valor'):'';
-    const calc = r.calculados?(' · '+r.calculados+(r.nomes.includes('malha 3D')?' com volume da malha 3D':' calculado(s) da geometria (estimativa)')):'';
+    const est = (F3D && F3D._areaEstimadas) || 0; if(F3D) F3D._areaEstimadas=0;
+    const calc = r.calculados ? (' · '+r.calculados+' medido(s) na malha 3D'+(est?(' — '+est+' peça(s) curva(s) sem espessura no IFC: área ESTIMADA (inclui bordas)'):'')) : '';
     return { msg:'**Σ '+prop+filtro+(pavim?(' no pavimento '+pavim):'')+' = '+val+' '+un+'** ('+r.n+' '+rot+')'+parcial+fonte+calc+'.' };
   }catch(e){ f3dDica(''); console.warn('somar:', e); return { msg:'Não consegui somar agora: '+(e.message||e) }; }
 }
@@ -9056,8 +9062,10 @@ async function localPainel(){
   if (!EMP) return;
   let lista = []; try { lista = await f3dModelosDoCde(); } catch (_){}
   const inst = lista.filter(m => LOCAL_INST[_discCod(m.nome)]);
-  // uma por disciplina: prefere o EXECUTIVO (-EX-)
-  const porDisc = {}; inst.forEach(m => { const d=_discCod(m.nome); const a=porDisc[d]; if(!a || (/-EX-/.test(m.nome) && !/-EX-/.test(a.nome))) porDisc[d]=m; });
+  // um por MODELO (HID-…-HID e HID-…-SAN são modelos diferentes); entre etapas do
+  // mesmo modelo (PE × EX) fica o EXECUTIVO
+  const chave = n => String(n || '').toUpperCase().replace(/-(EX|PE|EP|AP|LO|PB|AB)-/, '-*-');
+  const porDisc = {}; inst.forEach(m => { const d=chave(m.nome); const a=porDisc[d]; if(!a || (/-EX-/.test(m.nome) && !/-EX-/.test(a.nome))) porDisc[d]=m; });
   const escolhidos = Object.values(porDisc);
   const pavs = window.AuriaAndares ? AuriaAndares.ordemFisica((CDE_PAVS||[]).filter(p=>p.tipo!=='grupo'&&p.tipo!=='vista')).reverse() : (CDE_PAVS||[]);
   const temPrincipal = !!(OBRA_MODELO && OBRA_MODELO.principal_doc_id);
@@ -9081,6 +9089,7 @@ async function localAbrir(){
     const princ = (lista.find(x => x.documentoId === OBRA_MODELO.principal_doc_id) || {}).arquivoId;
     const ids = [princ].concat(inst).filter(Boolean);
     segFechar();
+    try { if (typeof mobPrancha === 'function') mobPrancha(); } catch (_){}   // celular: vai para a aba do 3D
     segBarraInfo('Abrindo estrutura + ' + inst.length + ' instalação(ões)…', '');
     await f3dModo(true, ids);
     for (let k = 0; k < 120 && !(F3D && F3D.modelos && F3D.modelos.length >= ids.length); k++) await new Promise(r => setTimeout(r, 500));
