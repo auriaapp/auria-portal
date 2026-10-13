@@ -4835,7 +4835,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12i').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-13a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -9041,6 +9041,134 @@ boot();
 </script>
 <script src="auria_pdfview.js"></script>
 <script src="auria_word.js"></script>
+<script>
+/* ── Instalações no local (backlog 231 — passo 1, sem câmera) ────────────────
+   No celular, dentro do pavimento: estrutura semitransparente (raio-X) com as
+   instalações por dentro, interferências estrutura × instalações destacadas e
+   visão em 1ª pessoa guiada pelo GIROSCÓPIO (DeviceOrientation). O modelo não
+   fica preso à obra real (isso é o passo 2, AR com câmera). */
+var LOCAL = { pav:null, pares:[], i:-1, ativo:false };
+const LOCAL_INST = { HID:0x3B82F6, SAN:0x3B82F6, ELE:0xF59E0B, TEL:0xEAB308, INC:0xF97316, PCI:0xF97316, GAS:0xA855F7, CLI:0x10B981, HVA:0x10B981, AVC:0x10B981, EXA:0x10B981, PRE:0x10B981, SPD:0x94A3B8, AUT:0x8B5CF6 };
+const LOCAL_CONFLITO = 0xFF1744;
+const _discCod = n => ((String(n || '').toUpperCase().match(/-([A-Z]{3})-/) || [])[1]) || '';
+function _localEhEst(m){ return /\b(EST|FUN|CON|MET)\b/.test(String(m.disciplina||'') + ' ' + String(m.nome||'').replace(/-/g,' ')); }
+async function localPainel(){
+  if (!EMP) return;
+  let lista = []; try { lista = await f3dModelosDoCde(); } catch (_){}
+  const inst = lista.filter(m => LOCAL_INST[_discCod(m.nome)]);
+  // uma por disciplina: prefere o EXECUTIVO (-EX-)
+  const porDisc = {}; inst.forEach(m => { const d=_discCod(m.nome); const a=porDisc[d]; if(!a || (/-EX-/.test(m.nome) && !/-EX-/.test(a.nome))) porDisc[d]=m; });
+  const escolhidos = Object.values(porDisc);
+  const pavs = window.AuriaAndares ? AuriaAndares.ordemFisica((CDE_PAVS||[]).filter(p=>p.tipo!=='grupo'&&p.tipo!=='vista')).reverse() : (CDE_PAVS||[]);
+  const temPrincipal = !!(OBRA_MODELO && OBRA_MODELO.principal_doc_id);
+  segOv('<div class="hd"><b>Instalações no local</b><p>Entre no pavimento pelo celular: a estrutura fica transparente para você ver por onde passam tubulações e infraestrutura, com as interferências destacadas. Aponte o celular para olhar em volta.</p></div>'
+    + '<div class="seg-form">'
+    + (temPrincipal ? '' : '<div class="seg-msg" style="display:block">A coordenação ainda não definiu o modelo principal da obra (estrutura). Peça no CDE.</div>')
+    + '<label>Pavimento</label><select id="locPav">' + pavs.map(p => '<option value="' + p.id + '"' + (LOCAL.pav===p.id?' selected':'') + '>' + esc((p.codigo||'').toUpperCase()) + ' — ' + esc(p.nome||'') + '</option>').join('') + '</select>'
+    + '<label>Instalações</label>'
+    + (escolhidos.length ? escolhidos.map(m => '<label class="chk"><input type="checkbox" class="locInst" value="' + m.arquivoId + '" checked> <span><b style="color:#' + LOCAL_INST[_discCod(m.nome)].toString(16).padStart(6,'0') + '">■</b> ' + esc(m.nome) + '</span></label>').join('')
+                         : '<div class="hint">Nenhum modelo de instalações convertido no CDE ainda.</div>')
+    + '<div id="segMsg" class="seg-msg"></div></div>'
+    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button><button class="b1" id="segOk" onclick="localAbrir()"' + (temPrincipal?'':' disabled') + '>Entrar no pavimento</button></div>');
+}
+async function localAbrir(){
+  const pavId = $('locPav').value, pav = (CDE_PAVS||[]).find(p => p.id === pavId); if (!pav) return;
+  const inst = [...document.querySelectorAll('.locInst:checked')].map(x => x.value);
+  const b = $('segOk'); if (b){ b.disabled = true; b.textContent = 'Abrindo…'; }
+  LOCAL.pav = pavId;
+  try {
+    const lista = await f3dModelosDoCde();
+    const princ = (lista.find(x => x.documentoId === OBRA_MODELO.principal_doc_id) || {}).arquivoId;
+    const ids = [princ].concat(inst).filter(Boolean);
+    segFechar();
+    segBarraInfo('Abrindo estrutura + ' + inst.length + ' instalação(ões)…', '');
+    await f3dModo(true, ids);
+    for (let k = 0; k < 120 && !(F3D && F3D.modelos && F3D.modelos.length >= ids.length); k++) await new Promise(r => setTimeout(r, 500));
+    segBarraInfo('Separando o pavimento ' + esc(pav.codigo || '') + '…', '');
+    const sets = await idsDoPavimento(pav);
+    const vis = {}, transp = {}, est = {}, cores = [];
+    F3D.modelos.forEach((m, mi) => { const st = sets[mi]; if (!st || !st.size) return; const arr = [...st]; vis[mi] = arr;
+      if (_localEhEst(m)) { est[mi] = arr; } });
+    // interferências estrutura × instalações (todo o modelo) e só as do pavimento
+    segBarraInfo('Procurando interferências no ' + esc(pav.codigo || '') + '…', '');
+    const rxE = [/^IFC(BEAM|COLUMN|SLAB|WALL|MEMBER|FOOTING|PILE)/];
+    const rxI = [/^IFC(FLOW|PIPE|DUCT|CABLE|DISTRIBUTION|FIRESUPPRESSION|SANITARY|VALVE|PUMP|TANK|ELECTRIC|LIGHT|OUTLET|SWITCH|JUNCTION|PROTECTIVE|ALARM|SENSOR|AIRTERMINAL|ENERGY)/];
+    let pares = [];
+    try { const r = await B3.clashCandidatos(F3D, rxE, rxI, 0.01); pares = (r.pares || []).filter(p => (sets[p.aMi] && sets[p.aMi].has(p.aId)) || (sets[p.bMi] && sets[p.bMi].has(p.bId))); } catch (_){}
+    LOCAL.pares = pares; LOCAL.i = -1;
+    const confA = {}, confB = {};
+    pares.forEach(p => { (confA[p.aMi] = confA[p.aMi] || new Set()).add(p.aId); (confB[p.bMi] = confB[p.bMi] || new Set()).add(p.bId); });
+    // estrutura transparente, menos as peças em conflito (ficam opacas e laranja)
+    Object.entries(est).forEach(([mi, arr]) => { const c = confA[mi]; transp[mi] = c ? arr.filter(id => !c.has(id)) : arr; });
+    // cor por disciplina nas instalações; conflito por cima
+    F3D.modelos.forEach((m, mi) => { if (_localEhEst(m) || !vis[mi]) return; const cor = LOCAL_INST[_discCod(m.nome)] || 0x8B5CF6; cores.push({ porMod: { [mi]: vis[mi] }, cor }); });
+    const pc = {}; Object.entries(confB).forEach(([mi, st]) => { pc[mi] = [...st]; });
+    const pe = {}; Object.entries(confA).forEach(([mi, st]) => { pe[mi] = [...st]; });
+    if (Object.keys(pe).length) cores.push({ porMod: pe, cor: 0xF59E0B });
+    if (Object.keys(pc).length) cores.push({ porMod: pc, cor: LOCAL_CONFLITO });
+    await B3.vistaLocal(F3D, { visiveis: vis, transparentes: transp, cores, opacidade: 0.16 });
+    B3.andarLento(F3D);
+    const ok = await B3.entrarAndarNoCentro(F3D, Object.keys(est).length ? est : vis);
+    LOCAL.ativo = true;
+    localControles(true);
+    segBarraInfo('<b>' + esc((pav.codigo||'').toUpperCase()) + '</b> · ' + pares.length + ' interferência(s) estrutura × instalações'
+      + (ok ? '' : ' · não achei o piso do pavimento'), '');
+  } catch (e){ segBarraInfo('Não foi possível abrir: ' + esc(e.message || e), ''); }
+}
+function localControles(on){
+  let c = $('localCtl');
+  if (!on){ if (c) c.remove(); return; }
+  if (!c){ c = document.createElement('div'); c.id = 'localCtl'; document.body.appendChild(c); }
+  const n = LOCAL.pares.length;
+  const bt = (k, t) => '<button class="lc-dir" data-k="' + k + '">' + t + '</button>';
+  c.innerHTML = '<style>#localCtl{position:fixed;left:0;right:0;bottom:calc(64px + env(safe-area-inset-bottom));z-index:9500;display:flex;align-items:flex-end;justify-content:space-between;padding:0 12px;pointer-events:none}'
+    + '#localCtl>div{pointer-events:auto}#localCtl .lc-pad{display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px;gap:6px}'
+    + '#localCtl button{border:0;border-radius:12px;background:rgba(15,23,42,.82);color:#fff;font:700 14px Segoe UI,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.35);touch-action:none;user-select:none;-webkit-user-select:none}'
+    + '#localCtl .lc-dir{font-size:20px}#localCtl .lc-lado{display:flex;flex-direction:column;gap:6px;align-items:stretch}#localCtl .lc-lado button{padding:11px 12px}'
+    + '#localCtl .on{background:#E8762B}#localCtl .lc-int{background:rgba(255,23,68,.9)}</style>'
+    + '<div class="lc-pad"><span></span>' + bt('w','▲') + '<span></span>' + bt('a','◀') + bt('s','▼') + bt('d','▶') + '</div>'
+    + '<div class="lc-lado">'
+    + '<button id="lcGiro" onclick="localGiro()">📱 Olhar com o celular</button>'
+    + '<button onclick="B3.andarRecentrar(F3D)">⟳ Recentrar</button>'
+    + (n ? '<button class="lc-int" onclick="localProxima(1)">⚠ ' + n + ' interferência(s) ›</button>' : '<button disabled style="opacity:.6">Sem interferências</button>')
+    + '<button onclick="localSair()">✕ Sair</button></div>';
+  c.querySelectorAll('.lc-dir').forEach(b => {
+    const k = b.dataset.k;
+    const dn = ev => { ev.preventDefault(); B3.andarTecla(F3D, k, true); };
+    const up = ev => { ev.preventDefault(); B3.andarTecla(F3D, k, false); };
+    b.addEventListener('pointerdown', dn); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
+  });
+}
+async function localGiro(){
+  const b = $('lcGiro'); const ligado = F3D && F3D.andar && F3D.andar.giro;
+  if (ligado){ B3.andarGiro(F3D, false); if (b){ b.classList.remove('on'); b.textContent = '📱 Olhar com o celular'; } return; }
+  try {   // iPhone: a permissão TEM de ser pedida no toque
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const r = await DeviceOrientationEvent.requestPermission(); if (r !== 'granted'){ alert('Sem permissão para o giroscópio. Libere em Ajustes do Safari.'); return; } }
+  } catch (_){}
+  if (!('DeviceOrientationEvent' in window)){ alert('Este aparelho não tem giroscópio disponível no navegador.'); return; }
+  B3.andarGiro(F3D, true);
+  if (b){ b.classList.add('on'); b.textContent = '📱 Giroscópio ligado'; }
+  setTimeout(() => { if (F3D && F3D.andar && F3D.andar._giroYawG == null) alert('O giroscópio não respondeu. No computador isso é normal — teste no celular.'); }, 2500);
+}
+async function localProxima(d){
+  const n = LOCAL.pares.length; if (!n) return;
+  LOCAL.i = ((LOCAL.i < 0 && d < 0 ? 0 : LOCAL.i) + d + n) % n;
+  const p = LOCAL.pares[LOCAL.i];
+  let bx = null; try { const bs = await F3D.modelos[p.bMi].model.getBoxes([p.bId]); bx = bs && bs[0]; } catch (_){}
+  if (bx && !bx.isEmpty()){ const c = bx.getCenter(new F3D.THREE.Vector3()); B3.andarIrPara(F3D, c, 2.2); }
+  segBarraInfo('⚠ <b>' + (LOCAL.i + 1) + '/' + n + '</b> · ' + esc(p.aNome || '') + ' × ' + esc(p.bNome || ''),
+    '<button onclick="localProxima(-1)">‹</button><button onclick="localProxima(1)">›</button>');
+}
+async function localSair(){
+  LOCAL.ativo = false; localControles(false);
+  try { B3.andarGiro(F3D, false); } catch (_){}
+  try { await B3.modoAndar(F3D, false); } catch (_){}
+  try { await B3.limparTransparencia(F3D); } catch (_){}
+  try { await f3dVoltarModelo(); } catch (_){}
+  try { segSairModo(); } catch (_){}
+}
+</script>
 <script src="auria_andares.js?v=3"></script>
 <script src="auria_itcopia.js"></script>
 <script>
@@ -9221,12 +9349,14 @@ function obraModulosHtml(){
     + mod('qualidade', '', '', 'Qualidade — FVS', 'carregando…', '', false)
     + mod('concretagem', '', '', 'Concretagem', 'carregando…', '', false)
     + mod('diario', '', '', 'Diário de Obra', 'abre no CDE', '', false)
+    + mod('local', '<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="2.4" width="8" height="15.2" rx="1.6"/><path d="M9 15h2"/><path d="M2.6 7.5c1.2-1.4 1.2-3.6 0-5M17.4 7.5c-1.2-1.4-1.2-3.6 0-5"/></svg>', '', 'Instalações no local', 'estrutura × tubulações pelo celular', '', false)
     + (['eng_chefe','coord_campo'].includes(segMeuNivel()) ? mod('qrpav', '<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.4" y="2.4" width="5.6" height="5.6" rx="1"/><rect x="12" y="2.4" width="5.6" height="5.6" rx="1"/><rect x="2.4" y="12" width="5.6" height="5.6" rx="1"/><path d="M12 12h2.4v2.4H12zM15.2 15.2h2.4v2.4h-2.4z"/></svg>', '', 'QR dos pavimentos', 'modelo 3D por andar, sem login', '', false) : '');
 }
 function obraModulo(k){
   if (k === 'avisos'){ obraMostrarAvisos(true); if (!obraPendentes().length && !segPendentes().length) obraTab('alertas'); return; }
   if (k === 'seguranca'){ segPainel(); return; }
   if (k === 'diario'){ if (EMP) window.open('cde.html?emp=' + encodeURIComponent(EMP.id), '_blank'); return; }
+  if (k === 'local'){ localPainel(); return; }
   if (k === 'qrpav'){ if (EMP) window.open('qr_pavimentos.html?de=obra&emp=' + encodeURIComponent(EMP.id), '_blank'); return; }
   // os módulos FVS/Concretagem/ITs substituem esta função; se chegou aqui, algo não carregou
   const f = { qualidade:'fvsPainel', concretagem:'concPainel', its:'itsPainel' }[k];

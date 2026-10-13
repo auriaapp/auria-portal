@@ -3120,10 +3120,78 @@ function andarQuadro(V, dt){
   if(W.teclas.has('d')) mov.add(lado);
   if(W.teclas.has('a')) mov.sub(lado);
   if(!mov.lengthSq()) return;
-  const v=4.5*(W.teclas.has('shift')?3:1);
+  const v=(W.lento?1.4:4.5)*(W.teclas.has('shift')?3:1);   // celular: passo de pessoa (1,4 m/s)
   W.pos.addScaledVector(mov.normalize(), v*dt);
   andarAplicar(V);
 }
+
+// ── Visão LOCAL no celular (backlog 231 — passo 1, sem câmera) ─────────────
+// Só o pavimento visível; estrutura semitransparente (raio-X) para enxergar os
+// encaminhamentos das instalações por dentro; grupos coloridos (disciplina,
+// interferência). Tudo por porMod {mi:[ids]}.
+export async function vistaLocal(V, cfg){
+  const T=V.THREE, vis=cfg.visiveis||{}, transp=cfg.transparentes||{}, cores=cfg.cores||[];
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  for(const [mi,ids] of Object.entries(vis)){ const x=V.modelos[mi]; if(x&&ids&&ids.length){ try{ await x.model.setVisible(ids,true); }catch(_){} } }
+  for(const g of cores){ for(const [mi,ids] of Object.entries(g.porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    try{ await x.model.highlight(ids, { color:new T.Color(g.cor), renderedFaces:1, opacity:1, transparent:false }); }catch(_){} } }
+  for(const [mi,ids] of Object.entries(transp)){ const x=V.modelos[mi]; if(x&&ids&&ids.length){ try{ await x.model.setOpacity(ids, cfg.opacidade!=null?cfg.opacidade:0.18); }catch(_){} } }
+  V._isolado=true; V._isoladoPorMod=vis; V._colorido=!!cores.length;
+  try{ await V.fragments.update(true); }catch(_){}
+}
+// Entra no modo caminhar no CENTRO do conjunto (o pavimento), no piso dele.
+export async function entrarAndarNoCentro(V, porMod){
+  const T=V.THREE, cx=new T.Box3(); let tem=false;
+  for(const [mi,ids] of Object.entries(porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    let bs=[]; try{ bs=await x.model.getBoxes(ids.slice(0,4000)); }catch(_){}
+    (bs||[]).forEach(b=>{ if(b && !b.isEmpty()){ cx.union(b); tem=true; } }); }
+  if(!tem) return false;
+  await niveis(V);
+  const c=cx.getCenter(new T.Vector3());
+  // piso = nível de laje mais próximo da base do conjunto (e não abaixo dela)
+  const ns=V.niveis||[]; let y=cx.min.y; let melhor=Infinity;
+  ns.forEach(n=>{ const d=Math.abs(n-cx.min.y); if(d<melhor){ melhor=d; y=n; } });
+  entrarAndar(V, new T.Vector3(c.x, y, c.z));
+  return true;
+}
+// Toque na tela (celular): segura ▲/▼/◀/▶ = mesmas teclas do W/S/A/D.
+export function andarTecla(V, k, on){ const W=V.andar; if(!W||!W.ativo) return; if(on) W.teclas.add(k); else W.teclas.delete(k); }
+export function andarLento(V){ const W=V.andar; if(W){ W.lento=true; } }
+// GIROSCÓPIO: o celular aponta, a vista acompanha (DeviceOrientation → yaw/pitch
+// do modo caminhar). iOS exige permissão pedida num toque (feito pelo App).
+// "Recentrar" mantém a direção atual da vista como referência.
+export function andarGiro(V, lig){
+  const W=V.andar, T=V.THREE;
+  if(W._giroFn){ window.removeEventListener('deviceorientation', W._giroFn, true); W._giroFn=null; }
+  W.giro=false; if(!lig) return false;
+  const q=new T.Quaternion(), q1=new T.Quaternion(-Math.sqrt(0.5),0,0,Math.sqrt(0.5)), q0=new T.Quaternion(), e=new T.Euler(), Z=new T.Vector3(0,0,1), f=new T.Vector3();
+  W._giroOff=null;
+  W._giroFn=(ev)=>{
+    if(!W.ativo || ev.alpha==null) return;
+    const R=Math.PI/180, orient=((screen.orientation&&screen.orientation.angle)||window.orientation||0)*R;
+    e.set(ev.beta*R, ev.alpha*R, -ev.gamma*R, 'YXZ');
+    q.setFromEuler(e); q.multiply(q1); q.multiply(q0.setFromAxisAngle(Z, -orient));
+    f.set(0,0,-1).applyQuaternion(q);
+    const yawG=Math.atan2(-f.x,-f.z), pitch=Math.asin(Math.max(-1,Math.min(1,f.y)));
+    if(W._giroOff==null) W._giroOff=W.yaw-yawG;           // 1º evento: mantém para onde a vista já olhava
+    W._giroYawG=yawG;
+    W.yaw=yawG+W._giroOff; W.pitch=Math.max(-1.4,Math.min(1.4,pitch));
+    andarAplicar(V);
+  };
+  window.addEventListener('deviceorientation', W._giroFn, true);
+  W.giro=true; return true;
+}
+// Leva quem caminha até perto de um ponto (ex.: uma interferência), olhando para ele.
+export function andarIrPara(V, alvo, dist){
+  const W=V.andar, T=V.THREE; if(!W||!W.ativo||!alvo) return;
+  const d=dist||2.2, dx=W.pos.x-alvo.x, dz=W.pos.z-alvo.z, L=Math.hypot(dx,dz)||1;
+  W.pos.x=alvo.x+dx/L*d; W.pos.z=alvo.z+dz/L*d;
+  W.yaw=Math.atan2(-(alvo.x-W.pos.x), -(alvo.z-W.pos.z));
+  W.pitch=Math.atan2(alvo.y-W.pos.y, d);
+  if(W._giroYawG!=null) W._giroOff=W.yaw-W._giroYawG;   // giroscópio continua de onde parou
+  andarAplicar(V);
+}
+export function andarRecentrar(V){ const W=V.andar; if(W && W._giroYawG!=null){ W._giroOff=W.yaw-W._giroYawG; } }
 
 // Dimensões REAIS do elemento (caixa orientada), não a caixa alinhada aos eixos do
 // modelo: uma parede/painel girado em planta ganhava "largura" de 1,3 m só por causa da
