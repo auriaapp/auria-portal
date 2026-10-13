@@ -4353,17 +4353,26 @@ async function f3dVolumePorPav(classes, prop){
   if(!window.AuriaAndares) return null;
   const rx=classes.map(c=>new RegExp('^'+c+'$','i'));
   const mp=(typeof OBRA_MODELO!=='undefined' && OBRA_MODELO && OBRA_MODELO.pav_map) || null;
-  const rot=nome=>{ if(mp && mp[nome]){ const p=(typeof CDE_PAVS!=='undefined'?CDE_PAVS:[]).find(x=>x.id===mp[nome]); if(p) return (p.codigo||'').toUpperCase()+' — '+(p.nome||''); } return nome||'(sem nome)'; };
+  const PV=(typeof CDE_PAVS!=='undefined'?CDE_PAVS:[]);
+  const rotId=id=>{ const p=PV.find(x=>x.id===id); return p ? (p.codigo||'').toUpperCase()+' — '+(p.nome||'') : null; };
   const linhas=[]; let total=0, nPec=0;
-  for(const x of F3D.modelos){
+  // concreto = modelos da ESTRUTURA (EST/FUN/CON/MET); a arquitetura também tem IfcWall/IfcSlab
+  const ehEst=x=>/(EST|FUN|CON|MET)/.test(String(x.disciplina||'')+' '+String(x.nome||'').replace(/-/g,' '));
+  const mods=F3D.modelos.some(ehEst) ? F3D.modelos.filter(ehEst) : F3D.modelos;
+  for(const x of mods){
     const md=x.model; if(!md) continue;
     let cat={}; try{ cat=await md.getItemsOfCategories(rx)||{}; }catch(_){}
     const daClasse=new Set(Object.values(cat).flat()); if(!daClasse.size) continue;
     const andares=await AuriaAndares.ler(md);
+    const sug=AuriaAndares.parear(andares.map(a=>a.nome), PV);
+    andares.forEach((a,k)=>{ a._pav = (mp && (a.nome in mp)) ? mp[a.nome] : (sug[k]&&sug[k].id); });
     for(const a of andares){
       const ids=a.ids.filter(id=>daClasse.has(id)); if(!ids.length) continue;
       let v=0; try{ v=+(await md.getItemsVolume(ids))||0; }catch(_){}
-      linhas.push({ nome:rot(a.nome), z:a.z, n:ids.length, v }); total+=v; nPec+=ids.length;
+      const nome=(a._pav && rotId(a._pav)) || a.nome || '(sem nome)';
+      const ja=linhas.find(l=>l.nome===nome);   // subníveis e camadas do mesmo pavimento somam numa linha
+      if(ja){ ja.n+=ids.length; ja.v+=v; ja.z=Math.max(ja.z,a.z); } else linhas.push({ nome, z:a.z, n:ids.length, v });
+      total+=v; nPec+=ids.length;
     }
   }
   if(!linhas.length) return null;
@@ -4826,7 +4835,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12e').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-12f').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões

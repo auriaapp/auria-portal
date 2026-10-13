@@ -2254,6 +2254,7 @@ function _rotuloValor(v, termo){
 // total da categoria. Leve (atributos-only).
 export async function contarFiltrado(V, regexes, termos, pavim){
   V._cancelar=false;
+  if(_pavSetsDe(V, pavim)){ const pm=await acharElementos(V, regexes, termos, pavim); let c=0; for(const a of Object.values(pm)) c+=(a?a.length:0); return c; }
   const termosLc=(termos||[]).map(t=>String(t).trim().toLowerCase()).filter(Boolean);
   const pavN = pavim ? _norm(pavim) : '';
   let n=0;
