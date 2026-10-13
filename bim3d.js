@@ -976,10 +976,12 @@ function _textoBusca(d){
   const escal=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
   const out=[];
   for(const [k,v] of Object.entries(d)){
-    if(k[0]==='_') continue;                          // pula _guid/_localId/_category
+    if(k[0]==='_' || /^(globalid|guid|ownerhistory)$/i.test(k)) continue;   // pula identificadores (_guid/_localId/GlobalId)
     if(Array.isArray(v)){
       v.forEach(ps=>{ if(!ps||typeof ps!=='object') return;
-        Object.values(ps).forEach(sub=>{
+        // idem dentro do Pset: o _guid do conjunto de propriedades entrava no texto
+        // ("…njC80IBU…" fazia um pilar C50 casar com "c80")
+        Object.entries(ps).filter(([k2])=> k2[0]!=='_' && !/^(globalid|guid|ownerhistory)$/i.test(k2)).map(([,x])=>x).forEach(sub=>{
           if(Array.isArray(sub)){ sub.forEach(p=>{ if(!p||typeof p!=='object') return;
             const pv=escal(p.NominalValue)??escal(p.Value)??escal(p.LengthValue)??escal(p.AreaValue)??escal(p.VolumeValue)??escal(p.CountValue);
             if(pv!=null) out.push(String(pv)); }); }
