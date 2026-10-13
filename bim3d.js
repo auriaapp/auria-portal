@@ -1192,9 +1192,14 @@ function _casaPav(nomeNorm, alvo){
 }
 // Categorias "visíveis" de construção (p/ isolar um andar inteiro sem puxar
 // espaços/tipos/relações).
-const CAT_VISIVEIS=[/^IFCWALL/,/^IFCSLAB/,/^IFCCOLUMN/,/^IFCBEAM/,/^IFCDOOR/,/^IFCWINDOW/,/^IFCSTAIR/,
-  /^IFCRAILING/,/^IFCROOF/,/^IFCCURTAINWALL/,/^IFCPLATE/,/^IFCMEMBER/,/^IFCCOVERING/,/^IFCFOOTING/,
-  /^IFCPILE/,/^IFCRAMP/,/^IFCBUILDINGELEMENTPROXY/,/^IFCFURNI/,/^IFCFLOWSEGMENT/,/^IFCFLOWTERMINAL/,/^IFCFLOWFITTING/];
+// Prefixo de classe SEM os TIPOS (IfcWallType, IfcDoorStyle…): o Revit exporta centenas de
+// definições de tipo (808 IfcWallType no PINI) que não são peças — sem geometria, mas com
+// nome e material — e entravam nas contagens/filtros por classe.
+const _SEM_TIPO='(?!\\w*(TYPE|STYLE)$)';
+const _rxClasse=pref=>new RegExp('^'+pref+_SEM_TIPO);
+const CAT_VISIVEIS=['IFCWALL','IFCSLAB','IFCCOLUMN','IFCBEAM','IFCDOOR','IFCWINDOW','IFCSTAIR',
+  'IFCRAILING','IFCROOF','IFCCURTAINWALL','IFCPLATE','IFCMEMBER','IFCCOVERING','IFCFOOTING',
+  'IFCPILE','IFCRAMP','IFCBUILDINGELEMENTPROXY','IFCFURNI','IFCFLOWSEGMENT','IFCFLOWTERMINAL','IFCFLOWFITTING'].map(_rxClasse);
 // Isola um PAVIMENTO INTEIRO (todas as categorias) pela faixa de altura — para
 // "destacar o pavimento térreo" sem citar classe. Sem realce (cores naturais).
 export async function isolarPavimento(V, pavim){
@@ -1430,7 +1435,7 @@ function _classeIfc(valor){
 // classe específica do IFC4 — a classe do filtro aceita as duas formas.
 const _CLASSE_EQ={ IFCPIPESEGMENT:'IFCPIPESEGMENT|IFCPIPEFITTING|IFCFLOWSEGMENT|IFCFLOWFITTING',
   IFCDUCTSEGMENT:'IFCDUCTSEGMENT|IFCDUCTFITTING', IFCCABLECARRIERSEGMENT:'IFCCABLECARRIERSEGMENT|IFCCABLECARRIERFITTING' };
-function _classeRx(valor){ const ifc=_classeIfc(valor); if(!ifc) return null; return new RegExp('^('+(_CLASSE_EQ[ifc]||ifc)+')'); }   // prefixo: pega subtipos
+function _classeRx(valor){ const ifc=_classeIfc(valor); if(!ifc) return null; return new RegExp('^('+(_CLASSE_EQ[ifc]||ifc)+')'+_SEM_TIPO); }   // prefixo: pega subtipos (IfcWallStandardCase), não os TIPOS
 // Sinônimos de material (PT/EN) — o exportador pode nomear em inglês. Casa se
 // QUALQUER termo bater (o _bateTermos já é OU).
 function _matSyn(v){ const t=_norm(v); const map={
