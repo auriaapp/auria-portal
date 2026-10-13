@@ -1420,7 +1420,11 @@ function _classeIfc(valor){
     janela:'IFCWINDOW',escada:'IFCSTAIR',cobertura:'IFCROOF',tubulacao:'IFCPIPESEGMENT',duto:'IFCDUCTSEGMENT'};
   return NM[_norm(valor).split(' ')[0]]||null;
 }
-function _classeRx(valor){ const ifc=_classeIfc(valor); return ifc?new RegExp('^'+ifc):null; }   // prefixo: pega subtipos
+// IFC2X3 (Revit/hidráulica) exporta tubo/conexão como IfcFlowSegment/IfcFlowFitting, sem a
+// classe específica do IFC4 — a classe do filtro aceita as duas formas.
+const _CLASSE_EQ={ IFCPIPESEGMENT:'IFCPIPESEGMENT|IFCPIPEFITTING|IFCFLOWSEGMENT|IFCFLOWFITTING',
+  IFCDUCTSEGMENT:'IFCDUCTSEGMENT|IFCDUCTFITTING', IFCCABLECARRIERSEGMENT:'IFCCABLECARRIERSEGMENT|IFCCABLECARRIERFITTING' };
+function _classeRx(valor){ const ifc=_classeIfc(valor); if(!ifc) return null; return new RegExp('^('+(_CLASSE_EQ[ifc]||ifc)+')'); }   // prefixo: pega subtipos
 // Sinônimos de material (PT/EN) — o exportador pode nomear em inglês. Casa se
 // QUALQUER termo bater (o _bateTermos já é OU).
 function _matSyn(v){ const t=_norm(v); const map={
