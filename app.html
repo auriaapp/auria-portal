@@ -566,7 +566,11 @@
           <button class="tb" onclick="abrirAnaliseSel()" title="Abrir análise (selecione os PDFs)" style="font-size:13px;padding:6px 9px">📂</button>
           <button class="tb app-wr" onclick="excluirAnaliseSel()" title="Excluir análise selecionada" style="font-size:13px;padding:6px 9px">🗑</button>
         </div>
-        <button class="btn-sec app-wr" onclick="salvarAnalise()" style="width:100%;font-size:12px" disabled id="btnSalvarAnalise">💾 Salvar análise atual</button>
+        <button class="btn-sec app-wr" onclick="salvarAnalise(false)" style="width:100%;font-size:12px" disabled id="btnSalvarAnalise">💾 Salvar análise atual</button>
+        <div id="anAtualInfo" style="display:none;align-items:center;gap:8px;margin-top:5px;font-size:10.5px;color:var(--mut)">
+          <span id="anAtualTxt" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <a href="#" class="app-wr" onclick="salvarAnalise(true);return false" style="color:var(--accent2);white-space:nowrap">salvar como nova…</a>
+        </div>
       </div>
 
       <div style="border-top:1px solid var(--line);padding-top:10px">
@@ -1366,6 +1370,7 @@ function trocarEmp(){
   renderCamadas();
   carregarApts();
   carregarFornecedores();
+  ANALISE_ATUAL=null;   // outro empreendimento: nenhuma análise aberta
   carregarAnalises();
   carregarCdePavs();
 }
@@ -1483,10 +1488,16 @@ async function selecionarCdePick(docId){
 }
 
 // ═══ ANÁLISES SALVAS ════════════════════════════════════════════════════════
-// Guarda o CONJUNTO de pranchas/camadas (ordem + identidade por hash) em
-// analises_auria. Reabrir: seleciona os PDFs (multi) → casa por hash → remonta.
+// Guarda o CONJUNTO aberto em analises_auria: pranchas/camadas (ordem + identidade
+// por hash ou documento do CDE), os MODELOS 3D federados (por documento do CDE →
+// reabrem na revisão VIGENTE, como as pranchas) e a VISTA (modo de tela + câmera
+// 3D). A análise aberta fica em ANALISE_ATUAL: "Salvar" passa a ATUALIZÁ-LA
+// (antes sempre criava cópia) e "salvar como nova…" cria outra. Escrita só do
+// coordenador do empreendimento (RLS restritiva, supabase_analises_v2.sql);
+// o visualizador nem vê os botões (app-wr).
 let ANALISES=[];
 let _analisePend=null;
+let ANALISE_ATUAL=null;   // id da análise aberta/salva agora (null = nenhuma)
 async function carregarAnalises(){
   ANALISES=[];
   if(EMP){
@@ -1495,15 +1506,29 @@ async function carregarAnalises(){
   }
   renderAnalises();
 }
-function renderAnalises(){
-  const sel=$('selAnalise'); if(sel) sel.innerHTML='<option value="">— análises salvas —</option>'+ANALISES.map(a=>`<option value="${a.id}">${esc(a.nome)} · ${(a.pranchas||[]).length} prancha(s)</option>`).join('');
-  const b=$('btnSalvarAnalise'); if(b) b.disabled=!(EMP&&LAYERS.length);
+function _anTemConteudo(){ return !!(EMP && (LAYERS.length || (F3D && F3D.modelos && F3D.modelos.length))); }
+function _anResumo(a){
+  const p=(a.pranchas||[]).length, m=(a.modelos||[]).length;
+  return [p?p+' prancha(s)':'', m?m+' modelo(s) 3D':''].filter(Boolean).join(' + ') || 'vazia';
 }
-async function salvarAnalise(){
-  if(!EMP){ alert('Selecione o empreendimento.'); return; }
-  if(!LAYERS.length){ alert('Abra ao menos a prancha base antes de salvar a análise.'); return; }
-  const nomeDefault=(LAYERS[0].prancha.arquivo_nome||'Análise')+' — '+new Date().toLocaleDateString('pt-BR');
-  const nome=prompt('Nome da análise:', nomeDefault); if(!nome) return;
+function _anCarimbo(a){
+  const d=a.atualizado_em||a.criado_em, dt=d?new Date(d).toLocaleDateString('pt-BR'):'';
+  return a.atualizado_por_nome ? ('Aberta · atualizada por '+a.atualizado_por_nome+' em '+dt) : ('Aberta · salva em '+dt);
+}
+function renderAnalises(){
+  const atual=ANALISES.find(a=>a.id===ANALISE_ATUAL)||null; if(!atual) ANALISE_ATUAL=null;
+  const sel=$('selAnalise');
+  if(sel) sel.innerHTML='<option value="">— análises salvas —</option>'+ANALISES.map(a=>
+    `<option value="${a.id}"${a.id===ANALISE_ATUAL?' selected':''}>${esc(a.nome)} · ${esc(_anResumo(a))}</option>`).join('');
+  const b=$('btnSalvarAnalise');
+  if(b){ b.disabled=!_anTemConteudo();
+    b.textContent = atual ? '💾 Atualizar “'+atual.nome+'”' : '💾 Salvar análise atual';
+    b.title = atual ? 'Grava o que está aberto agora POR CIMA desta análise' : 'Cria uma análise nova com as pranchas e modelos abertos'; }
+  const inf=$('anAtualInfo');
+  if(inf){ inf.style.display=atual?'flex':'none'; const t=$('anAtualTxt'); if(t&&atual){ t.textContent=_anCarimbo(atual); t.title=t.textContent; } }
+}
+// O que está aberto agora → { pranchas, modelos, vista }.
+function _anColetar(){
   // Pranchas vindas do CDE são recarregadas por download (cde_documento_id),
   // sem depender do usuário re-selecionar um arquivo local. As demais seguem
   // pelo casamento de hash de sempre.
@@ -1513,15 +1538,82 @@ async function salvarAnalise(){
     origem: L.prancha.cde_documento_id ? 'cde' : 'local',
     cde_documento_id: L.prancha.cde_documento_id || null
   }));
+  const modelos=((F3D && F3D.modelos)||[]).map(x=>({
+    documento_id:x.documentoId||null, arquivo_id:x.arquivoId||null, revisao_id:x.revisaoId||null,
+    codigo:x.nome||'', revisao:x.revisao||'', disciplina:x.disciplina||''
+  }));
+  let cam=null;
+  try{ if(F3D && F3D.camera && F3D.controls){ const c=F3D.camera.position, t=F3D.controls.target; cam={ p:[c.x,c.y,c.z], t:[t.x,t.y,t.z] }; } }catch(_){}
+  const split=document.body.classList.contains('split');
+  return { pranchas, modelos, vista:{ modo: split?'split':(F3D_MODO?'3d':'2d'), prim: split?SPLIT_PRIM:null, cam } };
+}
+function _anErroMsg(e){
+  const m=(e&&e.message)||String(e);
+  return /row-level security|violates|permission/i.test(m) ? 'sem permissão — só o coordenador deste empreendimento grava análises.' : m;
+}
+async function salvarAnalise(comoNova){
+  if(APP_RO){ roAviso(); return; }
+  if(!EMP){ alert('Selecione o empreendimento.'); return; }
+  if(!_anTemConteudo()){ alert('Abra ao menos uma prancha ou um modelo 3D antes de salvar a análise.'); return; }
+  const c=_anColetar();
+  const atual = !comoNova && ANALISES.find(a=>a.id===ANALISE_ATUAL);
   try{
-    const { error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome, pranchas, criado_por:USER.id });
+    if(atual){
+      if(!confirm('Atualizar a análise “'+atual.nome+'” com o que está aberto agora?\n('+_anResumo(c)+')\n\nPara manter a versão anterior, use “salvar como nova…”.')) return;
+      const { data, error }=await sb.from('analises_auria').update({ pranchas:c.pranchas, modelos:c.modelos, vista:c.vista }).eq('id',atual.id).select('id');
+      if(error) throw error;
+      if(!data || !data.length) throw new Error('row-level security');   // RLS filtra o UPDATE em silêncio (0 linhas)
+      await carregarAnalises();
+      alert('Análise “'+atual.nome+'” atualizada.');
+      return;
+    }
+    const base = c.pranchas.length ? (LAYERS[0].prancha.arquivo_nome||'Análise') : ((c.modelos[0]&&c.modelos[0].codigo)||'Análise 3D');
+    const nome=prompt('Nome da análise:', base+' — '+new Date().toLocaleDateString('pt-BR')); if(!nome) return;
+    const { data, error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome, pranchas:c.pranchas, modelos:c.modelos, vista:c.vista, criado_por:USER.id }).select('id').single();
     if(error) throw error;
+    ANALISE_ATUAL=data.id;
     await carregarAnalises();
-    const nCde=pranchas.filter(p=>p.origem==='cde').length;
-    alert('Análise salva.'+(nCde===pranchas.length ? ' Como é 100% do CDE, reabre sozinha — sem pedir arquivo nenhum.'
+    const nP=c.pranchas.length, nCde=c.pranchas.filter(p=>p.origem==='cde').length;
+    const txtP = !nP ? '' : (nCde===nP ? ' As pranchas são do CDE e reabrem sozinhas.'
       : nCde>0 ? ' As '+nCde+' prancha(s) do CDE reabrem sozinhas; as demais pedem o mesmo PDF local.'
-      : ' Para retomá-la depois, selecione-a e clique 📂, escolhendo os mesmos PDFs.'));
-  }catch(e){ alert('Erro ao salvar análise: '+(e.message||e)); }
+      : ' Para retomá-la, selecione-a e clique 📂, escolhendo os mesmos PDFs.');
+    const txtM = c.modelos.length ? ' Os '+c.modelos.length+' modelo(s) 3D reabrem na revisão vigente, com a mesma vista.' : '';
+    alert('Análise salva.'+txtP+txtM);
+  }catch(e){ alert('Erro ao salvar análise: '+_anErroMsg(e)); }
+}
+// Reabre os modelos 3D da análise na revisão VIGENTE de cada documento (mesma
+// regra das pranchas do CDE) e devolve avisos de revisão. Documento que saiu da
+// lista vigente abre pela revisão salva (f3dModo busca por arquivo, item 101).
+async function _anRestaurar3D(an){
+  const mods=an.modelos||[], vista=an.vista||{};
+  if(!mods.length){ if(F3D_MODO) await f3dModo(false); return []; }
+  let lista=[]; try{ lista=await f3dModelosDoCde(); }catch(_){}
+  const avisos=[], preSel=[];
+  mods.forEach(m=>{
+    const v=lista.find(x=>x.documentoId===m.documento_id);
+    if(v){
+      preSel.push(v.arquivoId);
+      if(m.revisao_id && v.revisaoId!==m.revisao_id) avisos.push((m.codigo||v.nome)+' abriu na '+(v.revisao||'revisão vigente')+' (análise salva na '+(m.revisao||'revisão anterior')+')');
+    } else if(m.arquivo_id){
+      preSel.push(m.arquivo_id);
+      avisos.push((m.codigo||'modelo')+' não está mais vigente no CDE — abriu a revisão salva'+(m.revisao?(' '+m.revisao):''));
+    }
+  });
+  if(!preSel.length) return ['nenhum dos modelos 3D desta análise foi encontrado no CDE'];
+  const split = vista.modo==='split' && LAYERS.length;
+  document.body.classList.remove('split','split-3dleft');
+  if(split){ SPLIT_PRIM = vista.prim==='3d' ? '3d' : '2d'; document.body.classList.add('split'); if(SPLIT_PRIM==='3d') document.body.classList.add('split-3dleft'); }
+  await f3dModo(true, preSel);
+  _splitBtns(!!split); _splitResize();
+  if(vista.cam && F3D && F3D.camera && F3D.controls){
+    try{
+      F3D.camera.position.set(vista.cam.p[0], vista.cam.p[1], vista.cam.p[2]);
+      F3D.controls.target.set(vista.cam.t[0], vista.cam.t[1], vista.cam.t[2]);
+      F3D.controls.update();
+      if(F3D.fragments) await F3D.fragments.update(true);
+    }catch(e){ console.warn('vista 3D:', e); }
+  }
+  return avisos;
 }
 // Uma prancha é "do CDE" na análise salva se tiver cde_documento_id — essas
 // recarregam por download (abrirDoCDE), sem depender de o usuário ter o
@@ -1581,10 +1673,17 @@ async function restaurarAnalise(an, localFilesByHash){
       }
     }catch(e){ faltando.push(m.arquivo_nome||'(sem nome)'); console.warn('restaurarAnalise local:',(e&&e.message)||e); }
   }
-  if(!baseFeita){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
-  renderCamadas();
+  if(!baseFeita && !(an.modelos||[]).length){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
+  if(baseFeita) renderCamadas();
+  let avisos3d=[];
+  try{ avisos3d=await _anRestaurar3D(an); }
+  catch(e){ console.warn('restaurarAnalise 3D:', e); avisos3d=['os modelos 3D não abriram: '+((e&&e.message)||e)]; }
+  ANALISE_ATUAL=an.id;
   renderAnalises();
-  if(faltando.length) alert('Análise aberta. Faltaram: '+faltando.join(', ')+'.');
+  const msgs=[];
+  if(faltando.length) msgs.push('Faltaram: '+faltando.join(', ')+'.');
+  if(avisos3d.length) msgs.push('Modelos 3D: '+avisos3d.join('; ')+'.');
+  if(msgs.length) alert('Análise aberta. '+msgs.join(' '));
 }
 async function excluirAnaliseSel(){
   const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
@@ -1870,7 +1969,7 @@ function renderCamadas(){
   };
 
   el.innerHTML=lockRow+LAYERS.map((L,i)=>card(L,i)).join('');
-  const bsa=$('btnSalvarAnalise'); if(bsa) bsa.disabled=!(EMP&&LAYERS.length);
+  renderAnalises();
   updateFoco();
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
@@ -4594,6 +4693,7 @@ async function f3dModo(lig, preSel){
     ['bimProps','regBox','bimFloorsPop'].forEach(id=>{ const e=$(id); if(e) e.classList.remove('on'); });
     const bp=$('btnBimProps'); if(bp) bp.classList.remove('on');
     F3D_PROPS=false;
+    renderAnalises();   // sem 3D: o botão volta a depender só das pranchas
     return;
   }
   if(!EMP){ $('modList').innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
@@ -4862,6 +4962,7 @@ async function f3dAbrirSelecionados(){
   }
   const m=$('bimMsg'); if(m) m.style.display='none';
   f3dAbrirBotaoSync();   // botão passa a mostrar "Recarregar modelo(s)"
+  renderAnalises();      // "Salvar análise" passa a valer também só com o 3D
   // Right-click hide/unhide fica sempre disponível — sem modo pra ligar.
   // O handler é agregado ao canvas atual (o clone limpo trocado no
   // f3dDescartar leva o listener embora quando trocar de modelo).
