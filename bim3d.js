@@ -1,4 +1,4 @@
-// bim3d version: 2026-08-18b  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-10-14a  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -1547,8 +1547,19 @@ function _avaliaCond(c, ctx){
     case 'dimensao':{ const subTermo={Altura:'height',Largura:'width',Espessura:'thickness',Comprimento:'length','Área':'area',Volume:'volume'};
       let r=ctx.d?_achaValorProfundo(ctx.d,_termoRegex(subTermo[c.sub]||c.sub||'')):null;
       if((!r||typeof r.val!=='number') && c.sub==='Volume' && ctx.vol!=null) r={val:ctx.vol};
+      // Sem a propriedade no IFC (TQS/Revit não grava Height/Width nas vigas e
+      // pilares) → mede na CAIXA 3D da peça. Antes devolvia false e o filtro
+      // "vigas com altura > 0,10 m" dava 0. Y é o eixo vertical do Fragments.
+      const esp=/esp/i.test(c.sub||'');
+      if((!r||typeof r.val!=='number') && ctx.box){
+        const b=ctx.box, h=b.max.y-b.min.y, dx=b.max.x-b.min.x, dz=b.max.z-b.min.z;
+        const deitada=/^IFC(SLAB|ROOF|COVERING|PLATE)/.test(ctx.cat||'');   // laje/forro: espessura é a vertical
+        const v = c.sub==='Altura' ? h : c.sub==='Comprimento' ? Math.max(dx,dz)
+                : c.sub==='Largura' ? Math.min(dx,dz) : esp ? (deitada ? h : Math.min(dx,dz)) : null;
+        if(v!=null && isFinite(v)) r={val:v};
+      }
       if(!r||typeof r.val!=='number') return false;
-      let x=r.val; const esp=/esp/i.test(c.sub||''); if(esp) x=x*100;   // espessura: compara em cm (input em cm)
+      let x=r.val; if(esp) x=x*100;   // espessura: compara em cm (input em cm)
       const a=_numBR(val); if(isNaN(a)) return false;
       if(op==='maior que') return x>a;
       if(op==='menor que') return x<a;
@@ -1593,6 +1604,7 @@ export async function filtrar(V, filtro){
   const need={pset:false,tipo:false,mat:false};
   caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento'||c.campo==='tipo') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
   const querVolMalha = caras.some(c=>c.campo==='dimensao'&&c.sub==='Volume');
+  const querCaixa    = caras.some(c=>c.campo==='dimensao'&&/^(Altura|Largura|Comprimento|Espessura)$/.test(c.sub||''));
   const relations={};
   if(need.pset) relations.IsDefinedBy={attributes:true,relations:true};
   if(need.tipo) relations.IsTypedBy={attributes:true,relations:false};
@@ -1615,8 +1627,10 @@ export async function filtrar(V, filtro){
     if(!ids.length) continue;
     const pavOf=new Map();
     if(temPav&&st.length){ st.filter(s=>s.mi===mi).forEach(s=> s.ids.forEach(id=> pavOf.set(id,s.nomeNorm))); }
-    const volOf=new Map();
-    const ctx=(id,d)=>({ id, mi, matDe:x._matDe, cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn, vol: volOf.has(id)?volOf.get(id):null });
+    const volOf=new Map(); let boxOf=null;
+    const ctx=(id,d)=>({ id, mi, matDe:x._matDe, cat:catOf.get(id), d, disc, pav: pavOf.has(id)?pavOf.get(id):(d?_pavimEl(d):''), pavY:pavYFn, vol: volOf.has(id)?volOf.get(id):null, box: boxOf?boxOf.get(id):null });
+    // caixa 3D estável (cache do clash) — só p/ dimensão sem propriedade no IFC
+    const lerCaixa=async(lista)=>{ if(querCaixa) boxOf=await _boxesCacheadas(V, mi, x, lista); };
     // volume da malha 3D por peça (só p/ "Dimensão Volume" e só dos candidatos)
     const lerVol=async(lista)=>{ if(!querVolMalha) return; for(let p=0;p<lista.length;p+=40){ if(V._cancelar) throw new Error('CANCELADO');
       await Promise.all(lista.slice(p,p+40).map(async id=>{ try{ volOf.set(id, +(await x.model.getItemsVolume([id]))||0); }catch(_){} })); } };
@@ -1625,11 +1639,11 @@ export async function filtrar(V, filtro){
         let cand = baratas.length ? ids.filter(id=> baratas.every(c=>_avaliaCond(c, ctx(id,null)))) : ids;
         if(!cand.length) continue;
         if(!caras.length){ porMod[mi]=cand; continue; }
-        const dOf=await lerDados(x.model, cand); await lerVol(cand);
+        const dOf=await lerDados(x.model, cand); await lerVol(cand); await lerCaixa(cand);
         const ok=cand.filter(id=> caras.every(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
         if(ok.length) porMod[mi]=ok;
       } else {   // OU: precisa avaliar TODAS por elemento → lê dados (só o necessário)
-        const dOf=await lerDados(x.model, ids); await lerVol(ids);
+        const dOf=await lerDados(x.model, ids); await lerVol(ids); await lerCaixa(ids);
         const ok=ids.filter(id=> conds.some(c=>_avaliaCond(c, ctx(id, dOf.get(id)))));
         if(ok.length) porMod[mi]=ok;
       }
