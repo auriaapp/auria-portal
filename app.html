@@ -1115,8 +1115,8 @@
       Apontamento aberto por <b id="apExtQuem">agente externo</b>. O texto do autor não é editável aqui — <b>responda</b> por mensagens/prints, negocie prazo e mude o status (Resolvido / Reprovado com justificativa).
     </div>
     <div class="g2">
-      <div class="fg"><label>ID</label><input id="apId" readonly style="background:#F8FAFC;color:#334155;font-weight:600"></div>
-      <div class="fg"><label>Disciplina</label><select id="apDisc"></select></div>
+      <div class="fg"><label>ID</label><input id="apId" readonly style="background:#F8FAFC;color:#334155;font-weight:600"><div id="apIdDica" style="display:none;font-size:10px;color:var(--mut);margin-top:3px"></div></div>
+      <div class="fg"><label>Disciplina</label><select id="apDisc" onchange="apDiscMudou()"></select></div>
     </div>
     <div class="fg"><label>Título</label><input id="apTitulo" placeholder="Resumo curto do apontamento"></div>
     <div class="fg"><label>Descrição</label><textarea id="apDesc" placeholder="Detalhe o apontamento…"></textarea></div>
@@ -3281,6 +3281,7 @@ function iaContexto(){
     +'Empreendimento: '+(EMP?EMP.nome:'—')+'. Disciplina da prancha ativa: '+(discAtiva()||'—')+'.\n'
     +'Apontamentos: '+n+' no total, '+ab+' em aberto, '+at+' atrasados.\n'
     +'Responda SEMPRE 100% em PORTUGUÊS DO BRASIL (PT-BR), nunca em inglês, de forma concisa e técnica, DIRETO ao ponto (sem mostrar raciocínio, planejamento ou rascunho). Se citar norma (NBR/ABNT/ISO), informe o número e, quando possível, o item.'
+    +' NÃO use LaTeX, fórmulas nem cifrões ($...$): escreva números e unidades em texto simples (ex.: 1,20 m; 25,55 m²; 0,28 m).'
     +'\n\nAÇÃO NO MODELO 3D: se o usuário pedir para LOCALIZAR, DESTACAR, MOSTRAR, ACHAR ou ISOLAR elementos de um TIPO '
     +'(ex.: "onde estão os pilares?", "destaque as vigas", "mostre as lajes"), inclua no FIM da resposta UMA linha exatamente '
     +'no formato: @DESTACAR: <CLASSE_IFC>. Traduza o termo PT para a classe IFC: pilar/pilares→IFCCOLUMN; viga/vigas→IFCBEAM; '
@@ -3495,9 +3496,30 @@ async function iaRegEnd(e){
 // Remove o raciocínio <think>…</think> (modelos R1/QwQ) que alguns modelos da Groq
 // emitem antes da resposta. Se o bloco não fechou (resposta cortada no meio do
 // raciocínio), tira só as tags e mantém o texto, para não sumir com tudo.
+// O Gemini às vezes responde medidas em LaTeX ("$1,20\\text{ m}$", "$25\\,m^2$")
+// e o painel mostrava o código cru. Converte para texto simples. Só mexe em
+// trechos entre $...$ que têm cara de fórmula (\\, ^ ou {) — "R$ 100" fica intacto.
+function _semLatex(s){
+  if(!s || !/[\\$]/.test(s)) return s;
+  const conv=m=>m
+    .replace(/\\(?:text|mathrm|textrm|mathbf|textbf|operatorname)\s*\{([^{}]*)\}/g,'$1')
+    .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g,'$1/$2')
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g,'√$1')
+    .replace(/\^\s*\{?\\circ\}?/g,'°').replace(/\\(?:degree|circ)\b/g,'°')
+    .replace(/\^\s*\{?2\}?/g,'²').replace(/\^\s*\{?3\}?/g,'³')
+    .replace(/\\times\b/g,'×').replace(/\\cdot\b/g,'·').replace(/\\approx\b/g,'≈').replace(/\\pm\b/g,'±')
+    .replace(/\\(?:geq|ge)\b/g,'≥').replace(/\\(?:leq|le)\b/g,'≤').replace(/\\neq\b/g,'≠')
+    .replace(/\\%/g,'%').replace(/\\[,;: !]/g,' ').replace(/\\quad\b/g,' ')
+    .replace(/[{}]/g,'').replace(/[ \t]{2,}/g,' ').trim();
+  return String(s)
+    .replace(/\$\$([\s\S]+?)\$\$/g,(_,m)=>conv(m))
+    .replace(/\$([^$\n]{1,200}?)\$/g,(t,m)=>/[\\^{]/.test(m)?conv(m):t)
+    .replace(/\\\(([\s\S]+?)\\\)/g,(_,m)=>conv(m))
+    .replace(/\\\[([\s\S]+?)\\\]/g,(_,m)=>conv(m));
+}
 function _iaLimpo(t){
   if(!t) return t;
-  let s=String(t);
+  let s=_semLatex(String(t));
   // <think> aberto e SEM fechar = a resposta foi cortada no meio do raciocínio
   // (não sobrou resposta real). Devolve vazio p/ o caller usar o fallback — nunca
   // mostra o raciocínio cru.
@@ -7674,9 +7696,19 @@ function abrirAptIdx(i){
 }
 function _locLista(t){ return String(t||'').split(';').map(x=>x.trim()).filter(Boolean); }
 function _apLocalLer(){ return [...document.querySelectorAll('#apLocal input:checked')].map(i=>i.value); }
-function _apLocalSum(){ const v=_apLocalLer(); $('apLocalSum').textContent=v.length?v.join('; '):'— selecione —'; $('apLocalSum').title=v.join('; '); }
+// Resumo em ETIQUETAS com o código do pavimento ([44T] [SS2]); o texto gravado
+// (local_txt "rótulo; rótulo") não muda — relatórios e exportações iguais.
+function _apLocalSum(){
+  const v=_apLocalLer(), el=$('apLocalSum'); el.title=v.join('; ');
+  el.innerHTML = v.length
+    ? v.map(l=>'<span style="display:inline-block;background:#1E3A5F;color:#CFE3F5;border:1px solid #2E5A8A;border-radius:10px;padding:0 7px;margin-right:4px;font:700 11px ui-monospace,Consolas,monospace">'+esc(String(l).split(' — ')[0])+'</span>').join('')
+    : '— selecione —';
+}
+let _apLocalManual=new Set();   // rótulos que a pessoa marcou/desmarcou À MÃO (a sugestão não mexe)
+let _apPinsN=0;                 // nº de pins quando o editor abriu / última conferência
+function _apLocalToque(cb){ _apLocalManual.add(cb.value); _apLocalSum(); }
 function _apLocalRender(locais, sel){
-  $('apLocal').innerHTML=locais.map(l=>`<label style="display:flex;gap:7px;align-items:center;padding:4px 6px;font-size:12px;cursor:pointer;border-radius:5px"><input type="checkbox" value="${esc(l)}"${sel.includes(l)?' checked':''}${APP_RO?' disabled':''} onchange="_apLocalSum()">${esc(l)}</label>`).join('')||'<div style="padding:6px;font-size:11px;color:var(--mut)">Sem pavimentos cadastrados.</div>';
+  $('apLocal').innerHTML=locais.map(l=>`<label style="display:flex;gap:7px;align-items:center;padding:4px 6px;font-size:12px;cursor:pointer;border-radius:5px"><input type="checkbox" value="${esc(l)}"${sel.includes(l)?' checked':''}${APP_RO?' disabled':''} onchange="_apLocalToque(this)">${esc(l)}</label>`).join('')||'<div style="padding:6px;font-size:11px;color:var(--mut)">Sem pavimentos cadastrados.</div>';
   _apLocalSum();
 }
 // Novo apontamento: pré-marca o pavimento da prancha (campo "local" do código no CDE).
@@ -7690,19 +7722,47 @@ async function _apLocalDaPrancha(locais){
     if(box && !_apLocalLer().length){ box.checked=true; _apLocalSum(); }
   }catch(_){}
 }
-// Apontamento 3D (frente BIM): pavimento = andar do ELEMENTO clicado, pareado com
-// o cadastro do empreendimento pelo mesmo de-para do filtro (mapaIdPav: de-para do
-// modelo principal, senão sugestão por nome). Só sugere — a pessoa pode trocar.
-async function _apLocalDo3D(){
-  try{
-    const pt=((APT_EDIT&&APT_EDIT.pontos_json)||[]).find(x=>x&&x.k3d);
-    if(!pt || pt.localId==null || !F3D || !F3D.modelos || !window.AuriaAndares || !(CDE_PAVS||[]).length) return;
-    const mi=F3D.modelos.findIndex(x=>x.arquivoId===pt.cde_arquivo_id); if(mi<0) return;
-    const mapa=(await mapaIdPav())[mi]; const pid=mapa&&mapa.get(pt.localId); if(!pid) return;
-    const p=CDE_PAVS.find(x=>x.id===pid); if(!p) return;
-    const lab=cdePavLabel(p), box=[...document.querySelectorAll('#apLocal input')].find(i=>i.value===lab);
-    if(box && !_apLocalLer().length){ box.checked=true; _apLocalSum(); }
-  }catch(e){ console.warn('pavimento 3D:', e); }
+// Sugere o pavimento de TODOS os pins (antes só o 1º): 3D = andar do elemento,
+// pareado com o cadastro pelo mesmo de-para do filtro (mapaIdPav); 2D = campo
+// "local" do código do documento da prancha de cada pin. Só ACRESCENTA — nunca
+// desmarca, e não toca no que a pessoa marcou/desmarcou à mão.
+async function _apLocalSugerir(){
+  const a=APT_EDIT; if(!a || APP_RO || !(CDE_PAVS||[]).length) return;
+  const labs=new Set(), pts=a.pontos_json||[];
+  const p3=pts.filter(x=>x && x.k3d && x.localId!=null);
+  if(p3.length && F3D && F3D.modelos && window.AuriaAndares){
+    try{
+      const mapas=await mapaIdPav();
+      p3.forEach(pt=>{
+        const mi=F3D.modelos.findIndex(x=>x.arquivoId===pt.cde_arquivo_id);
+        const pid=mi>=0 && mapas[mi] && mapas[mi].get(pt.localId);
+        const pv=pid && CDE_PAVS.find(x=>x.id===pid); if(pv) labs.add(cdePavLabel(pv));
+      });
+    }catch(e){ console.warn('pavimento 3D:', e); }
+  }
+  const p2=pts.filter(x=>x && !x.k3d);
+  if(p2.length){
+    const prIds=[...new Set(p2.map(x=>x.pid||a.prancha_id).filter(Boolean))];
+    const docDe={}; LAYERS.forEach(L=>{ if(L.prancha && L.prancha.id) docDe[L.prancha.id]=L.prancha.cde_documento_id||null; });
+    const faltam=prIds.filter(id=>!(id in docDe));   // ex.: prancha do outro lado do split
+    if(faltam.length){ try{ const { data }=await sb.from('pranchas_auria').select('id,cde_documento_id').in('id',faltam); (data||[]).forEach(r=>{ docDe[r.id]=r.cde_documento_id||null; }); }catch(_){} }
+    const docs=[...new Set(prIds.map(id=>docDe[id]).filter(Boolean))];
+    if(docs.length){
+      try{
+        const { data }=await sb.from('cde_documento_auria').select('id,local_txt').in('id',docs);
+        (data||[]).forEach(d=>{ const cod=String(d.local_txt||'').trim().toUpperCase();
+          const pv=cod && CDE_PAVS.find(x=>String(x.codigo||'').trim().toUpperCase()===cod); if(pv) labs.add(cdePavLabel(pv)); });
+      }catch(_){}
+    }
+  }
+  if(APT_EDIT!==a) return;   // fechou/trocou de apontamento enquanto buscava
+  let mudou=false;
+  labs.forEach(lab=>{
+    if(_apLocalManual.has(lab)) return;
+    const box=[...document.querySelectorAll('#apLocal input')].find(i=>i.value===lab);
+    if(box && !box.checked){ box.checked=true; mudou=true; }
+  });
+  if(mudou) _apLocalSum();
 }
 // ── Cobrança automática (item 12): status, Pausar e Cobrar agora ─────────
 // A régua roda no banco (cobranca_rodar, dias úteis 8h). Aqui só mostra quantas
@@ -7743,10 +7803,47 @@ async function apCobAgora(conjunto){
     apCobRender();
   }catch(e){ alert('Não foi possível cobrar: '+((e&&e.message)||e)); }
 }
+// Troca de disciplina no editor. Apontamento NOVO (ainda não salvo): o código
+// acompanha (ARQ-5 → EST-12; BIM-ARQ-2 → BIM-EST-4) e o responsável padrão troca
+// se a linha dele não foi mexida. Já SALVO: o código é a CHAVE (comentários,
+// conversas, cobranças, leituras, tarefas e e-mails já enviados citam ele) →
+// mantém e só avisa. Decisão do usuário 2026-10-15.
+function apDiscMudou(){
+  const a=APT_EDIT; if(!a) return;
+  const nova=$('apDisc').value, dica=$('apIdDica');
+  if(!a._novo){
+    if(dica){ dica.textContent='Código mantido ('+a.id+'): é a identidade do apontamento já salvo.'; dica.style.display='block'; }
+    return;
+  }
+  const antigo=String(a.id||'');
+  const bim = a.dimensao==='bim' || /^BIM-/.test(antigo);
+  const pref = id=>String(id).split('-').slice(0,-1).join('-');
+  a.disciplina=nova;
+  const g = bim ? f3dProximoId(nova) : proximoId(nova);
+  if(pref(g.id)!==pref(antigo)){          // mesmo prefixo (Estrutura Concreto ↔ Metálica = EST) mantém o número
+    a.id=g.id; a.id_num=g.num;
+    if(a.grupo_id===antigo) a.grupo_id=g.id;
+    const l0=(a.log_json||[])[0]; if(l0 && l0.tipo==='sistema' && l0.texto) l0.texto=l0.texto.split(antigo).join(g.id);
+    $('apId').value=g.id;
+  }
+  // Responsável padrão: troca só se a linha única ainda é a que nasceu sozinha.
+  const ps=lerParts(), ks=Object.keys(ps);
+  const emailsDe=d=>(FORN_DISC[d]&&FORN_DISC[d].emails.join(', '))||'';
+  if(ks.length===1 && !ps[nova]){
+    const k=ks[0], q=ps[k];
+    if((q.nivel||'Pendência')==='Pendência' && !q.prazo && !q.conclusao && (q.emails||'')===emailsDe(k)){
+      a.participantes={ [nova]:{ nivel:'Pendência', emails:emailsDe(nova), prazo:'', conclusao:'' } };
+      renderParts(); return;
+    }
+  }
+  a.participantes=ps;
+}
 function abrirEditor(){
   const a=APT_EDIT;
+  _apLocalManual=new Set(); _apPinsN=(a.pontos_json||[]).length;   // antes de qualquer renderPinsList
   $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id)+(APP_RO?' · consulta':'');
   $('apId').value=a.id;
+  { const d=$('apIdDica'); if(d) d.style.display='none'; }
   { const dFull=discFullName(a.disciplina); const ds=discsEd().slice(); if(dFull && !ds.includes(dFull)) ds.unshift(dFull);
     $('apDisc').innerHTML=ds.map(d=>`<option${d===dFull?' selected':''}>${esc(d)}</option>`).join(''); }
   $('apTitulo').value=a.titulo||'';
@@ -7762,7 +7859,7 @@ function abrirEditor(){
   const selLoc=_locLista(a.local_txt);
   selLoc.slice().reverse().forEach(l=>{ if(!locais.includes(l)) locais.unshift(l); });
   _apLocalRender(locais, selLoc);
-  if(a._novo && !selLoc.length){ if(a.dimensao==='bim') _apLocalDo3D(); else _apLocalDaPrancha(locais); }
+  if(a._novo && !selLoc.length) _apLocalSugerir();
   $('apVisib').value=a.visibilidade||'Projeto';
   apCobRender();
   if(!Array.isArray(a.drawings_json)) a.drawings_json=[];
@@ -7872,6 +7969,8 @@ function renderPinsList(){
         ${pt.k3d?('🧊 3D · '+esc(pt.mdisc||'modelo')):('📍 pág. '+(pt.pg||1))}
         <button class="btn-sec" style="padding:1px 6px;font-size:11px;border-radius:10px" onclick="removerPinApt(${i})">✕</button></span>`).join('')
     : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha ou no modelo 3D.</span>';
+  if(APT_EDIT && pts.length>_apPinsN) _apLocalSugerir();   // pin novo → pavimento dele entra (só acrescenta)
+  _apPinsN=pts.length;
 }
 function removerPinApt(i){
   if(!APT_EDIT) return;
