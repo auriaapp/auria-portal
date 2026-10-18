@@ -3488,7 +3488,9 @@ async function iaRegEnd(e){
   // retângulo da seleção em coords de CLIENTE (tela) — recorta direto do canvas exibido
   const cl=Math.min(s.x,ex)+r.left, ct=Math.min(s.y,ey)+r.top, cw=Math.abs(ex-s.x), ch=Math.abs(ey-s.y);
   if(cw<8 || ch<8){ return; }   // seleção muito pequena
-  const b64=capturarRegiao({left:cl, top:ct, w:cw, h:ch});
+  let b64=null;
+  try{ b64=await capturarRegiaoPdf({left:cl, top:ct, w:cw, h:ch}); }catch(err){ console.warn('região do PDF:', err); }
+  if(!b64) b64=capturarRegiao({left:cl, top:ct, w:cw, h:ch});   // reserva: recorte da tela (antigo)
   if(!b64){ alert('Não consegui capturar a região.'); return; }
   const L=_iaLayerSel(); const disc=(L&&(L.prancha.disciplina||deduzDisc(L.nome)))||'—';
   explicarRegiao(b64, disc);
@@ -3551,6 +3553,46 @@ async function explicarRegiao(b64, disc){
 // Recorta do CANVAS COMPOSTO (#pdfCanvas — todas as camadas visíveis, como o
 // usuário vê) usando a posição REAL do canvas na tela (getBoundingClientRect).
 // `rect` vem em coords de CLIENTE {left,top,w,h}. Imune a pan/zoom/escala.
+// Região re-renderizada DIRETO DO PDF (vetorial) em ~1600 px reais, pelo mesmo
+// laço de camadas da tela (offset/escala/rotação/cor/opacidade/multiply). O
+// recorte da tela (capturarRegiao, abaixo) tinha a resolução do ZOOM: com a folha
+// inteira à vista, 30% da folha = ~1090 px reais esticados a 1600 → a IA não lia
+// cota nenhuma. Medido 2026-10-18 (mesma região, gemini-3.6-flash): recorte da
+// tela 0/0 cotas (500 KB) × re-render do PDF 20/20 certas (210 KB).
+async function capturarRegiaoPdf(rect){
+  if(!LAYERS.length || !F || !F.zoom) return null;
+  const cv=$('pdfCanvas'); if(!cv) return null;
+  const cr=cv.getBoundingClientRect(); if(!cr.width) return null;
+  // cliente → pontos da BASE (mesma fórmula do render: tela = pt*zoom - pan)
+  const mgx=rect.w*0.10, mgy=rect.h*0.10;   // 10% de contexto
+  const toPt=(cx,cy)=>({ x:(cx-cr.left+F.panX)/F.zoom, y:(cy-cr.top+F.panY)/F.zoom });
+  const _bb=pageWH(LAYERS[0].page); const bw=_bb.w, bh=_bb.h;
+  const a=toPt(rect.left-mgx, rect.top-mgy), b=toPt(rect.left+rect.w+mgx, rect.top+rect.h+mgy);
+  const x0=Math.max(0,a.x), y0=Math.max(0,a.y), x1=Math.min(bw,b.x), y1=Math.min(bh,b.y);
+  const rw=x1-x0, rh=y1-y0; if(rw<4 || rh<4) return null;
+  const k=1600/Math.max(rw,rh);              // px por ponto da base (sem esticar: é vetorial)
+  const W=Math.max(8,Math.round(rw*k)), H=Math.max(8,Math.round(rh*k));
+  const out=document.createElement('canvas'); out.width=W; out.height=H;
+  const octx=out.getContext('2d'); octx.fillStyle='#FFFFFF'; octx.fillRect(0,0,W,H);
+  const lay=document.createElement('canvas'); lay.width=W; lay.height=H; const lctx=lay.getContext('2d');
+  for(const L of LAYERS){
+    if(!L.visible) continue;
+    const lw=pageWH(L.page).w;
+    const sc=L.scale*(bw/lw)*k;
+    const sx=(L.offset.x*bw - x0)*k, sy=(L.offset.y*bh - y0)*k;
+    const vp=L.page.getViewport({ scale:sc });
+    const bg=L.cor ? 'rgba(0,0,0,0)' : '#FFFFFF';
+    lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
+    lctx.save(); lctx.translate(sx,sy);
+    if(L.rot){ const cx=vp.width/2, cy=vp.height/2; lctx.translate(cx,cy); lctx.rotate(L.rot*Math.PI/180); lctx.translate(-cx,-cy); }
+    try{ await L.page.render({ canvasContext:lctx, viewport:vp, background:bg }).promise; }catch(le){ console.warn('camada (região):', le.message||le); }
+    lctx.restore();
+    if(L.cor){ lctx.setTransform(1,0,0,1,0,0); lctx.globalCompositeOperation='source-in'; lctx.fillStyle=L.cor; lctx.fillRect(0,0,W,H); lctx.globalCompositeOperation='source-over'; }
+    octx.globalCompositeOperation='multiply'; octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
+    octx.drawImage(lay,0,0); octx.globalAlpha=1; octx.globalCompositeOperation='source-over';
+  }
+  return out.toDataURL('image/jpeg',0.85).split(',')[1];
+}
 function capturarRegiao(rect){
   const cv=$('pdfCanvas'); if(!cv || !cv.width) return null;
   const cr=cv.getBoundingClientRect(); if(!cr.width || !cr.height) return null;
