@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auria — Painel da Qualidade</title>
+<link rel="icon" href="logo_symbol.png" type="image/png">
+<meta name="robots" content="noindex">
+<script src="auria_busy.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="auria_pdfview.js"></script>
+<script src="auria_word.js"></script>
+<script src="auria_itcopia.js"></script>
+<script src="auria_biblioteca.js"></script>
+<!-- ===========================================================================
+     Painel da Qualidade (mockup aprovado em 2026-10-18: mockups/painel_qualidade.html)
+     Entrada do setor de Qualidade (role setor + setor_area qualidade); a gestão
+     do grupo também abre. Telas: Para fazer · Biblioteca normativa · Conferência
+     de FVS · Fichas das obras · Cópias controladas.
+     Manutenção da biblioteca (publicar revisão, importar, solicitações) vem de
+     auria_biblioteca.js — o mesmo código do padroes_grupo.html.
+     Permissões são do banco (grupo_pode_editar); a página só esconde.
+     =========================================================================== -->
+<style>
+  :root{
+    --bg:#EEF2F7; --panel:#FFFFFF; --panel2:#F6F9FC; --line:#E2E8F0; --line2:#F1F5F9;
+    --txt:#0F172A; --txt2:#334155; --mut:#64748B;
+    --navy:#1E3A5F; --accent:#E8960A; --accentBg:#FEF6E7; --ok:#1E8449; --warn:#B7791F; --err:#A32D2D;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  }
+  body.dark{
+    --bg:#0B1220; --panel:#141C2B; --panel2:#1B2536; --line:#26324A; --line2:#1E293B;
+    --txt:#E8EEF6; --txt2:#C2CFDF; --mut:#8496AC;
+    --navy:#7FB3D3; --accent:#F0A72A; --accentBg:#2A2212; --ok:#4ADE80; --warn:#E9B44C; --err:#F87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:"Segoe UI",system-ui,Arial;font-size:13.5px;line-height:1.45}
+  header{background:linear-gradient(90deg,#0B1220,#152036);color:#fff;height:62px;padding:0 18px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:30}
+  header > img{height:22px}
+  header .tt{padding-left:16px;border-left:1px solid rgba(255,255,255,.18);min-width:0}
+  header .tt span{display:block}
+  header .gslot{margin:0 auto}
+  header .who{text-align:right}
+  header .who span{display:block}
+  .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;text-decoration:none}
+  .hbtn:hover{border-color:var(--accent)}
+
+  .app{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:calc(100vh - 62px)}
+  nav{background:var(--panel);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:2px;position:sticky;top:62px;height:calc(100vh - 62px);overflow:auto}
+  .nbusca{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:9px;padding:0 10px;color:var(--mut);background:var(--panel2);margin:0 2px 6px}
+  .nbusca:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px #FBE7C4}
+  .nbusca input{border:none;background:none;outline:none;padding:8px 0;font:inherit;font-size:12.5px;color:var(--txt);flex:1;min-width:0}
+  nav .grp{font:700 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mut);padding:12px 10px 6px}
+  nav a{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;border-left:3px solid transparent;color:var(--txt2);font-weight:600;cursor:pointer;text-decoration:none}
+  nav a:hover{background:var(--panel2)}
+  nav a svg{width:17px;height:17px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;color:var(--mut)}
+  nav a.on{background:var(--accentBg);border-left-color:var(--accent);color:var(--navy)}
+  nav a.on svg{color:var(--accent)}
+  nav a .n{margin-left:auto;font:800 11px var(--mono);background:var(--line);color:var(--mut);border-radius:99px;padding:1px 7px}
+  nav a .n.q{background:var(--accent);color:#231703}
+  main{min-width:0}
+  .tela{padding:20px 24px 60px}
+  .load{padding:70px 20px;text-align:center;color:var(--mut)}
+
+  h2{font-size:18px;color:var(--navy);margin:0}
+  .sub{color:var(--mut);font-size:12.5px;margin:3px 0 0}
+  .thd{display:flex;align-items:flex-end;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .thd > div:first-child{flex:1;min-width:240px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .card > .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .card > .hd b{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--navy)}
+  .sp{flex:1}
+  .cod{font-family:var(--mono);font-weight:700;color:var(--navy)}
+  .chip{display:inline-block;font-size:10.5px;font-weight:800;border-radius:99px;padding:1px 8px;white-space:nowrap;vertical-align:1px}
+  .c-ras{background:#FEF0D9;color:#8A5A04}.c-val{background:#FFEDD5;color:#C2410C}.c-rev{background:#FEE2E2;color:#B91C1C}
+  .c-pub{background:#E6F4EC;color:#1E8449}.c-nav{background:#E8F0F8;color:#1E3A5F}.c-mut{background:#F1F5F9;color:#64748B}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:12.5px;font-family:inherit;cursor:pointer;white-space:nowrap;text-decoration:none;display:inline-block}
+  body.dark .btn:not(.sec){color:#0B1220}
+  .btn.sec{background:var(--panel);color:var(--navy);border:1px solid var(--line)}
+  .btn.sec:hover{border-color:var(--accent)}
+  .btn.ac{background:var(--accent);color:#231703}
+  .btn.sm{padding:5px 10px;font-size:12px}
+  .btn:disabled{opacity:.5;cursor:default}
+  .hint{color:var(--mut);font-size:12px}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  kbd{font:700 10.5px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--txt2);background:var(--panel)}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);padding:8px 10px;border-bottom:1px solid var(--line);font-weight:700}
+  td{padding:9px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
+  label.l{display:block;font-size:11.5px;font-weight:700;color:var(--txt2);margin:10px 0 4px}
+  input[type=text],input[type=number],input[type=search],input[type=date],select,textarea{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:13px;background:var(--panel);color:var(--txt);width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #FBE7C4}
+  input:disabled,select:disabled,textarea:disabled{background:var(--panel2);color:var(--mut)}
+  .g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .chk{display:flex;align-items:center;gap:7px;font-weight:600;margin:6px 0}
+  .chk input{width:auto}
+  .msg{font-size:12px;margin-top:8px;min-height:16px}.msg.ok{color:var(--ok)}.msg.err{color:var(--err)}
+  .vazio{padding:28px 16px;text-align:center;color:var(--mut)}
+
+  /* modal (o mesmo do padroes_grupo — auria_biblioteca.js usa #ov/#ovBox) */
+  .ov{position:fixed;inset:0;background:rgba(11,18,32,.55);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
+  .ov.on{display:flex}
+  .box{background:var(--panel);border-radius:14px;width:560px;max-width:100%;max-height:90vh;overflow:auto;box-shadow:0 0 0 2px var(--accent),0 20px 60px rgba(0,0,0,.35)}
+  .box .hd{padding:14px 18px;border-bottom:1px solid var(--line)}.box .hd b{color:var(--navy);font-size:15px}
+  .box .bd{padding:6px 18px 12px}
+  .box .ft{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid var(--line)}
+
+  /* ── Para fazer ── */
+  .t1g{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  .fila .it{display:flex;gap:14px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line2);border-left:3px solid transparent}
+  .fila .it:last-child{border-bottom:none}
+  .fila .it.pri{border-left-color:var(--accent);background:linear-gradient(90deg,var(--accentBg),var(--panel) 40%)}
+  .fila .num{font:800 24px var(--mono);color:var(--navy);min-width:62px;text-align:right;font-variant-numeric:tabular-nums}
+  .fila .pri .num{color:var(--accent)}
+  .fila .num.zero{color:var(--line)}
+  .fila .tx{flex:1;min-width:0}
+  .fila .tx b{display:block;font-size:14px}
+  .fila .tx span{font-size:12px;color:var(--mut)}
+  .fila .okd{font-size:11.5px;font-weight:700;color:var(--ok)}
+  .bar{height:10px;border-radius:99px;background:var(--line2);overflow:hidden;display:flex}
+  .bar i{display:block;height:100%}
+  .etp{display:grid;grid-template-columns:140px minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:12px;margin-top:9px}
+  .etp .bar{height:7px}
+  .etp .q{font:700 11.5px var(--mono);color:var(--mut);text-align:right}
+  .leg{display:flex;gap:14px;font-size:11.5px;color:var(--mut);margin-top:10px;flex-wrap:wrap}
+  .leg i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .mini{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+  .mini div{background:var(--panel);padding:12px 14px}
+  .mini b{display:block;font:800 20px var(--mono);color:var(--navy)}
+  .mini span{font-size:11.5px;color:var(--mut)}
+  .ativ{padding:6px 16px 12px}
+  .ativ .e{display:grid;grid-template-columns:14px minmax(0,1fr);gap:10px;padding:8px 0;border-bottom:1px solid var(--line2);font-size:12.5px}
+  .ativ .e:last-child{border:none}
+  .ativ .e i{width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--line)}
+  .ativ .e i.a{background:var(--accent)} .ativ .e i.g{background:var(--ok)} .ativ .e i.n{background:var(--navy)}
+  .ativ .e small{display:block;color:var(--mut);font-size:11px}
+
+  /* ── Biblioteca ── */
+  .bib{display:grid;grid-template-columns:150px minmax(0,1fr) 420px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;height:calc(100vh - 62px - 118px);min-height:560px}
+  .trilho{background:var(--panel2);border-right:1px solid var(--line);padding:10px 0;overflow:auto}
+  .trilho .g{font:700 9.5px var(--mono);letter-spacing:.14em;color:var(--mut);padding:10px 14px 4px}
+  .trilho a{display:flex;justify-content:space-between;padding:7px 14px;font:700 12px var(--mono);letter-spacing:.08em;color:var(--txt2);border-left:3px solid transparent;cursor:pointer;text-transform:uppercase}
+  .trilho a span{color:var(--mut);font-weight:600}
+  .trilho a:hover{background:var(--panel)}
+  .trilho a.on{border-left-color:var(--accent);background:var(--panel);color:var(--navy)}
+  .lst{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0}
+  .lst .tb{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}
+  .lst .tb input{flex:1}
+  .lst .sc{overflow:auto;flex:1}
+  .tgl{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:none}
+  .tgl button{padding:7px 10px;font-size:12px;font-weight:700;color:var(--mut);background:var(--panel);border:none;cursor:pointer;font-family:inherit}
+  .tgl button.on{background:var(--navy);color:#fff}
+  .doc{display:grid;grid-template-columns:96px minmax(0,1fr) 44px;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line2);border-left:3px solid transparent;cursor:pointer}
+  .doc:hover{background:var(--panel2)}
+  .doc.sel{border-left-color:var(--accent);background:var(--accentBg)}
+  .doc.obs{opacity:.55}
+  .doc .t{font-weight:600;min-width:0}
+  .doc .t small{display:block;color:var(--mut);font-weight:400;font-size:11.5px;margin-top:2px}
+  .doc .t mark{background:#FDE7D3;color:#9A3412;font-weight:700}
+  .doc .r{font:700 12px var(--mono);color:var(--navy);text-align:right}
+  .doc .r small{display:block;font-weight:500;color:var(--mut);font-size:10px}
+  .det{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto}
+  .det .top{padding:16px 18px 12px;border-bottom:1px solid var(--line)}
+  .det .top .cod{font-size:20px}
+  .det .top h3{margin:2px 0 6px;font-size:15px}
+  .vig{display:flex;gap:14px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px}
+  .vig b{font:800 22px var(--mono);color:var(--navy);line-height:1}
+  .vig small{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-weight:700}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .dtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);padding:0 12px;flex-wrap:wrap}
+  .dtabs button{padding:9px 10px;font-size:12px;font-weight:700;color:var(--mut);border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;font-family:inherit}
+  .dtabs button.on{color:var(--navy);border-bottom-color:var(--accent)}
+  .dbody{padding:12px 16px;font-size:12.5px}
+  .lig{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:6px;cursor:pointer}
+  .lig:hover{border-color:var(--accent)}
+  .lig .cod{font-size:12px;min-width:88px}
+  .lig .x{flex:1;min-width:0}
+  .lig .x small{display:block;color:var(--mut);font-size:11px}
+  .mono-t{font:700 10px var(--mono);letter-spacing:.12em;color:var(--mut);margin:14px 0 6px}
+
+  /* ── Conferência ── */
+  .conf{display:grid;grid-template-columns:270px minmax(0,1fr) minmax(0,1.2fr);background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;height:calc(100vh - 62px - 118px);min-height:560px}
+  .fq{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .fq .tb{padding:10px 12px;border-bottom:1px solid var(--line)}
+  .fq .seg{display:flex;gap:4px;margin-top:8px}
+  .fq .seg button{flex:1;font-size:11.5px;font-weight:700;padding:5px 0;border-radius:7px;border:1px solid var(--line);color:var(--mut);background:var(--panel);cursor:pointer;font-family:inherit}
+  .fq .seg button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .fq .ls{overflow:auto;flex:1}
+  .fq .gi{font:700 10px var(--mono);letter-spacing:.1em;color:var(--mut);padding:9px 12px 4px;background:var(--panel2);border-bottom:1px solid var(--line2);display:flex;gap:6px;text-transform:uppercase}
+  .fq .gi span{margin-left:auto}
+  .fq .f{padding:8px 12px;border-bottom:1px solid var(--line2);border-left:3px solid transparent;font-size:12.5px;cursor:pointer}
+  .fq .f:hover{background:var(--panel2)}
+  .fq .f .cod{font-size:11.5px;display:block}
+  .fq .f.sel{border-left-color:var(--accent);background:var(--accentBg)}
+  .pdf{background:#525A66;display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line)}
+  .pdf .tb{display:flex;align-items:center;gap:8px;padding:7px 12px;background:#2B323D;color:#C9D6E4;font-size:12px}
+  .pdf .tb .cod{color:#fff}
+  .pdf .tb button{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:7px;padding:3px 9px;font-weight:700;cursor:pointer;font-family:inherit}
+  .pdf .tb button:hover{border-color:var(--accent)}
+  .pdf .pc{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;align-items:center;gap:12px}
+  .pdf .pg{background:#fff;box-shadow:0 4px 18px rgba(0,0,0,.35);position:relative;flex:none}
+  .pdf .pg canvas{display:block;width:100%;height:100%}
+  .pdf .pg.ref{outline:3px solid var(--accent);outline-offset:2px}
+  .pdf .pg .nr{position:absolute;top:-1px;left:-1px;font:700 10px var(--mono);background:#2B323D;color:#fff;padding:1px 6px;border-radius:0 0 5px 0}
+  .pdf .pg.ref .nr{background:var(--accent);color:#231703}
+  .pdf .pm{color:#C9D6E4;font-size:13px;margin-top:40px;text-align:center;padding:0 20px}
+  .ed{display:flex;flex-direction:column;min-height:0;min-width:0}
+  .ed .top{padding:14px 18px 12px;border-bottom:1px solid var(--line)}
+  .ed .top .cod{font-size:18px}
+  .alerta{background:#FFF7ED;border:1px solid #FDBA74;border-left:3px solid var(--accent);border-radius:9px;padding:9px 12px;margin:10px 0 0;font-size:12.5px;color:#7C2D12}
+  .alerta.rev{background:#FEF2F2;border-color:#FCA5A5;border-left-color:#B91C1C;color:#7F1D1D}
+  .ed .its{overflow:auto;flex:1;padding:6px 18px 10px}
+  .ed table td{padding:5px 4px;border-bottom:1px solid var(--line2)}
+  .ed table th{padding:6px 4px}
+  .ed textarea{padding:5px 7px;font-size:12.5px;resize:vertical;min-height:34px;line-height:1.35}
+  .itc{border:1px solid var(--line);border-radius:10px;padding:8px 10px 10px;margin-top:8px;background:var(--panel)}
+  .itc:focus-within{border-color:var(--accent)}
+  .itc .h{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .itc .h .cod{font-size:12px}
+  .itc .g{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) 110px;gap:6px;margin-top:6px}
+  .itc small{display:block;font:700 9.5px var(--mono);letter-spacing:.1em;color:var(--mut);text-transform:uppercase;margin-bottom:2px}
+  .itc .chk{margin:0;font-size:12px;font-weight:600;color:var(--txt2)}
+  .ed .ib{background:none;border:1px solid var(--line);border-radius:6px;padding:2px 7px;cursor:pointer;color:var(--mut);font-weight:700}
+  .ed .ib:hover{border-color:var(--accent);color:var(--navy)}
+  .ed .ft{border-top:1px solid var(--line);padding:11px 18px;display:flex;gap:8px;align-items:center;background:var(--panel2);flex-wrap:wrap}
+
+  /* ── Fichas ── */
+  .kp{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:var(--line);border-radius:12px;overflow:hidden;border:1px solid var(--line);margin-bottom:14px}
+  .kp button{background:var(--panel);padding:10px 14px;border:none;border-top:3px solid transparent;text-align:left;cursor:pointer;font-family:inherit;color:var(--txt)}
+  .kp button.on{background:var(--accentBg)}
+  .kp b{display:block;font:800 20px var(--mono)}
+  .kp span{font-size:11.5px;color:var(--mut)}
+  .t4g{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}
+  .mx{overflow:auto;padding:12px 14px}
+  .mx table{border-collapse:separate;border-spacing:3px;width:auto}
+  .mx th{border:none;padding:0;font:700 10px var(--mono);letter-spacing:.06em;white-space:nowrap;text-transform:uppercase}
+  .mx th.v{writing-mode:vertical-rl;transform:rotate(180deg);height:150px;width:30px;line-height:30px;text-align:left;vertical-align:bottom}
+  .mx td{border:none;padding:0}
+  .mx td.pv{font:700 11px var(--mono);color:var(--navy);padding-right:8px;white-space:nowrap;text-align:right}
+  .cl{display:block;width:30px;height:24px;border-radius:5px;background:var(--line2);border:none;cursor:default;padding:0;font:800 10px var(--mono);color:#fff}
+  .cl[data-id]{cursor:pointer}
+  .cl.aberta{background:#93C5FD}.cl.em_verificacao{background:#1E3A5F}.cl.aguardando{background:#E8960A}.cl.reprovada{background:#C0392B}.cl.aprovada{background:#1E8449}
+  .cl.foc{outline:2.5px solid var(--accent);outline-offset:1px}
+  .fic{padding:14px 16px}
+  .fic .cod{font-size:16px}
+  .res{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;padding:7px 0;border-bottom:1px solid var(--line2);font-size:12.5px;align-items:start}
+  .res .n{font:700 11px var(--mono);color:var(--mut)}
+  .hist{border-left:2px solid var(--line);margin:10px 0 0 4px;padding-left:12px;font-size:12px}
+  .hist div{margin-bottom:7px;position:relative}
+  .hist div::before{content:'';position:absolute;left:-17px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--navy)}
+  .hist div.a::before{background:var(--ok)} .hist div.r::before{background:#C0392B}
+
+  @media (max-width:1100px){
+    .t1g,.t4g{grid-template-columns:minmax(0,1fr)}
+    .bib{grid-template-columns:120px minmax(0,1fr);height:auto} .bib .det{grid-column:1/-1;border-top:1px solid var(--line)}
+    .conf{grid-template-columns:220px minmax(0,1fr);height:auto} .conf .pdf{display:none}
+  }
+  @media (max-width:760px){
+    .app{grid-template-columns:minmax(0,1fr)} nav{position:static;height:auto}
+    .tela{padding:14px 12px 50px} .bib,.conf{grid-template-columns:minmax(0,1fr)} .trilho{display:none}
+    header .tt span,header .gslot{display:none}
+  }
+  header > img[src="logo_symbol.png"]{margin-right:-14px}
+</style>
+<link rel="stylesheet" href="auria_barra.css">
+</head>
+<body>
+<header>
+  <img src="logo_auria_branco.png" alt="Auria">
+  <div class="tt"><b>Painel da Qualidade</b><span id="hGrupo"></span></div>
+  <div class="gslot" id="gLogo"></div>
+  <div class="who"><b id="uNome"></b><span id="uPapel"></span></div>
+  <button class="hbtn" onclick="tema()">Tema</button>
+  <button class="hbtn" onclick="sair()">Sair</button>
+</header>
+
+<div id="load" class="load">Carregando…</div>
+<div class="app" id="app" style="display:none">
+  <nav id="nav">
+    <label class="nbusca"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input type="search" id="gBusca" placeholder="Buscar norma ou FVS" autocomplete="off"><kbd>/</kbd></label>
+    <div class="grp">Qualidade</div>
+    <a data-t="fazer" href="#fazer"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Para fazer<span class="n" id="nFazer"></span></a>
+    <a data-t="biblioteca" href="#biblioteca"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 13h8M8 17h5"/></svg>Biblioteca normativa<span class="n" id="nBib"></span></a>
+    <a data-t="conferencia" href="#conferencia"><svg viewBox="0 0 24 24"><path d="M9 5h10M9 12h10M9 19h10"/><path d="m3.5 5 1.5 1.5L7.5 4M3.5 12l1.5 1.5 2.5-2.5M3.5 19l1.5 1.5 2.5-2.5"/></svg>Modelos de FVS<span class="n" id="nFvs"></span></a>
+    <a data-t="fichas" href="#fichas"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>Fichas das obras<span class="n" id="nFic"></span></a>
+    <div class="grp">Distribuição</div>
+    <a data-t="copias" href="#copias"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M4 7v14h11"/></svg>Cópias controladas<span class="n" id="nCop"></span></a>
+    <a onclick="abrirSolicitacoes()"><svg viewBox="0 0 24 24"><path d="M4 6h16v10H8l-4 4z"/></svg>Solicitações de revisão<span class="n" id="nSol"></span></a>
+    <div class="grp">Consulta</div>
+    <a href="cde_setor.html?consulta=1"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/></svg>CDE das obras</a>
+    <a href="padroes_grupo.html?aba=qualidade"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7z"/></svg>Padrões do grupo</a>
+  </nav>
+  <main id="corpo"></main>
+</div>
+
+<div class="ov" id="ov"><div class="box" id="ovBox"></div></div>
+
+<script>
+const sb = window.supabase.createClient(
+  'https://sabzccokueowpromwxdg.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnpjY29rdWVvd3Byb213eGRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MjIxMTcsImV4cCI6MjA5MDQ5ODExN30.2sjY0auOwEEjkaXF7jaE_fRB8FG5H2r18BQqp-5HOcE');
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const dt = d => d ? new Date(d).toLocaleDateString('pt-BR') : '';
+const dth = d => d ? new Date(d).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+const rev2 = n => String(n == null ? 0 : n).padStart(2, '0');
+
+let ME = null, GRUPO = null, PODE = { its:false, qualidade:false }, ITS = [], FVS = [], EMPS = [], TELA = 'fazer';
+const TEMA_ROT = { seguranca:'Segurança', qualidade:'Qualidade', execucao:'Execução', meio_ambiente:'Meio ambiente', outro:'Outro' };
+const ETAPA_ROT = { estrutura:'Estrutura', vedacao:'Vedação', revestimento:'Revestimento', instalacoes:'Instalações', impermeabilizacao:'Impermeabilização', acabamento:'Acabamento', fachada:'Fachada', outro:'Outro' };
+const NIVEL_ROT = { pavimento:'Pavimento', unidade:'Unidade (apto/sala)', ambiente:'Ambiente' };
+const SIT = { aberta:['Aberta','#93C5FD'], em_verificacao:['Em verificação','#1E3A5F'], aguardando:['Aguardando aprovação','#E8960A'], reprovada:['Reprovada','#C0392B'], aprovada:['Aprovada','#1E8449'] };
+
+function tema(){ const d = document.body.classList.toggle('dark'); try { localStorage.setItem('auria_theme', d ? 'dark' : 'light'); } catch (e){} }
+try { if (localStorage.getItem('auria_theme') === 'dark') document.body.classList.add('dark'); } catch (e){}
+async function sair(){ try { await sb.auth.signOut(); } catch (e){} location.replace('./'); }
+function ov(html){ $('ovBox').style.width = ''; $('ovBox').innerHTML = html; $('ov').classList.add('on'); }
+function ovFechar(){ $('ov').classList.remove('on'); }
+async function r2Url(action, path, contentType){
+  const r = await sb.functions.invoke('cde-r2', { body:{ action, path, contentType } });
+  if (r.error){ let m = r.error.message; try { const b = await r.error.context.json(); if (b && b.error) m = b.error; } catch (_){} throw new Error(m); }
+  return r.data.url;
+}
+const itDe = id => ITS.find(i => i.id === id);
+const vigDe = i => i && (i.revs || []).find(r => r.vigente);
+const fvsAlerta = m => !!(m.validar_nota || m.revisar_it_rev);
+
+// ── entrada ─────────────────────────────────────────────────────────────────
+async function boot(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if (!session){ location.replace('./?next=' + encodeURIComponent('qualidade.html' + location.hash)); return; }
+  const { data:p } = await sb.from('usuarios_auria').select('id,nome,email,role,empresa_id,setor_area').eq('id', session.user.id).maybeSingle();
+  // Guarda: setor da Qualidade e gestão do grupo. Outro setor volta à consulta do CDE.
+  if (!p){ location.replace('./'); return; }
+  if (p.role === 'setor' && p.setor_area !== 'qualidade'){ location.replace('cde_setor.html'); return; }
+  if (!['setor','gerente','super_admin'].includes(p.role)){ location.replace('./'); return; }
+  ME = p; GRUPO = p.empresa_id;
+  $('uNome').textContent = p.nome || p.email;
+  $('uPapel').textContent = p.role === 'setor' ? 'Setor · Qualidade' : (p.role === 'gerente' ? 'Gestão do grupo' : 'Administrador');
+  try { sb.rpc('auria_ping_acesso').then(() => {}, () => {}); } catch (_){}
+  const [g, pi, pq, em] = await Promise.all([
+    sb.from('empresas_auria').select('nome,logo_url').eq('id', GRUPO).maybeSingle(),
+    sb.rpc('grupo_pode_editar', { p_grupo:GRUPO, p_secao:'its' }),
+    sb.rpc('grupo_pode_editar', { p_grupo:GRUPO, p_secao:'qualidade' }),
+    sb.from('empreendimentos_auria').select('id,nome').eq('empresa_id', GRUPO).order('nome')]);
+  PODE.its = pi.data === true; PODE.qualidade = pq.data === true;
+  EMPS = em.data || [];
+  const gn = g.data ? g.data.nome : '';
+  $('hGrupo').textContent = gn;
+  const sig = (gn || '').split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean).map(w => w[0]).join('').slice(0, 4).toUpperCase();
+  $('gLogo').innerHTML = g.data && g.data.logo_url ? '<div class="glogo"><img src="' + esc(g.data.logo_url) + '" alt=""></div>' : (gn ? '<div class="glogo ph">' + esc(sig) + '</div>' : '');
+  await Promise.all([carregarITs(), carregarFvs()]);
+  $('load').style.display = 'none'; $('app').style.display = '';
+  window.__ajudaCfg = { sb, papel:'setor', pagina:'Painel da Qualidade' }; if (window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);
+  window.addEventListener('hashchange', rotear);
+  rotear();
+  contadores();
+}
+async function carregarFvs(){
+  const { data } = await sb.from('fvs_modelo_auria').select('*').eq('grupo_id', GRUPO).eq('tipo', 'fvs').order('codigo');
+  FVS = (data || []).sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }));
+}
+function rotear(){
+  const t = (location.hash || '#fazer').slice(1).split('?')[0];
+  TELA = ({ fazer:1, biblioteca:1, conferencia:1, fichas:1, copias:1 })[t] ? t : 'fazer';
+  document.querySelectorAll('#nav a[data-t]').forEach(a => a.classList.toggle('on', a.dataset.t === TELA));
+  ({ fazer:telaFazer, biblioteca:telaBiblioteca, conferencia:telaConferencia, fichas:telaFichas, copias:telaCopias })[TELA]();
+}
+function ir(t){ if (('#' + t) === location.hash) rotear(); else location.hash = t; }
+
+// Contadores do menu e da fila — consultas leves, todas de uma vez.
+let CONT = {};
+async function contadores(){
+  const ids = EMPS.map(e => e.id).concat(['00000000-0000-0000-0000-000000000000']);
+  const semana = new Date(Date.now() - 7 * 864e5).toISOString(), mes = new Date(Date.now() - 30 * 864e5).toISOString();
+  const revVig = ITS.filter(i => i.ativo).map(i => (vigDe(i) || {}).id).filter(Boolean);
+  const [sol, cop, copObs, fic, ficAud, semTxt, leit] = await Promise.all([
+    sb.from('grupo_it_solicitacao_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).in('situacao', ['aberta','em_analise']),
+    sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).is('obsoleta_em', null),
+    sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null),
+    sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').in('situacao', ['aberta','em_verificacao','aguardando','reprovada']),
+    sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').eq('situacao', 'aprovada').gte('aprovado_em', semana),
+    revVig.length ? sb.from('grupo_it_revisao_auria').select('id,it_id,arquivo_path').in('id', revVig).or('texto_busca.is.null,texto_busca.eq.') : Promise.resolve({ data:[] }),
+    revVig.length ? sb.from('grupo_it_visualizacao_auria').select('id', { count:'exact', head:true }).in('revisao_id', ITS.flatMap(i => (i.revs || []).map(r => r.id))).gte('em', mes) : Promise.resolve({ count:0 })]);
+  const hoje30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+  CONT = {
+    sol: sol.count || 0, cop: cop.count || 0, copObs: copObs.count || 0, fic: fic.count || 0, ficAud: ficAud.count || 0,
+    semTxt: semTxt.data || [], leit: leit.count || 0,
+    venc: ITS.filter(i => i.ativo && i.validade && i.validade <= hoje30),
+    ras: FVS.filter(m => m.ativo && m.rascunho).length, alerta: FVS.filter(m => m.ativo && fvsAlerta(m)).length
+  };
+  const n = (id, v, q) => { const el = $(id); el.textContent = v ? v : ''; el.style.display = v ? '' : 'none'; el.classList.toggle('q', !!q); };
+  const fila = CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
+  n('nFazer', fila, true); n('nBib', ITS.filter(i => i.ativo).length); n('nFvs', CONT.ras + FVS.filter(m => m.ativo && !m.rascunho && m.revisar_it_rev).length, true);
+  n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
+  if (TELA === 'fazer') telaFazer();
+}
+
+// ── Para fazer ──────────────────────────────────────────────────────────────
+function telaFazer(){
+  const C = CONT, carregando = C.ras === undefined;
+  const ativos = FVS.filter(m => m.ativo), pub = ativos.filter(m => !m.rascunho).length;
+  const linha = (num, tit, txt, acao, pri) => '<div class="it' + (pri && num ? ' pri' : '') + '"><div class="num' + (num ? '' : ' zero') + '">' + (carregando ? '…' : num) + '</div><div class="tx"><b>' + tit + '</b><span>' + txt + '</span></div>'
+    + (num ? acao : '<span class="okd">em dia</span>') + '</div>';
+  const etapas = {}; ativos.forEach(m => { const k = ['acabamento','fachada','outro'].includes(m.etapa) ? 'acab' : m.etapa; (etapas[k] = etapas[k] || []).push(m); });
+  const ROT = Object.assign({}, ETAPA_ROT, { acab:'Acabamento / fachada' });
+  const barra = l => { const t = l.length || 1, p = l.filter(m => !m.rascunho).length, a = l.filter(m => m.rascunho && fvsAlerta(m)).length, r = l.length - p - a;
+    return '<div class="bar"><i style="width:' + (p / t * 100) + '%;background:var(--ok)"></i><i style="width:' + (a / t * 100) + '%;background:var(--accent)"></i><i style="width:' + (r / t * 100) + '%;background:#FDE7C0"></i></div>'; };
+  const tipos = {}; ITS.filter(i => i.ativo).forEach(i => tipos[i.tipo || 'IT'] = (tipos[i.tipo || 'IT'] || 0) + 1);
+  // atividade: revisões publicadas, modelos alterados e cópias — o que já está carregado
+  const ev = [];
+  ITS.forEach(i => (i.revs || []).forEach(r => ev.push({ em:r.publicado_em, c:'n', t:'<span class="cod">' + esc(i.codigo) + '</span> rev. ' + esc(r.revisao) + ' publicada', q:r.publicado_nome })));
+  ativos.filter(m => m.atualizado_em).forEach(m => ev.push({ em:m.atualizado_em, c:m.rascunho ? 'a' : 'g', t:'<span class="cod">' + esc(m.codigo) + '</span> ' + (m.rascunho ? 'alterada (rascunho)' : 'publicada para as obras'), q:m.atualizado_nome }));
+  ev.sort((a, b) => new Date(b.em) - new Date(a.em));
+  // agrupa a carga em lote (muitas revisões no mesmo dia pela mesma pessoa) numa linha só
+  const atv = []; ev.forEach(e => { const u = atv[atv.length - 1]; if (u && u.lote && dt(u.em) === dt(e.em) && u.q === e.q && e.c === 'n') u.n++; else atv.push(Object.assign({}, e, { lote:e.c === 'n', n:1 })); });
+  $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Para fazer</h2><p class="sub">O que depende da Qualidade hoje, do mais urgente para o menos. Cada linha abre a tela já filtrada.</p></div></div>'
+    + '<div class="t1g"><div>'
+    + '<div class="card fila"><div class="hd"><b>Fila de trabalho</b></div>'
+    + linha(C.ras, 'Modelos de FVS em rascunho — a obra ainda não vê', 'Extraídos das ITs e do sistema anterior. Conferir com a IT vigente e publicar.', '<button class="btn ac" onclick="CF.seg=\'ras\';ir(\'conferencia\')">Conferir agora</button>', true)
+    + linha(C.alerta, 'Com alerta de validação', 'Tolerância divergente da IT, item duplicado, numeração trocada, critério faltando, IT revisada.', '<button class="btn sec" onclick="CF.seg=\'alerta\';ir(\'conferencia\')">Ver alertas</button>')
+    + linha(C.sol, 'Solicitações de revisão abertas', 'Pedidos de obra ou setor para revisar uma norma.', '<button class="btn sec" onclick="abrirSolicitacoes()">Responder</button>', true)
+    + linha((C.semTxt || []).length, 'Documento sem texto pesquisável', 'Não aparece na busca por conteúdo. O texto é lido uma vez só.', '<button class="btn sec" id="btIdx" onclick="indexarFaltantes()">Indexar</button>')
+    + linha(C.copObs, 'Cópias controladas obsoletas', 'Saiu revisão nova; o responsável foi avisado por e-mail. Confirme o recolhimento na obra.', '<button class="btn sec" onclick="CP.so=\'obs\';ir(\'copias\')">Ver cópias</button>')
+    + linha(C.ficAud, 'Fichas aprovadas na última semana', 'Amostragem para auditoria — a Qualidade pode contestar uma ficha aprovada.', '<button class="btn sec" onclick="FI.sit=\'aprovada\';ir(\'fichas\')">Auditar</button>')
+    + linha((C.venc || []).length, 'Validades vencendo em 30 dias', 'Documentos com data de validade cadastrada.', '<button class="btn sec" onclick="BB.f=\'venc\';ir(\'biblioteca\')">Ver</button>')
+    + '</div>'
+    + '<div class="card" style="margin-top:16px"><div class="hd"><b>Implantação das FVS</b><span class="sp"></span><span class="cod">' + pub + ' / ' + ativos.length + '</span><span class="hint">publicadas</span></div><div style="padding:14px 16px">'
+    + barra(ativos)
+    + '<div class="leg"><span><i style="background:var(--ok)"></i>Publicada ' + pub + '</span><span><i style="background:var(--accent)"></i>Rascunho com alerta ' + ativos.filter(m => m.rascunho && fvsAlerta(m)).length + '</span><span><i style="background:#FDE7C0"></i>Rascunho sem alerta ' + ativos.filter(m => m.rascunho && !fvsAlerta(m)).length + '</span></div>'
+    + Object.keys(etapas).sort((a, b) => etapas[b].length - etapas[a].length).map(k => '<div class="etp"><span>' + esc(ROT[k] || k) + '</span>' + barra(etapas[k]) + '<span class="q">' + etapas[k].filter(m => !m.rascunho).length + '/' + etapas[k].length + '</span></div>').join('')
+    + '</div></div></div>'
+    + '<div style="display:flex;flex-direction:column;gap:16px">'
+    + '<div class="card"><div class="hd"><b>Biblioteca</b><span class="sp"></span><a class="btn sec sm" href="#biblioteca">Abrir</a></div><div class="mini">'
+    + '<div><b>' + ITS.filter(i => i.ativo).length + '</b><span>documentos vigentes</span></div><div><b>' + ITS.filter(i => !i.ativo).length + '</b><span>obsoletos</span></div>'
+    + '<div><b>' + (carregando ? '…' : C.leit) + '</b><span>leituras em 30 dias</span></div><div><b>' + (carregando ? '…' : C.cop) + '</b><span>cópias controladas ativas</span></div></div>'
+    + '<div style="padding:10px 16px" class="hint">' + Object.keys(tipos).sort((a, b) => tipos[b] - tipos[a]).map(k => '<span class="cod">' + esc(k) + '</span> ' + tipos[k]).join(' · ') + '</div></div>'
+    + '<div class="card"><div class="hd"><b>Atividade recente</b></div><div class="ativ">'
+    + (atv.length ? atv.slice(0, 7).map(e => '<div class="e"><i class="' + e.c + '"></i><div>' + (e.n > 1 ? e.n + ' revisões publicadas' : e.t) + '<small>' + esc(e.q || '') + ' · ' + dth(e.em) + '</small></div></div>').join('') : '<div class="hint" style="padding:10px 0">Nada ainda.</div>')
+    + '</div></div></div></div></section>';
+}
+// Lê o texto do original (só quem mantém a biblioteca baixa o original) e indexa — uma vez.
+async function indexarFaltantes(){
+  const b = $('btIdx'); if (b){ b.disabled = true; b.textContent = 'Lendo…'; }
+  let ok = 0, vazio = 0;
+  for (const r of CONT.semTxt || []){
+    try {
+      const blob = await (await fetch(await r2Url('download', r.arquivo_path))).blob();
+      const t = await AuriaIT.textoArquivo(new File([blob], r.arquivo_path.split('/').pop(), { type:blob.type }));
+      await sb.rpc('it_indexar', { p_revisao:r.id, p_texto:t || ' ' });
+      if ((t || '').trim()) ok++; else vazio++;
+    } catch (e){ console.warn('indexar', e); }
+  }
+  if (vazio) alert(vazio + ' documento(s) sem texto legível (PDF escaneado). Eles não voltam para a fila.');
+  contadores();
+}
+function abrirSolicitacoes(){ itSolicitacoes(PODE.its ? 'todas' : 'minhas'); }
+
+// ── Biblioteca ──────────────────────────────────────────────────────────────
+const BB = { f:'todos', q:'', cont:false, sel:null, aba:'fvs', trechos:null };
+const FAM_N = { grupo:'Grupo', victa:'Victa' };
+function telaITs(){ if (TELA === 'biblioteca') telaBiblioteca(); else contadores(); }       // gancho do auria_biblioteca.js
+function itDetalhe(id){ ovFechar(); BB.sel = id; contadores(); if (TELA !== 'biblioteca') ir('biblioteca'); else telaBiblioteca(); }
+async function telaBiblioteca(soLista){
+  const hoje30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+  const F = {
+    todos:[ 'Todos', i => i.ativo ], obs:[ 'Obsoletos', i => !i.ativo ], ped:[ 'C/ pedido', i => i.ativo && SOL_AB[i.id] ], venc:[ 'Validade', i => i.ativo && i.validade && i.validade <= hoje30 ],
+    grupo:[ 'Grupo', i => i.ativo && (i.familia || 'grupo') === 'grupo' ], victa:[ 'Victa', i => i.ativo && i.familia === 'victa' ] };
+  const tipos = [...new Set(ITS.map(i => i.tipo || 'IT'))].sort((a, b) => ITS.filter(i => (i.tipo || 'IT') === b).length - ITS.filter(i => (i.tipo || 'IT') === a).length);
+  tipos.forEach(t => F['t:' + t] = [ t, i => i.ativo && (i.tipo || 'IT') === t ]);
+  if (!F[BB.f]) BB.f = 'todos';
+  const q = BB.q.trim(), ql = q.toLowerCase();
+  if (BB.cont && q.length >= 2){
+    const r = await sb.rpc('it_buscar', { p_grupo:GRUPO, p_q:q });
+    BB.trechos = {}; (r.data || []).forEach(x => BB.trechos[x.it_id] = x.trecho);
+  } else BB.trechos = null;
+  const lista = ITS.filter(i => F[BB.f][1](i) && (BB.trechos ? BB.trechos[i.id] !== undefined : (!ql || (i.codigo + ' ' + i.titulo + ' ' + (i.palavras || '')).toLowerCase().includes(ql))))
+    .sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }));
+  if (!BB.sel || !lista.find(i => i.id === BB.sel)) BB.sel = lista.length ? lista[0].id : null;
+  const trecho = t => esc(t).replace(/«/g, '<mark>').replace(/»/g, '</mark>');
+  const linhas = lista.length ? lista.map(i => { const v = vigDe(i);
+      return '<div class="doc' + (i.id === BB.sel ? ' sel' : '') + (i.ativo ? '' : ' obs') + '" onclick="BB.sel=\'' + i.id + '\';telaBiblioteca()"><span class="cod">' + esc(i.codigo) + '</span><div class="t">' + esc(i.titulo)
+        + ' <span class="chip ' + (i.familia === 'victa' ? 'c-ras' : 'c-nav') + '">' + FAM_N[i.familia || 'grupo'] + '</span>' + AuriaIT.chipNorma(SOL_AB[i.id])
+        + (i.validade && i.validade <= hoje30 && i.ativo ? ' <span class="chip c-rev">validade ' + dt(i.validade + 'T12:00') + '</span>' : '')
+        + (BB.trechos && BB.trechos[i.id] ? '<small>…' + trecho(BB.trechos[i.id]) + '…</small>' : '') + '</div>'
+        + '<div class="r">' + (v ? esc(v.revisao) + '<small>' + new Date(v.publicado_em).toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + '</small>' : '—') + '</div></div>'; }).join('')
+    : '<div class="vazio">' + (BB.trechos ? 'Nada encontrado dentro dos documentos.' : 'Nenhum documento neste filtro.') + '</div>';
+  if (soLista && $('bibLs')){ $('bibLs').innerHTML = linhas; $('bibN').textContent = cabLista(lista.length, q); bibDetalhe(); return; }
+  const tr = (k) => '<a class="' + (BB.f === k ? 'on' : '') + '" onclick="BB.f=\'' + k + '\';BB.sel=null;telaBiblioteca()">' + esc(F[k][0]) + '<span>' + ITS.filter(F[k][1]).length + '</span></a>';
+  $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Biblioteca normativa</h2><p class="sub">Lista mestra do grupo. Só a revisão vigente chega às obras; toda abertura sai carimbada (cópia não controlada).</p></div>'
+    + '<button class="btn sec" onclick="listaMestra()">Lista mestra</button>'
+    + (PODE.its ? '<button class="btn sec" onclick="itImportar()">Importar pasta</button><button class="btn" onclick="itForm()">＋ Documento</button>' : '') + '</div>'
+    + '<div class="bib"><div class="trilho"><div class="g">TIPO</div>' + tr('todos') + tipos.map(t => tr('t:' + t)).join('')
+    + '<div class="g" style="margin-top:8px">FAMÍLIA</div>' + tr('grupo') + tr('victa')
+    + '<div class="g" style="margin-top:8px">SITUAÇÃO</div>' + tr('ped') + tr('venc') + (PODE.its ? tr('obs') : '') + '</div>'
+    + '<div class="lst"><div class="tb"><input type="search" id="bibQ" placeholder="' + (BB.cont ? 'Buscar dentro dos documentos…' : 'Código, título ou palavra') + '" value="' + esc(BB.q) + '" oninput="BB.q=this.value;clearTimeout(window._bq);window._bq=setTimeout(()=>telaBiblioteca(true),280)">'
+    + '<div class="tgl"><button class="' + (BB.cont ? '' : 'on') + '" onclick="BB.cont=false;telaBiblioteca()">Título</button><button class="' + (BB.cont ? 'on' : '') + '" title="Buscar no texto dos PDFs" onclick="BB.cont=true;telaBiblioteca()">Conteúdo</button></div></div>'
+    + '<div class="hint" id="bibN" style="padding:7px 14px;border-bottom:1px solid var(--line2)">' + cabLista(lista.length, q) + '</div>'
+    + '<div class="sc" id="bibLs">' + linhas + '</div></div>'
+    + '<div class="det" id="bibDet"></div></div></section>';
+  bibDetalhe();
+}
+function cabLista(n, q){ return n + ' documento' + (n === 1 ? '' : 's') + (q ? (BB.cont ? ' citam “' + q + '”' : ' com “' + q + '”') : ''); }
+async function bibDetalhe(){
+  const el = $('bibDet'); if (!el) return;
+  const i = itDe(BB.sel);
+  if (!i){ el.innerHTML = '<div class="vazio">Selecione um documento.</div>'; return; }
+  const v = vigDe(i), ext = v ? AuriaIT.extDe(v.arquivo_path) : '';
+  const fvs = FVS.filter(m => m.it_id === i.id && m.ativo);
+  const abas = [['fvs','FVS ligadas · ' + fvs.length], ['copias','Cópias'], ['revs','Revisões · ' + i.revs.length], ['leit','Leituras']];
+  el.innerHTML = '<div class="top"><span class="cod">' + esc(i.codigo) + '</span> ' + (i.ativo ? '<span class="chip c-pub">vigente</span>' : '<span class="chip c-mut">obsoleto</span>')
+    + ' <span class="chip c-nav">' + FAM_N[i.familia || 'grupo'] + ' · ' + esc(TEMA_ROT[i.tema] || '') + '</span>' + AuriaIT.chipNorma(SOL_AB[i.id])
+    + '<h3>' + esc(i.titulo) + '</h3>'
+    + (v ? '<div class="vig"><div><small>Revisão</small><b>' + esc(v.revisao) + '</b></div><div style="flex:1"><small>Publicada</small>' + dt(v.publicado_em) + ' · ' + esc(v.publicado_nome || '') + '</div><div><small>Validade</small>' + (i.validade ? dt(i.validade + 'T12:00') : '—') + '</div></div>' : '<div class="hint" style="margin-top:8px">Sem revisão publicada.</div>')
+    + '<div class="acts">' + (v && AuriaIT.podeVer(ext) ? '<button class="btn" onclick="itAbrir(\'' + v.id + '\')">Abrir</button>' : '')
+    + (v && i.ativo ? '<button class="btn sec" onclick="itCopia(\'' + i.id + '\')">Cópia controlada</button>' : '')
+    + (PODE.its ? '<button class="btn sec" onclick="revForm(\'' + i.id + '\')">Publicar revisão</button><button class="btn sec" onclick="itForm(\'' + i.id + '\')">Editar</button>'
+                : (i.ativo ? '<button class="btn sec" onclick="itSolicitar(\'' + i.id + '\')">Solicitar revisão</button>' : '')) + '</div></div>'
+    + '<div class="dtabs">' + abas.map(([k, t]) => '<button class="' + (BB.aba === k ? 'on' : '') + '" onclick="BB.aba=\'' + k + '\';bibDetalhe()">' + t + '</button>').join('') + '</div>'
+    + '<div class="dbody" id="bibAba"><div class="hint">Carregando…</div></div>';
+  const ab = $('bibAba');
+  if (BB.aba === 'fvs'){
+    ab.innerHTML = '<p class="hint" style="margin:0 0 10px">Quando sai revisão nova desta norma, as FVS abaixo ganham a marca “revisar” e entram na fila da Qualidade.</p>'
+      + (fvs.length ? fvs.map(m => '<div class="lig" onclick="CF.sel=\'' + m.id + '\';CF.seg=\'todas\';ir(\'conferencia\')"><span class="cod">' + esc(m.codigo) + '</span><div class="x">' + esc(m.servico)
+          + '<small>' + esc(ETAPA_ROT[m.etapa] || m.etapa) + ((m.it_paginas || []).length ? ' · págs. ' + m.it_paginas.join(', ') : '') + ' · ' + (m.itens || []).length + ' itens</small></div>' + chipFvs(m) + '</div>').join('')
+        : '<div class="hint">Nenhum modelo de FVS aponta para esta norma.</div>');
+    return;
+  }
+  if (BB.aba === 'revs'){
+    ab.innerHTML = i.revs.length ? '<table><tr><th>Rev.</th><th>Publicada</th><th>O que mudou</th><th></th></tr>' + i.revs.map(r => '<tr><td class="cod">' + esc(r.revisao) + (r.vigente ? ' <span class="chip c-pub">vigente</span>' : '') + '</td>'
+        + '<td>' + dt(r.publicado_em) + '<div class="hint">' + esc(r.publicado_nome || '') + '</div></td><td>' + esc(r.observacao || '—') + '</td>'
+        + '<td style="text-align:right">' + (r.arquivo_path ? (AuriaIT.podeVer(AuriaIT.extDe(r.arquivo_path)) ? '<button class="btn sec sm" onclick="itAbrir(\'' + r.id + '\')">Abrir</button>' : (PODE.its ? '<button class="btn sec sm" onclick="itBaixarOriginal(\'' + esc(r.arquivo_path) + '\')">Baixar</button>' : '')) : '') + '</td></tr>').join('') + '</table>'
+      : '<div class="hint">Nenhuma revisão publicada.</div>';
+    return;
+  }
+  if (BB.aba === 'copias'){
+    const { data, error } = await sb.from('grupo_it_copia_auria').select('numero,quantidade,emitido_em,obsoleta_em,avisado_em,revisao_id,empreendimentos_auria(nome),usuarios_auria!grupo_it_copia_auria_responsavel_id_fkey(nome,email)').eq('it_id', i.id).order('emitido_em', { ascending:false });
+    const d2 = error ? await sb.from('grupo_it_copia_auria').select('numero,quantidade,emitido_em,obsoleta_em,avisado_em,revisao_id,empreendimentos_auria(nome)').eq('it_id', i.id).order('emitido_em', { ascending:false }) : { data };
+    if ($('bibAba') !== ab) return;
+    const revN = {}; i.revs.forEach(r => revN[r.id] = r.revisao);
+    ab.innerHTML = (d2.data || []).length ? '<table><tr><th>Nº</th><th>Obra</th><th>Rev.</th><th>Situação</th></tr>' + d2.data.map(c => '<tr' + (c.obsoleta_em ? ' style="opacity:.6"' : '') + '><td class="cod">' + c.numero + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—')
+        + '<div class="hint">' + (c.usuarios_auria ? esc(c.usuarios_auria.nome || c.usuarios_auria.email) + ' · ' : '') + c.quantidade + ' cópia(s) · ' + dt(c.emitido_em) + '</div></td><td class="cod">' + esc(revN[c.revisao_id] || '') + '</td>'
+        + '<td>' + (c.obsoleta_em ? '<span class="chip c-rev">obsoleta</span>' + (c.avisado_em ? '<div class="hint">avisado por e-mail</div>' : '') : '<span class="chip c-pub">vigente</span>') + '</td></tr>').join('') + '</table>'
+      : '<div class="hint">Nenhuma cópia controlada emitida.</div>';
+    return;
+  }
+  // Leituras: quem abriu cada revisão (prova de ciência para auditoria)
+  const revIds = i.revs.map(r => r.id);
+  const { data } = revIds.length ? await sb.from('grupo_it_visualizacao_auria').select('revisao_id,usuario_id,em').in('revisao_id', revIds).order('em', { ascending:false }).limit(200) : { data:[] };
+  const uids = [...new Set((data || []).map(x => x.usuario_id))];
+  const nomes = {}; if (uids.length){ const u = await sb.from('usuarios_auria').select('id,nome,email').in('id', uids); (u.data || []).forEach(x => nomes[x.id] = x.nome || x.email); }
+  if ($('bibAba') !== ab) return;
+  const revN = {}; i.revs.forEach(r => revN[r.id] = r.revisao);
+  ab.innerHTML = (data || []).length ? '<table><tr><th>Pessoa</th><th>Rev.</th><th>Quando</th></tr>' + data.map(x => '<tr><td>' + esc(nomes[x.usuario_id] || 'usuário') + '</td><td class="cod">' + esc(revN[x.revisao_id] || '') + '</td><td>' + dth(x.em) + '</td></tr>').join('') + '</table>'
+    : '<div class="hint">Ninguém abriu esta norma ainda.</div>';
+}
+// Lista mestra: o que vale hoje, para imprimir/salvar em PDF pelo navegador.
+function listaMestra(){
+  const l = ITS.filter(i => i.ativo).sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }));
+  const w = window.open('', '_blank'); if (!w) return alert('Libere as janelas pop-up para gerar a lista.');
+  w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lista mestra — ' + esc($('hGrupo').textContent) + '</title><style>body{font:12px "Segoe UI",Arial;color:#0F172A;margin:28px}h1{font-size:16px;color:#1E3A5F;margin:0}p{color:#64748B;margin:4px 0 14px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #E2E8F0;padding:5px 6px;text-align:left}th{font-size:10px;text-transform:uppercase;color:#64748B}td.c{font-family:Consolas,monospace;font-weight:700;color:#1E3A5F;white-space:nowrap}</style></head><body>'
+    + '<h1>Lista mestra de documentos — ' + esc($('hGrupo').textContent) + '</h1><p>' + l.length + ' documentos vigentes · emitida em ' + new Date().toLocaleString('pt-BR') + ' por ' + esc(ME.nome || ME.email) + '</p>'
+    + '<table><tr><th>Código</th><th>Título</th><th>Família</th><th>Rev.</th><th>Publicada</th></tr>' + l.map(i => { const v = vigDe(i); return '<tr><td class="c">' + esc(i.codigo) + '</td><td>' + esc(i.titulo) + '</td><td>' + FAM_N[i.familia || 'grupo'] + '</td><td class="c">' + esc(v ? v.revisao : '—') + '</td><td>' + (v ? dt(v.publicado_em) : '') + '</td></tr>'; }).join('')
+    + '</table><script>setTimeout(()=>print(),300)<\/script></body></html>');
+  w.document.close();
+}
+function chipFvs(m){
+  if (!m.ativo) return '<span class="chip c-mut">inativo</span>';
+  if (m.revisar_it_rev) return '<span class="chip c-rev">revisar · IT rev. ' + esc(m.revisar_it_rev) + '</span>';
+  if (m.validar_nota) return '<span class="chip c-val">validar</span>';
+  return m.rascunho ? '<span class="chip c-ras">rascunho</span>' : '<span class="chip c-pub">publicada</span>';
+}
+
+// ── Conferência de FVS ──────────────────────────────────────────────────────
+const CF = { seg:'alerta', q:'', sel:null, it:null };
+function cfLista(){
+  const q = CF.q.trim().toLowerCase();
+  return FVS.filter(m => m.ativo && ({ alerta: fvsAlerta(m), ras: m.rascunho && !fvsAlerta(m), pub: !m.rascunho && !fvsAlerta(m), todas: true })[CF.seg]
+    && (!q || (m.codigo + ' ' + m.servico + ' ' + ((itDe(m.it_id) || {}).codigo || '')).toLowerCase().includes(q)));
+}
+function telaConferencia(){
+  const L = cfLista();
+  if (!CF.sel || !L.find(m => m.id === CF.sel)) CF.sel = L.length ? L[0].id : null;
+  const ativos = FVS.filter(m => m.ativo);
+  const n = { alerta: ativos.filter(fvsAlerta).length, ras: ativos.filter(m => m.rascunho && !fvsAlerta(m)).length, pub: ativos.filter(m => !m.rascunho && !fvsAlerta(m)).length };
+  $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Modelos de FVS</h2><p class="sub">A IT de origem ao lado do modelo. Confira, ajuste e publique' + (PODE.qualidade ? ' — <kbd>Ctrl</kbd>+<kbd>Enter</kbd> publica e passa para a próxima.' : '.') + '</p></div>'
+    + '<span class="cod" style="font-size:15px">' + ativos.filter(m => !m.rascunho).length + ' / ' + ativos.length + '</span><span class="hint">publicadas</span>'
+    + (PODE.qualidade ? '<a class="btn sec" href="padroes_grupo.html?aba=qualidade" title="Criar modelo novo na tela de padrões">＋ Modelo</a>' : '') + '</div>'
+    + '<div class="conf"><div class="fq"><div class="tb"><input type="search" id="cfQ" placeholder="Buscar FVS ou IT" value="' + esc(CF.q) + '" oninput="CF.q=this.value;clearTimeout(window._cq);window._cq=setTimeout(cfFila,200)">'
+    + '<div class="seg">' + [['alerta','Alerta ' + n.alerta], ['ras','Rasc. ' + n.ras], ['pub','Pub. ' + n.pub], ['todas','Todas']].map(([k, t]) => '<button class="' + (CF.seg === k ? 'on' : '') + '" onclick="CF.seg=\'' + k + '\';CF.sel=null;telaConferencia()">' + t + '</button>').join('') + '</div></div>'
+    + '<div class="ls" id="cfLs"></div></div>'
+    + '<div class="pdf"><div class="tb" id="pdfTb"><span class="hint" style="color:#C9D6E4">—</span></div><div class="pc" id="pdfC"></div></div>'
+    + '<div class="ed" id="cfEd"></div></div></section>';
+  cfFila(); cfEditor();
+}
+function cfFila(){
+  const L = cfLista(), el = $('cfLs'); if (!el) return;
+  const grupos = []; L.forEach(m => { const k = m.it_id || '-'; let g = grupos.find(x => x.k === k); if (!g){ g = { k, l:[] }; grupos.push(g); } g.l.push(m); });
+  el.innerHTML = grupos.length ? grupos.map(g => { const i = itDe(g.k);
+      return '<div class="gi">' + (i ? esc(i.codigo) + ' · ' + esc(i.titulo.length > 22 ? i.titulo.slice(0, 22) + '…' : i.titulo) : 'Sem IT de referência') + '<span>' + g.l.length + '</span></div>'
+        + g.l.map(m => '<div class="f' + (m.id === CF.sel ? ' sel' : '') + '" data-id="' + m.id + '" onclick="cfSel(\'' + m.id + '\')"><span class="cod">' + esc(m.codigo) + '</span>' + esc(m.servico) + ' ' + chipFvs(m) + '</div>').join(''); }).join('')
+    : '<div class="vazio">' + (CF.seg === 'alerta' ? 'Nenhum modelo com alerta.' : 'Nenhum modelo neste filtro.') + '</div>';
+  const s = el.querySelector('.f.sel'); if (s) s.scrollIntoView({ block:'nearest' });
+}
+function cfSel(id){ cfLerItens(); CF.sel = id; document.querySelectorAll('#cfLs .f').forEach(f => f.classList.toggle('sel', f.dataset.id === id)); cfEditor(); }
+let _CF_IT = [];
+function cfEditor(){
+  const el = $('cfEd'); if (!el) return;
+  const m = FVS.find(x => x.id === CF.sel);
+  if (!m){ el.innerHTML = '<div class="vazio">Nada para conferir neste filtro.</div>'; pdfMostrar(null); return; }
+  _CF_IT = JSON.parse(JSON.stringify(m.itens || []));
+  const dis = PODE.qualidade ? '' : ' disabled';
+  el.innerHTML = '<div class="top"><span class="cod">' + esc(m.codigo) + '</span> ' + chipFvs(m) + ' <span class="chip c-mut">rev. ' + rev2(m.revisao) + '</span>'
+    + (m.origem === 'construpoint' ? ' <span class="chip c-mut" title="Itens vindos do sistema anterior">importado</span>' : '')
+    + '<input type="text" id="cfServ" value="' + esc(m.servico) + '"' + dis + ' style="margin-top:8px;font-weight:700;font-size:14px">'
+    + '<div class="g3" style="margin-top:8px"><select id="cfEtapa"' + dis + '>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === m.etapa ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select>'
+    + '<select id="cfNivel"' + dis + '>' + Object.keys(NIVEL_ROT).map(k => '<option value="' + k + '"' + (k === m.nivel_local ? ' selected' : '') + '>Por ' + NIVEL_ROT[k].toLowerCase() + '</option>').join('') + '</select>'
+    + '<select id="cfIt"' + dis + ' onchange="pdfMostrar(this.value)"><option value="">Sem IT</option>' + ITS.filter(i => i.ativo || i.id === m.it_id).sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true })).map(i => '<option value="' + i.id + '"' + (i.id === m.it_id ? ' selected' : '') + '>' + esc(i.codigo) + '</option>').join('') + '</select></div>'
+    + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="cfDuas"' + (m.duas_aprovacoes ? ' checked' : '') + dis + '> Exige 2 aprovações (coord. de campo e eng. chefe)</label>'
+    + (m.validar_nota ? '<div class="alerta"><b>Validar:</b> ' + esc(m.validar_nota) + '</div>' : '')
+    + (m.revisar_it_rev ? '<div class="alerta rev">A IT de origem passou para a <b>rev. ' + esc(m.revisar_it_rev) + '</b>' + (m.revisar_desde ? ' em ' + dt(m.revisar_desde) : '') + '. Confira os itens com a IT nova.</div>' : '')
+    + '</div><div class="its"><div id="cfItens"></div>'
+    + (PODE.qualidade ? '<button class="btn sec sm" style="margin-top:6px" onclick="cfLerItens();_CF_IT.push({item:\'\',criterio:\'\',metodo:\'\',tolerancia:\'\',exige_foto:false});cfItensHtml()">＋ Item</button>' : '')
+    + '<div class="msg" id="cfMsg"></div>'
+    + (m.atualizado_em ? '<div class="hint" style="margin-top:6px">Última alteração: ' + esc(m.atualizado_nome || '') + ' · ' + new Date(m.atualizado_em).toLocaleString('pt-BR') + '</div>' : '') + '</div>'
+    + '<div class="ft"><button class="btn sec" onclick="cfProx()">Pular <kbd>↓</kbd></button><span class="sp"></span>'
+    + (PODE.qualidade ? '<button class="btn sec" id="cfSalvar" onclick="cfSalvar(false)">Salvar</button>'
+        + '<button class="btn ac" id="cfPub" onclick="cfSalvar(true)">' + (m.rascunho ? 'Conferido · publicar e próxima' : 'Conferido · salvar e próxima') + '</button>' : '') + '</div>';
+  cfItensHtml();
+  pdfMostrar(m.it_id, m.it_paginas || []);
+}
+function cfItensHtml(){
+  const dis = PODE.qualidade ? '' : ' disabled';
+  const ta = (i, k, v) => '<textarea rows="' + (k === 'item' ? 1 : 2) + '" data-fi="' + k + '"' + dis + '>' + esc(v || '') + '</textarea>';
+  // Um cartão por item: "o que verificar" na largura toda; critério/método/tolerância embaixo.
+  $('cfItens').innerHTML = _CF_IT.length ? _CF_IT.map((t, i) => '<div class="itc"><div class="h"><span class="cod">' + String(i + 1).padStart(2, '0') + '</span><span class="sp"></span>'
+      + '<label class="chk"><input type="checkbox" data-fi="exige_foto"' + (t.exige_foto ? ' checked' : '') + dis + '> exige foto</label>'
+      + (PODE.qualidade ? '<button class="ib" title="Subir" onclick="cfMover(' + i + ',-1)">↑</button><button class="ib" title="Tirar o item" onclick="cfLerItens();_CF_IT.splice(' + i + ',1);cfItensHtml()">×</button>' : '') + '</div>'
+      + '<small>O que verificar</small>' + ta(i, 'item', t.item)
+      + '<div class="g"><div><small>Critério de aceitação</small>' + ta(i, 'criterio', t.criterio) + '</div><div><small>Método</small>' + ta(i, 'metodo', t.metodo) + '</div><div><small>Tolerância</small>' + ta(i, 'tolerancia', t.tolerancia) + '</div></div></div>').join('')
+    : '<div class="hint" style="margin-top:8px">Nenhum item.</div>';
+}
+function cfLerItens(){
+  const rows = [...document.querySelectorAll('#cfItens .itc')]; if (!rows.length && !_CF_IT.length) return;
+  _CF_IT = rows.map((r, i) => Object.assign({}, _CF_IT[i] || {}, {
+    item: r.querySelector('[data-fi=item]').value.trim(), criterio: r.querySelector('[data-fi=criterio]').value.trim(), metodo: r.querySelector('[data-fi=metodo]').value.trim(),
+    tolerancia: r.querySelector('[data-fi=tolerancia]').value.trim(), exige_foto: r.querySelector('[data-fi=exige_foto]').checked }));
+}
+function cfMover(i, d){ cfLerItens(); const j = i + d; if (j < 0 || j >= _CF_IT.length) return; [_CF_IT[i], _CF_IT[j]] = [_CF_IT[j], _CF_IT[i]]; cfItensHtml(); }
+function cfProx(){
+  const L = cfLista(), k = L.findIndex(m => m.id === CF.sel);
+  const nx = L[k + 1] || L[0];
+  if (nx && nx.id !== CF.sel) cfSel(nx.id);
+}
+async function cfSalvar(conferido){
+  const m = FVS.find(x => x.id === CF.sel); if (!m || !PODE.qualidade) return;
+  cfLerItens();
+  const msg = (t, ok) => { $('cfMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('cfMsg').textContent = t; };
+  const itens = _CF_IT.filter(t => t.item).map(t => ({ item:t.item, criterio:t.criterio || '', metodo:t.metodo || '', tolerancia:t.tolerancia || '', exige_foto:!!t.exige_foto }));
+  const row = { servico:($('cfServ').value || '').trim(), etapa:$('cfEtapa').value, nivel_local:$('cfNivel').value, it_id:$('cfIt').value || null, duas_aprovacoes:$('cfDuas').checked, itens };
+  if (row.servico.length < 3) return msg('Escreva o serviço.');
+  if (!itens.length) return msg('O modelo precisa de pelo menos um item.');
+  // "Conferido" publica e tira os alertas; "Salvar" só grava (o alerta continua até conferir).
+  if (conferido){ row.rascunho = false; row.validar_nota = null; row.revisar_it_rev = null; row.revisar_desde = null; }
+  ['cfSalvar','cfPub'].forEach(b => $(b).disabled = true);
+  const L = cfLista(), k = L.findIndex(x => x.id === m.id);
+  const { data, error } = await sb.from('fvs_modelo_auria').update(row).eq('id', m.id).select('*').single();
+  if (error){ ['cfSalvar','cfPub'].forEach(b => $(b).disabled = false); return msg(error.message); }
+  Object.assign(m, data);
+  if (!conferido){ msg('Salvo.', true); ['cfSalvar','cfPub'].forEach(b => $(b).disabled = false); cfFila(); return; }
+  // próxima: a que vinha depois na fila de antes (a atual pode sair do filtro)
+  const nx = L.slice(k + 1).concat(L.slice(0, k)).find(x => x.id !== m.id && cfLista().includes(x));
+  CF.sel = nx ? nx.id : m.id;
+  telaConferencia(); contadores();
+}
+document.addEventListener('keydown', ev => {
+  if (ev.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){ ev.preventDefault(); $('gBusca') && $('gBusca').focus(); return; }
+  if (TELA !== 'conferencia' || $('ov').classList.contains('on') || document.getElementById('apv')) return;
+  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); if ($('cfPub')) cfSalvar(true); }
+  else if (!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')){
+    ev.preventDefault(); const L = cfLista(), k = L.findIndex(m => m.id === CF.sel), nx = L[k + (ev.key === 'ArrowDown' ? 1 : -1)]; if (nx) cfSel(nx.id); }
+});
+
+// Leitor da IT ao lado: pdf.js com a cópia "não controlada" (mesma it-copia de sempre).
+// Um documento por vez em memória; páginas desenhadas só quando aparecem.
+const PV = { revId:null, doc:null, escala:1, obs:null, job:0, paginas:[] };
+async function pdfMostrar(itId, paginas){
+  const tb = $('pdfTb'), pc = $('pdfC'); if (!tb) return;
+  const i = itDe(itId), v = vigDe(i);
+  PV.paginas = (paginas || []).map(Number);
+  if (!i || !v){ tb.innerHTML = '<span style="color:#C9D6E4">Sem IT de referência</span>'; pc.innerHTML = '<div class="pm">Escolha a IT de referência ao lado para conferir os itens com ela.</div>'; return; }
+  const ext = AuriaIT.extDe(v.arquivo_path);
+  tb.innerHTML = '<span class="cod">' + esc(i.codigo) + '</span> rev. ' + esc(v.revisao) + '<span class="sp"></span><span id="pvPg" style="font-family:var(--mono)"></span>'
+    + '<button onclick="pvZoom(1/1.2)">−</button><button onclick="pvZoom(1.2)">+</button><button title="Tela cheia" onclick="itAbrir(\'' + v.id + '\')">⤢</button>';
+  if (ext !== 'pdf'){ pc.innerHTML = '<div class="pm">Arquivo .' + esc(ext) + ' — use ⤢ para abrir.</div>'; PV.revId = null; return; }
+  if (PV.revId === v.id && PV.doc){ pvDesenhar(true); return; }
+  pc.innerHTML = '<div class="pm">Abrindo ' + esc(i.codigo) + '…</div>';
+  try {
+    if (PV.doc){ try { PV.doc.destroy(); } catch (_){} PV.doc = null; }
+    PV.revId = v.id;
+    const lib = await AuriaPDF.carregarPdfjs();
+    const by = await AuriaIT.bytes(sb, v.id);
+    if (PV.revId !== v.id) return;
+    PV.doc = await lib.getDocument({ data:by }).promise;
+    const p1 = await PV.doc.getPage(1); PV.base = p1.getViewport({ scale:1 }).width;
+    PV.escala = null; pvDesenhar(true);
+  } catch (e){ pc.innerHTML = '<div class="pm">Não foi possível abrir: ' + esc(e.message || e) + '</div>'; }
+}
+function pvZoom(f){ if (!PV.doc) return; PV.escala = (PV.escala || 1) * f; pvDesenhar(false); }
+async function pvDesenhar(irPagina){
+  const pc = $('pdfC'); if (!pc || !PV.doc) return;
+  if (PV.escala == null) PV.escala = Math.max(0.4, Math.min(2.2, (pc.clientWidth - 44) / PV.base));
+  const job = ++PV.job;
+  if (PV.obs) PV.obs.disconnect();
+  pc.innerHTML = '';
+  PV.obs = new IntersectionObserver(ents => ents.forEach(en => { if (en.isIntersecting) pvPagina(en.target, job); }), { root:pc, rootMargin:'500px 0px' });
+  let alvo = null;
+  for (let n = 1; n <= PV.doc.numPages; n++){
+    const pg = await PV.doc.getPage(n); if (job !== PV.job) return;
+    const vp = pg.getViewport({ scale:PV.escala });
+    const d = document.createElement('div'); d.className = 'pg' + (PV.paginas.includes(n) ? ' ref' : ''); d.dataset.n = n;
+    d.style.width = Math.floor(vp.width) + 'px'; d.style.height = Math.floor(vp.height) + 'px';
+    d.innerHTML = '<span class="nr">' + n + '</span>';
+    pc.appendChild(d); PV.obs.observe(d);
+    if (!alvo && PV.paginas.includes(n)) alvo = d;
+  }
+  if (irPagina && alvo) pc.scrollTop = alvo.offsetTop - 12;
+  const pgN = () => { const el = $('pvPg'); if (!el) return; const pgs = pc.querySelectorAll('.pg'), meio = pc.scrollTop + pc.clientHeight / 3; let n = 1; pgs.forEach(p => { if (p.offsetTop <= meio) n = +p.dataset.n; }); el.textContent = n + ' / ' + PV.doc.numPages; };
+  pc.onscroll = pgN; pgN();
+}
+async function pvPagina(div, job){
+  if (div.dataset.ok === String(job)) return; div.dataset.ok = String(job);
+  const pg = await PV.doc.getPage(+div.dataset.n); if (job !== PV.job) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), vp = pg.getViewport({ scale:PV.escala * dpr });
+  const c = document.createElement('canvas'); c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+  await pg.render({ canvasContext:c.getContext('2d'), viewport:vp }).promise;
+  if (job !== PV.job) return;
+  div.insertBefore(c, div.firstChild);
+}
+
+// ── Fichas das obras ────────────────────────────────────────────────────────
+const FI = { emp:'', etapa:'', sit:'', sel:null };
+let FICHAS = [], PAVS = [];
+async function telaFichas(){
+  $('corpo').innerHTML = '<section class="tela"><div class="load">Carregando fichas…</div></section>';
+  const ids = EMPS.map(e => e.id).concat(['00000000-0000-0000-0000-000000000000']);
+  const { data, error } = await sb.from('fvs_inspecao_auria').select('id,empreendimento_id,codigo,servico,modelo_id,modelo_codigo,modelo_revisao,rodada,pavimento_id,local_txt,itens,situacao,aprovado_nome,aprovado_em,reprovado_nome,reprovado_em,reprovado_motivo,aberta_nome,aberta_em,atualizado_em')
+    .in('empreendimento_id', ids).eq('tipo', 'fvs').order('atualizado_em', { ascending:false }).limit(2000);
+  const todas = data || [];
+  if (!FI.emp){ const c = {}; todas.forEach(f => c[f.empreendimento_id] = (c[f.empreendimento_id] || 0) + 1); FI.emp = (Object.keys(c).sort((a, b) => c[b] - c[a])[0]) || (EMPS[0] || {}).id || ''; }
+  const p = FI.emp ? await sb.from('cde_pavimento_auria').select('id,codigo,nome,ordem,tipo').eq('empreendimento_id', FI.emp).eq('ativo', true).order('ordem', { ascending:false }) : { data:[] };
+  PAVS = p.data || [];
+  const etapaDe = f => ((FVS.find(m => m.id === f.modelo_id) || {}).etapa) || '';
+  const daObra = todas.filter(f => f.empreendimento_id === FI.emp && (!FI.etapa || etapaDe(f) === FI.etapa));
+  FICHAS = daObra;
+  const nSit = k => daObra.filter(f => f.situacao === k).length;
+  const lista = daObra.filter(f => !FI.sit || f.situacao === FI.sit);
+  const cols = [...new Set(lista.map(f => f.modelo_codigo))].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric:true }));
+  const servDe = c => { const f = lista.find(x => x.modelo_codigo === c); return f ? f.servico : ''; };
+  const pavsUsados = PAVS.filter(pv => lista.some(f => f.pavimento_id === pv.id) || PAVS.length <= 30);
+  const semPav = lista.filter(f => !f.pavimento_id || !PAVS.find(pv => pv.id === f.pavimento_id));
+  const pior = l => ['reprovada','aguardando','em_verificacao','aberta','aprovada'].find(s => l.some(f => f.situacao === s));
+  const cel = (pv, c) => { const l = lista.filter(f => f.pavimento_id === pv.id && f.modelo_codigo === c);
+    if (!l.length) return '<td><span class="cl"></span></td>';
+    const s = pior(l), f = l.find(x => x.situacao === s);
+    return '<td><button class="cl ' + s + (f.id === FI.sel ? ' foc' : '') + '" data-id="' + f.id + '" title="' + esc(c + ' · ' + (pv.codigo || pv.nome) + ' · ' + SIT[s][0] + (l.length > 1 ? ' (' + l.length + ' fichas)' : '')) + '" onclick="fichaSel(\'' + f.id + '\')">' + (l.length > 1 ? l.length : '') + '</button></td>'; };
+  $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Fichas das obras</h2><p class="sub">Cada quadrado é uma FVS num pavimento — a cor é a pior situação ali. Clique para ver itens, fotos e histórico; aprovada pode ser contestada.</p></div></div>'
+    + (error ? '<div class="alerta rev">' + esc(error.message) + '</div>' : '')
+    + '<div class="row" style="margin-bottom:14px"><select style="width:auto;min-width:240px" onchange="FI.emp=this.value;FI.sel=null;telaFichas()">' + EMPS.map(e => '<option value="' + e.id + '"' + (e.id === FI.emp ? ' selected' : '') + '>' + esc(e.nome) + '</option>').join('') + '</select>'
+    + '<select style="width:auto" onchange="FI.etapa=this.value;telaFichas()"><option value="">Todas as etapas</option>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === FI.etapa ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select></div>'
+    + '<div class="kp">' + ['aberta','em_verificacao','aguardando','reprovada','aprovada'].map(k => '<button class="' + (FI.sit === k ? 'on' : '') + '" style="border-top-color:' + SIT[k][1] + '" onclick="FI.sit=FI.sit===\'' + k + '\'?\'\':\'' + k + '\';telaFichas()"><b style="color:' + (k === 'aberta' || k === 'em_verificacao' ? 'var(--txt)' : SIT[k][1]) + '">' + nSit(k) + '</b><span>' + SIT[k][0].toLowerCase() + '</span></button>').join('') + '</div>'
+    + '<div class="t4g"><div class="card">'
+    + (cols.length && pavsUsados.length ? '<div class="mx"><table><tr><th></th>' + cols.map(c => '<th class="v" title="' + esc(servDe(c)) + '">' + esc(c) + ' · ' + esc((servDe(c) || '').slice(0, 16)) + '</th>').join('') + '</tr>'
+        + pavsUsados.map(pv => '<tr><td class="pv">' + esc(pv.codigo || pv.nome) + '</td>' + cols.map(c => cel(pv, c)).join('') + '</tr>').join('') + '</table>'
+        + '<div class="leg" style="margin-top:12px">' + Object.keys(SIT).map(k => '<span><i style="background:' + SIT[k][1] + '"></i>' + SIT[k][0].toLowerCase() + '</span>').join('') + '</div></div>'
+      : '<div class="vazio">' + (daObra.length ? 'Nenhuma ficha neste filtro.' : 'Nenhuma ficha aberta ainda nesta obra. Elas aparecem aqui quando a obra abrir a primeira FVS no App Obra.') + '</div>')
+    + (semPav.length ? '<div style="border-top:1px solid var(--line)"><table><tr><th>Ficha</th><th>Serviço</th><th>Local</th><th>Situação</th></tr>' + semPav.map(f => '<tr style="cursor:pointer" onclick="fichaSel(\'' + f.id + '\')"><td class="cod">' + esc(f.codigo) + '</td><td>' + esc(f.servico) + '</td><td>' + esc(f.local_txt || '—') + '</td><td><span class="chip" style="background:' + SIT[f.situacao][1] + ';color:#fff">' + SIT[f.situacao][0] + '</span></td></tr>').join('') + '</table></div>' : '')
+    + '</div><div class="card" id="ficDet"><div class="vazio">Selecione uma ficha.</div></div></div></section>';
+  if (FI.sel && FICHAS.find(f => f.id === FI.sel)) fichaSel(FI.sel);
+}
+async function fichaSel(id){
+  FI.sel = id;
+  document.querySelectorAll('.cl.foc').forEach(c => c.classList.remove('foc'));
+  const b = document.querySelector('.cl[data-id="' + id + '"]'); if (b) b.classList.add('foc');
+  const f = FICHAS.find(x => x.id === id), el = $('ficDet'); if (!f || !el) return;
+  const RES = { c:['C','var(--ok)','Conforme'], nc:['NC','#C0392B','Não conforme'], na:['NA','var(--mut)','Não se aplica'] };
+  const pv = PAVS.find(p => p.id === f.pavimento_id);
+  el.innerHTML = '<div class="fic"><span class="cod">' + esc(f.codigo) + '</span> <span class="chip" style="background:' + SIT[f.situacao][1] + ';color:#fff">' + SIT[f.situacao][0] + '</span>'
+    + '<div style="font-weight:700;margin-top:3px">' + esc(f.servico) + ' · ' + esc([pv && (pv.codigo || pv.nome), f.local_txt].filter(Boolean).join(' › ')) + '</div>'
+    + '<div class="hint">' + esc(f.modelo_codigo) + ' rev. ' + rev2(f.modelo_revisao) + ' · rodada ' + (f.rodada || 1) + '</div>'
+    + (f.situacao === 'reprovada' && f.reprovado_motivo ? '<div class="alerta rev">' + esc(f.reprovado_motivo) + ' — ' + esc(f.reprovado_nome || '') + '</div>' : '')
+    + '<div style="margin-top:10px">' + (f.itens || []).map((t, i) => '<div class="res"><span class="n">' + (i + 1) + '</span><span>' + esc(t.item) + (t.obs ? '<div class="hint">' + esc(t.obs) + '</div>' : '')
+        + ((t.fotos || []).length ? '<div class="row" style="margin-top:4px">' + t.fotos.map(p => '<button class="btn sec sm" onclick="fichaFoto(\'' + esc(p.path) + '\')">Foto</button>').join('') + '</div>' : '') + '</span>'
+        + (t.resultado ? '<b style="color:' + RES[t.resultado][1] + '" title="' + RES[t.resultado][2] + '">' + RES[t.resultado][0] + '</b>' : '<span class="hint">—</span>') + '</div>').join('') + '</div>'
+    + '<div class="hist" id="ficHist"><div>Aberta · ' + dth(f.aberta_em) + ' · ' + esc(f.aberta_nome || '') + '</div></div>'
+    + (f.situacao === 'aprovada' && PODE.qualidade ? '<div class="mono-t">CONTESTAR</div><textarea id="ctMot" rows="2" placeholder="O que foi encontrado (volta a reprovada e a obra refaz a inspeção)"></textarea><div class="row" style="margin-top:8px"><span class="msg" id="ctMsg" style="flex:1;margin:0"></span><button class="btn" id="ctOk" onclick="fichaContestar(\'' + id + '\')">Contestar</button></div>' : '')
+    + '</div>';
+  const EV = { enviada:'Enviada para aprovação', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada pela Qualidade', reinspecao:'Reinspeção' };
+  const { data:evs } = await sb.from('fvs_evento_auria').select('*').eq('inspecao_id', id).order('em', { ascending:false });
+  const h = $('ficHist'); if (!h || FI.sel !== id) return;
+  h.innerHTML = (evs || []).map(e => '<div class="' + (/aprovada/.test(e.tipo) ? 'a' : /reprovada|contestada/.test(e.tipo) ? 'r' : '') + '">' + esc(EV[e.tipo] || e.tipo) + ' · ' + dth(e.em) + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
+    + '<div>Aberta · ' + dth(f.aberta_em) + ' · ' + esc(f.aberta_nome || '') + '</div>';
+}
+async function fichaFoto(path){ try { window.open(await r2Url('download', path), '_blank'); } catch (e){ alert(e.message || e); } }
+async function fichaContestar(id){
+  const mot = ($('ctMot').value || '').trim(), m = $('ctMsg');
+  if (mot.length < 5){ m.className = 'msg err'; m.textContent = 'Informe o motivo (mínimo 5 caracteres).'; return; }
+  $('ctOk').disabled = true;
+  const { error } = await sb.rpc('fvs_contestar', { p_id:id, p_motivo:mot });
+  if (error){ $('ctOk').disabled = false; m.className = 'msg err'; m.textContent = error.message; return; }
+  telaFichas(); contadores();
+}
+
+// ── Cópias controladas ──────────────────────────────────────────────────────
+const CP = { so:'' };
+async function telaCopias(){
+  $('corpo').innerHTML = '<section class="tela"><div class="load">Carregando cópias…</div></section>';
+  const { data, error } = await sb.from('grupo_it_copia_auria').select('id,numero,it_id,revisao_id,quantidade,emitido_em,obsoleta_em,avisado_em,empreendimentos_auria(nome)').eq('grupo_id', GRUPO).order('emitido_em', { ascending:false });
+  const l = (data || []).filter(c => !CP.so || (CP.so === 'obs' ? c.obsoleta_em : !c.obsoleta_em));
+  const revN = {}; ITS.forEach(i => (i.revs || []).forEach(r => revN[r.id] = r.revisao));
+  $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Cópias controladas</h2><p class="sub">Cada cópia tem número, obra, responsável e quantidade. Quando sai revisão nova, ela fica obsoleta e o responsável recebe e-mail.</p></div>'
+    + '<div class="tgl">' + [['','Todas'], ['vig','Vigentes'], ['obs','Obsoletas']].map(([k, t]) => '<button class="' + (CP.so === k ? 'on' : '') + '" onclick="CP.so=\'' + k + '\';telaCopias()">' + t + '</button>').join('') + '</div></div>'
+    + (error ? '<div class="alerta rev">' + esc(error.message) + '</div>' : '')
+    + '<div class="card">' + (l.length ? '<table><tr><th>Nº</th><th>Documento</th><th>Rev.</th><th>Obra</th><th>Emitida</th><th>Situação</th></tr>' + l.map(c => { const i = itDe(c.it_id) || { codigo:'?', titulo:'' };
+        return '<tr' + (c.obsoleta_em ? ' style="opacity:.7"' : '') + '><td class="cod">' + c.numero + '</td><td><a style="cursor:pointer" onclick="BB.sel=\'' + c.it_id + '\';BB.aba=\'copias\';BB.f=\'todos\';ir(\'biblioteca\')"><span class="cod">' + esc(i.codigo) + '</span> ' + esc(i.titulo) + '</a></td>'
+          + '<td class="cod">' + esc(revN[c.revisao_id] || '') + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—') + '<div class="hint">' + c.quantidade + ' cópia(s)</div></td><td>' + dt(c.emitido_em) + '</td>'
+          + '<td>' + (c.obsoleta_em ? '<span class="chip c-rev">obsoleta</span><div class="hint">desde ' + dt(c.obsoleta_em) + (c.avisado_em ? ' · avisado' : '') + '</div>' : '<span class="chip c-pub">vigente</span>') + '</td></tr>'; }).join('') + '</table>'
+      : '<div class="vazio">Nenhuma cópia controlada' + (CP.so ? ' neste filtro' : ' emitida ainda — emita pela Biblioteca, no botão “Cópia controlada”') + '.</div>') + '</div></section>';
+}
+
+// ── busca do menu: FVS vai para os modelos; o resto, para a biblioteca ─────────
+$('gBusca').addEventListener('keydown', ev => {
+  if (ev.key !== 'Enter') return;
+  const q = ev.target.value.trim(); if (!q) return;
+  if (/^fvs/i.test(q)){ CF.q = q; CF.seg = 'todas'; CF.sel = null; ir('conferencia'); }
+  else { BB.q = q; BB.f = 'todos'; BB.sel = null; BB.cont = !ITS.some(i => (i.codigo + ' ' + i.titulo).toLowerCase().includes(q.toLowerCase())); ir('biblioteca'); }
+  ev.target.blur();
+});
+
+boot().catch(e => { $('load').textContent = 'Erro ao carregar: ' + (e.message || e); });
+</script>
+<script src="auria_ajuda.js"></script>
+</body>
+</html>
