@@ -130,7 +130,7 @@ body.o4d-on #f3dDica{display:none!important}
 /* visualizador estreito: opções e legenda descem para a linha do tempo, contador sai (o resumo fica no rodapé) */
 #bimBody.o4-estreito #o4dTar{width:230px;top:58px}
 #bimBody.o4-estreito #o4dPainel{width:290px}
-#bimBody.o4-estreito #o4dCnt{display:none!important}
+#bimBody.o4-estreito #o4dCnt{top:58px;right:306px}
 #bimBody.o4-estreito #o4dSelInfo{left:246px;top:58px;max-width:calc(100% - 560px)}
 #bimBody.o4-estreito #o4dOpc,#bimBody.o4-estreito #o4dLeg{position:static;max-width:none;background:none;border:none;padding:0;margin-top:4px}
 #bimBody.o4-estreito #o4dTar,#bimBody.o4-estreito #o4dPainel{bottom:170px}
@@ -273,7 +273,7 @@ window.o4dPlay=()=>{ const b=document.getElementById('o4dPlay'), sl=document.get
 
 // ── painel ──
 function painel(){ const p=document.getElementById('o4dPainel');
-  p.innerHTML='<div class="o4ts">'+[['v','Vínculo da tarefa'],['c','Conferência'],['s','Serviços padrão']].map(([k,r])=>'<div class="o4t'+(O.aba===k?' on':'')+'" onclick="o4dAba(\''+k+'\')">'+r+'</div>').join('')+'<button class="o4x" title="Fechar o 4D" onclick="o4dToggle()">✕</button></div><div class="bd" id="o4dBd"></div>';
+  p.innerHTML='<div class="o4ts">'+[['v','Vínculo'],['c','Conferência'],['s','Serviços']].map(([k,r])=>'<div class="o4t'+(O.aba===k?' on':'')+'" onclick="o4dAba(\''+k+'\')">'+r+'</div>').join('')+'<button class="o4x" title="Fechar o 4D" onclick="o4dToggle()">✕</button></div><div class="bd" id="o4dBd"></div>';
   ({v:vinculo,c:conferencia,s:servicos})[O.aba](); lista(); selInfo(); }
 window.o4dAba=k=>{ if(k==='t'){ const l=document.getElementById('o4dLst'); if(l) l.scrollTop=0; return; } O.aba=k; O.conf=(k==='c'); painel(); pintar(); };
 function lista(){ const bd=document.getElementById('o4dLst'); if(!bd) return;
@@ -339,9 +339,10 @@ window.o4dVerSem=async()=>{ const s=semTarefa(); if(nPecas(s)) try{ await B3.enq
 
 function servicos(){ const bd=document.getElementById('o4dBd'); if(!bd) return; const ro=!O.pode;
   bd.innerHTML='<div class="sec"><div class="hint" style="margin-top:0">Cada serviço diz de quais modelos e quais tipos de peça vêm. Uma tarefa cujo nome começa com o nome do serviço já nasce ligada, pelo pavimento.'+(O.servDaConstrutora?'':' <b>Usando a lista padrão do Auria</b>'+(ro?'':' — salve para virar a da construtora.'))+'</div></div>'+
-   '<div class="sec"><table><tr><th>Cód.</th><th>Serviço</th><th>Modelos</th><th>Peças</th></tr>'+O.serv.map((s,si)=>'<tr><td><b>'+esc(s.codigo)+'</b></td><td>'+esc(s.nome)+
-     ((s.etapas||[]).length?'<div style="margin-top:4px;display:flex;flex-direction:column;gap:3px">'+s.etapas.map((e,ei)=>'<label style="display:flex;gap:5px;align-items:center;font-size:11px"><input type="color" value="'+e.cor+'" '+(ro?'disabled':'onchange="o4dCorEt('+si+','+ei+',\'cor\',this.value)"')+' style="width:20px;height:16px;border:none;padding:0;background:none">'+esc(e.nome)+'</label>'+(e.depois?'<label style="display:flex;gap:5px;align-items:center;font-size:11px;padding-left:12px"><input type="color" value="'+e.depois.cor+'" '+(ro?'disabled':'onchange="o4dCorEt('+si+','+ei+',\'depois\',this.value)"')+' style="width:20px;height:16px;border:none;padding:0;background:none">depois: '+esc(e.depois.nome)+'</label>':'')).join('')+'</div>':'')+
-     '</td><td>'+esc((s.disciplinas||[]).join(', '))+'</td><td>'+esc((s.classes||[]).map(rotC).join(', '))+'</td></tr>').join('')+'</table>'+
+   O.serv.map((s,si)=>'<div class="sec"><div style="display:flex;gap:8px;align-items:baseline"><b style="font-family:ui-monospace,Consolas,monospace;color:var(--navy,#1E3A5F)">'+esc(s.codigo)+'</b><b>'+esc(s.nome)+'</b><span style="margin-left:auto;font-size:11px;color:var(--mut,#64748B)">'+esc((s.disciplinas||[]).join(' · '))+'</span></div>'+
+     '<div class="hint" style="margin-top:3px">'+esc((s.classes||[]).map(rotC).join(', '))+'</div>'+
+     ((s.etapas||[]).length?'<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px 12px">'+s.etapas.map((e,ei)=>'<label style="display:flex;gap:5px;align-items:center;font-size:11.5px"><input type="color" value="'+e.cor+'" '+(ro?'disabled':'onchange="o4dCorEt('+si+','+ei+',\'cor\',this.value)"')+' style="width:18px;height:16px;border:none;padding:0;background:none">'+esc(e.nome)+'</label>'+(e.depois?'<label style="display:flex;gap:5px;align-items:center;font-size:11.5px;color:var(--mut,#64748B)"><input type="color" value="'+e.depois.cor+'" '+(ro?'disabled':'onchange="o4dCorEt('+si+','+ei+',\'depois\',this.value)"')+' style="width:18px;height:16px;border:none;padding:0;background:none">depois: '+esc(e.depois.nome)+'</label>':'')).join('')+'</div>':'')+'</div>').join('')+
+   '<div class="sec">'+
    (ro?'':'<div class="btns" style="margin-top:8px"><button class="bt" onclick="o4dNovaEtapa()">+ Etapa em um serviço</button></div>')+
    (ro?'':'<div class="btns" style="margin-top:8px"><button class="bt pri" onclick="o4dSalvarServ()">'+(O.servDaConstrutora?'Salvar a lista':'Adotar como padrão da construtora')+'</button></div><div class="hint">As cores das etapas valem para todas as obras da construtora depois de salvar.</div>')+'</div>'; }
 window.o4dCorEt=(si,ei,campo,v)=>{ const e=O.serv[si].etapas[ei]; if(campo==='cor') e.cor=v; else e.depois.cor=v; pintar(); };
