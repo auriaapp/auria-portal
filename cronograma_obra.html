@@ -189,6 +189,13 @@ body.v-gantt .sheet,body.v-gantt #spS{display:none}
 .row .real-med{cursor:pointer;text-decoration:underline dotted var(--mut);text-underline-offset:3px}
 .row input.medi{width:52px;height:22px;text-align:right;font-family:var(--mono);border-color:var(--line);background:var(--panel2)}
 .row input.medi:hover,.row input.medi:focus{border-color:var(--accent);background:var(--panel)}
+.hrow>div{position:relative;cursor:grab;user-select:none}
+.hrow>div:active{cursor:grabbing}
+.hrow>div.dropL{box-shadow:inset 3px 0 0 var(--accent)}
+.hrow>div.dropR{box-shadow:inset -3px 0 0 var(--accent)}
+.hrow .rz{position:absolute;right:-3px;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:2}
+.hrow .rz:hover{background:color-mix(in srgb,var(--accent) 45%,transparent)}
+.vl.suc{grid-template-columns:52px 1fr 54px 52px 18px}
 </style>
 <link rel="stylesheet" href="auria_barra.css"></head><body>
 <header>
@@ -312,10 +319,26 @@ const COLS=[ // chave, rótulo, largura, grupo, visível, fixa
  ['bini','Base início',74,'Linha de base',0,0],['bfim','Base fim',74,'Linha de base',0,0],
  ['resp','Responsável',110,'Equipe',0,0],['com','Comentários',90,'Equipe',1,0],
  ['orc','Orçado (R$)',92,'Custo',0,0],['rea','Realizado (R$)',92,'Custo',0,0]];
-try{ const sv=JSON.parse(localStorage.getItem('crono_obra_cols')||'null'); if(sv) COLS.forEach(c=>{ if(!c[5]&&sv[c[0]]!=null) c[4]=sv[c[0]]; }); }catch(e){}
-function salvaCols(){ try{ const o={}; COLS.forEach(c=>o[c[0]]=c[4]); localStorage.setItem('crono_obra_cols',JSON.stringify(o)); }catch(e){} }
+const COLS_PADRAO=COLS.map(c=>c.slice());
+try{ const sv=JSON.parse(localStorage.getItem('crono_obra_cols')||'null');
+  if(sv){ const vis=sv.vis||sv, larg=sv.larg||{}, ordem=sv.ordem||null;          // aceita o formato antigo (só visibilidade)
+    COLS.forEach(c=>{ if(!c[5]&&vis[c[0]]!=null) c[4]=vis[c[0]]; if(larg[c[0]]) c[2]=larg[c[0]]; });
+    if(ordem) COLS.sort((a,b)=>{ const i=ordem.indexOf(a[0]), j=ordem.indexOf(b[0]); return (i<0?99:i)-(j<0?99:j); }); } }catch(e){}
+function salvaCols(){ try{ const vis={}, larg={}; COLS.forEach(c=>{ vis[c[0]]=c[4]; larg[c[0]]=c[2]; }); localStorage.setItem('crono_obra_cols',JSON.stringify({vis,larg,ordem:COLS.map(c=>c[0])})); }catch(e){} }
+function colsPadrao(){ COLS.length=0; COLS_PADRAO.forEach(c=>COLS.push(c.slice())); salvaCols(); colpop(); desenha(); }
+// arrastar o cabeçalho reordena; puxar a borda direita muda a largura
+let _colArr=null;
+function colDragStart(e,k){ _colArr=k; e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain',k); }catch(_){} }
+function colDrop(e,k){ e.preventDefault(); document.querySelectorAll('.hrow>div').forEach(d=>d.classList.remove('dropL','dropR')); if(!_colArr||_colArr===k) return;
+  const de=COLS.findIndex(c=>c[0]===_colArr), c=COLS.splice(de,1)[0]; let para=COLS.findIndex(x=>x[0]===k); const r=e.currentTarget.getBoundingClientRect(); if(e.clientX>r.left+r.width/2) para++;
+  COLS.splice(para,0,c); _colArr=null; salvaCols(); desenha(); }
+function colOver(e){ e.preventDefault(); const r=e.currentTarget.getBoundingClientRect(), dir=e.clientX>r.left+r.width/2; e.currentTarget.classList.toggle('dropR',dir); e.currentTarget.classList.toggle('dropL',!dir); }
+function colRz(e,k){ e.preventDefault(); e.stopPropagation(); const c=COLS.find(x=>x[0]===k), x0=e.clientX, w0=c[2];
+  const mv=ev=>{ c[2]=Math.max(36,Math.min(600,w0+ev.clientX-x0)); document.documentElement.style.setProperty('--gcols',COLS.filter(x=>x[4]).map(x=>x[0]==='nm'?'minmax('+x[2]+'px,1fr)':x[2]+'px').join(' ')); };
+  const up=()=>{ removeEventListener('mousemove',mv); removeEventListener('mouseup',up); document.body.style.cursor=''; salvaCols(); desenha(); };
+  document.body.style.cursor='ew-resize'; addEventListener('mousemove',mv); addEventListener('mouseup',up); }
 function colpop(){ let g='',h=''; COLS.forEach((c,i)=>{ if(c[3]!==g){ g=c[3]; h+='<div class="gt">'+g+'</div>'; } h+='<label><input type="checkbox" '+(c[4]?'checked':'')+(c[5]?' disabled':'')+' onchange="COLS['+i+'][4]=this.checked?1:0;salvaCols();desenha()">'+c[1]+(c[5]?' <span style="color:var(--mut);font-size:10.5px">(fixa)</span>':'')+'</label>'; });
-  $('colpop').innerHTML=h+'<div style="display:flex;gap:6px;border-top:1px solid var(--line);margin-top:6px;padding-top:6px"><button class="abtn" onclick="COLS.forEach(c=>c[4]=1);salvaCols();colpop();desenha()">Todas</button><button class="abtn" onclick="COLS.forEach(c=>c[4]=c[5]||[\'ini\',\'fim\',\'real\',\'st\'].includes(c[0])?1:0);salvaCols();colpop();desenha()">Essenciais</button></div>'; }
+  $('colpop').innerHTML=h+'<div style="display:flex;gap:6px;border-top:1px solid var(--line);margin-top:6px;padding-top:6px"><button class="abtn" onclick="COLS.forEach(c=>c[4]=1);salvaCols();colpop();desenha()">Todas</button><button class="abtn" onclick="COLS.forEach(c=>c[4]=c[5]||[\'ini\',\'fim\',\'real\',\'st\'].includes(c[0])?1:0);salvaCols();colpop();desenha()">Essenciais</button><button class="abtn" title="Ordem, largura e visibilidade originais" onclick="colsPadrao()">Padrão</button></div><div class="hint" style="padding:6px 6px 0">Arraste o título de uma coluna para mudar a ordem; puxe a borda direita para a largura.</div>'; }
 document.addEventListener('click',()=>document.querySelectorAll('.pop').forEach(p=>p.classList.remove('on')));
 
 // ══════════════ vínculos (formato MS Project por EAP) ══════════════
@@ -460,7 +483,7 @@ function desenha(){
   const vis=COLS.filter(c=>c[4]);
   document.documentElement.style.setProperty('--gcols',vis.map(c=>c[0]==='nm'?'minmax('+c[2]+'px,1fr)':c[2]+'px').join(' '));
   const livre=innerWidth-(T.some(u=>u.uid===SEL)?DETW:0); if(SHEETW) document.documentElement.style.setProperty('--sheetw',Math.min(SHEETW,livre-120)+'px'); else document.documentElement.style.setProperty('--sheetw',Math.max(360,Math.min(Math.round(livre*.55),vis.reduce((a,c)=>a+c[2],0)+24))+'px');
-  $('hrow').innerHTML=vis.map(c=>'<div>'+c[1]+'</div>').join('');
+  $('hrow').innerHTML=vis.map(c=>'<div draggable="true" title="Arraste para mudar a ordem · puxe a borda direita para a largura" ondragstart="colDragStart(event,\''+c[0]+'\')" ondragover="colOver(event)" ondragleave="this.classList.remove(\'dropL\',\'dropR\')" ondrop="colDrop(event,\''+c[0]+'\')">'+c[1]+'<span class="rz" draggable="false" onmousedown="colRz(event,\''+c[0]+'\')" ondblclick="event.stopPropagation()"></span></div>').join('');
   const V=visiveis();
   $('rows').innerHTML=V.map(i=>{ const t=T[i]; return '<div class="row'+(t._fase?' fase':'')+(t.uid===SEL?' sel':'')+'" onclick="seleciona(\''+t.uid+'\')">'+vis.map(c=>cel(t,i,c[0])).join('')+'</div>'; }).join('');
   // gantt
@@ -550,11 +573,18 @@ function detalhe(){
   h+='<div class="sec"><div class="lb">Datas</div><div class="kv"><div><span>Início</span><b>'+BR(t.ini)+'</b></div><div><span>Fim</span><b>'+BR(t.fim)+'</b></div><div><span>Base início</span><b>'+(b?BR(b.ini):'—')+'</b></div><div><span>Base fim</span><b>'+(b?BR(b.fim):'—')+'</b></div><div><span>Duração</span><b>'+dur(t)+' d úteis</b></div><div><span>Responsável</span><b style="font-size:11.5px;font-family:inherit">'+esc(t.resp||'—')+'</b></div></div></div>';
   // vínculos
   const IX={}; T.forEach(u=>IX[u.wbs]=u); const ps=parseP(t.pred);
-  h+='<div class="sec"><div class="lb">Predecessoras</div>'+(ps.map((q,k)=>{ const u=IX[q.eap]; return '<div class="vl"><span class="e">'+esc(q.eap)+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(u?'':'color:var(--err)')+'">'+esc(u?u.nome:'não existe')+'</span>'+
-      (EDIT?'<select onchange="editaVinc(\''+t.uid+'\','+k+',\'tipo\',this.value)">'+['TI','II','TT','IT'].map(o=>'<option'+(o===q.tipo?' selected':'')+'>'+o+'</option>').join('')+'</select><input value="'+q.lag+'" title="folga em dias úteis (+) ou antecipação (−)" onchange="editaVinc(\''+t.uid+'\','+k+',\'lag\',this.value)"><span class="x" title="remover" onclick="editaVinc(\''+t.uid+'\','+k+',\'del\')">×</span>'
-      :'<span class="mono" style="font-size:11px;color:var(--mut)">'+q.tipo+'</span><span class="mono" style="font-size:11px;color:var(--mut)">'+(q.lag?(q.lag>0?'+':'')+q.lag+'d':'')+'</span><span></span>')+'</div>'; }).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>');
-  if(EDIT) h+='<div class="addv"><input id="novoVinc" list="dlT" placeholder="EAP ou nome da tarefa…"><datalist id="dlT">'+T.filter(u=>u.uid!==t.uid).map(u=>'<option value="'+esc(u.wbs)+'">'+esc(u.nome)+'</option>').join('')+'</datalist><button class="abtn" onclick="addVinc(\''+t.uid+'\')">Vincular</button></div><div class="hint">TI término→início · II início→início · TT término→término · IT início→término. Folga em dias úteis.</div>';
-  h+='<div class="lb" style="margin-top:12px">Sucessoras</div>'+((t._suc||[]).map(k=>{ const e=(k.match(/^[\w.]+?(?=TI|II|TT|IT|[+-]|$)/)||[k])[0], u=IX[e]; return '<div class="vl" style="grid-template-columns:52px 1fr 64px"><span class="e">'+esc(e)+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u?u.nome:'')+'</span><span class="mono" style="font-size:10.5px;color:var(--mut);text-align:right">'+esc(k.slice(e.length)||'TI')+'</span></div>'; }).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>')+'</div>';
+  const ED=PODE_ED, tipos=q=>['TI','II','TT','IT'].map(o=>'<option'+(o===q.tipo?' selected':'')+'>'+o+'</option>').join('');
+  const dl='<datalist id="dlT">'+T.filter(u=>u.uid!==t.uid).map(u=>'<option value="'+esc(u.wbs)+'">'+esc(u.wbs+' — '+u.nome)+'</option>').join('')+'</datalist>';
+  const linha=(eap,nome,q,on)=>'<div class="vl"><span class="e">'+esc(eap)+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(nome==null?'color:var(--err)':'')+'" title="'+esc(nome||'')+'">'+esc(nome==null?'não existe':nome)+'</span>'+
+    (ED?'<select onchange="'+on+'(\'tipo\',this.value)">'+tipos(q)+'</select><input value="'+q.lag+'" title="folga em dias úteis (+) ou antecipação (−)" onchange="'+on+'(\'lag\',this.value)"><span class="x" title="remover vínculo" onclick="'+on+'(\'del\')">×</span>'
+        :'<span class="mono" style="font-size:11px;color:var(--mut)">'+q.tipo+'</span><span class="mono" style="font-size:11px;color:var(--mut)">'+(q.lag?(q.lag>0?'+':'')+q.lag+'d':'')+'</span><span></span>')+'</div>';
+  h+='<div class="sec"><div class="lb">Predecessoras</div>'+(ps.map((q,k)=>{ const u=IX[q.eap]; return linha(q.eap,u?u.nome:null,q,'vincPre.bind(null,\''+t.uid+'\','+k+')'); }).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>');
+  if(ED) h+='<div class="addv"><input id="novoPre" list="dlT" placeholder="Adicionar predecessora (EAP ou nome)…" onkeydown="if(event.key===\'Enter\')addVinc(\''+t.uid+'\',\'pre\')"><button class="abtn" onclick="addVinc(\''+t.uid+'\',\'pre\')">+</button></div>';
+  const sucs=[]; T.forEach(u=>parseP(u.pred).forEach((q,k)=>{ if(q.eap===t.wbs) sucs.push([u,q,k]); }));
+  h+='<div class="lb" style="margin-top:12px">Sucessoras</div>'+(sucs.map(([u,q,k])=>linha(u.wbs,u.nome,q,'vincSuc.bind(null,\''+u.uid+'\','+k+')')).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>');
+  if(ED) h+='<div class="addv"><input id="novoSuc" list="dlT" placeholder="Adicionar sucessora (EAP ou nome)…" onkeydown="if(event.key===\'Enter\')addVinc(\''+t.uid+'\',\'suc\')"><button class="abtn" onclick="addVinc(\''+t.uid+'\',\'suc\')">+</button></div>'+dl+
+    '<div class="hint">TI término→início · II início→início · TT término→término · IT início→término. Folga em dias úteis.'+(EDIT?'':' Cada mudança recalcula a cascata e salva na hora.')+'</div>';
+  h+='</div>';
   // medições
   if(!t._fase){
     h+='<div class="sec"><div class="lb">Medições</div>'+(meds.length?meds.slice(0,8).map(m=>'<div class="med"><span class="mono">'+BRc(D(m.data))+'</span><span title="'+esc(m.obs||'')+'">'+esc(m.lancado_nome||'—')+(m.obs?' · <span style="color:var(--mut)">'+esc(m.obs)+'</span>':'')+'</span><b class="mono" style="text-align:right">'+Math.round(m.percentual)+'%</b></div>').join(''):'<div style="font-size:12px;color:var(--mut)">Nenhuma medição lançada.</div>');
@@ -629,9 +659,29 @@ function editaCampo(uid,campo,v){ const t=T.find(u=>u.uid===uid); if(!t) return;
   else if(campo==='fim'){ let n=D(v); if(n==null) return; if(!util(n)){ n=antUtil(n); toast('Fim ajustado para o dia útil anterior: '+BR(n)); } t.fim=Math.max(n,t.ini==null?n:t.ini); if(t.ini==null) t.ini=t.fim; }
   else if(campo==='dur'){ const n=parseInt(v); if(!(n>0)) return; if(t.ini==null) t.ini=proxUtil(HOJE); t.fim=fimDe(t.ini,n); }
   aposEdicao(); }
-function editaVinc(uid,k,campo,v){ const t=T.find(u=>u.uid===uid); const l=parseP(t.pred); if(campo==='del') l.splice(k,1); else if(campo==='tipo') l[k].tipo=v; else l[k].lag=parseInt(v)||0; t.pred=fmtP(l); aposEdicao(); }
-function addVinc(uid){ const t=T.find(u=>u.uid===uid), v=($('novoVinc').value||'').trim(); if(!v) return; let alvo=T.find(u=>u.wbs===v)||T.find(u=>u.nome.toLowerCase()===v.toLowerCase()); if(!alvo){ toast('Tarefa "'+v+'" não encontrada.',true); return; }
-  if(alvo.uid===uid){ toast('Uma tarefa não pode depender dela mesma.',true); return; } const l=parseP(t.pred); if(l.some(q=>q.eap===alvo.wbs)) return; l.push({eap:alvo.wbs,tipo:'TI',lag:0}); t.pred=fmtP(l); aposEdicao(); }
+// Vínculos pelo painel: no modo edição entram na edição em curso; fora dele
+// (eng_chefe/coord_campo) aplicam a cascata e salvam na hora, como no Prevision.
+async function vinc(fn){
+  if(EDIT){ fn(); aposEdicao(); return; }
+  if(!PODE_ED) return;
+  const antes=JSON.stringify(T); fn(); const msg=recalc(true);
+  const circ=msg.find(m=>m.indexOf('circular')>=0); if(circ){ T=JSON.parse(antes); recalc(false); desenhaTudo(); toast(circ,true); return; }
+  desenhaTudo();
+  const linhas=T.map((t,i)=>({uid:t.uid,ordem:i+1,wbs:t.wbs,nome:t.nome,nivel:t.nivel,tipo:t._fase?'fase':t.tipo,pavimento:t.pav,inicio:S(t.ini),fim:S(t.fim),progresso:t.prog,predecessoras:t.pred,responsavel:t.resp,custo_orcado:t.orc,custo_realizado:t.rea}));
+  const r=await sb.rpc('obra_crono_salvar',{p_emp:EMP_ID,p_tarefas:linhas,p_versao:CAB.versao||0,p_origem:null});
+  if(r.error){ T=JSON.parse(antes); recalc(false); desenhaTudo(); toast('Vínculo não salvo: '+r.error.message,true); return; }
+  toast('Vínculo salvo'+(msg.length?' · '+msg[0]:'')+'.'); await carregar();
+}
+function editaLink(t,k,campo,v){ const l=parseP(t.pred); if(campo==='del') l.splice(k,1); else if(campo==='tipo') l[k].tipo=v; else l[k].lag=parseInt(v)||0; t.pred=fmtP(l); }
+function vincPre(uid,k,campo,v){ vinc(()=>editaLink(T.find(u=>u.uid===uid),k,campo,v)); }
+function vincSuc(sucUid,k,campo,v){ vinc(()=>editaLink(T.find(u=>u.uid===sucUid),k,campo,v)); }
+function editaVinc(uid,k,campo,v){ vincPre(uid,k,campo,v); }
+function addVinc(uid,lado){ lado=lado||'pre'; const t=T.find(u=>u.uid===uid), el=$(lado==='pre'?'novoPre':'novoSuc'), v=(el&&el.value||'').trim(); if(!v) return;
+  const w=v.split(' — ')[0].trim(); const alvo=T.find(u=>u.wbs===w)||T.find(u=>u.nome.toLowerCase()===v.toLowerCase()); if(!alvo){ toast('Tarefa "'+v+'" não encontrada.',true); return; }
+  if(alvo.uid===uid){ toast('Uma tarefa não pode depender dela mesma.',true); return; }
+  const de=lado==='pre'?t:alvo, para=lado==='pre'?alvo:t;            // "de" recebe a predecessora "para"
+  if(parseP(de.pred).some(q=>q.eap===para.wbs)){ toast('Esse vínculo já existe.'); return; }
+  vinc(()=>{ const l=parseP(de.pred); l.push({eap:para.wbs,tipo:'TI',lag:0}); de.pred=fmtP(l); }); }
 // renumerar mantendo os vínculos (que são por EAP)
 function comRenumeracao(fn){ const ant={}; T.forEach(t=>ant[t.uid]=t.wbs); fn(); renumera(); const novo={}; T.forEach(t=>novo[ant[t.uid]]=t.wbs);
   T.forEach(t=>{ t.pred=fmtP(parseP(t.pred).filter(q=>novo[q.eap]).map(q=>({...q,eap:novo[q.eap]}))); }); aposEdicao(); }
