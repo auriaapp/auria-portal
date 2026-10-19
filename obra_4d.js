@@ -138,7 +138,8 @@ function servicoDe(t){ const n=_n(t.nome);
   return O.serv.find(s=>n.startsWith(_n(s.nome))||n.startsWith(_n(s.codigo)+' ')||n.includes(_n(s.nome))); }
 function etapaDe(cod,etp){ const s=O.serv.find(x=>x.codigo===cod); return s&&etp?(s.etapas||[]).find(e=>e.codigo===etp)||null:null; }
 function pavsDe(t){ if(!O.idx) return []; const todos=[...new Set(O.idx.flatMap(m=>Object.keys(m.pavs)))];
-  const alvo=_n(t.pav||''); const fonte=alvo||_n(t.nome);
+  const alvo=_n(t.pav||''); const ex=todos.filter(p=>alvo&&_n(p).replace(/[^a-z0-9]/g,'')===alvo.replace(/[^a-z0-9]/g,'')); if(ex.length) return ex;
+  const fonte=alvo||_n(t.nome);
   const num=(fonte.match(/(\d+)\s*(º|o|°)?\s*(pav|andar)/)||fonte.match(/(?:pav\w*|andar|t)\s*0?(\d+)/)||[])[1];
   const pal=/terreo/.test(fonte)?'terreo':/cobert/.test(fonte)?'cobert':/subsolo|ss\d/.test(fonte)?'subsolo':'';
   return todos.filter(p=>{ const pn=_n(p), pd=(pn.match(/\d+/)||[])[0];
@@ -304,7 +305,10 @@ window.o4dToggle=async()=>{
   if(!EMP){ toast('Escolha o empreendimento.',true); return; }
   montarUi(); O.on=true; document.body.classList.add('o4d-on'); if(btn) btn.classList.add('on');
   const p=document.getElementById('o4dPainel'); p.classList.add('on'); p.innerHTML='<div class="sec"><div class="hint">Lendo cronograma e modelos…</div></div>';
-  try{ await carregar(); B3.limpaIndice4D(F3D); O.idx=await B3.indice4D(F3D); await resolverTudo(); }catch(e){ console.warn('4D:',e); p.innerHTML='<div class="sec" style="color:#C62828">Não foi possível montar o 4D: '+esc(e.message||e)+'</div>'; return; }
+  try{ await carregar(); B3.limpaIndice4D(F3D); O.idx=await B3.indice4D(F3D);
+    const NAO_PECA=/^IFC(PROPERTY|COMPLEXPROPERTY|SIUNIT|DERIVEDUNIT|CONVERSIONBASEDUNIT|MONETARYUNIT|UNITASSIGNMENT|MATERIAL|REL|OWNERHISTORY|ELEMENTQUANTITY|QUANTITY|CLASSIFICATION|PRESENTATION|STYLEDITEM|SURFACESTYLE|APPLICATION|PERSON|ORGANIZATION|GROUP|ZONE|SYSTEM|ANNOTATION|GRID|OPENINGELEMENT|VIRTUALELEMENT|SPACE|DOCUMENT|APPROVAL|CONSTRAINT|TASK|RESOURCE|ACTOR)/;
+    O.idx.forEach(m=>Object.keys(m.porCat).forEach(c=>{ if(NAO_PECA.test(c)) delete m.porCat[c]; }));
+    await resolverTudo(); }catch(e){ console.warn('4D:',e); p.innerHTML='<div class="sec" style="color:#C62828">Não foi possível montar o 4D: '+esc(e.message||e)+'</div>'; return; }
   const [a,z]=faixa(), sl=document.getElementById('o4dSl'); sl.min=a; sl.max=z; sl.value=Math.min(Math.max(HOJE,a),z);
   document.getElementById('o4dMk').innerHTML=[0,.25,.5,.75,1].map(f=>'<span>'+BR(Math.round(a+(z-a)*f))+'</span>').join('');
   document.getElementById('o4dTl').classList.add('on'); marcaSg(); O.aba='t'; painel(); o4dData(+sl.value);
