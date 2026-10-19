@@ -1,4 +1,4 @@
-// bim3d version: 2026-10-14a  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-10-19a  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -3327,3 +3327,61 @@ export async function dimOrientadas(model, localId){
     return { altura:maxY-minY, comprimento:hd[0], largura:hd[1], angulo:th*180/Math.PI, orientado:true };
   }catch(_){ return null; }
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+//  BIM 4D (App Obra) — 2026-10-19
+//  Índice por modelo (categoria IFC → peças; pavimento → peças) para resolver
+//  as REGRAS de vínculo das tarefas sem ler propriedade peça a peça, e pintura
+//  por estado (a iniciar / em execução / atrasada / concluída).
+//  Os ajustes manuais são guardados por GlobalId (estável entre revisões).
+// ══════════════════════════════════════════════════════════════════════════
+export async function indice4D(V){
+  if(V._idx4d) return V._idx4d;
+  const st=await _storeysMapa(V);
+  const out=[];
+  for(let mi=0; mi<V.modelos.length; mi++){
+    const x=V.modelos[mi]; if(!x||!x.model) continue;
+    let cats={}; try{ cats=await x.model.getItemsOfCategories([new RegExp('^IFC'+_SEM_TIPO)])||{}; }catch(_){}
+    const porCat={}; Object.entries(cats).forEach(([c,ids])=>{ const k=String(c).toUpperCase(); if(_ESPACIAL.has(k)||/TYPE$|STYLE$/.test(k)||!ids||!ids.length) return; porCat[k]=ids; });
+    const pavs={}; st.filter(s=>s.mi===mi).forEach(s=>{ (pavs[s.nome]=pavs[s.nome]||[]).push(...s.ids); });
+    out.push({ mi, doc:x.documentoId||null, nome:x.nome||'', disciplina:String(x.disciplina||'').toUpperCase(), revisao:x.revisao||'', porCat, pavs });
+  }
+  V._idx4d=out; return out;
+}
+export function limpaIndice4D(V){ V._idx4d=null; }
+// Resolve uma regra {disciplinas, pavimentos, classes} em {mi:[ids]}.
+// Vazio em disciplinas/pavimentos = todos; vazio em classes = nenhuma peça.
+export function resolverRegra4D(idx, regra){
+  const ds=new Set((regra.disciplinas||[]).map(d=>String(d).toUpperCase()));
+  const ps=new Set(regra.pavimentos||[]), cs=(regra.classes||[]).map(c=>String(c).toUpperCase());
+  const porMod={};
+  idx.forEach(m=>{
+    if(ds.size && !ds.has(m.disciplina)) return;
+    let ids=[]; cs.forEach(c=>{ const l=m.porCat[c]; if(l) ids=ids.concat(l); });
+    if(!ids.length) return;
+    if(ps.size){ const ok=new Set(); ps.forEach(p=>(m.pavs[p]||[]).forEach(i=>ok.add(i))); ids=ids.filter(i=>ok.has(i)); }
+    if(ids.length) porMod[m.mi]=[...new Set(ids)];
+  });
+  return porMod;
+}
+export async function guids4D(V, mi, ids){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) return [];
+  try{ if(x.model.getGuidsByLocalIds) return await x.model.getGuidsByLocalIds(ids); }catch(_){}
+  try{ const d=await x.model.getItemsData(ids,{attributesDefault:false,attributes:['GlobalId'],relationsDefault:{attributes:false,relations:false}}); return (d||[]).map(o=>o&&o.GlobalId&&o.GlobalId.value||null); }catch(_){ return []; } }
+export async function idsDeGuids4D(V, mi, guids){ const x=V.modelos[mi]; if(!x||!guids||!guids.length) return [];
+  try{ if(x.model.getLocalIdsByGuids){ const r=await x.model.getLocalIdsByGuids(guids); return (r||[]).filter(v=>v!=null); } }catch(_){}
+  return []; }
+// Pinta o 4D. grupos = [{porMod, cor}] (cores sólidas); fantasma = {porMod, oculto:bool}.
+// Peças fora de todos os grupos ficam com a cor real.
+export async function pintar4D(V, grupos, fantasma){
+  const T=V.THREE;
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} }
+  if(fantasma&&fantasma.porMod){ for(const [mi,ids] of Object.entries(fantasma.porMod)){ const x=V.modelos[mi]; if(!x||!ids.length) continue;
+    if(fantasma.oculto){ try{ await x.model.setVisible(ids,false); }catch(_){} }
+    else { try{ await x.model.highlight(ids,{ color:new T.Color(0x94A3B8), renderedFaces:1, opacity:.12, transparent:true }); }catch(_){} } } }
+  for(const g of (grupos||[])){ for(const [mi,ids] of Object.entries(g.porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue;
+    try{ await x.model.highlight(ids,{ color:new T.Color(g.cor), renderedFaces:1, opacity:1, transparent:false }); }catch(_){} } }
+  V._colorido=true;
+  try{ await V.fragments.update(true); }catch(_){}
+}
+export async function limpar4D(V){ for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} }
+  V._colorido=false; try{ await V.fragments.update(true); }catch(_){} }
