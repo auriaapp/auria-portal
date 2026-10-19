@@ -147,7 +147,7 @@ function montarUi(){
     <span class="lb">Concluídas</span><span class="sg" id="o4dSgConc"><span data-v="verde">Verde</span><span data-v="real">Cor real (apresentação)</span></span>
     <button class="bo" id="o4dIso" onclick="o4dIsolar()" title="Mostra só as peças da tarefa selecionada">Isolar tarefa</button>`);
   mk('o4dCnt'); mk('o4dSelInfo');
-  mk('o4dLeg',`<span><i style="background:#94A3B8;opacity:.45"></i>A iniciar</span><span><i style="background:${CSS4.exe}"></i>Em execução</span><span><i style="background:${CSS4.atr}"></i>Atrasada</span><span><i style="background:${CSS4.ok}"></i>Concluída</span><span><i style="background:none;border:2px solid #38BDF8;width:9px;height:9px"></i>Selecionada</span><span id="o4dLgConf" style="display:none"><i style="background:#FF00FF"></i>Sem tarefa</span><span id="o4dLgEt" style="display:contents"></span>`);
+  mk('o4dLeg',`<span title="Inclui as peças que ainda não têm tarefa"><i style="background:#94A3B8;opacity:.45"></i>A iniciar / sem tarefa</span><span><i style="background:${CSS4.exe}"></i>Em execução</span><span><i style="background:${CSS4.atr}"></i>Atrasada</span><span><i style="background:${CSS4.ok}"></i>Concluída</span><span><i style="background:none;border:2px solid #38BDF8;width:9px;height:9px"></i>Selecionada</span><span id="o4dLgConf" style="display:none"><i style="background:#FF00FF"></i>Sem tarefa</span><span id="o4dLgEt" style="display:contents"></span>`);
   mk('o4dTl',`<div class="r"><button class="pl" id="o4dPlay" onclick="o4dPlay()">▶</button><span class="dt" id="o4dData"></span>
     <span class="lb">passo</span><span class="sg" id="o4dSgPasso"><span data-v="1">Dia</span><span data-v="7">Semana</span><span data-v="30">Mês</span></span>
     <span style="flex:1"></span><span id="o4dResumo" style="font-size:11.5px;color:#8FA6C0"></span>
@@ -238,6 +238,9 @@ async function pintar(){
       // parte concluída, parte por vir: entre etapas (ex.: concretada, aguardando protensão = escorado)
       const ult=l.filter(x=>x.s==='ok').sort((a,b)=>(b.t.fim||0)-(a.t.fim||0))[0];
       add(ult&&ult.et?parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16):C4.exe,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
+    // Peça sem tarefa ainda não tem execução prevista: segue "Futuras" (fantasma/oculta), como as a iniciar.
+    // Na Conferência ela fica em magenta (abaixo), para achar o que falta ligar.
+    if(!O.conf){ const st=semTarefa(); Object.entries(st).forEach(([mi,ids])=>{ (fut[mi]=fut[mi]||[]).push(...ids); }); }
     const grupos=[...porCor].map(([cor,porMod])=>({porMod,cor})); const g={fut};
     if(O.conf){ grupos.push({porMod:semTarefa(),cor:0xFF00FF}); }
     await B3.pintar4D(F3D,grupos,O.conf?null:{porMod:g.fut,oculto:O.fut==='ocul'});
