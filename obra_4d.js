@@ -301,7 +301,11 @@ window.o4dSalvarServ=async()=>{ if(!O.construtora){ toast('Empreendimento sem co
 window.o4dToggle=async()=>{
   const btn=document.getElementById('f3dBtn4d');
   if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } document.getElementById('o4dPainel').classList.remove('on'); document.getElementById('o4dTl').classList.remove('on'); document.body.classList.remove('o4d-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
-  if(!F3D||!F3D.modelos||!F3D.modelos.length){ toast('Carregue os modelos BIM antes de abrir o 4D.',true); return; }
+  // O 4D roda no visualizador completo (o mesmo de "abrir modelos marcados"). Se há modelos
+  // marcados na coluna e ele ainda não abriu, abre agora; senão orienta.
+  if((!F3D||!F3D.modelos||!F3D.modelos.length) && typeof F3D_SEL!=='undefined' && F3D_SEL.size && typeof f3dAbrirSelecionados==='function'){
+    toast('Abrindo os modelos marcados…'); try{ await f3dAbrirSelecionados(); }catch(e){ console.warn('4D abrir:',e); } }
+  if(!F3D||!F3D.modelos||!F3D.modelos.length){ toast('Marque os modelos (Estrutura, Arquitetura…) na coluna Modelos BIM à esquerda e abra o 3D; depois ligue o 4D.',true); return; }
   if(!EMP){ toast('Escolha o empreendimento.',true); return; }
   montarUi(); O.on=true; document.body.classList.add('o4d-on'); if(btn) btn.classList.add('on');
   const p=document.getElementById('o4dPainel'); p.classList.add('on'); p.innerHTML='<div class="sec"><div class="hint">Lendo cronograma e modelos…</div></div>';
