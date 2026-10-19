@@ -187,6 +187,8 @@ body.v-gantt .sheet,body.v-gantt #spS{display:none}
 .ncom{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:11px;color:var(--mut);cursor:pointer}
 .ncom.tem{color:var(--navy);font-weight:700}
 .row .real-med{cursor:pointer;text-decoration:underline dotted var(--mut);text-underline-offset:3px}
+.row input.medi{width:52px;height:22px;text-align:right;font-family:var(--mono);border-color:var(--line);background:var(--panel2)}
+.row input.medi:hover,.row input.medi:focus{border-color:var(--accent);background:var(--panel)}
 </style>
 <link rel="stylesheet" href="auria_barra.css"></head><body>
 <header>
@@ -441,7 +443,7 @@ function cel(t,i,c){ const s=status(t), a=atrasoBase(t), ms=t.tipo==='marco', e=
     case 'dur': return '<div class="num">'+(e&&!ms?inp('dur',dur(t),'','n'):(t.ini!=null?dur(t)+'d':'—'))+'</div>';
     case 'pre': return '<div class="dep">'+(EDIT?inp('pred',t.pred):esc(t.pred))+'</div>';
     case 'suc': return '<div class="dep">'+esc((t._suc||[]).join(';'))+'</div>';
-    case 'real': return '<div class="num">'+(PODE_MED&&!EDIT&&!t._fase?'<span class="real-med" title="Lançar medição" onclick="event.stopPropagation();medirRapido(\''+t.uid+'\')">'+Math.round(t.prog)+'%</span>':Math.round(t.prog)+'%')+'</div>';
+    case 'real': return '<div class="num">'+(PODE_MED&&!EDIT&&!t._fase?'<input class="n medi" type="number" min="0" max="100" step="1" value="'+Math.round(t.prog)+'" title="Digite o % acumulado e tecle Enter: lança uma medição com a data de hoje" onclick="event.stopPropagation()" onfocus="this.select()" onkeydown="if(event.key===\'Enter\')this.blur();if(event.key===\'Escape\'){this.value='+Math.round(t.prog)+';this.blur();}" onchange="medirNaCelula(\''+t.uid+'\',this)">':Math.round(t.prog)+'%')+'</div>';
     case 'com': { const n=COMS?COMS.filter(c=>c.tarefa_uid===t.uid).length:0; return '<div>'+(COMS?'<span class="ncom'+(n?' tem':'')+'" title="Comentários" onclick="event.stopPropagation();verComentarios(\''+t.uid+'\')"><svg class="ci" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4 5h16v11H9l-5 4z"/></svg>'+(n||'')+'</span>':'')+'</div>'; }
     case 'prev': return '<div class="num" style="color:var(--mut)">'+Math.round(prevEm(t,HOJE))+'%</div>';
     case 'atr': return '<div class="num'+(a>0?' late':'')+'">'+(a==null?'—':a>0?'+'+a+'d':(a<0?a+'d':'0'))+'</div>';
@@ -594,6 +596,17 @@ async function apagaComentario(id){ if(!confirm('Apagar este comentário?')) ret
 function medirRapido(uid){ SEL=uid; desenha(); setTimeout(()=>{ const p=$('mPct'); if(p){ p.scrollIntoView({block:'center',behavior:'smooth'}); p.focus(); p.select(); } },50); }
 
 // ══════════════ medições ══════════════
+// Medição direto na planilha (como no Prevision): grava com a data de hoje.
+// A medição detalhada (outra data, observação) continua no painel da tarefa.
+async function medirNaCelula(uid,el){
+  const t=T.find(u=>u.uid===uid), v=parseFloat(el.value);
+  if(!t||isNaN(v)||v<0||v>100){ toast('Informe um % de 0 a 100.',true); el.value=Math.round(t?t.prog:0); return; }
+  if(Math.round(v)===Math.round(t.prog)) return;
+  el.disabled=true;
+  const r=await sb.from('obra_crono_medicao_auria').insert({empreendimento_id:EMP_ID,tarefa_uid:uid,data:S(HOJE),percentual:v,lancado_nome:ME.nome||null});
+  if(r.error){ toast('Medição não lançada: '+r.error.message,true); el.disabled=false; el.value=Math.round(t.prog); return; }
+  toast(t.wbs+' '+t.nome+': '+Math.round(v)+'% em '+BR(HOJE)+'.'); await carregar();
+}
 async function lancarMed(uid){
   const pct=parseFloat($('mPct').value), data=$('mData').value, obs=$('mObs').value.trim();
   if(isNaN(pct)||pct<0||pct>100){ toast('Informe um percentual de 0 a 100.',true); return; }
