@@ -37,7 +37,7 @@ const Dn=s=>{ const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m?
 const BR=n=>{ if(n==null) return '—'; const d=new Date(n*864e5).toISOString(); return d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(2,4); };
 const HOJE=(()=>{ const t=new Date(); return Date.UTC(t.getFullYear(),t.getMonth(),t.getDate())/864e5; })();
 
-const O={on:false,n:HOJE,modo:'real',fut:'fant',conc:'verde',aba:'t',sel:null,conf:false,timer:null,
+const O={on:false,n:HOJE,modo:'real',fut:'fant',conc:'verde',aba:'v',passo:7,isolado:false,sel:null,conf:false,timer:null,
   T:[],meds:[],base:null,vinc:{},serv:SERV_PADRAO,servDaConstrutora:false,idx:null,porT:{},pode:false,construtora:null};
 window.O4=O;
 
@@ -46,11 +46,48 @@ function toast(m,err){ let t=document.getElementById('o4dToast'); if(!t){ t=docu
 
 // ── estilos ──
 const st=document.createElement('style'); st.textContent=`
-#o4dPainel{position:absolute;top:8px;right:8px;bottom:118px;width:340px;z-index:30;background:var(--panel,#fff);color:var(--txt,#0F172A);border:1px solid var(--line,#E2E8F0);border-radius:12px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 12px 32px rgba(0,0,0,.25);font-size:12.5px}
-#o4dPainel.on,#o4dTl.on{display:flex}
-#o4dPainel .tbs{display:flex;gap:14px;padding:0 14px;border-bottom:1px solid var(--line,#E2E8F0);flex-shrink:0}
-#o4dPainel .tb{padding:9px 0 7px;font-weight:600;color:var(--mut,#64748B);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
-#o4dPainel .tb.on{color:var(--txt,#0F172A);border-bottom-color:#E8960A}
+#o4dPainel{position:absolute;top:8px;right:8px;bottom:128px;width:340px;z-index:30;background:var(--panel,#fff);color:var(--txt,#0F172A);border:1px solid var(--line,#E2E8F0);border-radius:12px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 12px 32px rgba(0,0,0,.25);font-size:12.5px}
+#o4dPainel.on,#o4dTl.on,#o4dTar.on,#o4dOpc.on,#o4dCnt.on,#o4dLeg.on{display:flex}
+#o4dPainel .o4ts{display:flex;gap:16px;padding:0 14px;border-bottom:1px solid var(--line,#E2E8F0);flex-shrink:0;align-items:center}
+#o4dPainel .o4t{padding:10px 0 8px;font-weight:600;font-size:12.5px;color:var(--mut,#64748B);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;background:none;border-radius:0}
+#o4dPainel .o4t.on{color:var(--txt,#0F172A);border-bottom-color:#E8960A}
+#o4dPainel .o4x{margin-left:auto;border:none;background:none;color:var(--mut,#64748B);font-size:18px;cursor:pointer;padding:4px}
+#o4dTar{position:absolute;top:58px;left:8px;bottom:128px;width:300px;z-index:30;background:var(--panel,#fff);color:var(--txt,#0F172A);border:1px solid var(--line,#E2E8F0);border-radius:12px;display:none;flex-direction:column;overflow:hidden;box-shadow:0 12px 32px rgba(0,0,0,.25);font-size:12.5px}
+#o4dTar .hd{padding:10px 14px;border-bottom:1px solid var(--line,#E2E8F0);display:flex;align-items:center;gap:8px;flex-shrink:0}
+#o4dTar .hd b{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt2,#334155)}
+#o4dTar .hd span{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut,#64748B);font-weight:700}
+#o4dTar .lst{overflow:auto;flex:1}
+#o4dTar .tk{display:grid;grid-template-columns:40px 1fr auto;gap:6px;align-items:center;padding:6px 14px;border-bottom:1px solid var(--line,#E2E8F0);cursor:pointer}
+#o4dTar .tk:hover{background:var(--panel2,#F6F9FC)}
+#o4dTar .tk.sel{box-shadow:inset 3px 0 0 #38BDF8;background:rgba(56,189,248,.12)}
+#o4dTar .tk.fase{font-weight:700;background:var(--panel2,#F6F9FC);cursor:default}
+#o4dTar .tk .e{font:700 11px ui-monospace,Consolas,monospace;color:var(--navy,#1E3A5F)}
+#o4dTar .tk .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#o4dTar .tk .nm small{display:block;font-size:10.5px;color:var(--mut,#64748B);font-weight:400}
+#o4dTar .tk .q{font:700 10.5px ui-monospace,Consolas,monospace;color:var(--mut,#64748B);text-align:right;display:block}
+#o4dTar .tk .q.z{color:#C62828}
+#o4dTar .tk .q.auto{font-weight:400;font-style:italic}
+#o4dTar .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#o4dTar .vazio{padding:16px 14px;color:var(--txt2,#334155);font-size:12.5px;line-height:1.5}
+#o4dTar .vazio button{margin-top:10px;background:#E8960A;border:1px solid #E8960A;color:#231703;border-radius:7px;padding:6px 11px;font-weight:700;cursor:pointer;font-family:inherit}
+#o4dOpc{position:absolute;top:58px;left:318px;right:356px;z-index:29;display:none;gap:8px;align-items:center;flex-wrap:wrap;color:#C9D6E4;font-size:12px}
+#o4dOpc .lb,#o4dTl .lb{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#8FA6C0;font-weight:700}
+#o4dOpc .sg,#o4dTl .sg{display:inline-flex;border:1px solid #26324A;border-radius:7px;overflow:hidden;background:#1B2740}
+#o4dOpc .sg span,#o4dTl .sg span{padding:4px 9px;cursor:pointer;border-right:1px solid #26324A;user-select:none;color:#C9D6E4}
+#o4dOpc .sg span:last-child,#o4dTl .sg span:last-child{border-right:none}
+#o4dOpc .sg span.on,#o4dTl .sg span.on{background:#E8960A;color:#231703;font-weight:700}
+#o4dOpc .bo{background:#1B2740;border:1px solid #26324A;color:#C9D6E4;border-radius:7px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:12px}
+#o4dOpc .bo.on{border-color:#38BDF8;color:#38BDF8}
+#o4dCnt{position:absolute;top:96px;right:356px;z-index:29;display:none;flex-direction:column;gap:2px;background:rgba(14,23,38,.88);border:1px solid #26324A;border-radius:8px;padding:8px 12px;color:#C9D6E4;font-size:11.5px;min-width:180px}
+#o4dCnt div{display:flex;justify-content:space-between;gap:14px}
+#o4dCnt b{font-family:ui-monospace,Consolas,monospace}
+#o4dSelInfo{position:absolute;top:96px;left:318px;z-index:29;display:none;background:rgba(14,23,38,.92);border:1px solid #38BDF8;border-radius:8px;padding:8px 12px;color:#E8EEF6;font-size:12px;max-width:300px}
+#o4dSelInfo b{font-family:ui-monospace,Consolas,monospace;color:#38BDF8}
+#o4dLeg{position:absolute;left:380px;bottom:138px;z-index:29;display:none;gap:12px;flex-wrap:wrap;background:rgba(14,23,38,.88);border:1px solid #26324A;border-radius:8px;padding:7px 11px;font-size:11.5px;color:#C9D6E4;max-width:calc(100% - 760px)}
+#o4dLeg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+#o4dSl{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;background:#26324A;outline:none;margin:4px 0;padding:0;border:none}
+#o4dSl::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:#E8960A;border:2px solid #231703;cursor:pointer}
+#o4dSl::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#E8960A;border:2px solid #231703;cursor:pointer}
 #o4dPainel .bd{overflow:auto;flex:1}
 #o4dPainel .sec{padding:10px 14px;border-bottom:1px solid var(--line,#E2E8F0)}
 #o4dPainel .lb{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut,#64748B);font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;gap:6px}
@@ -85,35 +122,34 @@ const st=document.createElement('style'); st.textContent=`
 #o4dTl .r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #o4dTl .dt{font:800 15px ui-monospace,Consolas,monospace;color:#fff;min-width:96px}
 #o4dTl .pl{width:30px;height:30px;border-radius:50%;border:none;background:#E8960A;color:#231703;cursor:pointer;font-size:12px}
-#o4dTl input[type=range]{width:100%;accent-color:#E8960A}
-#o4dTl .sg{display:inline-flex;border:1px solid #26324A;border-radius:7px;overflow:hidden}
-#o4dTl .sg span{padding:4px 9px;cursor:pointer;border-right:1px solid #26324A;user-select:none}
-#o4dTl .sg span:last-child{border-right:none}
-#o4dTl .sg span.on{background:#E8960A;color:#231703;font-weight:700}
-#o4dTl .lg{display:flex;gap:10px;font-size:11px}
-#o4dTl .lg i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 #o4dTl .mk{display:flex;justify-content:space-between;font:10px ui-monospace,Consolas,monospace;color:#8FA6C0}
 #o4dTl .lb{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#8FA6C0;font-weight:700}
 #f3dBtn4d.on{background:#E8960A!important;color:#231703!important}
-body.o4d-on #f3dLogo{bottom:128px!important;opacity:.9}
-body.o4d-on #f3dDica{bottom:132px!important}
+body.o4d-on #f3dLogo{left:318px!important;bottom:136px!important;opacity:.9}
+body.o4d-on #f3dDica{display:none!important}
+@media(max-width:1100px){#o4dTar{width:240px}#o4dOpc,#o4dSelInfo{left:258px}body.o4d-on #f3dLogo{left:258px!important}#o4dLeg{left:320px;max-width:calc(100% - 680px)}}
 `; document.head.appendChild(st);
 
 function montarUi(){
   const body=document.getElementById('bimBody'); if(!body||document.getElementById('o4dPainel')) return;
-  const p=document.createElement('div'); p.id='o4dPainel'; body.appendChild(p);
-  const t=document.createElement('div'); t.id='o4dTl'; body.appendChild(t);
-  t.innerHTML=`<div class="r"><button class="pl" id="o4dPlay" onclick="o4dPlay()">▶</button><span class="dt" id="o4dData"></span>
-    <span class="lb">Comparar</span><span class="sg" id="o4dSgModo"><span data-v="prev">Previsto</span><span data-v="real">Realizado</span></span>
+  const mk=(id,html)=>{ const d=document.createElement('div'); d.id=id; if(html) d.innerHTML=html; body.appendChild(d); return d; };
+  mk('o4dTar','<div class="hd"><b>Tarefas</b><span>peças</span></div><div class="lst" id="o4dLst"></div>');
+  mk('o4dPainel');
+  mk('o4dOpc',`<span class="lb">Comparar</span><span class="sg" id="o4dSgModo"><span data-v="prev">Previsto</span><span data-v="real">Realizado</span></span>
     <span class="lb">Futuras</span><span class="sg" id="o4dSgFut"><span data-v="fant">Fantasma</span><span data-v="ocul">Ocultas</span></span>
-    <span class="lb">Concluídas</span><span class="sg" id="o4dSgConc"><span data-v="verde">Verde</span><span data-v="real">Cor real</span></span>
-    <span style="flex:1"></span><button class="pl" style="background:#1B2740;color:#C9D6E4;width:auto;border-radius:7px;padding:0 10px;font-size:12px" onclick="o4dIr(${'HOJE'})">Hoje</button></div>
-    <input type="range" id="o4dSl" oninput="o4dData(+this.value)"><div class="mk" id="o4dMk"></div>
-    <div class="r"><span class="lg"><span><i style="background:#94A3B8;opacity:.4"></i>A iniciar</span><span><i style="background:${CSS4.exe}"></i>Em execução</span><span><i style="background:${CSS4.atr}"></i>Atrasada</span><span><i style="background:${CSS4.ok}"></i>Concluída</span><span><i style="background:#FF00FF"></i>Sem tarefa (conferência)</span></span><span class="lg" id="o4dLgEt"></span><span style="flex:1"></span><span id="o4dResumo"></span></div>`;
-  const liga=(id,k)=>document.querySelectorAll('#'+id+' span').forEach(s=>s.onclick=()=>{ O[k]=s.dataset.v; marcaSg(); pintar(); });
-  liga('o4dSgModo','modo'); liga('o4dSgFut','fut'); liga('o4dSgConc','conc');
+    <span class="lb">Concluídas</span><span class="sg" id="o4dSgConc"><span data-v="verde">Verde</span><span data-v="real">Cor real (apresentação)</span></span>
+    <button class="bo" id="o4dIso" onclick="o4dIsolar()" title="Mostra só as peças da tarefa selecionada">Isolar tarefa</button>`);
+  mk('o4dCnt'); mk('o4dSelInfo');
+  mk('o4dLeg',`<span><i style="background:#94A3B8;opacity:.45"></i>A iniciar</span><span><i style="background:${CSS4.exe}"></i>Em execução</span><span><i style="background:${CSS4.atr}"></i>Atrasada</span><span><i style="background:${CSS4.ok}"></i>Concluída</span><span><i style="background:none;border:2px solid #38BDF8;width:9px;height:9px"></i>Selecionada</span><span id="o4dLgConf" style="display:none"><i style="background:#FF00FF"></i>Sem tarefa</span><span id="o4dLgEt" style="display:contents"></span>`);
+  mk('o4dTl',`<div class="r"><button class="pl" id="o4dPlay" onclick="o4dPlay()">▶</button><span class="dt" id="o4dData"></span>
+    <span class="lb">passo</span><span class="sg" id="o4dSgPasso"><span data-v="1">Dia</span><span data-v="7">Semana</span><span data-v="30">Mês</span></span>
+    <span style="flex:1"></span><span id="o4dResumo" style="font-size:11.5px;color:#8FA6C0"></span>
+    <button class="pl" style="background:#1B2740;color:#C9D6E4;width:auto;border-radius:7px;padding:0 10px;font-size:12px;border:1px solid #26324A" onclick="o4dIr(${HOJE})">Hoje</button></div>
+    <input type="range" id="o4dSl" oninput="o4dData(+this.value)"><div class="mk" id="o4dMk"></div>`);
+  const liga=(id,k,num)=>document.querySelectorAll('#'+id+' span').forEach(x=>x.onclick=()=>{ O[k]=num?+x.dataset.v:x.dataset.v; marcaSg(); if(!num) pintar(); });
+  liga('o4dSgModo','modo'); liga('o4dSgFut','fut'); liga('o4dSgConc','conc'); liga('o4dSgPasso','passo',1);
 }
-function marcaSg(){ [['o4dSgModo','modo'],['o4dSgFut','fut'],['o4dSgConc','conc']].forEach(([id,k])=>document.querySelectorAll('#'+id+' span').forEach(s=>s.classList.toggle('on',s.dataset.v===O[k]))); }
+function marcaSg(){ [['o4dSgModo','modo'],['o4dSgFut','fut'],['o4dSgConc','conc'],['o4dSgPasso','passo']].forEach(([id,k])=>document.querySelectorAll('#'+id+' span').forEach(x=>x.classList.toggle('on',x.dataset.v===String(O[k])))); }
 
 // ── carga ──
 async function carregar(){
@@ -196,7 +232,9 @@ async function pintar(){
     await B3.pintar4D(F3D,grupos,O.conf?null:{porMod:g.fut,oculto:O.fut==='ocul'});
     legendaEtapas();
     if(O.sel&&O.porT[O.sel]&&nPecas(O.porT[O.sel])){ try{ for(const [mi,ids] of Object.entries(O.porT[O.sel])){ await F3D.modelos[mi].model.highlight(ids,{color:new F3D.THREE.Color(0x38BDF8),renderedFaces:1,opacity:1,transparent:false}); } await F3D.fragments.update(true); }catch(_){} }
-    const r=document.getElementById('o4dResumo'); if(r) r.innerHTML=(O.modo==='prev'?'Previsto'+(O.base?' ('+esc(O.base.nome)+')':' (datas atuais)'):'Realizado (medições)')+' · <b style="color:'+CSS4.exe+'">'+cnt.exe+'</b> em execução · <b style="color:#F87171">'+cnt.atr+'</b> atrasadas · <b style="color:#4ADE80">'+cnt.ok+'</b> concluídas · '+cnt.fut+' a iniciar';
+    const r=document.getElementById('o4dResumo'); if(r) r.textContent=O.modo==='prev'?'Previsto pela '+(O.base?'linha de base '+O.base.nome:'datas atuais (sem linha de base)'):'Realizado pelas medições';
+    const c=document.getElementById('o4dCnt'); if(c) c.innerHTML='<div><span>Tarefas no dia</span><b>'+(cnt.exe+cnt.atr+cnt.ok+cnt.fut)+'</b></div><div><span style="color:'+CSS4.exe+'">Em execução</span><b>'+cnt.exe+'</b></div><div><span style="color:#F87171">Atrasadas</span><b>'+cnt.atr+'</b></div><div><span style="color:#4ADE80">Concluídas</span><b>'+cnt.ok+'</b></div><div><span>A iniciar</span><b>'+cnt.fut+'</b></div>';
+    const lc=document.getElementById('o4dLgConf'); if(lc) lc.style.display=O.conf?'':'none';
   } finally { _pintando=false; if(_pend){ _pend=false; pintar(); } }
 }
 function semTarefa(){ const usados={}; Object.values(O.porT).forEach(pm=>Object.entries(pm).forEach(([mi,ids])=>{ const s=usados[mi]=usados[mi]||new Set(); ids.forEach(i=>s.add(i)); }));
@@ -206,32 +244,38 @@ function semTarefa(){ const usados={}; Object.values(O.porT).forEach(pm=>Object.
 
 function legendaEtapas(){ const el=document.getElementById('o4dLgEt'); if(!el) return; const usados=new Set(O.T.map(t=>{ const r=regraDe(t); return r&&r.etapa?r.servico+':'+r.etapa:null; }).filter(Boolean));
   const it=[]; O.serv.forEach(s=>(s.etapas||[]).forEach(e=>{ if(!usados.has(s.codigo+':'+e.codigo)) return; it.push('<span><i style="background:'+e.cor+'"></i>'+esc(e.nome)+'</span>'); if(e.depois) it.push('<span><i style="background:'+e.depois.cor+'"></i>'+esc(e.depois.nome)+'</span>'); }));
-  el.innerHTML=it.length?'<span style="color:#8FA6C0">Etapas:</span>'+it.join(''):''; }
+  el.innerHTML=it.join(''); }
 // ── linha do tempo ──
 function faixa(){ const ds=O.T.flatMap(t=>[t.ini,t.fim]).filter(n=>n!=null); if(!ds.length) return [HOJE-30,HOJE+30]; return [Math.min(...ds,HOJE)-3, Math.max(...ds,HOJE)+3]; }
-window.o4dData=n=>{ O.n=n; document.getElementById('o4dData').textContent=BR(n); pintar(); if(O.aba==='t') lista(); if(O.aba==='v') vinculo(); };
+window.o4dData=n=>{ O.n=n; document.getElementById('o4dData').textContent=BR(n); if(O.isolado){ O.isolado=false; const b=document.getElementById('o4dIso'); if(b){ b.classList.remove('on'); b.textContent='Isolar tarefa'; } } pintar(); lista(); if(O.aba==='v') vinculo(); selInfo(); };
+window.o4dIsolar=async()=>{ const b=document.getElementById('o4dIso'); if(O.isolado){ O.isolado=false; b.classList.remove('on'); b.textContent='Isolar tarefa'; pintar(); return; }
+  const pm=O.porT[O.sel]; if(!O.sel||!nPecas(pm)){ toast('Escolha uma tarefa com peças.',true); return; }
+  try{ await B3.isolarPorMod(F3D,pm); await B3.enquadrarIds(F3D,pm); }catch(_){} O.isolado=true; b.classList.add('on'); b.textContent='Mostrar tudo'; };
+function selInfo(){ const el=document.getElementById('o4dSelInfo'); if(!el) return; const t=O.T.find(x=>x.uid===O.sel);
+  if(!t){ el.style.display='none'; return; } const s=estado(t,O.n); el.style.display='block';
+  el.innerHTML='<b>'+esc(t.wbs)+'</b> '+esc(t.nome)+'<br><span style="color:#8FA6C0">'+nPecas(O.porT[t.uid])+' peças · '+BR(t.ini)+' → '+BR(t.fim)+' · </span><span style="color:'+CSS4[s]+'">'+NOME4[s]+'</span>'; }
 window.o4dIr=n=>{ const sl=document.getElementById('o4dSl'); sl.value=n; o4dData(n); };
 window.o4dPlay=()=>{ const b=document.getElementById('o4dPlay'), sl=document.getElementById('o4dSl');
   if(O.timer){ clearInterval(O.timer); O.timer=null; b.textContent='▶'; return; }
   if(+sl.value>=+sl.max) sl.value=sl.min; b.textContent='❚❚';
-  O.timer=setInterval(()=>{ if(_pintando) return; sl.value=+sl.value+7; o4dData(+sl.value); if(+sl.value>=+sl.max){ clearInterval(O.timer); O.timer=null; b.textContent='▶'; } },350); };
+  O.timer=setInterval(()=>{ if(_pintando) return; sl.value=+sl.value+O.passo; o4dData(+sl.value); if(+sl.value>=+sl.max){ clearInterval(O.timer); O.timer=null; b.textContent='▶'; } },350); };
 
 // ── painel ──
 function painel(){ const p=document.getElementById('o4dPainel');
-  p.innerHTML='<div class="tbs">'+[['t','Tarefas'],['v','Vínculo'],['c','Conferência'],['s','Serviços']].map(([k,r])=>'<div class="tb'+(O.aba===k?' on':'')+'" onclick="o4dAba(\''+k+'\')">'+r+'</div>').join('')+'<span style="flex:1"></span><div class="tb" title="Fechar o 4D" onclick="o4dToggle()">✕</div></div><div class="bd" id="o4dBd"></div>';
-  ({t:lista,v:vinculo,c:conferencia,s:servicos})[O.aba](); }
-window.o4dAba=k=>{ O.aba=k; O.conf=(k==='c'); painel(); pintar(); };
-function lista(){ const bd=document.getElementById('o4dBd'); if(!bd) return;
-  if(!O.T.length){ bd.innerHTML='<div class="sec"><div class="hint">O Cronograma da Obra ainda não tem tarefas. Monte o cronograma primeiro (botão Cronograma da Obra).</div></div>'; return; }
-  bd.innerHTML=(O.semTabela?'<div class="sec" style="color:#B45309">O banco do 4D ainda não foi criado (supabase_obra_4d.sql). A simulação funciona com regras automáticas, mas não dá para salvar vínculos.</div>':'')+
+  p.innerHTML='<div class="o4ts">'+[['v','Vínculo da tarefa'],['c','Conferência'],['s','Serviços padrão']].map(([k,r])=>'<div class="o4t'+(O.aba===k?' on':'')+'" onclick="o4dAba(\''+k+'\')">'+r+'</div>').join('')+'<button class="o4x" title="Fechar o 4D" onclick="o4dToggle()">✕</button></div><div class="bd" id="o4dBd"></div>';
+  ({v:vinculo,c:conferencia,s:servicos})[O.aba](); lista(); selInfo(); }
+window.o4dAba=k=>{ if(k==='t'){ const l=document.getElementById('o4dLst'); if(l) l.scrollTop=0; return; } O.aba=k; O.conf=(k==='c'); painel(); pintar(); };
+function lista(){ const bd=document.getElementById('o4dLst'); if(!bd) return;
+  if(!O.T.filter(t=>!t.fase).length){ bd.innerHTML='<div class="vazio"><b>O Cronograma da Obra ainda não tem tarefas por pavimento.</b><br>Crie tarefas como <i>Cimbramento TERREO</i>, <i>Concretagem SOBRE1</i> ou <i>Alvenaria TIPO1-005</i>: elas se ligam sozinhas às peças pelo serviço e pelo pavimento.'+(typeof abrirCronograma==='function'?'<br><button onclick="abrirCronograma()">Abrir o Cronograma da Obra</button>':'')+'</div>'; return; }
+  bd.innerHTML=(O.semTabela?'<div class="vazio" style="color:#B45309">O banco do 4D ainda não foi criado. A simulação funciona com regras automáticas, mas não dá para salvar vínculos.</div>':'')+
     O.T.map(t=>{ if(t.fase) return '<div class="tk fase" style="padding-left:'+(14+t.nivel*10)+'px"><span class="e">'+esc(t.wbs)+'</span><span class="nm">'+esc(t.nome)+'</span><span></span></div>';
       const s=estado(t,O.n), np=nPecas(O.porT[t.uid]), r=regraDe(t);
       return '<div class="tk'+(O.sel===t.uid?' sel':'')+'" onclick="o4dSel(\''+t.uid+'\')"><span class="e">'+esc(t.wbs)+'</span><span class="nm"><span class="dot" style="background:'+(CSS4[s])+';'+(s==='fut'?'opacity:.45':'')+'"></span>'+esc(t.nome)+'<small>'+BR(t.ini)+' → '+BR(t.fim)+' · '+NOME4[s]+'</small></span><span class="q'+(np?'':' z')+(r&&!r.salva?' auto':'')+'" title="'+(r?(r.salva?'vínculo salvo':'vínculo automático pelo serviço '+esc(r.servico)+' — confira e salve'):'sem regra')+'">'+(np?np:'sem peças')+'</span></div>'; }).join(''); }
-window.o4dSel=uid=>{ O.sel=O.sel===uid?null:uid; if(O.sel&&O.aba==='t'){ O.aba='v'; painel(); } else painel(); pintar(); };
+window.o4dSel=uid=>{ O.sel=O.sel===uid?null:uid; if(O.sel&&O.aba!=='v'){ O.aba='v'; O.conf=false; } painel(); pintar(); };
 
 let EDT=null;   // regra em edição
 function vinculo(){ const bd=document.getElementById('o4dBd'); if(!bd) return; const t=O.T.find(x=>x.uid===O.sel);
-  if(!t){ bd.innerHTML='<div class="sec"><div class="hint">Escolha uma tarefa na aba Tarefas.</div></div>'; return; }
+  if(!t){ bd.innerHTML='<div class="sec"><div class="hint" style="font-size:12px">Escolha uma tarefa na coluna da esquerda para ver e ajustar de quais modelos, pavimentos e tipos de peça ela é feita.</div></div>'; return; }
   const r=regraDe(t)||{salva:false,servico:'',disciplinas:[],pavimentos:[],classes:[],adicionados:[],removidos:[]};
   if(!EDT||EDT.uid!==t.uid) EDT={uid:t.uid,...JSON.parse(JSON.stringify(r))};
   const ro=!O.pode, disc=[...new Set(O.idx.map(m=>m.disciplina).filter(Boolean))].sort();
@@ -300,7 +344,7 @@ window.o4dSalvarServ=async()=>{ if(!O.construtora){ toast('Empreendimento sem co
 // ── liga / desliga ──
 window.o4dToggle=async()=>{
   const btn=document.getElementById('f3dBtn4d');
-  if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } document.getElementById('o4dPainel').classList.remove('on'); document.getElementById('o4dTl').classList.remove('on'); document.body.classList.remove('o4d-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
+  if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } ['o4dPainel','o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); const si=document.getElementById('o4dSelInfo'); if(si) si.style.display='none'; document.body.classList.remove('o4d-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
   // O 4D roda no visualizador completo (o mesmo de "abrir modelos marcados"). Se há modelos
   // marcados na coluna e ele ainda não abriu, abre agora; senão orienta.
   if((!F3D||!F3D.modelos||!F3D.modelos.length) && typeof F3D_SEL!=='undefined' && F3D_SEL.size && typeof f3dAbrirSelecionados==='function'){
@@ -315,7 +359,7 @@ window.o4dToggle=async()=>{
     await resolverTudo(); }catch(e){ console.warn('4D:',e); p.innerHTML='<div class="sec" style="color:#C62828">Não foi possível montar o 4D: '+esc(e.message||e)+'</div>'; return; }
   const [a,z]=faixa(), sl=document.getElementById('o4dSl'); sl.min=a; sl.max=z; sl.value=Math.min(Math.max(HOJE,a),z);
   document.getElementById('o4dMk').innerHTML=[0,.25,.5,.75,1].map(f=>'<span>'+BR(Math.round(a+(z-a)*f))+'</span>').join('');
-  document.getElementById('o4dTl').classList.add('on'); marcaSg(); O.aba='t'; painel(); o4dData(+sl.value);
+  ['o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>document.getElementById(id).classList.add('on')); marcaSg(); O.aba='v'; painel(); o4dData(+sl.value);
 };
 // botão na barra do 3D
 function botao(){ const ref=document.getElementById('f3dBtnLocal'); if(!ref||document.getElementById('f3dBtn4d')) return;
