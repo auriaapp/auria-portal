@@ -127,7 +127,14 @@ const st=document.createElement('style'); st.textContent=`
 #f3dBtn4d.on{background:#E8960A!important;color:#231703!important}
 body.o4d-on #f3dLogo{left:318px!important;bottom:136px!important;opacity:.9}
 body.o4d-on #f3dDica{display:none!important}
-@media(max-width:1100px){#o4dTar{width:240px}#o4dOpc,#o4dSelInfo{left:258px}body.o4d-on #f3dLogo{left:258px!important}#o4dLeg{left:320px;max-width:calc(100% - 680px)}}
+/* visualizador estreito: opções e legenda descem para a linha do tempo, contador sai (o resumo fica no rodapé) */
+#bimBody.o4-estreito #o4dTar{width:230px;top:58px}
+#bimBody.o4-estreito #o4dPainel{width:290px}
+#bimBody.o4-estreito #o4dCnt{display:none!important}
+#bimBody.o4-estreito #o4dSelInfo{left:246px;top:58px;max-width:calc(100% - 560px)}
+#bimBody.o4-estreito #o4dOpc,#bimBody.o4-estreito #o4dLeg{position:static;max-width:none;background:none;border:none;padding:0;margin-top:4px}
+#bimBody.o4-estreito #o4dTar,#bimBody.o4-estreito #o4dPainel{bottom:170px}
+body.o4d-on #bimBody.o4-estreito ~ * #f3dLogo, body.o4d-on.o4-estreito-on #f3dLogo{left:246px!important;bottom:178px!important}
 `; document.head.appendChild(st);
 
 function montarUi(){
@@ -149,6 +156,10 @@ function montarUi(){
   const liga=(id,k,num)=>document.querySelectorAll('#'+id+' span').forEach(x=>x.onclick=()=>{ O[k]=num?+x.dataset.v:x.dataset.v; marcaSg(); if(!num) pintar(); });
   liga('o4dSgModo','modo'); liga('o4dSgFut','fut'); liga('o4dSgConc','conc'); liga('o4dSgPasso','passo',1);
 }
+function adapta(){ const b=document.getElementById('bimBody'); if(!b) return; const est=b.clientWidth<1180; b.classList.toggle('o4-estreito',est); document.body.classList.toggle('o4-estreito-on',est&&O.on);
+  const tl=document.getElementById('o4dTl'), op=document.getElementById('o4dOpc'), lg=document.getElementById('o4dLeg'); if(!tl||!op||!lg) return;
+  if(est){ if(op.parentElement!==tl){ tl.appendChild(op); tl.appendChild(lg); } } else if(op.parentElement===tl){ b.appendChild(op); b.appendChild(lg); } }
+if(window.ResizeObserver){ const ro=new ResizeObserver(()=>{ if(O.on) adapta(); }); const liga=()=>{ const b=document.getElementById('bimBody'); if(b) ro.observe(b); }; if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',liga); else liga(); }
 function marcaSg(){ [['o4dSgModo','modo'],['o4dSgFut','fut'],['o4dSgConc','conc'],['o4dSgPasso','passo']].forEach(([id,k])=>document.querySelectorAll('#'+id+' span').forEach(x=>x.classList.toggle('on',x.dataset.v===String(O[k])))); }
 
 // ── carga ──
@@ -344,7 +355,7 @@ window.o4dSalvarServ=async()=>{ if(!O.construtora){ toast('Empreendimento sem co
 // ── liga / desliga ──
 window.o4dToggle=async()=>{
   const btn=document.getElementById('f3dBtn4d');
-  if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } ['o4dPainel','o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); const si=document.getElementById('o4dSelInfo'); if(si) si.style.display='none'; document.body.classList.remove('o4d-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
+  if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } ['o4dPainel','o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); const si=document.getElementById('o4dSelInfo'); if(si) si.style.display='none'; document.body.classList.remove('o4d-on','o4-estreito-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
   // O 4D roda no visualizador completo (o mesmo de "abrir modelos marcados"). Se há modelos
   // marcados na coluna e ele ainda não abriu, abre agora; senão orienta.
   if((!F3D||!F3D.modelos||!F3D.modelos.length) && typeof F3D_SEL!=='undefined' && F3D_SEL.size && typeof f3dAbrirSelecionados==='function'){
@@ -359,7 +370,7 @@ window.o4dToggle=async()=>{
     await resolverTudo(); }catch(e){ console.warn('4D:',e); p.innerHTML='<div class="sec" style="color:#C62828">Não foi possível montar o 4D: '+esc(e.message||e)+'</div>'; return; }
   const [a,z]=faixa(), sl=document.getElementById('o4dSl'); sl.min=a; sl.max=z; sl.value=Math.min(Math.max(HOJE,a),z);
   document.getElementById('o4dMk').innerHTML=[0,.25,.5,.75,1].map(f=>'<span>'+BR(Math.round(a+(z-a)*f))+'</span>').join('');
-  ['o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>document.getElementById(id).classList.add('on')); marcaSg(); O.aba='v'; painel(); o4dData(+sl.value);
+  ['o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>document.getElementById(id).classList.add('on')); adapta(); marcaSg(); O.aba='v'; painel(); o4dData(+sl.value);
 };
 // botão na barra do 3D
 function botao(){ const ref=document.getElementById('f3dBtnLocal'); if(!ref||document.getElementById('f3dBtn4d')) return;
