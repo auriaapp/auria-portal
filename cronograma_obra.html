@@ -105,6 +105,7 @@ body.editando .edit-on{display:flex}
 .gh .w{position:absolute;top:22px;height:24px;border-right:1px solid var(--line);font-family:var(--mono);font-size:9.5px;color:var(--mut);padding:6px 3px;overflow:hidden}
 .gb{position:relative}
 .gb .gl{position:absolute;top:0;bottom:0;border-right:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.gb .gl.fer{border:none;background:color-mix(in srgb,var(--rep) 18%,transparent)}
 .gb .hoje{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--accent);z-index:3}
 .gr{height:30px;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);position:relative}
 .gr.sel{background:color-mix(in srgb,var(--accent) 8%,transparent)}
@@ -213,6 +214,7 @@ table.tb .cod{font-family:var(--mono);color:var(--navy);font-weight:700}
     <span class="chip" id="cCrit" onclick="F.crit=!F.crit;this.classList.toggle('act');desenha()">Caminho crítico</span>
     <span class="chip" id="cConc" onclick="F.conc=!F.conc;this.classList.toggle('act');desenha()">Ocultar concluídas</span>
     <span class="sp"></span>
+    <div style="position:relative"><button class="abtn" onclick="event.stopPropagation();abreCal()" title="Dias de trabalho e feriados da obra"><svg class="ci" viewBox="0 0 24 24"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg>Calendário</button><div class="pop" id="calpop" onclick="event.stopPropagation()" style="right:0;top:110%;width:320px"></div></div>
     <div style="position:relative"><button class="abtn" onclick="event.stopPropagation();document.getElementById('colpop').classList.toggle('on')"><svg class="ci" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM9 5v14M15 5v14"/></svg>Colunas ▾</button><div class="pop" id="colpop" onclick="event.stopPropagation()" style="right:0;top:110%"></div></div>
     <div class="seg" id="segEsc"><span data-e="dia" onclick="escala('dia')">Dia</span><span data-e="sem" class="on" onclick="escala('sem')">Semana</span><span data-e="mes" onclick="escala('mes')">Mês</span></div>
     <button class="abtn" title="Recolher/expandir todas as fases" onclick="recolherTudo()"><svg class="ci" viewBox="0 0 24 24"><path d="M12 3v7M9 7l3 3 3-3M12 21v-7M9 17l3-3 3 3M4 12h16"/></svg></button>
@@ -282,7 +284,7 @@ let ESC='sem'; const PXD={dia:22,sem:5,mes:1.6};
 // ── colunas (ocultáveis; preferência guardada neste navegador) ──
 const COLS=[ // chave, rótulo, largura, grupo, visível, fixa
  ['eap','EAP',56,'Identificação',1,1],['nm','Tarefa',220,'Identificação',1,1],['pav','Pav.',56,'Identificação',1,0],
- ['ini','Início',74,'Prazo',1,0],['fim','Fim',74,'Prazo',1,0],['dur','Dur.',44,'Prazo',1,0],
+ ['ini','Início',74,'Prazo',1,0],['fim','Fim',74,'Prazo',1,0],['dur','Dur. (úteis)',58,'Prazo',1,0],
  ['pre','Predecessoras',96,'Vínculos',1,0],['suc','Sucessoras',96,'Vínculos',0,0],
  ['real','Real',46,'Avanço',1,0],['prev','Prev.',46,'Avanço',1,0],['atr','Atraso',54,'Avanço',1,0],['st','Status',80,'Avanço',1,0],
  ['bini','Base início',74,'Linha de base',0,0],['bfim','Base fim',74,'Linha de base',0,0],
@@ -303,10 +305,37 @@ const fmtP=l=>l.map(q=>q.eap+(q.tipo!=='TI'||q.lag?q.tipo:'')+(q.lag?(q.lag>0?'+
 function temFilhos(i){ return i+1<T.length && T[i+1].nivel>T[i].nivel; }
 function filhos(i){ const r=[]; for(let k=i+1;k<T.length&&T[k].nivel>T[i].nivel;k++) r.push(k); return r; }
 function renumera(){ const cnt=[]; T.forEach(t=>{ cnt.length=t.nivel+1; cnt[t.nivel]=(cnt[t.nivel]||0)+1; t.wbs=cnt.slice(0,t.nivel+1).map(x=>x||1).join('.'); }); }
-function dur(t){ return (t.ini!=null&&t.fim!=null)?Math.max(0,t.fim-t.ini+(t.tipo==='marco'?0:1)):0; }
+// ── Calendário de trabalho (dias úteis) ──────────────────────────────────
+// Toda a aritmética de prazo roda no "espaço de dias úteis": W(n) = quantos dias
+// úteis existem antes do dia n. Duração, folga (lag) e cascata contam só dias
+// úteis, como no MS Project. Calendário por obra (obra_crono_auria.calendario).
+const CAL_PADRAO={dias:[1,2,3,4,5],nacionais:true,feriados:[]};
+let CAL=JSON.parse(JSON.stringify(CAL_PADRAO)), _W=null, _FER=new Map();
+const B0=D('2015-01-01'), B1=D('2045-12-31');
+const dow=n=>((n+4)%7+7)%7;                     // 1970-01-01 foi quinta
+function pascoa(a){ const b=a%19,c=Math.floor(a/100),d=a%100,e=Math.floor(c/4),f=c%4,g=Math.floor((c+8)/25),h=Math.floor((c-g+1)/3),i=(19*b+c-e-h+15)%30,k=Math.floor(d/4),l=d%4,m=(32+2*f+2*k-i-l)%7,n=Math.floor((b+11*i+22*m)/451),mes=Math.floor((i+m-7*n+114)/31),dia=((i+m-7*n+114)%31)+1; return Date.UTC(a,mes-1,dia)/864e5; }
+function feriadosNacionais(a){ const p=pascoa(a), fx=(m,d,nm)=>[Date.UTC(a,m-1,d)/864e5,nm];
+  return [fx(1,1,'Confraternização Universal'),[p-48,'Carnaval'],[p-47,'Carnaval'],[p-2,'Sexta-feira Santa'],fx(4,21,'Tiradentes'),fx(5,1,'Dia do Trabalho'),[p+60,'Corpus Christi'],
+    fx(9,7,'Independência'),fx(10,12,'Nossa Senhora Aparecida'),fx(11,2,'Finados'),fx(11,15,'Proclamação da República'),fx(11,20,'Consciência Negra'),fx(12,25,'Natal')]; }
+function montaCal(){
+  _FER=new Map(); if(CAL.nacionais) for(let a=2015;a<=2045;a++) feriadosNacionais(a).forEach(([n,nm])=>_FER.set(n,nm));
+  (CAL.feriados||[]).forEach(x=>{ const n=D(x.data); if(n!=null) _FER.set(n,x.nome||'Feriado da obra'); });
+  const dias=new Set(CAL.dias), idx=new Int32Array(B1-B0+2), lst=[];
+  for(let n=B0;n<=B1;n++){ idx[n-B0]=lst.length; if(dias.has(dow(n))&&!_FER.has(n)) lst.push(n); } idx[B1-B0+1]=lst.length;
+  _W={idx,lst};
+}
+const util=n=>CAL.dias.includes(dow(n))&&!_FER.has(n);
+const W=n=>n<B0?0:n>B1+1?_W.lst.length:_W.idx[n-B0];                       // dias úteis antes de n
+const DW=i=>_W.lst[Math.max(0,Math.min(_W.lst.length-1,i))];                 // i-ésimo dia útil
+const proxUtil=n=>DW(W(n));                                                // n ou o próximo dia útil
+const antUtil=n=>DW(W(n+1)-1);                                             // n ou o dia útil anterior
+const fimDe=(ini,d)=>DW(W(ini)+Math.max(1,d)-1);                           // fim para d dias úteis
+const uteisEntre=(a,b)=>Math.max(0,W(b+1)-W(a));                           // dias úteis em [a,b]
+function dur(t){ return (t.ini!=null&&t.fim!=null)?(t.tipo==='marco'?0:uteisEntre(t.ini,t.fim)):0; }
+function calResumo(){ const nm='DSTQQSS', d=CAL.dias.slice().sort(); const seq=d.join()==='1,2,3,4,5'?'seg–sex':d.join()==='1,2,3,4,5,6'?'seg–sáb':d.length===7?'todos os dias':d.map(x=>nm[x]).join(''); return seq+(CAL.nacionais?' + feriados nacionais':'')+((CAL.feriados||[]).length?' + '+CAL.feriados.length+' da obra':''); }
 function baseDe(t){ if(!BASE) return null; const b=BASE.map[t.uid]; return b?{ini:D(b.inicio),fim:D(b.fim)}:null; }
 // previsto % na data n (linha de base ativa; sem base usa as datas atuais)
-function prevEm(t,n,usarAtual){ const b=usarAtual?null:baseDe(t); const a=b?b.ini:t.ini, z=b?b.fim:t.fim; if(a==null||z==null) return 0; if(n<a) return 0; if(n>=z) return 100; return Math.round((n-a+1)/(z-a+1)*1000)/10; }
+function prevEm(t,n,usarAtual){ const b=usarAtual?null:baseDe(t); const a=b?b.ini:t.ini, z=b?b.fim:t.fim; if(a==null||z==null) return 0; if(n<a) return 0; if(n>=z) return 100; const tot=uteisEntre(a,z); return tot?Math.round(uteisEntre(a,n)/tot*1000)/10:0; }
 // medição vigente de uma tarefa na data n
 function realEm(uid,n){ let v=0,best=null; MEDS.forEach(m=>{ if(m.tarefa_uid!==uid) return; const d=D(m.data); if(d>n) return; if(best==null||d>best||(d===best)){ best=d; v=+m.percentual; } }); return v; }
 
@@ -321,11 +350,12 @@ function recalc(empurrar){
       parseP(T[i].pred).forEach(q=>{ const j=IX[q.eap]; if(j!=null&&!ciclo){ (T[j]._fase?filhos(j).filter(k=>!T[k]._fase):[j]).forEach(visita); } }); est[i]=2; ordem.push(i); };
     folhas.forEach(i=>{ if(!ciclo) visita(i); });
     if(ciclo){ msg.push('Vínculo circular envolvendo a tarefa '+ciclo+' — corrija as predecessoras.'); }
-    else ordem.forEach(i=>{ const t=T[i]; if(t.ini==null) return; const d=t.tipo==='marco'?0:Math.max(1,dur(t)); let min=null;
+    else ordem.forEach(i=>{ const t=T[i]; if(t.ini==null) return; const d=t.tipo==='marco'?0:Math.max(1,dur(t)); let min=null;  // min em índice de dia útil
       parseP(t.pred).forEach(q=>{ const j=IX[q.eap]; if(j==null){ msg.push(t.wbs+': predecessora '+q.eap+' não existe'); return; } const p=T[j]; if(p.ini==null||p.fim==null) return; let c;
-        if(q.tipo==='TI') c=p.fim+1+q.lag; else if(q.tipo==='II') c=p.ini+q.lag; else if(q.tipo==='TT') c=p.fim+q.lag-d+1; else c=p.ini+q.lag-d+1;
-        if((p.tipo==='marco'||t.tipo==='marco')&&q.tipo==='TI') c=p.fim+q.lag; if(min==null||c>min) min=c; });
-      if(min!=null&&min>t.ini){ if(t.prog>0){ msg.push(t.wbs+' já começou — não foi empurrada'); return; } t.ini=min; t.fim=t.tipo==='marco'?min:min+d-1; } });
+        const ef=W(p.fim+1)-1, es=W(p.ini), dd=Math.max(0,d-1);
+        if(q.tipo==='TI') c=ef+1+q.lag; else if(q.tipo==='II') c=es+q.lag; else if(q.tipo==='TT') c=ef+q.lag-dd; else c=es+q.lag-dd;
+        if((p.tipo==='marco'||t.tipo==='marco')&&q.tipo==='TI') c=ef+q.lag; if(min==null||c>min) min=c; });
+      if(min!=null&&min>W(t.ini)){ if(t.prog>0){ msg.push(t.wbs+' já começou — não foi empurrada'); return; } t.ini=DW(min); t.fim=t.tipo==='marco'?t.ini:DW(min+d-1); } });
   }
   // rollup das fases (de baixo para cima)
   for(let i=T.length-1;i>=0;i--){ const t=T[i]; if(!t._fase) continue; let a=null,z=null,pd=0,sd=0,o=0,r=0,temO=false,temR=false;
@@ -338,18 +368,18 @@ function recalc(empurrar){
 function critico(){
   T.forEach(t=>{ t._crit=false; t._suc=[]; }); const IX={}; T.forEach((t,i)=>IX[t.wbs]=i);
   const folhas=T.filter(t=>!t._fase&&t.ini!=null&&t.fim!=null); if(!folhas.length) return;
-  const fimProj=Math.max(...folhas.map(t=>t.fim)); const LF={};
+  const ef=t=>W(t.fim+1)-1, es=t=>W(t.ini); const fimProj=Math.max(...folhas.map(ef)); const LF={};
   folhas.forEach(t=>LF[t.uid]=fimProj);
   const preds=[]; T.forEach(t=>parseP(t.pred).forEach(q=>{ const j=IX[q.eap]; if(j==null) return; const p=T[j]; p._suc.push(t.wbs+(q.tipo!=='TI'||q.lag?q.tipo:'')+(q.lag?(q.lag>0?'+':'')+q.lag+'d':''));
     (p._fase?filhos(j).map(k=>T[k]).filter(u=>!u._fase):[p]).forEach(pp=>{ if(!t._fase) preds.push([pp,t,q]); }); }));
-  for(let it=0;it<T.length+2;it++){ let mud=false; preds.forEach(([p,s,q])=>{ if(p.ini==null||s.ini==null) return; const dp=p.fim-p.ini, ds=s.fim-s.ini, lfs=LF[s.uid], lss=lfs-ds; let c;
+  for(let it=0;it<T.length+2;it++){ let mud=false; preds.forEach(([p,s,q])=>{ if(p.ini==null||s.ini==null) return; const dp=ef(p)-es(p), ds=ef(s)-es(s), lfs=LF[s.uid], lss=lfs-ds; let c;
       if(q.tipo==='TI') c=lss-1-q.lag+((p.tipo==='marco'||s.tipo==='marco')?1:0); else if(q.tipo==='II') c=lss-q.lag+dp; else if(q.tipo==='TT') c=lfs-q.lag; else c=lfs-q.lag+dp;
       if(c<LF[p.uid]){ LF[p.uid]=c; mud=true; } }); if(!mud) break; }
-  folhas.forEach(t=>{ t._folga=LF[t.uid]-t.fim; if(t._folga<=0) t._crit=true; });
+  folhas.forEach(t=>{ t._folga=LF[t.uid]-ef(t); if(t._folga<=0) t._crit=true; });
   for(let i=T.length-1;i>=0;i--) if(T[i]._fase) T[i]._crit=filhos(i).some(k=>!T[k]._fase&&T[k]._crit);
 }
 function status(t){ if(t.prog>=100) return ['ok','Concluída']; if(t.fim!=null&&HOJE>t.fim) return ['at','Atrasada']; const p=prevEm(t,HOJE); if(p-t.prog>10) return ['at','Atrasada']; if(t.ini!=null&&t.ini<=HOJE) return ['and','Andamento']; return ['fut','Futura']; }
-function atrasoBase(t){ const b=baseDe(t); return (b&&t.fim!=null&&b.fim!=null)?t.fim-b.fim:null; }
+function atrasoBase(t){ const b=baseDe(t); return (b&&t.fim!=null&&b.fim!=null)?(t.fim>=b.fim?uteisEntre(b.fim+1,t.fim):-uteisEntre(t.fim+1,b.fim)):null; }
 
 // ══════════════ carga ══════════════
 async function carregar(){
@@ -360,11 +390,12 @@ async function carregar(){
     sb.from('obra_crono_medicao_auria').select('*').eq('empreendimento_id',EMP_ID).order('data',{ascending:false}).order('lancado_em',{ascending:false})]);
   if(rT.error){ toast('Erro ao ler o cronograma: '+rT.error.message,true); }
   CAB=rC.data||{versao:0}; BASES=rB.data||[]; MEDS=rM.data||[];
+  CAL=CAB.calendario&&Array.isArray(CAB.calendario.dias)&&CAB.calendario.dias.length?CAB.calendario:JSON.parse(JSON.stringify(CAL_PADRAO)); montaCal();
   const ba=BASES.find(b=>b.ativa); BASE=ba?{...ba,map:Object.fromEntries((ba.tarefas||[]).map(x=>[x.uid,x]))}:null;
   T=(rT.data||[]).map(r=>({uid:r.uid,wbs:r.wbs,nome:r.nome,nivel:r.nivel,tipo:r.tipo,pav:r.pavimento||'',ini:D(r.inicio),fim:D(r.fim),prog:+r.progresso||0,pred:r.predecessoras||'',resp:r.responsavel||'',orc:r.custo_orcado,rea:r.custo_realizado}));
   recalc(false);
   const pavs=[...new Set(T.map(t=>t.pav).filter(Boolean))].sort(); $('fPav').innerHTML='<option value="">Pavimento: todos</option>'+pavs.map(p=>'<option'+(p===F.pav?' selected':'')+'>'+esc(p)+'</option>').join('');
-  $('hSub').textContent=(EMP.nome||'')+(BASE?' · linha de base '+BASE.nome:' · sem linha de base')+(CAB.atualizado_em?' · salvo '+new Date(CAB.atualizado_em).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+(CAB.atualizado_nome?' por '+CAB.atualizado_nome:''):'');
+  $('hSub').textContent=(EMP.nome||'')+(BASE?' · linha de base '+BASE.nome:' · sem linha de base')+' · '+calResumo()+(CAB.atualizado_em?' · salvo '+new Date(CAB.atualizado_em).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+(CAB.atualizado_nome?' por '+CAB.atualizado_nome:''):'');
   if(SEL&&!T.find(t=>t.uid===SEL)) SEL=null;
   desenhaTudo();
 }
@@ -417,7 +448,8 @@ function desenha(){
   let h='',g=''; let m=new Date(INI*864e5);
   while(m.getTime()/864e5<FIM){ const n=new Date(Date.UTC(m.getUTCFullYear(),m.getUTCMonth()+1,1)); const a=X(m.getTime()/864e5), b=X(n.getTime()/864e5); h+='<div class="m" style="left:'+a+'px;width:'+(b-a)+'px">'+m.toLocaleDateString('pt-BR',{month:'short',year:'2-digit',timeZone:'UTC'}).replace('.','')+'</div>'; if(ESC==='mes') g+='<div class="gl" style="left:'+a+'px"></div>'; m=n; }
   if(ESC!=='mes'){ const passo=ESC==='dia'?1:7; let w=INI; if(ESC==='sem'){ while(new Date(w*864e5).getUTCDay()!==1) w++; }
-    for(;w<FIM;w+=passo){ const dd=new Date(w*864e5); h+='<div class="w" style="left:'+X(w)+'px;width:'+(passo*px)+'px">'+(ESC==='dia'?'DSTQQSS'[dd.getUTCDay()]+dd.getUTCDate():('0'+dd.getUTCDate()).slice(-2))+'</div>'; g+='<div class="gl" style="left:'+X(w)+'px'+(ESC==='dia'&&(dd.getUTCDay()===0||dd.getUTCDay()===6)?';background:color-mix(in srgb,var(--line) 35%,transparent);width:'+px+'px':'')+'"></div>'; } }
+    for(;w<FIM;w+=passo){ const dd=new Date(w*864e5); h+='<div class="w" style="left:'+X(w)+'px;width:'+(passo*px)+'px">'+(ESC==='dia'?'DSTQQSS'[dd.getUTCDay()]+dd.getUTCDate():('0'+dd.getUTCDate()).slice(-2))+'</div>'; g+='<div class="gl" style="left:'+X(w)+'px'+(ESC==='dia'&&!util(w)?';background:color-mix(in srgb,var(--line) 45%,transparent);width:'+px+'px':'')+'"'+(_FER.has(w)?' title="'+esc(_FER.get(w))+'"':'')+'></div>'; }
+    if(ESC==='sem') _FER.forEach((nm,n)=>{ if(n>=INI&&n<=FIM&&CAL.dias.includes(dow(n))) g+='<div class="gl fer" style="left:'+X(n)+'px;width:'+Math.max(2,px)+'px" title="'+esc(nm)+' · '+BR(n)+'"></div>'; }); }
   $('gh').style.width=W+'px'; $('gh').innerHTML=h;
   const pos={}; V.forEach((i,k)=>pos[T[i].uid]=k);
   const rows=V.map(i=>{ const t=T[i], s=status(t), b=baseDe(t); let r='<div class="gr'+(t.uid===SEL?' sel':'')+'">';
@@ -442,7 +474,7 @@ function desenhaStrip(){
   const pond=f=>{ let a=0,b=0; fol.forEach(t=>{ const w=Math.max(1,dur(t)); a+=w*f(t); b+=w; }); return b?a/b:0; };
   const real=pond(t=>t.prog), prev=pond(t=>prevEm(t,HOJE)), desv=real-prev;
   const fimAt=fol.length?Math.max(...fol.map(t=>t.fim)):null, fimB=BASE&&fol.length?Math.max(...fol.map(t=>{ const b=baseDe(t); return b&&b.fim!=null?b.fim:-1e9; })):null;
-  const atrProj=(fimAt!=null&&fimB>0)?fimAt-fimB:null;
+  const atrProj=(fimAt!=null&&fimB>0)?(fimAt>=fimB?uteisEntre(fimB+1,fimAt):-uteisEntre(fimAt+1,fimB)):null;
   const atr=fol.filter(t=>status(t)[0]==='at'), critAtr=atr.filter(t=>t._crit).length;
   const prox=fol.filter(t=>t.ini>=HOJE&&t.ini<=HOJE+15), marcos=prox.filter(t=>t.tipo==='marco').length;
   // série: últimas 8 semanas
@@ -472,13 +504,13 @@ function detalhe(){
   const s=status(t), a=atrasoBase(t), b=baseDe(t), p=prevEm(t,HOJE), meds=MEDS.filter(m=>m.tarefa_uid===t.uid);
   let h='<div class="dh"><button class="x" onclick="SEL=null;desenha()" title="fechar">×</button><div class="eap">'+esc(t.wbs)+(t.pav?' · '+esc(t.pav):'')+'</div><h3>'+esc(t.nome||'(sem nome)')+'</h3><span class="st '+s[0]+'">'+s[1]+'</span>'+(t._crit?' <span class="st at">Caminho crítico</span>':(t._folga!=null&&!t._fase?' <span class="st fut">folga '+t._folga+'d</span>':''))+'</div>';
   h+='<div class="sec"><div class="lb">Avanço</div><div class="pbar"><i style="width:'+t.prog+'%"></i><em style="left:'+p+'%" title="previsto hoje"></em></div><div class="kv"><div><span>Realizado</span><b>'+Math.round(t.prog)+'%</b></div><div><span>Previsto hoje</span><b>'+Math.round(p)+'%</b></div><div><span>Desvio</span><b style="color:'+(t.prog<p?'var(--err)':'var(--ok)')+'">'+Math.round(t.prog-p)+' pp</b></div><div><span>Atraso × base</span><b style="color:'+(a>0?'var(--err)':'inherit')+'">'+(a==null?'—':(a>0?'+':'')+a+' d')+'</b></div></div></div>';
-  h+='<div class="sec"><div class="lb">Datas</div><div class="kv"><div><span>Início</span><b>'+BR(t.ini)+'</b></div><div><span>Fim</span><b>'+BR(t.fim)+'</b></div><div><span>Base início</span><b>'+(b?BR(b.ini):'—')+'</b></div><div><span>Base fim</span><b>'+(b?BR(b.fim):'—')+'</b></div><div><span>Duração</span><b>'+dur(t)+' d</b></div><div><span>Responsável</span><b style="font-size:11.5px;font-family:inherit">'+esc(t.resp||'—')+'</b></div></div></div>';
+  h+='<div class="sec"><div class="lb">Datas</div><div class="kv"><div><span>Início</span><b>'+BR(t.ini)+'</b></div><div><span>Fim</span><b>'+BR(t.fim)+'</b></div><div><span>Base início</span><b>'+(b?BR(b.ini):'—')+'</b></div><div><span>Base fim</span><b>'+(b?BR(b.fim):'—')+'</b></div><div><span>Duração</span><b>'+dur(t)+' d úteis</b></div><div><span>Responsável</span><b style="font-size:11.5px;font-family:inherit">'+esc(t.resp||'—')+'</b></div></div></div>';
   // vínculos
   const IX={}; T.forEach(u=>IX[u.wbs]=u); const ps=parseP(t.pred);
   h+='<div class="sec"><div class="lb">Predecessoras</div>'+(ps.map((q,k)=>{ const u=IX[q.eap]; return '<div class="vl"><span class="e">'+esc(q.eap)+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'+(u?'':'color:var(--err)')+'">'+esc(u?u.nome:'não existe')+'</span>'+
-      (EDIT?'<select onchange="editaVinc(\''+t.uid+'\','+k+',\'tipo\',this.value)">'+['TI','II','TT','IT'].map(o=>'<option'+(o===q.tipo?' selected':'')+'>'+o+'</option>').join('')+'</select><input value="'+q.lag+'" title="folga em dias (+) ou antecipação (−)" onchange="editaVinc(\''+t.uid+'\','+k+',\'lag\',this.value)"><span class="x" title="remover" onclick="editaVinc(\''+t.uid+'\','+k+',\'del\')">×</span>'
+      (EDIT?'<select onchange="editaVinc(\''+t.uid+'\','+k+',\'tipo\',this.value)">'+['TI','II','TT','IT'].map(o=>'<option'+(o===q.tipo?' selected':'')+'>'+o+'</option>').join('')+'</select><input value="'+q.lag+'" title="folga em dias úteis (+) ou antecipação (−)" onchange="editaVinc(\''+t.uid+'\','+k+',\'lag\',this.value)"><span class="x" title="remover" onclick="editaVinc(\''+t.uid+'\','+k+',\'del\')">×</span>'
       :'<span class="mono" style="font-size:11px;color:var(--mut)">'+q.tipo+'</span><span class="mono" style="font-size:11px;color:var(--mut)">'+(q.lag?(q.lag>0?'+':'')+q.lag+'d':'')+'</span><span></span>')+'</div>'; }).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>');
-  if(EDIT) h+='<div class="addv"><input id="novoVinc" list="dlT" placeholder="EAP ou nome da tarefa…"><datalist id="dlT">'+T.filter(u=>u.uid!==t.uid).map(u=>'<option value="'+esc(u.wbs)+'">'+esc(u.nome)+'</option>').join('')+'</datalist><button class="abtn" onclick="addVinc(\''+t.uid+'\')">Vincular</button></div><div class="hint">TI término→início · II início→início · TT término→término · IT início→término. Folga em dias.</div>';
+  if(EDIT) h+='<div class="addv"><input id="novoVinc" list="dlT" placeholder="EAP ou nome da tarefa…"><datalist id="dlT">'+T.filter(u=>u.uid!==t.uid).map(u=>'<option value="'+esc(u.wbs)+'">'+esc(u.nome)+'</option>').join('')+'</datalist><button class="abtn" onclick="addVinc(\''+t.uid+'\')">Vincular</button></div><div class="hint">TI término→início · II início→início · TT término→término · IT início→término. Folga em dias úteis.</div>';
   h+='<div class="lb" style="margin-top:12px">Sucessoras</div>'+((t._suc||[]).map(k=>{ const e=(k.match(/^[\w.]+?(?=TI|II|TT|IT|[+-]|$)/)||[k])[0], u=IX[e]; return '<div class="vl" style="grid-template-columns:52px 1fr 64px"><span class="e">'+esc(e)+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(u?u.nome:'')+'</span><span class="mono" style="font-size:10.5px;color:var(--mut);text-align:right">'+esc(k.slice(e.length)||'TI')+'</span></div>'; }).join('')||'<div style="font-size:12px;color:var(--mut)">Nenhuma</div>')+'</div>';
   // medições
   if(!t._fase){
@@ -491,6 +523,23 @@ function detalhe(){
   if(t.orc!=null||t.rea!=null){ const m=t.orc!=null?t.orc*t.prog/100:null; h+='<div class="sec"><div class="lb">Custos (R$)</div><div class="kv"><div><span>Orçado</span><b>'+(t.orc!=null?(+t.orc).toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>Medido (% × orçado)</span><b>'+(m!=null?m.toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>Realizado</span><b>'+(t.rea!=null?(+t.rea).toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>IDC</span><b>'+(m&&t.rea?(m/t.rea).toFixed(2).replace('.',','):'—')+'</b></div></div></div>'; }
   det.innerHTML=h;
 }
+
+// ══════════════ calendário (tela) ══════════════
+let CALED=null;
+function abreCal(){ document.querySelectorAll('.pop').forEach(p=>p.id!=='calpop'&&p.classList.remove('on')); const p=$('calpop'); if(p.classList.contains('on')){ p.classList.remove('on'); return; } CALED=JSON.parse(JSON.stringify(CAL)); desenhaCal(); p.classList.add('on'); }
+function desenhaCal(){ const ro=!PODE_ED, nm=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'], c=CALED, prox=[];
+  const a=new Date().getFullYear(); [a,a+1].forEach(y=>feriadosNacionais(y).forEach(([n,t])=>{ if(n>=HOJE&&prox.length<6) prox.push(BR(n)+' '+t); }));
+  $('calpop').innerHTML='<div class="gt">Dias de trabalho</div><div style="display:flex;gap:4px;padding:4px 6px;flex-wrap:wrap">'+nm.map((x,i)=>'<label style="padding:3px 6px;border:1px solid var(--line);border-radius:6px"><input type="checkbox" '+(c.dias.includes(i)?'checked':'')+(ro?' disabled':'')+' onchange="CALED.dias=this.checked?[...CALED.dias,'+i+'].sort():CALED.dias.filter(d=>d!=='+i+');desenhaCal()">'+x+'</label>').join('')+'</div>'+
+    '<label><input type="checkbox" '+(c.nacionais?'checked':'')+(ro?' disabled':'')+' onchange="CALED.nacionais=this.checked">Feriados nacionais (inclui Carnaval, Sexta-feira Santa e Corpus Christi)</label>'+
+    (c.nacionais?'<div class="hint" style="padding:0 6px">Próximos: '+prox.join(' · ')+'</div>':'')+
+    '<div class="gt">Feriados e paradas da obra</div>'+((c.feriados||[]).map((x,i)=>'<div style="display:flex;gap:6px;align-items:center;padding:3px 6px;font-size:12px"><span class="mono">'+BR(D(x.data))+'</span><span style="flex:1">'+esc(x.nome||'')+'</span>'+(ro?'':'<span class="x" style="cursor:pointer;color:var(--mut)" onclick="CALED.feriados.splice('+i+',1);desenhaCal()">×</span>')+'</div>').join('')||'<div class="hint" style="padding:0 6px 4px">Nenhum (ex.: feriado municipal, aniversário da cidade, parada coletiva).</div>')+
+    (ro?'':'<div style="display:flex;gap:4px;padding:4px 6px"><input type="date" id="cfData" class="chip" style="padding:3px 4px"><input id="cfNome" class="chip" placeholder="Nome" style="flex:1;min-width:0"><button class="abtn" onclick="addFer()">+</button></div>')+
+    '<div style="display:flex;gap:6px;border-top:1px solid var(--line);margin-top:6px;padding-top:8px">'+(ro?'<div class="hint">Só o engenheiro chefe e o coordenador de campo alteram o calendário.</div>':'<button class="abtn" onclick="$(\'calpop\').classList.remove(\'on\')">Cancelar</button><button class="abtn pri" onclick="salvaCal()">Salvar calendário</button>')+'</div>'+
+    '<div class="hint" style="padding:6px 6px 0">Duração, folgas e cascata contam só os dias úteis. As datas das tarefas não mudam ao trocar o calendário; a duração em dias úteis é recontada.</div>'; }
+function addFer(){ const d=$('cfData').value, n=$('cfNome').value.trim(); if(!d){ toast('Escolha a data.',true); return; } CALED.feriados=(CALED.feriados||[]).filter(x=>x.data!==d).concat([{data:d,nome:n||'Feriado da obra'}]).sort((a,b)=>a.data<b.data?-1:1); desenhaCal(); }
+async function salvaCal(){ if(!CALED.dias.length){ toast('Marque ao menos um dia de trabalho.',true); return; }
+  const r=await sb.rpc('obra_crono_calendario_salvar',{p_emp:EMP_ID,p_cal:CALED}); if(r.error){ toast('Calendário não salvo: '+r.error.message,true); return; }
+  $('calpop').classList.remove('on'); CAL=CALED; montaCal(); recalc(EDIT); desenhaTudo(); toast('Calendário salvo: '+calResumo()+'.'); }
 
 // ══════════════ medições ══════════════
 async function lancarMed(uid){
@@ -511,9 +560,9 @@ function editaCampo(uid,campo,v){ const t=T.find(u=>u.uid===uid); if(!t) return;
   if(campo==='nome'||campo==='pav'||campo==='resp') t[campo]=v.trim();
   else if(campo==='pred') t.pred=fmtP(parseP(v));
   else if(campo==='orc'||campo==='rea'){ const n=parseFloat(String(v).replace(/\./g,'').replace(',','.')); t[campo]=isNaN(n)?null:n; }
-  else if(campo==='ini'){ const n=D(v); if(n==null) return; const d=t.tipo==='marco'?0:Math.max(1,dur(t)||1); t.ini=n; t.fim=t.tipo==='marco'?n:n+d-1; }
-  else if(campo==='fim'){ const n=D(v); if(n==null) return; t.fim=Math.max(n,t.ini==null?n:t.ini); if(t.ini==null) t.ini=t.fim; }
-  else if(campo==='dur'){ const n=parseInt(v); if(!(n>0)) return; if(t.ini==null) t.ini=HOJE; t.fim=t.ini+n-1; }
+  else if(campo==='ini'){ let n=D(v); if(n==null) return; const d=t.tipo==='marco'?0:Math.max(1,dur(t)||1); if(!util(n)){ n=proxUtil(n); toast('Início ajustado para o próximo dia útil: '+BR(n)); } t.ini=n; t.fim=t.tipo==='marco'?n:fimDe(n,d); }
+  else if(campo==='fim'){ let n=D(v); if(n==null) return; if(!util(n)){ n=antUtil(n); toast('Fim ajustado para o dia útil anterior: '+BR(n)); } t.fim=Math.max(n,t.ini==null?n:t.ini); if(t.ini==null) t.ini=t.fim; }
+  else if(campo==='dur'){ const n=parseInt(v); if(!(n>0)) return; if(t.ini==null) t.ini=proxUtil(HOJE); t.fim=fimDe(t.ini,n); }
   aposEdicao(); }
 function editaVinc(uid,k,campo,v){ const t=T.find(u=>u.uid===uid); const l=parseP(t.pred); if(campo==='del') l.splice(k,1); else if(campo==='tipo') l[k].tipo=v; else l[k].lag=parseInt(v)||0; t.pred=fmtP(l); aposEdicao(); }
 function addVinc(uid){ const t=T.find(u=>u.uid===uid), v=($('novoVinc').value||'').trim(); if(!v) return; let alvo=T.find(u=>u.wbs===v)||T.find(u=>u.nome.toLowerCase()===v.toLowerCase()); if(!alvo){ toast('Tarefa "'+v+'" não encontrada.',true); return; }
@@ -522,17 +571,17 @@ function addVinc(uid){ const t=T.find(u=>u.uid===uid), v=($('novoVinc').value||'
 function comRenumeracao(fn){ const ant={}; T.forEach(t=>ant[t.uid]=t.wbs); fn(); renumera(); const novo={}; T.forEach(t=>novo[ant[t.uid]]=t.wbs);
   T.forEach(t=>{ t.pred=fmtP(parseP(t.pred).filter(q=>novo[q.eap]).map(q=>({...q,eap:novo[q.eap]}))); }); aposEdicao(); }
 function idxSel(){ return T.findIndex(t=>t.uid===SEL); }
-function novaTarefa(){ comRenumeracao(()=>{ let i=idxSel(); const base=i>=0?T[i]:null; const fimBloco=i>=0?(filhos(i).pop()??i):T.length-1; const ini=base&&base.fim!=null?base.fim+1:HOJE;
-  const t={uid:novoUid(),wbs:'',nome:'Nova tarefa',nivel:base?(base._fase&&!COLAPS.has(base.uid)?base.nivel+1:base.nivel):0,tipo:'tarefa',pav:base?base.pav:'',ini,fim:ini+4,prog:0,pred:'',resp:'',orc:null,rea:null};
+function novaTarefa(){ comRenumeracao(()=>{ let i=idxSel(); const base=i>=0?T[i]:null; const fimBloco=i>=0?(filhos(i).pop()??i):T.length-1; const ini=proxUtil(base&&base.fim!=null?base.fim+1:HOJE);
+  const t={uid:novoUid(),wbs:'',nome:'Nova tarefa',nivel:base?(base._fase&&!COLAPS.has(base.uid)?base.nivel+1:base.nivel):0,tipo:'tarefa',pav:base?base.pav:'',ini,fim:fimDe(ini,5),prog:0,pred:'',resp:'',orc:null,rea:null};
   T.splice(base&&base._fase&&!COLAPS.has(base.uid)?i+1:fimBloco+1,0,t); SEL=t.uid; }); }
 function nivelar(d){ const i=idxSel(); if(i<0) return; comRenumeracao(()=>{ const bloco=[i,...filhos(i)]; if(d>0){ if(i===0||T[i-1].nivel<T[i].nivel) return; } else if(T[i].nivel===0) return; bloco.forEach(k=>T[k].nivel+=d); }); }
 function mover(d){ const i=idxSel(); if(i<0) return; comRenumeracao(()=>{ const bloco=[i,...filhos(i)], n=bloco.length, seg=T.splice(i,n);
   let j=i; if(d<0){ j=i-1; while(j>0&&T[j].nivel>seg[0].nivel) j--; if(j<0||T[j].nivel<seg[0].nivel) j=i; } else { if(i<T.length&&T[i].nivel===seg[0].nivel){ j=i+1; while(j<T.length&&T[j].nivel>seg[0].nivel) j++; } }
   T.splice(Math.max(0,j),0,...seg); }); }
-function alternaMarco(){ const i=idxSel(); if(i<0||T[i]._fase) return; const t=T[i]; if(t.tipo==='marco'){ t.tipo='tarefa'; t.fim=(t.ini??HOJE)+4; } else { t.tipo='marco'; t.fim=t.ini; } aposEdicao(); }
+function alternaMarco(){ const i=idxSel(); if(i<0||T[i]._fase) return; const t=T[i]; if(t.tipo==='marco'){ t.tipo='tarefa'; t.fim=fimDe(t.ini??proxUtil(HOJE),5); } else { t.tipo='marco'; t.fim=t.ini; } aposEdicao(); }
 function excluir(){ const i=idxSel(); if(i<0) return; const n=1+filhos(i).length; if(MEDS.some(m=>[i,...filhos(i)].some(k=>T[k].uid===m.tarefa_uid))&&!confirm('Esta tarefa tem medições lançadas. Excluir mesmo assim? (as medições ficam no histórico, sem tarefa)')) return;
   comRenumeracao(()=>{ T.splice(i,n); SEL=null; }); }
-function criarDoZero(){ if(!PODE_ED) return; toggleEdit(); const ini=HOJE; T=[{uid:novoUid(),wbs:'1',nome:'OBRA',nivel:0,tipo:'tarefa',pav:'',ini,fim:ini+29,prog:0,pred:'',resp:'',orc:null,rea:null}]; SEL=T[0].uid; aposEdicao(); toast('Use + para criar tarefas e → para torná-las subtarefas.'); }
+function criarDoZero(){ if(!PODE_ED) return; toggleEdit(); const ini=proxUtil(HOJE); T=[{uid:novoUid(),wbs:'1',nome:'OBRA',nivel:0,tipo:'tarefa',pav:'',ini,fim:fimDe(ini,22),prog:0,pred:'',resp:'',orc:null,rea:null}]; SEL=T[0].uid; aposEdicao(); toast('Use + para criar tarefas e → para torná-las subtarefas.'); }
 async function salvar(){
   const msg=recalc(true); if(msg.some(m=>m.indexOf('circular')>=0)){ toast(msg[0],true); return; }
   if(T.some(t=>!t.nome.trim())){ toast('Há tarefa sem nome.',true); return; }
@@ -611,7 +660,7 @@ async function exportarExcel(){ const b=$('bXls'); b.disabled=true; try{
   if(!window.ExcelJS) await new Promise((ok,ko)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'; s.onload=ok; s.onerror=ko; document.head.appendChild(s); });
   const wb=new ExcelJS.Workbook(), ws=wb.addWorksheet('Cronograma',{views:[{state:'frozen',ySplit:3}]});
   ws.mergeCells(1,1,1,14); ws.getCell(1,1).value='Cronograma da Obra — '+(EMP.nome||'')+(BASE?' · base '+BASE.nome:''); ws.getCell(1,1).font={bold:true,size:13,color:{argb:'FF1E3A5F'}};
-  const H=['EAP','Tarefa','Tipo','Pavimento','Início','Fim','Duração (d)','Predecessoras','Real %','Previsto %','Base início','Base fim','Atraso × base (d)','Status','Responsável','Orçado (R$)','Realizado (R$)'];
+  const H=['EAP','Tarefa','Tipo','Pavimento','Início','Fim','Duração (dias úteis)','Predecessoras','Real %','Previsto %','Base início','Base fim','Atraso × base (d)','Status','Responsável','Orçado (R$)','Realizado (R$)'];
   ws.getRow(3).values=H; ws.getRow(3).eachCell(c=>{ c.font={bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1E3A5F'}}; });
   const dt=n=>n==null?null:new Date(n*864e5+12*36e5);
   T.forEach(t=>{ const b=baseDe(t), r=ws.addRow([t.wbs,'  '.repeat(t.nivel)+t.nome,t._fase?'fase':t.tipo,t.pav,dt(t.ini),dt(t.fim),dur(t),t.pred,Math.round(t.prog),Math.round(prevEm(t,HOJE)),b?dt(b.ini):null,b?dt(b.fim):null,atrasoBase(t),status(t)[1],t.resp,t.orc,t.rea]); if(t._fase) r.font={bold:true}; });
@@ -628,7 +677,7 @@ window.addEventListener('message',ev=>{ const d=ev.data||{}; if(d.auria_tema){ l
 window.addEventListener('beforeunload',e=>{ if(EDIT&&ORIG&&JSON.stringify(ORIG)!==JSON.stringify(T)){ e.preventDefault(); e.returnValue=''; } });
 let ME={};
 async function boot(){
-  applyTheme(); colpop();
+  applyTheme(); montaCal(); colpop();
   const {data:s}=await sb.auth.getSession(); if(!s||!s.session){ location.replace('./'); return; }
   if(!EMP_ID){ $('hSub').textContent='Empreendimento não informado.'; return; }
   const [rU,rE,rN]=await Promise.all([sb.from('usuarios_auria').select('nome').eq('id',s.session.user.id).maybeSingle(),
