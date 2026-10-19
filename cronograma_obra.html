@@ -171,12 +171,22 @@ table.tb .cod{font-family:var(--mono);color:var(--navy);font-weight:700}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#0F172A;color:#fff;padding:9px 16px;border-radius:8px;font-size:12.5px;z-index:999;box-shadow:0 10px 30px rgba(0,0,0,.3);display:none;max-width:90vw}
 .toast.err{background:#7F1D1D}
 @media(max-width:900px){.strip{grid-template-columns:repeat(3,1fr)}.det{position:absolute;right:0;top:0;bottom:0;z-index:20;box-shadow:-10px 0 30px rgba(0,0,0,.15)}.srch input{width:140px}}
-.split{width:6px;flex-shrink:0;cursor:col-resize;background:var(--line);position:relative;z-index:5}
+.split{width:6px;flex-shrink:0;cursor:ew-resize;background:var(--line);position:relative;z-index:5}
 .split:hover,.split.on{background:var(--accent)}
 .split::after{content:"";position:absolute;left:1px;right:1px;top:50%;height:28px;margin-top:-14px;border-left:1px solid var(--panel);border-right:1px solid var(--panel);opacity:.8}
 body.v-plan .gantt,body.v-plan #spG{display:none} body.v-plan .sheet{flex:1;width:auto}
 body.v-gantt .sheet,body.v-gantt #spS{display:none}
 .det.off+.split,#spD.off{display:none}
+.cmt{padding:7px 0;border-bottom:1px dashed var(--line);font-size:12px}
+.cmt:last-child{border-bottom:none}
+.cmt .ch{display:flex;gap:6px;align-items:baseline;color:var(--mut);font-size:11px}
+.cmt .ch b{color:var(--txt2);font-size:11.5px}
+.cmt .ch .x{margin-left:auto;cursor:pointer}
+.cmt .tx{white-space:pre-wrap;color:var(--txt);margin-top:2px;word-break:break-word}
+.cmtf textarea{width:100%;min-height:58px;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);border-radius:6px;padding:6px 8px;resize:vertical;margin-top:8px}
+.ncom{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-size:11px;color:var(--mut);cursor:pointer}
+.ncom.tem{color:var(--navy);font-weight:700}
+.row .real-med{cursor:pointer;text-decoration:underline dotted var(--mut);text-underline-offset:3px}
 </style></head><body>
 <header>
   <a href="app_obra.html" title="App Obra"><img class="lg" src="logo_auria_branco.png" alt="Auria"></a>
@@ -297,7 +307,7 @@ const COLS=[ // chave, rótulo, largura, grupo, visível, fixa
  ['pre','Predecessoras',96,'Vínculos',1,0],['suc','Sucessoras',96,'Vínculos',0,0],
  ['real','Real',46,'Avanço',1,0],['prev','Prev.',46,'Avanço',1,0],['atr','Atraso',54,'Avanço',1,0],['st','Status',80,'Avanço',1,0],
  ['bini','Base início',74,'Linha de base',0,0],['bfim','Base fim',74,'Linha de base',0,0],
- ['resp','Responsável',110,'Equipe',0,0],
+ ['resp','Responsável',110,'Equipe',0,0],['com','Comentários',90,'Equipe',1,0],
  ['orc','Orçado (R$)',92,'Custo',0,0],['rea','Realizado (R$)',92,'Custo',0,0]];
 try{ const sv=JSON.parse(localStorage.getItem('crono_obra_cols')||'null'); if(sv) COLS.forEach(c=>{ if(!c[5]&&sv[c[0]]!=null) c[4]=sv[c[0]]; }); }catch(e){}
 function salvaCols(){ try{ const o={}; COLS.forEach(c=>o[c[0]]=c[4]); localStorage.setItem('crono_obra_cols',JSON.stringify(o)); }catch(e){} }
@@ -399,6 +409,7 @@ async function carregar(){
     sb.from('obra_crono_medicao_auria').select('*').eq('empreendimento_id',EMP_ID).order('data',{ascending:false}).order('lancado_em',{ascending:false})]);
   if(rT.error){ toast('Erro ao ler o cronograma: '+rT.error.message,true); }
   CAB=rC.data||{versao:0}; BASES=rB.data||[]; MEDS=rM.data||[];
+  { const rc=await sb.from('obra_crono_comentario_auria').select('*').eq('empreendimento_id',EMP_ID).order('criado_em'); COMS=rc.error?null:(rc.data||[]); }   // null = tabela ainda não criada
   CAL=CAB.calendario&&Array.isArray(CAB.calendario.dias)&&CAB.calendario.dias.length?CAB.calendario:JSON.parse(JSON.stringify(CAL_PADRAO)); montaCal();
   const ba=BASES.find(b=>b.ativa); BASE=ba?{...ba,map:Object.fromEntries((ba.tarefas||[]).map(x=>[x.uid,x]))}:null;
   T=(rT.data||[]).map(r=>({uid:r.uid,wbs:r.wbs,nome:r.nome,nivel:r.nivel,tipo:r.tipo,pav:r.pavimento||'',ini:D(r.inicio),fim:D(r.fim),prog:+r.progresso||0,pred:r.predecessoras||'',resp:r.responsavel||'',orc:r.custo_orcado,rea:r.custo_realizado}));
@@ -429,7 +440,8 @@ function cel(t,i,c){ const s=status(t), a=atrasoBase(t), ms=t.tipo==='marco', e=
     case 'dur': return '<div class="num">'+(e&&!ms?inp('dur',dur(t),'','n'):(t.ini!=null?dur(t)+'d':'—'))+'</div>';
     case 'pre': return '<div class="dep">'+(EDIT?inp('pred',t.pred):esc(t.pred))+'</div>';
     case 'suc': return '<div class="dep">'+esc((t._suc||[]).join(';'))+'</div>';
-    case 'real': return '<div class="num">'+(Math.round(t.prog))+'%</div>';
+    case 'real': return '<div class="num">'+(PODE_MED&&!EDIT&&!t._fase?'<span class="real-med" title="Lançar medição" onclick="event.stopPropagation();medirRapido(\''+t.uid+'\')">'+Math.round(t.prog)+'%</span>':Math.round(t.prog)+'%')+'</div>';
+    case 'com': { const n=COMS?COMS.filter(c=>c.tarefa_uid===t.uid).length:0; return '<div>'+(COMS?'<span class="ncom'+(n?' tem':'')+'" title="Comentários" onclick="event.stopPropagation();verComentarios(\''+t.uid+'\')"><svg class="ci" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4 5h16v11H9l-5 4z"/></svg>'+(n||'')+'</span>':'')+'</div>'; }
     case 'prev': return '<div class="num" style="color:var(--mut)">'+Math.round(prevEm(t,HOJE))+'%</div>';
     case 'atr': return '<div class="num'+(a>0?' late':'')+'">'+(a==null?'—':a>0?'+'+a+'d':(a<0?a+'d':'0'))+'</div>';
     case 'st': return '<div><span class="st '+s[0]+'">'+s[1]+'</span></div>';
@@ -512,7 +524,7 @@ function vista(v){ VISTA=v; document.body.classList.toggle('v-plan',v==='plan');
   document.querySelectorAll('#segVista span').forEach(x=>x.classList.toggle('on',x.dataset.v===v)); salvaLayout(); desenha(); if(v!=='plan') irHoje(); }
 function arrasta(el,ao){ el.addEventListener('mousedown',e=>{ e.preventDefault(); el.classList.add('on'); const x0=e.clientX;
     const mv=ev=>ao(ev.clientX-x0,false), up=ev=>{ el.classList.remove('on'); ao(ev.clientX-x0,true); removeEventListener('mousemove',mv); removeEventListener('mouseup',up); document.body.style.cursor=''; };
-    document.body.style.cursor='col-resize'; addEventListener('mousemove',mv); addEventListener('mouseup',up); }); }
+    document.body.style.cursor='ew-resize'; addEventListener('mousemove',mv); addEventListener('mouseup',up); }); }
 function ligaDivisorias(){
   const sp=$('spS'), sd=$('spD'); let w0, d0;
   sp.addEventListener('mousedown',()=>{ w0=$('sheet').getBoundingClientRect().width; });
@@ -548,6 +560,9 @@ function detalhe(){
     else if(EDIT) h+='<div class="hint">Saia do modo edição para lançar medições.</div>';
     h+='</div>';
   } else h+='<div class="sec"><div class="hint">Fase: o avanço é a média das tarefas abaixo, ponderada pela duração. Medição é lançada nas tarefas.</div></div>';
+  if(COMS){ const cs=COMS.filter(c=>c.tarefa_uid===t.uid);
+    h+='<div class="sec" id="secCom"><div class="lb">Comentários'+(cs.length?' · '+cs.length:'')+'</div>'+(cs.map(c=>'<div class="cmt"><div class="ch"><b>'+esc(c.autor_nome||'—')+'</b><span>'+new Date(c.criado_em).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+'</span>'+(c.autor_id===ME.id?'<span class="x" title="apagar" onclick="apagaComentario(\''+c.id+'\')">×</span>':'')+'</div><div class="tx">'+esc(c.texto)+'</div></div>').join('')||'<div style="font-size:12px;color:var(--mut)">Nenhum comentário.</div>')+
+      '<div class="cmtf"><textarea id="cTxt" placeholder="Escreva um comentário sobre esta tarefa…" onkeydown="if(event.key===\'Enter\'&&(event.ctrlKey||event.metaKey))comentar(\''+t.uid+'\')"></textarea><button class="abtn pri" style="margin-top:6px;width:100%;justify-content:center" onclick="comentar(\''+t.uid+'\')">Comentar</button><div class="hint">Ctrl+Enter envia. Fica registrado com seu nome e a hora.</div></div></div>'; }
   if(t.orc!=null||t.rea!=null){ const m=t.orc!=null?t.orc*t.prog/100:null; h+='<div class="sec"><div class="lb">Custos (R$)</div><div class="kv"><div><span>Orçado</span><b>'+(t.orc!=null?(+t.orc).toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>Medido (% × orçado)</span><b>'+(m!=null?m.toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>Realizado</span><b>'+(t.rea!=null?(+t.rea).toLocaleString('pt-BR',{maximumFractionDigits:0}):'—')+'</b></div><div><span>IDC</span><b>'+(m&&t.rea?(m/t.rea).toFixed(2).replace('.',','):'—')+'</b></div></div></div>'; }
   det.innerHTML=h;
 }
@@ -568,6 +583,14 @@ function addFer(){ const d=$('cfData').value, n=$('cfNome').value.trim(); if(!d)
 async function salvaCal(){ if(!CALED.dias.length){ toast('Marque ao menos um dia de trabalho.',true); return; }
   const r=await sb.rpc('obra_crono_calendario_salvar',{p_emp:EMP_ID,p_cal:CALED}); if(r.error){ toast('Calendário não salvo: '+r.error.message,true); return; }
   $('calpop').classList.remove('on'); CAL=CALED; montaCal(); recalc(EDIT); desenhaTudo(); toast('Calendário salvo: '+calResumo()+'.'); }
+
+// ══════════════ comentários ══════════════
+function verComentarios(uid){ SEL=uid; desenha(); setTimeout(()=>{ const e=$('secCom'); if(e){ e.scrollIntoView({block:'start',behavior:'smooth'}); const ta=$('cTxt'); if(ta) ta.focus(); } },50); }
+async function comentar(uid){ const ta=$('cTxt'), tx=(ta&&ta.value||'').trim(); if(!tx) return;
+  const r=await sb.from('obra_crono_comentario_auria').insert({empreendimento_id:EMP_ID,tarefa_uid:uid,texto:tx,autor_nome:ME.nome||null}).select().single();
+  if(r.error){ toast('Comentário não enviado: '+r.error.message,true); return; } COMS.push(r.data); desenha(); verComentarios(uid); toast('Comentário registrado.'); }
+async function apagaComentario(id){ if(!confirm('Apagar este comentário?')) return; const r=await sb.from('obra_crono_comentario_auria').delete().eq('id',id); if(r.error){ toast(r.error.message,true); return; } COMS=COMS.filter(c=>c.id!==id); desenha(); }
+function medirRapido(uid){ SEL=uid; desenha(); setTimeout(()=>{ const p=$('mPct'); if(p){ p.scrollIntoView({block:'center',behavior:'smooth'}); p.focus(); p.select(); } },50); }
 
 // ══════════════ medições ══════════════
 async function lancarMed(uid){
@@ -703,7 +726,7 @@ function applyTheme(){ document.body.classList.toggle('dark',(localStorage.getIt
 function toggleTheme(){ localStorage.setItem('auria_theme',(localStorage.getItem('auria_theme')||'light')==='light'?'dark':'light'); applyTheme(); }
 window.addEventListener('message',ev=>{ const d=ev.data||{}; if(d.auria_tema){ localStorage.setItem('auria_theme',d.auria_tema); applyTheme(); } });
 window.addEventListener('beforeunload',e=>{ if(EDIT&&ORIG&&JSON.stringify(ORIG)!==JSON.stringify(T)){ e.preventDefault(); e.returnValue=''; } });
-let ME={};
+let ME={}, COMS=null;
 // Aberta sem ?emp_id= (endereço direto, favorito): uma obra só → abre direto;
 // várias → lista para escolher. Sem isso a página não sabe o nível e esconde a edição.
 async function escolherObra(uid){
@@ -724,7 +747,7 @@ async function boot(){
   const [rU,rE,rN]=await Promise.all([sb.from('usuarios_auria').select('nome').eq('id',s.session.user.id).maybeSingle(),
     sb.from('empreendimentos_auria').select('nome,codigo,logo_url,construtora_id').eq('id',EMP_ID).maybeSingle(),
     sb.rpc('obra_meu_nivel',{p_emp:EMP_ID})]);
-  ME=rU.data||{}; EMP=rE.data||{}; NIVEL=rN.data||null;
+  ME=rU.data||{}; ME.id=s.session.user.id; EMP=rE.data||{}; NIVEL=rN.data||null;
   PODE_ED=['eng_chefe','coord_campo'].includes(NIVEL); PODE_MED=PODE_ED||NIVEL==='equipe_campo';
   document.body.classList.toggle('pode-editar',PODE_ED);
   const slot=(id,url,sig,tit)=>{ const el=$(id); el.style.display='flex'; if(url){ el.className='elogo'; el.innerHTML='<img src="'+esc(url)+'" alt="">'; } else { el.className='elogo ph'; el.textContent=sig||'?'; } el.title=tit||''; };
