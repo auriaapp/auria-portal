@@ -206,7 +206,10 @@ async function carregar(){
 // regra efetiva da tarefa: a salva, ou uma sugerida pelo serviço + pavimento
 function servicoDe(t){ const n=_n(t.nome);
   for(const s of O.serv) for(const e of (s.etapas||[])) if(n.startsWith(_n(e.nome))) return {...s,_etapa:e.codigo};
-  return O.serv.find(s=>n.startsWith(_n(s.nome))||n.startsWith(_n(s.codigo)+' ')||n.includes(_n(s.nome))); }
+  // o nome tem de COMEÇAR pelo serviço e seguir com separador ("Estrutura - Tipo 10", "Pele de Vidro - Tipo 02"):
+  // "Estrutura da Prumada…", "Tratamento da Estrutura…", "Alvenaria do Hall…" não são o serviço que constrói a peça
+  const casa=(nm)=>{ const x=_n(nm); return n===x||(n.startsWith(x)&&/^\s*(-|–|\(|,|$)/.test(n.slice(x.length))); };
+  return O.serv.find(s=>casa(s.nome)||n.startsWith(_n(s.codigo)+' - ')); }
 function etapaDe(cod,etp){ const s=O.serv.find(x=>x.codigo===cod); return s&&etp?(s.etapas||[]).find(e=>e.codigo===etp)||null:null; }
 // chave canônica do pavimento: cronograma ("Tipo 10", "Subsolo 03", "Sobressolo 01") e IFC
 // ("10º PAVIMENTO", "SUBSOLO 3_(P.A_0,07)", "SOBRE1", "TIPO1-004") caem na mesma chave.
@@ -253,7 +256,11 @@ function pavsDe(t){ if(!O.idx) return []; const pfx=pavsFaixa(t); if(pfx) return
 function regraDe(t){ O.regra=O.regra||{}; if(t.uid in O.regra) return O.regra[t.uid]; return (O.regra[t.uid]=regraCalc(t)); }
 function regraCalc(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
   const s=servicoDe(t); if(!s) return null; const pv=pavsDe(t); if(!pv.length) return null;   // sem pavimento que case: não liga ao modelo inteiro
-  return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pv,classes:s.classes||[],tipos:s.tipos||[],adicionados:[],removidos:[]}; }
+  // trecho de escada: só as peças de escada (a laje do andar segue as outras tarefas e fica verde quando elas terminam)
+  const escada=/trecho escada|escada/.test(_n(t.nome)); const ESC=['IFCSTAIR','IFCSTAIRFLIGHT'];
+  const cls=escada?(s.classes||[]).filter(c=>ESC.includes(c)):(s.classes||[]);
+  if(escada&&!cls.length) return null;
+  return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pv,classes:cls,tipos:s.tipos||[],adicionados:[],removidos:[]}; }
 async function resolverTudo(){
   O.porT={}; O.regra={}; O._semT=null; O._legOk=false;
   const clsT=new Set(); O.serv.forEach(s=>{ if((s.tipos||[]).length) (s.classes||[]).forEach(c=>clsT.add(c)); }); if(clsT.size&&B3.nomes4D) await B3.nomes4D(F3D,O.idx,[...clsT]);
