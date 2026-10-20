@@ -306,7 +306,7 @@ const novoUid=()=>(crypto.randomUUID?crypto.randomUUID():String(Math.random()).s
 
 // ── estado ──
 let EMP={}, NIVEL=null, PODE_ED=false, PODE_MED=false, CAB={versao:0};
-let T=[], ORIG=null, BASES=[], BASE=null, MEDS=[], SEL=null, EDIT=false, ORIGEM_IMPORT=null;
+let T=[], ORIG=null, BASES=[], BASE=null, MEDS=[], SEL=null, EDIT=false, ORIGEM_IMPORT=null, BASE_IMPORT=null;
 const COLAPS=new Set(); const F={txt:'',pav:'',atr:false,crit:false,conc:false};
 let ESC='sem'; const PXD={dia:22,sem:5,mes:1.6};
 
@@ -440,6 +440,7 @@ async function carregar(){
   const ba=BASES.find(b=>b.ativa); BASE=ba?{...ba,map:Object.fromEntries((ba.tarefas||[]).map(x=>[x.uid,x]))}:null;
   T=(rT.data||[]).map(r=>({uid:r.uid,wbs:r.wbs,nome:r.nome,nivel:r.nivel,tipo:r.tipo,pav:r.pavimento||'',ini:D(r.inicio),fim:D(r.fim),prog:+r.progresso||0,pred:r.predecessoras||'',resp:r.responsavel||'',orc:r.custo_orcado,rea:r.custo_realizado}));
   recalc(false);
+  if(!COLAPS.size&&T.length>400) T.forEach(t=>{ if(t._fase&&t.nivel>=1) COLAPS.add(t.uid); });   // cronograma grande abre resumido
   const pavs=[...new Set(T.map(t=>t.pav).filter(Boolean))].sort(); $('fPav').innerHTML='<option value="">Pavimento: todos</option>'+pavs.map(p=>'<option'+(p===F.pav?' selected':'')+'>'+esc(p)+'</option>').join('');
   $('hSub').textContent=(EMP.nome||'')+(BASE?' · linha de base '+BASE.nome:' · sem linha de base')+' · '+calResumo()+(CAB.atualizado_em?' · salvo '+new Date(CAB.atualizado_em).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})+(CAB.atualizado_nome?' por '+CAB.atualizado_nome:''):'');
   if(SEL&&!T.find(t=>t.uid===SEL)) SEL=null;
@@ -648,7 +649,7 @@ async function lancarMed(uid){
 
 // ══════════════ edição ══════════════
 function toggleEdit(){ if(EDIT){ descartar(); return; } if(!PODE_ED) return; EDIT=true; ORIG=JSON.parse(JSON.stringify(T)); document.body.classList.add('editando'); $('bEdit').classList.add('on'); document.querySelector('.ed-tools').style.display='inline-flex'; COLS.find(c=>c[0]==='pre')[4]=1; desenha(); }
-function sairEdit(){ EDIT=false; ORIG=null; ORIGEM_IMPORT=null; document.body.classList.remove('editando'); $('bEdit').classList.remove('on'); document.querySelector('.ed-tools').style.display='none'; $('edMsg').textContent=''; }
+function sairEdit(){ EDIT=false; ORIG=null; ORIGEM_IMPORT=null; BASE_IMPORT=null; document.body.classList.remove('editando'); $('bEdit').classList.remove('on'); document.querySelector('.ed-tools').style.display='none'; $('edMsg').textContent=''; }
 function descartar(){ if(ORIG&&JSON.stringify(ORIG)!==JSON.stringify(T)&&!confirm('Descartar as alterações não salvas?')) return; if(ORIG) T=ORIG; sairEdit(); recalc(false); desenhaTudo(); }
 function aposEdicao(){ const msg=recalc(true); $('edMsg').textContent=msg.slice(0,3).join(' · ')+(msg.length>3?' (+'+(msg.length-3)+')':''); desenhaTudo(); }
 function editaCampo(uid,campo,v){ const t=T.find(u=>u.uid===uid); if(!t) return;
@@ -701,8 +702,18 @@ async function salvar(){
   const msg=recalc(true); if(msg.some(m=>m.indexOf('circular')>=0)){ toast(msg[0],true); return; }
   if(T.some(t=>!t.nome.trim())){ toast('Há tarefa sem nome.',true); return; }
   const linhas=T.map((t,i)=>({uid:t.uid,ordem:i+1,wbs:t.wbs,nome:t.nome,nivel:t.nivel,tipo:t._fase?'fase':t.tipo,pavimento:t.pav,inicio:S(t.ini),fim:S(t.fim),progresso:t.prog,predecessoras:t.pred,responsavel:t.resp,custo_orcado:t.orc,custo_realizado:t.rea}));
-  const r=await sb.rpc('obra_crono_salvar',{p_emp:EMP_ID,p_tarefas:linhas,p_versao:CAB.versao||0,p_origem:ORIGEM_IMPORT});
+  let ver=CAB.versao||0, nomeLB=null;
+  if(BASE_IMPORT&&confirm('O arquivo traz linha de base (datas planejadas originais). Gravá-la como nova linha de base ativa?')){
+    // a base é uma foto das tarefas gravadas: grava com as datas da base, fotografa, e regrava com as datas atuais
+    const lb=linhas.map(l=>{ const b=BASE_IMPORT[l.uid]; return b?Object.assign({},l,{inicio:S(b[0]),fim:S(b[1])}):l; });
+    const r0=await sb.rpc('obra_crono_salvar',{p_emp:EMP_ID,p_tarefas:lb,p_versao:ver,p_origem:ORIGEM_IMPORT});
+    if(r0.error){ toast('Não foi salvo: '+r0.error.message,true); return; }
+    ver=r0.data; nomeLB='LB-'+String(BASES.length+1).padStart(2,'0')+' (MS Project)';
+    const rb=await sb.rpc('obra_crono_base_salvar',{p_emp:EMP_ID,p_nome:nomeLB}); if(rb.error){ toast('Linha de base não foi salva: '+rb.error.message,true); nomeLB=null; }
+  }
+  const r=await sb.rpc('obra_crono_salvar',{p_emp:EMP_ID,p_tarefas:linhas,p_versao:ver,p_origem:ORIGEM_IMPORT});
   if(r.error){ toast('Não foi salvo: '+r.error.message,true); return; }
+  if(nomeLB){ sairEdit(); toast('Cronograma salvo com a linha de base '+nomeLB+'.'); await carregar(); return; }
   sairEdit(); toast('Cronograma salvo.'+(BASES.length?'':' Dica: salve uma linha de base para acompanhar atrasos.')); await carregar();
 }
 
@@ -716,9 +727,17 @@ function importarXML(inp){
     if(!tasks.length) throw new Error('nenhuma tarefa encontrada');
     const uid2wbs={}; tasks.forEach(t=>uid2wbs[g(t,'UID')]=g(t,'OutlineNumber')||g(t,'WBS'));
     const tipoMap={'0':'TT','1':'TI','2':'IT','3':'II'};
-    const novo=tasks.map(t=>{ const lv=Math.max(0,(parseInt(g(t,'OutlineLevel'))||1)-1); const ms=g(t,'Milestone')==='1';
+    // custo no MSPDI vem em centavos; só nas folhas (as fases somam). Text1 (FieldID 188743731) = pavimento
+    const ch=(el,tag)=>[...el.children].filter(c=>c.tagName===tag);
+    const ext=t=>{ const a=ch(t,'ExtendedAttribute').find(e=>g(e,'FieldID')==='188743731'); return a?g(a,'Value').replace(/^\d+\.\s*/,'').trim():''; };
+    const cent=v=>v===''?null:(Math.round(parseFloat(v))/100||null);
+    const base={}; let nb=0;
+    const novo=tasks.map(t=>{ const lv=Math.max(0,(parseInt(g(t,'OutlineLevel'))||1)-1); const ms=g(t,'Milestone')==='1'; const folha=g(t,'Summary')!=='1';
       const preds=[...t.getElementsByTagName('PredecessorLink')].map(p=>{ const w=uid2wbs[g(p,'PredecessorUID')]; if(!w) return null; const lag=Math.round((parseInt(g(p,'LinkLag'))||0)/4800); return {eap:w,tipo:tipoMap[g(p,'Type')]||'TI',lag}; }).filter(Boolean);
-      return {uid:'x'+g(t,'UID'),wbs:'',nome:g(t,'Name'),nivel:lv,tipo:ms?'marco':'tarefa',pav:'',ini:D(g(t,'Start')),fim:ms?D(g(t,'Start')):D(g(t,'Finish')),prog:parseFloat(g(t,'PercentComplete'))||0,pred:fmtP(preds),resp:'',orc:null,rea:null}; });
+      const uid='x'+g(t,'UID'); const b=ch(t,'Baseline').find(e=>g(e,'Number')==='0');
+      if(b&&g(b,'Start')&&g(b,'Finish')){ base[uid]=[D(g(b,'Start')),ms?D(g(b,'Start')):D(g(b,'Finish'))]; nb++; }
+      return {uid,wbs:'',nome:g(t,'Name'),nivel:lv,tipo:ms?'marco':'tarefa',pav:ext(t),ini:D(g(t,'Start')),fim:ms?D(g(t,'Start')):D(g(t,'Finish')),prog:parseFloat(g(t,'PercentComplete'))||0,pred:fmtP(preds),resp:'',orc:folha?cent(g(t,'Cost')):null,rea:folha?cent(g(t,'ActualCost')):null}; });
+    BASE_IMPORT=nb?base:null;
     // vínculos vêm pelo OutlineNumber do XML; após renumerar seguem iguais (mesma árvore)
     if(T.length&&!confirm('Substituir o cronograma atual ('+T.length+' tarefas) pelas '+novo.length+' do arquivo?\nAs medições de tarefas com o mesmo código continuam ligadas. Nada é gravado até você Salvar.')) return;
     if(!EDIT) toggleEdit(); T=novo; renumera(); ORIGEM_IMPORT='xml: '+f.name; SEL=null; aposEdicao();
@@ -815,7 +834,8 @@ async function boot(){
   PODE_ED=['eng_chefe','coord_campo'].includes(NIVEL); PODE_MED=PODE_ED||NIVEL==='equipe_campo';
   document.body.classList.toggle('pode-editar',PODE_ED);
   const slot=(id,url,sig,tit)=>{ const el=$(id); el.style.display='flex'; if(url){ el.className='elogo'; el.innerHTML='<img src="'+esc(url)+'" alt="">'; } else { el.className='elogo ph'; el.textContent=sig||'?'; } el.title=tit||''; };
-  if(EMP.construtora_id){ const {data:c}=await sb.from('construtoras_auria').select('nome,logo_url').eq('id',EMP.construtora_id).maybeSingle(); if(c) slot('lgCon',c.logo_url,(c.nome||'').slice(0,3).toUpperCase(),c.nome); }
+  if(EMP.construtora_id){ const {data:c}=await sb.from('construtoras_auria').select('nome,logo_url').eq('id',EMP.construtora_id).maybeSingle(); if(c) slot('lgCon',c.logo_url,(c.nome||'').slice(0,3).toUpperCase(),c.nome);
+    else { const r=await sb.rpc('emp_logos',{p_emp:EMP_ID}); const x=((r.data)||[])[0]||{}; const u=x.empresa_logo||x.grupo_logo; if(u) slot('lgCon',u,'',''); } }   // obra não lê construtoras_auria (RLS)
   if(EMP.nome) slot('lgEmp',EMP.logo_url,EMP.codigo,EMP.nome);
   await carregar(); setTimeout(irHoje,50);
 }
