@@ -65,7 +65,7 @@ const st=document.createElement('style'); st.textContent=`
 #o4dTar .hd b{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt2,#334155)}
 #o4dTar .hd span{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut,#64748B);font-weight:700}
 #o4dTar .lst{overflow:auto;flex:1}
-#o4dTar .tk{display:grid;grid-template-columns:40px 1fr auto;gap:6px;align-items:center;padding:6px 14px;border-bottom:1px solid var(--line,#E2E8F0);cursor:pointer}
+#o4dTar .tk{display:grid;grid-template-columns:40px 1fr auto;gap:6px;align-items:center;height:44px;box-sizing:border-box;overflow:hidden;padding:4px 14px;border-bottom:1px solid var(--line,#E2E8F0);cursor:pointer}
 #o4dTar .tk:hover{background:var(--panel2,#F6F9FC)}
 #o4dTar .tk.sel{box-shadow:inset 3px 0 0 #38BDF8;background:rgba(56,189,248,.12)}
 #o4dTar .tk.fase{font-weight:700;background:var(--panel2,#F6F9FC);cursor:default}
@@ -135,6 +135,18 @@ const st=document.createElement('style'); st.textContent=`
 #f3dBtn4d.on{background:#E8960A!important;color:#231703!important}
 body.o4d-on #f3dLogo{left:318px!important;bottom:136px!important;opacity:.9}
 body.o4d-on #f3dDica{display:none!important}
+/* modo apresentação: só modelo + linha do tempo + legenda + contadores, em tela cheia */
+body.o4d-apres #bimBody>*:not(#f3dCanvas):not(#o4dTl):not(#o4dLeg):not(#o4dCnt):not(#f3dLogo):not(#o4dApresTit){display:none!important}
+body.o4d-apres #o4dOpc,body.o4d-apres #o4dSelInfo{display:none!important}
+body.o4d-apres #o4dTl{left:24px;right:24px;bottom:20px}
+body.o4d-apres #o4dTl .dt{font-size:22px;min-width:140px}
+body.o4d-apres #o4dLeg{top:auto!important;bottom:118px!important;left:24px!important;right:auto!important}
+body.o4d-apres #o4dCnt{top:20px!important;right:24px!important}
+body.o4d-apres #f3dLogo{left:auto!important;right:24px!important;bottom:118px!important}
+#o4dApresTit{display:none;position:absolute;left:24px;top:20px;z-index:31;color:#fff;font:800 20px/1.2 system-ui,sans-serif;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+#o4dApresTit small{display:block;font:600 11px ui-monospace,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;color:#E8960A;margin-top:4px}
+body.o4d-apres #o4dApresTit{display:block}
+body.o4d-apres #bimBody{background:#0E1626}
 /* visualizador estreito: opções e legenda descem para a linha do tempo, contador sai (o resumo fica no rodapé) */
 #bimBody.o4-estreito #o4dTar{width:230px;top:58px}
 #bimBody.o4-estreito #o4dPainel{width:290px}
@@ -159,7 +171,8 @@ function montarUi(){
   mk('o4dTl',`<div class="r"><button class="pl" id="o4dPlay" onclick="o4dPlay()">▶</button><span class="dt" id="o4dData"></span>
     <span class="lb">passo</span><span class="sg" id="o4dSgPasso"><span data-v="1">Dia</span><span data-v="7">Semana</span><span data-v="30">Mês</span></span>
     <span style="flex:1"></span><span id="o4dResumo" style="font-size:11.5px;color:#8FA6C0"></span>
-    <button class="pl" style="background:#1B2740;color:#C9D6E4;width:auto;border-radius:7px;padding:0 10px;font-size:12px;border:1px solid #26324A" onclick="o4dIr(${HOJE})">Hoje</button></div>
+    <button class="pl" style="background:#1B2740;color:#C9D6E4;width:auto;border-radius:7px;padding:0 10px;font-size:12px;border:1px solid #26324A" onclick="o4dIr(${HOJE})">Hoje</button>
+    <button class="pl" id="o4dApresBtn" style="background:#1B2740;color:#C9D6E4;width:auto;border-radius:7px;padding:0 10px;font-size:12px;border:1px solid #26324A" onclick="o4dApres()" title="Tela cheia só com o modelo, a data e a legenda — para apresentar o avanço (Esc sai)">⛶ Apresentação</button></div>
     <input type="range" id="o4dSl" oninput="o4dData(+this.value)"><div class="mk" id="o4dMk"></div>`);
   const liga=(id,k,num)=>document.querySelectorAll('#'+id+' span').forEach(x=>x.onclick=()=>{ O[k]=num?+x.dataset.v:x.dataset.v; marcaSg(); if(!num) pintar(); });
   liga('o4dSgModo','modo'); liga('o4dSgFut','fut'); liga('o4dSgConc','conc'); liga('o4dSgPasso','passo',1);
@@ -182,7 +195,7 @@ async function carregar(){
     sb.from('obra_4d_vinculo_auria').select('*').eq('empreendimento_id',E),
     sb.from('empreendimentos_auria').select('construtora_id').eq('id',E).maybeSingle()]);
   O.T=(rT.data||[]).map(r=>({uid:r.uid,wbs:r.wbs,nome:r.nome,nivel:r.nivel,fase:r.tipo==='fase',marco:r.tipo==='marco',pav:r.pavimento||'',ini:Dn(r.inicio),fim:Dn(r.fim),prog:+r.progresso||0}));
-  O.meds=rM.data||[]; O.base=rB.data?{nome:rB.data.nome,map:Object.fromEntries((rB.data.tarefas||[]).map(x=>[x.uid,x]))}:null;
+  O.meds=rM.data||[]; O.medsPor=null; O.base=rB.data?{nome:rB.data.nome,map:Object.fromEntries((rB.data.tarefas||[]).map(x=>[x.uid,x]))}:null;
   O.vinc={}; O.semTabela=!!rV.error; (rV.data||[]).forEach(v=>O.vinc[v.tarefa_uid]=v);
   O.construtora=rE.data&&rE.data.construtora_id;
   O.PE=null; if(window.PavEquiv){ try{ O.PE=await PavEquiv.carregar(sb,E); O.PE.registrar('cronograma',[...new Set(O.T.map(t=>t.pav).filter(Boolean))]); }catch(e){ console.warn('pav equiv:',e); } }
@@ -233,10 +246,11 @@ function pavsDe(t){ if(!O.idx) return []; const pf=pavsFicha(t); if(pf) return p
     if(pal==='terreo') return /terreo/.test(pn); if(pal==='cobert') return /cobert/.test(pn);
     if(pal==='subsolo'){ const ns=(fonte.match(/(?:subsolo|ss)\s*0?(\d+)/)||[])[1]; return /subsolo|ss/.test(pn)&&(!ns||pd===ns); }
     return num&&pd&&parseInt(pd,10)===parseInt(num,10)&&!/subsolo|ss/.test(pn); }); }
-function regraDe(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
+function regraDe(t){ O.regra=O.regra||{}; if(t.uid in O.regra) return O.regra[t.uid]; return (O.regra[t.uid]=regraCalc(t)); }
+function regraCalc(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
   const s=servicoDe(t); if(!s) return null; return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pavsDe(t),classes:s.classes||[],tipos:s.tipos||[],adicionados:[],removidos:[]}; }
 async function resolverTudo(){
-  O.porT={};
+  O.porT={}; O.regra={}; O._semT=null; O._legOk=false;
   const clsT=new Set(); O.serv.forEach(s=>{ if((s.tipos||[]).length) (s.classes||[]).forEach(c=>clsT.add(c)); }); if(clsT.size&&B3.nomes4D) await B3.nomes4D(F3D,O.idx,[...clsT]);
   for(const t of O.T){ if(t.fase) continue; const r=regraDe(t); if(!r){ O.porT[t.uid]={}; continue; }
     const pm=B3.resolverRegra4D(O.idx,r);
@@ -250,13 +264,19 @@ const nPecas=pm=>Object.values(pm||{}).reduce((a,l)=>a+l.length,0);
 // ── estado no dia ──
 function baseDe(t){ const b=O.base&&O.base.map[t.uid]; return b?{ini:Dn(b.inicio),fim:Dn(b.fim)}:null; }
 function prevEm(t,n){ const b=baseDe(t), a=b?b.ini:t.ini, z=b?b.fim:t.fim; if(a==null||z==null) return 0; if(n<a) return 0; if(n>=z) return 100; return (n-a+1)/(z-a+1)*100; }
-function realEm(uid,n){ let v=0,d0=null; O.meds.forEach(m=>{ if(m.tarefa_uid!==uid) return; const d=Dn(m.data); if(d>n) return; if(d0==null||d>=d0){ d0=d; v=+m.percentual; } }); return v; }
+function medsDe(uid){ if(!O.medsPor){ O.medsPor=new Map(); O.meds.forEach(m=>{ let l=O.medsPor.get(m.tarefa_uid); if(!l) O.medsPor.set(m.tarefa_uid,l=[]); l.push([Dn(m.data),+m.percentual]); }); O.medsPor.forEach(l=>l.sort((a,b)=>a[0]-b[0])); } return O.medsPor.get(uid); }
+// realizado no dia n: pelas medições; sem medição, pelo % da tarefa (importado do MS Project)
+// espalhado do início até o fim real (concluída) ou até hoje (em andamento)
+function realEm(uid,n,t){ const l=medsDe(uid); if(l&&l.length){ let v=0; for(const [d,p] of l){ if(d>n) break; v=p; } return v; }
+  if(!t||!t.prog||t.ini==null) return 0; if(n>=HOJE) return t.prog; if(n<t.ini) return 0;
+  const z=t.prog>=100&&t.fim!=null?Math.min(t.fim,HOJE):HOJE; if(n>=z) return t.prog; return t.prog*(n-t.ini+1)/Math.max(1,z-t.ini+1); }
 function estado(t,n){
   if(O.modo==='prev'){ const b=baseDe(t), a=b?b.ini:t.ini, z=b?b.fim:t.fim; if(a==null||n<a) return 'fut'; if(n>z) return 'ok'; return 'exe'; }
-  const p=(n>=HOJE)?Math.max(realEm(t.uid,n),n>=HOJE?t.prog:0):realEm(t.uid,n), pv=prevEm(t,n);
+  const p=(n>=HOJE)?Math.max(realEm(t.uid,n,t),t.prog):realEm(t.uid,n,t), pv=prevEm(t,n);
   if(p>=100) return 'ok';
   if(p<=0&&pv<=0) return 'fut';
-  if((t.fim!=null&&n>t.fim)||pv-p>10) return 'atr';
+  const bz=(baseDe(t)||{}).fim; const fimRef=bz!=null?bz:t.fim;
+  if((fimRef!=null&&n>fimRef)||pv-p>10) return 'atr';
   return p>0||pv>0?'exe':'fut';
 }
 
@@ -269,24 +289,22 @@ async function pintar(){
     O.T.forEach(t=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm||!nPecas(pm)) return; const s=estado(t,O.n); cnt[s]++;
       const r=regraDe(t)||{}, et=etapaDe(r.servico,r.etapa);
       Object.entries(pm).forEach(([mi,ids])=>ids.forEach(id=>{ const k=mi+':'+id; let l=P.get(k); if(!l) P.set(k,l=[]); l.push({s,t,et}); })); });
-    const porCor=new Map(); const add=(cor,k)=>{ let m=porCor.get(cor); if(!m) porCor.set(cor,m={}); const [mi,id]=k.split(':'); (m[mi]=m[mi]||[]).push(+id); };
+    const alvo=new Map(); const add=(cor,k)=>alvo.set(k,cor);
     const fut={};
     P.forEach((l,k)=>{
       if(l.some(x=>x.s==='atr')) return add(C4.atr,k);
       const ex=l.find(x=>x.s==='exe'); if(ex) return add(ex.et?parseInt(ex.et.cor.slice(1),16):C4.exe,k);
       if(l.every(x=>x.s==='ok')){ if(O.conc==='verde') add(C4.ok,k); return; }
-      if(l.every(x=>x.s==='fut')){ const [mi,id]=k.split(':'); (fut[mi]=fut[mi]||[]).push(+id); return; }
+      if(l.every(x=>x.s==='fut')){ if(!O.conf) alvo.set(k,'fut'); return; }
       // parte concluída, parte por vir: entre etapas (ex.: concretada, aguardando protensão = escorado)
       const ult=l.filter(x=>x.s==='ok').sort((a,b)=>(b.t.fim||0)-(a.t.fim||0))[0];
       add(ult&&ult.et?parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16):C4.exe,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
     // Peça sem tarefa ainda não tem execução prevista: segue "Futuras" (fantasma/oculta), como as a iniciar.
     // Na Conferência ela fica em magenta (abaixo), para achar o que falta ligar.
-    if(!O.conf){ const st=semTarefa(); Object.entries(st).forEach(([mi,ids])=>{ (fut[mi]=fut[mi]||[]).push(...ids); }); }
-    const grupos=[...porCor].map(([cor,porMod])=>({porMod,cor})); const g={fut};
-    if(O.conf){ grupos.push({porMod:semTarefa(),cor:0xFF00FF}); }
-    await B3.pintar4D(F3D,grupos,O.conf?null:{porMod:g.fut,oculto:O.fut==='ocul'});
-    legendaEtapas();
-    if(O.sel&&O.porT[O.sel]&&nPecas(O.porT[O.sel])){ try{ for(const [mi,ids] of Object.entries(O.porT[O.sel])){ await F3D.modelos[mi].model.highlight(ids,{color:new F3D.THREE.Color(0x38BDF8),renderedFaces:1,opacity:1,transparent:false}); } await F3D.fragments.update(true); }catch(_){} }
+    const st=O._semT||(O._semT=semTarefa()); Object.entries(st).forEach(([mi,ids])=>ids.forEach(id=>alvo.set(mi+':'+id,O.conf?0xFF00FF:'fut')));
+    if(O.sel&&O.porT[O.sel]&&!O.apres) Object.entries(O.porT[O.sel]).forEach(([mi,ids])=>ids.forEach(id=>alvo.set(mi+':'+id,0x38BDF8)));
+    await B3.pintar4Dinc(F3D,alvo,O.fut==='ocul');
+    if(!O._legOk){ legendaEtapas(); O._legOk=true; }
     const r=document.getElementById('o4dResumo'); if(r) r.textContent=O.modo==='prev'?'Previsto pela '+(O.base?'linha de base '+O.base.nome:'datas atuais (sem linha de base)'):'Realizado pelas medições';
     const c=document.getElementById('o4dCnt'); if(c) c.innerHTML='<div><span>Tarefas no dia</span><b>'+(cnt.exe+cnt.atr+cnt.ok+cnt.fut)+'</b></div><div><span style="color:'+CSS4.exe+'">Em execução</span><b>'+cnt.exe+'</b></div><div><span style="color:#F87171">Atrasadas</span><b>'+cnt.atr+'</b></div><div><span style="color:#4ADE80">Concluídas</span><b>'+cnt.ok+'</b></div><div><span>A iniciar</span><b>'+cnt.fut+'</b></div>';
     const lc=document.getElementById('o4dLgConf'); if(lc) lc.style.display=O.conf?'':'none';
@@ -309,6 +327,16 @@ window.o4dIsolar=async()=>{ const b=document.getElementById('o4dIso'); if(O.isol
 function selInfo(){ const el=document.getElementById('o4dSelInfo'); if(!el) return; const t=O.T.find(x=>x.uid===O.sel);
   if(!t){ el.style.display='none'; return; } const s=estado(t,O.n); el.style.display='block';
   el.innerHTML='<b>'+esc(t.wbs)+'</b> '+esc(t.nome)+'<br><span style="color:#8FA6C0">'+nPecas(O.porT[t.uid])+' peças · '+BR(t.ini)+' → '+BR(t.fim)+' · </span><span style="color:'+CSS4[s]+'">'+NOME4[s]+'</span>'; }
+window.o4dApres=async()=>{ const b=document.getElementById('bimBody'); if(!b) return;
+  if(document.body.classList.contains('o4d-apres')){ if(document.fullscreenElement) try{ await document.exitFullscreen(); }catch(_){} apresSai(); return; }
+  let t=document.getElementById('o4dApresTit'); if(!t){ t=document.createElement('div'); t.id='o4dApresTit'; b.appendChild(t); }
+  t.innerHTML=esc((typeof EMP!=='undefined'&&EMP&&EMP.nome)||'Obra')+'<small>Avanço físico · BIM 4D</small>';
+  O.apres=true; document.body.classList.add('o4d-apres'); const bt=document.getElementById('o4dApresBtn'); if(bt) bt.textContent='Sair da apresentação';
+  if(O.sel){ O.sel=null; }
+  try{ await b.requestFullscreen(); }catch(_){}
+  pintar(); };
+function apresSai(){ O.apres=false; document.body.classList.remove('o4d-apres'); const bt=document.getElementById('o4dApresBtn'); if(bt) bt.textContent='⛶ Apresentação'; if(O.on){ painel(); pintar(); } }
+document.addEventListener('fullscreenchange',()=>{ if(!document.fullscreenElement&&document.body.classList.contains('o4d-apres')) apresSai(); });
 window.o4dIr=n=>{ const sl=document.getElementById('o4dSl'); sl.value=n; o4dData(n); };
 window.o4dPlay=()=>{ const b=document.getElementById('o4dPlay'), sl=document.getElementById('o4dSl');
   if(O.timer){ clearInterval(O.timer); O.timer=null; b.textContent='▶'; return; }
@@ -320,12 +348,22 @@ function painel(){ const p=document.getElementById('o4dPainel');
   p.innerHTML='<div class="o4ts">'+[['v','Vínculo'],['c','Conferência'],['s','Serviços']].map(([k,r])=>'<div class="o4t'+(O.aba===k?' on':'')+'" onclick="o4dAba(\''+k+'\')">'+r+'</div>').join('')+'<button class="o4x" title="Fechar o 4D" onclick="o4dToggle()">✕</button></div><div class="bd" id="o4dBd"></div>';
   ({v:vinculo,c:conferencia,s:servicos})[O.aba](); lista(); selInfo(); }
 window.o4dAba=k=>{ if(k==='t'){ const l=document.getElementById('o4dLst'); if(l) l.scrollTop=0; return; } O.aba=k; O.conf=(k==='c'); painel(); pintar(); };
+const LH=44;
 function lista(){ const bd=document.getElementById('o4dLst'); if(!bd) return;
+  if(O.T.filter(t=>!t.fase).length&&!O.semTabela){ listaVirtual(bd); return; }
   if(!O.T.filter(t=>!t.fase).length){ bd.innerHTML='<div class="vazio"><b>O Cronograma da Obra ainda não tem tarefas por pavimento.</b><br>Crie tarefas como <i>Cimbramento TERREO</i>, <i>Concretagem SOBRE1</i> ou <i>Alvenaria TIPO1-005</i>: elas se ligam sozinhas às peças pelo serviço e pelo pavimento.'+(typeof abrirCronograma==='function'?'<br><button onclick="abrirCronograma()">Abrir o Cronograma da Obra</button>':'')+'</div>'; return; }
   bd.innerHTML=(O.semTabela?'<div class="vazio" style="color:#B45309">O banco do 4D ainda não foi criado. A simulação funciona com regras automáticas, mas não dá para salvar vínculos.</div>':'')+
     O.T.map(t=>{ if(t.fase) return '<div class="tk fase" style="padding-left:'+(14+t.nivel*10)+'px"><span class="e">'+esc(t.wbs)+'</span><span class="nm">'+esc(t.nome)+'</span><span></span></div>';
       const s=estado(t,O.n), np=nPecas(O.porT[t.uid]), r=regraDe(t);
       return '<div class="tk'+(O.sel===t.uid?' sel':'')+'" onclick="o4dSel(\''+t.uid+'\')"><span class="e">'+esc(t.wbs)+'</span><span class="nm"><span class="dot" style="background:'+(CSS4[s])+';'+(s==='fut'?'opacity:.45':'')+'"></span>'+esc(t.nome)+'<small>'+BR(t.ini)+' → '+BR(t.fim)+' · '+NOME4[s]+'</small></span><span class="q'+(np?'':' z')+(r&&!r.salva?' auto':'')+'" title="'+(r?(r.salva?'vínculo salvo':'vínculo automático pelo serviço '+esc(r.servico)+' — confira e salve'):'sem regra')+'">'+(np?np:'sem peças')+'</span></div>'; }).join(''); }
+function linhaTk(t){ if(t.fase) return '<div class="tk fase" style="padding-left:'+(14+t.nivel*10)+'px"><span class="e">'+esc(t.wbs)+'</span><span class="nm">'+esc(t.nome)+'</span><span></span></div>';
+  const s=estado(t,O.n), np=nPecas(O.porT[t.uid]), r=regraDe(t);
+  return '<div class="tk'+(O.sel===t.uid?' sel':'')+'" data-uid="'+esc(t.uid)+'" onclick="o4dSel(this.dataset.uid)"><span class="e">'+esc(t.wbs)+'</span><span class="nm"><span class="dot" style="background:'+(CSS4[s])+';'+(s==='fut'?'opacity:.45':'')+'"></span>'+esc(t.nome)+'<small>'+BR(t.ini)+' → '+BR(t.fim)+' · '+NOME4[s]+'</small></span><span class="q'+(np?'':' z')+(r&&!r.salva?' auto':'')+'">'+(np?np:'sem peças')+'</span></div>'; }
+function listaVirtual(bd){
+  if(!bd._v){ bd._v=1; bd.innerHTML='<div class="vsp" style="position:relative"><div class="vjan" style="position:absolute;left:0;right:0;top:0"></div></div>'; bd.addEventListener('scroll',()=>{ if(!bd._raf) bd._raf=requestAnimationFrame(()=>{ bd._raf=0; listaVirtual(bd); }); }); }
+  const sp=bd.firstChild, jan=sp.firstChild; sp.style.height=(O.T.length*LH)+'px';
+  const a=Math.max(0,Math.floor(bd.scrollTop/LH)-8), z=Math.min(O.T.length,a+Math.ceil((bd.clientHeight||600)/LH)+16);
+  jan.style.top=(a*LH)+'px'; jan.innerHTML=O.T.slice(a,z).map(linhaTk).join(''); }
 window.o4dSel=uid=>{ O.sel=O.sel===uid?null:uid; if(O.sel&&O.aba!=='v'){ O.aba='v'; O.conf=false; } painel(); pintar(); };
 
 let EDT=null;   // regra em edição
@@ -400,7 +438,7 @@ window.o4dSalvarServ=async()=>{ if(!O.construtora){ toast('Empreendimento sem co
 // ── liga / desliga ──
 window.o4dToggle=async()=>{
   const btn=document.getElementById('f3dBtn4d');
-  if(O.on){ O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } ['o4dPainel','o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); const si=document.getElementById('o4dSelInfo'); if(si) si.style.display='none'; document.body.classList.remove('o4d-on','o4-estreito-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
+  if(O.on){ if(O.apres){ if(document.fullscreenElement) try{ await document.exitFullscreen(); }catch(_){} apresSai(); } O.on=false; if(O.timer){ clearInterval(O.timer); O.timer=null; } ['o4dPainel','o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>{ const e=document.getElementById(id); if(e) e.classList.remove('on'); }); const si=document.getElementById('o4dSelInfo'); if(si) si.style.display='none'; document.body.classList.remove('o4d-on','o4-estreito-on'); if(btn) btn.classList.remove('on'); try{ await B3.limpar4D(F3D); }catch(_){} return; }
   // O 4D roda no visualizador completo (o mesmo de "abrir modelos marcados"). Se há modelos
   // marcados na coluna e ele ainda não abriu, abre agora; senão orienta.
   if((!F3D||!F3D.modelos||!F3D.modelos.length) && typeof F3D_SEL!=='undefined' && F3D_SEL.size && typeof f3dAbrirSelecionados==='function'){
@@ -409,7 +447,7 @@ window.o4dToggle=async()=>{
   if(!EMP){ toast('Escolha o empreendimento.',true); return; }
   montarUi(); O.on=true; document.body.classList.add('o4d-on'); if(btn) btn.classList.add('on');
   const p=document.getElementById('o4dPainel'); p.classList.add('on'); p.innerHTML='<div class="sec"><div class="hint">Lendo cronograma e modelos…</div></div>';
-  try{ await carregar(); B3.limpaIndice4D(F3D); O.idx=await B3.indice4D(F3D);
+  try{ await carregar(); O.idx=await B3.indice4D(F3D);   // índice fica guardado no visualizador (refazer custa ~40 s no ARQ)
     const NAO_PECA=/^IFC(PROPERTY|COMPLEXPROPERTY|SIUNIT|DERIVEDUNIT|CONVERSIONBASEDUNIT|MONETARYUNIT|UNITASSIGNMENT|MATERIAL|REL|OWNERHISTORY|ELEMENTQUANTITY|QUANTITY|CLASSIFICATION|PRESENTATION|STYLEDITEM|SURFACESTYLE|APPLICATION|PERSON|ORGANIZATION|GROUP|ZONE|SYSTEM|ANNOTATION|GRID|OPENINGELEMENT|VIRTUALELEMENT|SPACE|DOCUMENT|APPROVAL|CONSTRAINT|TASK|RESOURCE|ACTOR)/;
     O.idx.forEach(m=>Object.keys(m.porCat).forEach(c=>{ if(NAO_PECA.test(c)) delete m.porCat[c]; }));
     if(O.PE) O.idx.forEach(m=>{ const nomes=Object.keys(m.pavs); O.PE.registrar(fonteDe(m),nomes); });

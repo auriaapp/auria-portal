@@ -3450,7 +3450,7 @@ export async function idsDeGuids4D(V, mi, guids){ const x=V.modelos[mi]; if(!x||
 // Pinta o 4D. grupos = [{porMod, cor}] (cores sólidas); fantasma = {porMod, oculto:bool}.
 // Peças fora de todos os grupos ficam com a cor real.
 export async function pintar4D(V, grupos, fantasma){
-  const T=V.THREE;
+  const T=V.THREE; V._c4d=null;
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} }
   if(fantasma&&fantasma.porMod){ for(const [mi,ids] of Object.entries(fantasma.porMod)){ const x=V.modelos[mi]; if(!x||!ids.length) continue;
     if(fantasma.oculto){ try{ await x.model.setVisible(ids,false); }catch(_){} }
@@ -3460,5 +3460,29 @@ export async function pintar4D(V, grupos, fantasma){
   V._colorido=true;
   try{ await V.fragments.update(true); }catch(_){}
 }
-export async function limpar4D(V){ for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} }
+// Pintura INCREMENTAL do 4D: alvo = Map("mi:id" → cor numérica | 'fut'). Peça fora do mapa = cor real.
+// Só toca nas peças cujo estado mudou desde a última pintura (o play não repinta 40 mil peças por quadro).
+export async function pintar4Dinc(V, alvo, futOculto){
+  const T=V.THREE;
+  if(!V._c4d){ for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} } V._c4d=new Map(); V._c4dOc=futOculto; }
+  const prev=V._c4d, trocouFut=V._c4dOc!==futOculto; V._c4dOc=futOculto;
+  const muda=new Map();   // destino → {mi:[ids]}   ; destino 'real' | 'fut' | número
+  const vis=new Map();    // mi → ids que voltam a aparecer (saíram de 'fut' oculto)
+  const poe=(dest,k)=>{ let m=muda.get(dest); if(!m) muda.set(dest,m={}); const i=k.indexOf(':'); const mi=k.slice(0,i); (m[mi]=m[mi]||[]).push(+k.slice(i+1)); };
+  const volta=k=>{ const i=k.indexOf(':'); const mi=k.slice(0,i); let l=vis.get(mi); if(!l) vis.set(mi,l=[]); l.push(+k.slice(i+1)); };
+  alvo.forEach((c,k)=>{ const a=prev.get(k); if(a===c&&!(c==='fut'&&trocouFut)) return; if(a==='fut'&&V._c4dOcAnt) volta(k); poe(c,k); });
+  prev.forEach((a,k)=>{ if(alvo.has(k)) return; if(a==='fut'&&V._c4dOcAnt) volta(k); poe('real',k); });
+  V._c4dOcAnt=futOculto;
+  for(const [mi,ids] of vis){ const x=V.modelos[mi]; if(x) try{ await x.model.setVisible(ids,true); }catch(_){} }
+  for(const [dest,porMod] of muda){ for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi]; if(!x||!ids.length) continue;
+    try{
+      if(dest==='real'){ await x.model.resetHighlight(ids); }
+      else if(dest==='fut'){ if(futOculto){ await x.model.resetHighlight(ids); await x.model.setVisible(ids,false); } else { await x.model.setVisible(ids,true); await x.model.highlight(ids,{ color:new T.Color(0x94A3B8), renderedFaces:1, opacity:.12, transparent:true }); } }
+      else await x.model.highlight(ids,{ color:new T.Color(dest), renderedFaces:1, opacity:1, transparent:false });
+    }catch(_){} } }
+  V._c4d=new Map(alvo); V._colorido=true;
+  if(muda.size||vis.size) try{ await V.fragments.update(true); }catch(_){}
+  let n=0; muda.forEach(m=>Object.values(m).forEach(l=>n+=l.length)); return n;
+}
+export async function limpar4D(V){ V._c4d=null; V._c4dOcAnt=false; for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} try{ await x.model.resetOpacity(undefined); }catch(_){} }
   V._colorido=false; try{ await V.fragments.update(true); }catch(_){} }
