@@ -3335,6 +3335,26 @@ export async function dimOrientadas(model, localId){
 //  por estado (a iniciar / em execução / atrasada / concluída).
 //  Os ajustes manuais são guardados por GlobalId (estável entre revisões).
 // ══════════════════════════════════════════════════════════════════════════
+// Modelo com BLOCOS COPIADOS (ARQ do PINI: 47 cópias do bloco tipo, cada uma com seus
+// "1º…4º PAVIMENTO" em cotas deslocadas): o nome do storey não diz o andar, a COTA diz.
+// Agrupa storeys pela Elevation (cm) e dá a todos o nome mais RARO do grupo (o do prédio
+// principal, ex.: "5º PAVIMENTO" aparece 1×; "4º" das cópias aparece 47×); empate → maior número.
+// Subníveis "_(P.A…)" e "P.A." ficam como estão.
+async function _nomesPorCota(x, sts){
+  const freq={}; sts.forEach(s=>freq[s.nome]=(freq[s.nome]||0)+1);
+  if(!Object.values(freq).some(v=>v>1)) return {};
+  const elev={}; const ids=sts.map(s=>s.id);
+  for(let p=0;p<ids.length;p+=400){ let d=[]; try{ d=await x.model.getItemsData(ids.slice(p,p+400),{attributesDefault:true,relationsDefault:{attributes:false,relations:false}})||[]; }catch(_){}
+    d.forEach(o=>{ const lid=o&&o._localId&&o._localId.value; const e=o&&o.Elevation&&o.Elevation.value; if(lid!=null&&e!=null&&isFinite(+e)) elev[lid]=+e; }); }
+  const sub=n=>/_\(p\.?a|^p\.a\./i.test(n);
+  const grupos={}; sts.forEach(s=>{ if(elev[s.id]==null) return; const suf=(s.nome.match(/_\(p\.?a.*$/i)||[''])[0]; const k=Math.round(elev[s.id]*100)+'|'+suf.toUpperCase().replace(/[^A-Z0-9,]/g,''); (grupos[k]=grupos[k]||[]).push(s); });
+  const out={};
+  Object.values(grupos).forEach(g=>{ const nomes=[...new Set(g.map(s=>s.nome))]; if(nomes.length<2) return;
+    const num=n=>parseInt((n.match(/\d+/)||['0'])[0],10);
+    nomes.sort((a,b)=>(freq[a]-freq[b])||(num(b)-num(a))); const esc=nomes[0];
+    g.forEach(s=>{ if(s.nome!==esc&&!/^p\.a\./i.test(s.nome)) out[s.id]=esc; }); });
+  return out;
+}
 // Modelo que joga vários andares num pavimento só (ARQ do PINI: todo o tipo no "2º PAVIMENTO")
 // → reparte as peças do pavimento SOBRECARREGADO pela altura (base da caixa) contra a cota
 // (Elevation) de cada IfcBuildingStorey. Cota do IFC → Y do mundo por ajuste linear, usando
@@ -3378,7 +3398,8 @@ export async function indice4D(V){
     const x=V.modelos[mi]; if(!x||!x.model) continue;
     let cats={}; try{ cats=await x.model.getItemsOfCategories([new RegExp('^IFC'+_SEM_TIPO)])||{}; }catch(_){}
     const porCat={}; Object.entries(cats).forEach(([c,ids])=>{ const k=String(c).toUpperCase(); if(_ESPACIAL.has(k)||/TYPE$|STYLE$/.test(k)||!ids||!ids.length) return; porCat[k]=ids; });
-    const pavs={}; st.filter(s=>s.mi===mi).forEach(s=>{ (pavs[s.nome]=pavs[s.nome]||[]).push(...s.ids); });
+    const stm=st.filter(s=>s.mi===mi); let canon={}; try{ canon=await _nomesPorCota(x, stm); }catch(_){}
+    const pavs={}; stm.forEach(s=>{ const nm=canon[s.id]||s.nome; (pavs[nm]=pavs[nm]||[]).push(...s.ids); });
     let redist=0; try{ redist=await _redistribuiPorAltura(V, x, st.filter(s=>s.mi===mi), pavs); }catch(e){ console.warn('4D altura:', e); }
     out.push({ mi, doc:x.documentoId||null, nome:x.nome||'', disciplina:String(x.disciplina||'').toUpperCase(), revisao:x.revisao||'', porCat, pavs, redist });
   }
