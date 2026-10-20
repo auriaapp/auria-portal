@@ -185,6 +185,7 @@ async function carregar(){
   O.meds=rM.data||[]; O.base=rB.data?{nome:rB.data.nome,map:Object.fromEntries((rB.data.tarefas||[]).map(x=>[x.uid,x]))}:null;
   O.vinc={}; O.semTabela=!!rV.error; (rV.data||[]).forEach(v=>O.vinc[v.tarefa_uid]=v);
   O.construtora=rE.data&&rE.data.construtora_id;
+  O.PE=null; if(window.PavEquiv){ try{ O.PE=await PavEquiv.carregar(sb,E); O.PE.registrar('cronograma',[...new Set(O.T.map(t=>t.pav).filter(Boolean))]); }catch(e){ console.warn('pav equiv:',e); } }
   O.serv=SERV_PADRAO; O.servDaConstrutora=false;
   if(O.construtora&&!O.semTabela){ const rs=await sb.from('obra_4d_servico_auria').select('*').eq('construtora_id',O.construtora).order('ordem'); if(rs.data&&rs.data.length){ O.serv=rs.data; O.servDaConstrutora=true; } }
   O.pode=['eng_chefe','coord_campo'].includes(typeof segMeuNivel==='function'?segMeuNivel():'');
@@ -215,7 +216,13 @@ function seqEst(todos){ if(_seqEst) return; _seqEst=new Map();
   const l=todos.map(p=>_n(p).replace(/_\(p\.a.*$/,'').trim()).filter(n=>/^1o\s*pav$|^tipo\d+-\d+$/.test(n));
   const u=[...new Set(l)].sort((a,b)=>(/^1o/.test(a)?-1:/^1o/.test(b)?1:a.localeCompare(b,'pt',{numeric:true})));
   u.forEach((n,i)=>_seqEst.set(n,i+1)); }
-function pavsDe(t){ if(!O.idx) return []; const todos=[...new Set(O.idx.flatMap(m=>Object.keys(m.pavs)))];
+// pavimento pela FICHA (PavEquiv): cronograma e modelos apontam para o mesmo código
+function fonteDe(m){ return m.fonte||m.nome||m.doc||''; }
+function pavsFicha(t){ if(!O.PE||!t.pav) return null; const cod=O.PE.codigo('cronograma',t.pav); if(!cod) return null;
+  const out=[]; O.idx.forEach(m=>{ const nomes=Object.keys(m.pavs); nomes.forEach(n=>{ if(O.PE.codigo(fonteDe(m),n,nomes)===cod) out.push(n); }); });
+  return out.length?out:null; }
+function pavsDe(t){ if(!O.idx) return []; const pf=pavsFicha(t); if(pf) return pf;
+  const todos=[...new Set(O.idx.flatMap(m=>Object.keys(m.pavs)))];
   seqEst(todos);
   const ch=t.pav?chavePav(t.pav):null; if(ch){ const l=todos.filter(p=>chavePav(p)===ch); if(l.length) return l; }
   const alvo=_n(t.pav||''); const ex=todos.filter(p=>alvo&&_n(p).replace(/[^a-z0-9]/g,'')===alvo.replace(/[^a-z0-9]/g,'')); if(ex.length) return ex;
@@ -405,6 +412,7 @@ window.o4dToggle=async()=>{
   try{ await carregar(); B3.limpaIndice4D(F3D); O.idx=await B3.indice4D(F3D);
     const NAO_PECA=/^IFC(PROPERTY|COMPLEXPROPERTY|SIUNIT|DERIVEDUNIT|CONVERSIONBASEDUNIT|MONETARYUNIT|UNITASSIGNMENT|MATERIAL|REL|OWNERHISTORY|ELEMENTQUANTITY|QUANTITY|CLASSIFICATION|PRESENTATION|STYLEDITEM|SURFACESTYLE|APPLICATION|PERSON|ORGANIZATION|GROUP|ZONE|SYSTEM|ANNOTATION|GRID|OPENINGELEMENT|VIRTUALELEMENT|SPACE|DOCUMENT|APPROVAL|CONSTRAINT|TASK|RESOURCE|ACTOR)/;
     O.idx.forEach(m=>Object.keys(m.porCat).forEach(c=>{ if(NAO_PECA.test(c)) delete m.porCat[c]; }));
+    if(O.PE) O.idx.forEach(m=>{ const nomes=Object.keys(m.pavs); O.PE.registrar(fonteDe(m),nomes); });
     await resolverTudo(); }catch(e){ console.warn('4D:',e); p.innerHTML='<div class="sec" style="color:#C62828">Não foi possível montar o 4D: '+esc(e.message||e)+'</div>'; return; }
   const [a,z]=faixa(), sl=document.getElementById('o4dSl'); sl.min=a; sl.max=z; sl.value=Math.min(Math.max(HOJE,a),z);
   document.getElementById('o4dMk').innerHTML=[0,.25,.5,.75,1].map(f=>'<span>'+BR(Math.round(a+(z-a)*f))+'</span>').join('');
