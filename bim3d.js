@@ -3335,6 +3335,41 @@ export async function dimOrientadas(model, localId){
 //  por estado (a iniciar / em execução / atrasada / concluída).
 //  Os ajustes manuais são guardados por GlobalId (estável entre revisões).
 // ══════════════════════════════════════════════════════════════════════════
+// Modelo que joga vários andares num pavimento só (ARQ do PINI: todo o tipo no "2º PAVIMENTO")
+// → reparte as peças do pavimento SOBRECARREGADO pela altura (base da caixa) contra a cota
+// (Elevation) de cada IfcBuildingStorey. Cota do IFC → Y do mundo por ajuste linear, usando
+// os pavimentos que estão certos (mediana da base das peças de cada um). Pavimentos
+// "P.A." / "_(P.A…)" (subníveis de acabamento) não recebem peças.
+async function _redistribuiPorAltura(V, x, sts, pavs){
+  const cont=Object.entries(pavs).map(([n,l])=>[n,l.length]).filter(e=>e[1]>0);
+  if(cont.length<4) return 0;
+  const ord=cont.map(e=>e[1]).sort((a,b)=>a-b), med=ord[Math.floor(ord.length/2)];
+  const cheios=cont.filter(e=>e[1]>Math.max(2000, med*20)).map(e=>e[0]); if(!cheios.length) return 0;
+  // cota de cada storey
+  const elev={}; const ids=sts.map(s=>s.id);
+  for(let p=0;p<ids.length;p+=400){ let d=[]; try{ d=await x.model.getItemsData(ids.slice(p,p+400),{attributesDefault:true,relationsDefault:{attributes:false,relations:false}})||[]; }catch(_){}
+    d.forEach(o=>{ const lid=o&&o._localId&&o._localId.value; const e=o&&o.Elevation&&o.Elevation.value; if(lid!=null&&e!=null&&isFinite(+e)) elev[lid]=+e; }); }
+  const principal=s=>!/_\(p\.?a|^p\.a\./i.test(s.nome);
+  const base=async l=>{ const out=[]; for(let i=0;i<l.length;i+=3000){ let b=[]; try{ b=await x.model.getBoxes(l.slice(i,i+3000)); }catch(_){} (b||[]).forEach((bx,j)=>out.push([l[i+j], bx&&bx.min&&isFinite(bx.min.y)?bx.min.y:null])); } return out; };
+  // calibração: storeys certos (não cheios, com peças) → mediana da base
+  const pares=[];
+  for(const s of sts){ if(!principal(s)||cheios.includes(s.nome)||elev[s.id]==null||s.ids.length<5) continue;
+    const ys=(await base(s.ids.slice(0,200))).map(e=>e[1]).filter(v=>v!=null).sort((a,b)=>a-b); if(ys.length<5) continue;
+    pares.push([elev[s.id], ys[Math.floor(ys.length/2)]]); }
+  if(pares.length<3) return 0;
+  const n=pares.length, sx=pares.reduce((a,p)=>a+p[0],0), sy=pares.reduce((a,p)=>a+p[1],0), sxx=pares.reduce((a,p)=>a+p[0]*p[0],0), sxy=pares.reduce((a,p)=>a+p[0]*p[1],0);
+  const a=(n*sxy-sx*sy)/(n*sxx-sx*sx), b=(sy-a*sx)/n; if(!isFinite(a)||a<=0) return 0;
+  const niveis=sts.filter(s=>principal(s)&&elev[s.id]!=null).map(s=>({nome:s.nome,y:a*elev[s.id]+b})).sort((p,q)=>p.y-q.y);
+  if(niveis.length<3) return 0;
+  let mov=0;
+  for(const nome of cheios){ const l=pavs[nome]; const ficam=[];
+    for(const [id,y] of await base(l)){ if(y==null){ ficam.push(id); continue; }
+      let alvo=null; for(const nv of niveis){ if(nv.y<=y+0.3) alvo=nv; else break; }   // 30 cm: base da peça um pouco abaixo do piso
+      if(!alvo||alvo.nome===nome){ ficam.push(id); continue; }
+      (pavs[alvo.nome]=pavs[alvo.nome]||[]).push(id); mov++; }
+    pavs[nome]=ficam; }
+  return mov;
+}
 export async function indice4D(V){
   if(V._idx4d) return V._idx4d;
   const st=await _storeysMapa(V);
@@ -3344,7 +3379,8 @@ export async function indice4D(V){
     let cats={}; try{ cats=await x.model.getItemsOfCategories([new RegExp('^IFC'+_SEM_TIPO)])||{}; }catch(_){}
     const porCat={}; Object.entries(cats).forEach(([c,ids])=>{ const k=String(c).toUpperCase(); if(_ESPACIAL.has(k)||/TYPE$|STYLE$/.test(k)||!ids||!ids.length) return; porCat[k]=ids; });
     const pavs={}; st.filter(s=>s.mi===mi).forEach(s=>{ (pavs[s.nome]=pavs[s.nome]||[]).push(...s.ids); });
-    out.push({ mi, doc:x.documentoId||null, nome:x.nome||'', disciplina:String(x.disciplina||'').toUpperCase(), revisao:x.revisao||'', porCat, pavs });
+    let redist=0; try{ redist=await _redistribuiPorAltura(V, x, st.filter(s=>s.mi===mi), pavs); }catch(e){ console.warn('4D altura:', e); }
+    out.push({ mi, doc:x.documentoId||null, nome:x.nome||'', disciplina:String(x.disciplina||'').toUpperCase(), revisao:x.revisao||'', porCat, pavs, redist });
   }
   V._idx4d=out; return out;
 }
