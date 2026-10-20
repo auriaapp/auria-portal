@@ -279,6 +279,9 @@ function realEm(uid,n,t){ const l=medsDe(uid); if(l&&l.length){ let v=0; for(con
   const z=t.prog>=100&&t.fim!=null?Math.min(t.fim,HOJE):HOJE; if(n>=z) return t.prog; return t.prog*(n-t.ini+1)/Math.max(1,z-t.ini+1); }
 function estado(t,n){
   if(O.modo==='prev'){ const b=baseDe(t), a=b?b.ini:t.ini, z=b?b.fim:t.fim; if(a==null||n<a) return 'fut'; if(n>z) return 'ok'; return 'exe'; }
+  // depois de hoje não há medição: projeta pelo cronograma ATUAL (datas reprogramadas); atrasa se passar do fim da base
+  if(n>HOJE){ if(t.prog>=100) return 'ok'; const a=Math.max(t.ini==null?n:t.ini,HOJE), z=t.fim; if(z!=null&&n>z) return 'ok'; if(n<a&&t.prog<=0) return 'fut';
+    const bz=(baseDe(t)||{}).fim; return bz!=null&&n>bz?'atr':'exe'; }
   const p=(n>=HOJE)?Math.max(realEm(t.uid,n,t),t.prog):realEm(t.uid,n,t), pv=prevEm(t,n);
   if(p>=100) return 'ok';
   if(p<=0&&pv<=0) return 'fut';
