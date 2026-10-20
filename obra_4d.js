@@ -305,7 +305,9 @@ async function pintar(){
       if(l.every(x=>x.s==='fut')){ if(!O.conf) alvo.set(k,'fut'); return; }
       // parte concluída, parte por vir: entre etapas (ex.: concretada, aguardando protensão = escorado)
       const ult=l.filter(x=>x.s==='ok').sort((a,b)=>(b.t.fim||0)-(a.t.fim||0))[0];
-      add(ult&&ult.et?parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16):C4.exe,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
+      if(ult&&ult.et) return add(parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16),k);
+      // serviço concluído e o próximo ainda não começou (ex.: estrutura pronta, alvenaria por vir): já está pronta
+      if(O.conc==='verde') add(C4.ok,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
     // Peça sem tarefa ainda não tem execução prevista: segue "Futuras" (fantasma/oculta), como as a iniciar.
     // Na Conferência ela fica em magenta (abaixo), para achar o que falta ligar.
     const st=O._semT||(O._semT=semTarefa()); Object.entries(st).forEach(([mi,ids])=>ids.forEach(id=>alvo.set(mi+':'+id,O.conf?0xFF00FF:'fut')));
