@@ -17,7 +17,15 @@ const SERV_PADRAO=[
    // Etapas: tarefas "Cimbramento 5º pav.", "Concretagem 5º pav.", "Protensão 5º pav." usam as MESMAS peças.
    // A peça mostra a cor da etapa em execução; entre a concretagem e a protensão fica "Escorado".
    etapas:[{codigo:'CIM',nome:'Cimbramento',cor:'#3B82F6'},{codigo:'CON',nome:'Concretagem',cor:'#E8C21A',depois:{nome:'Escorado',cor:'#8B5CF6'}},{codigo:'PRO',nome:'Protensão',cor:'#06B6D4'}]},
-  {codigo:'ALV',nome:'Alvenaria',disciplinas:['ALV','ARQ'],classes:['IFCWALL','IFCWALLSTANDARDCASE']},
+  // paredes do ARQ modeladas por camada: o NOME DO TIPO diz qual serviço (bloco, gesso, emboço…)
+  {codigo:'ALC',nome:'Alvenarias de Bloco Cerâmico',disciplinas:['ARQ','ALV'],classes:['IFCWALL','IFCWALLSTANDARDCASE'],tipos:['BLOCO CERAMICO','BLOCO CONCRETO']},
+  {codigo:'ALG',nome:'Alvenarias de Bloco de Gesso',disciplinas:['ARQ','ALV'],classes:['IFCWALL','IFCWALLSTANDARDCASE'],tipos:['BLOCO DE GESSO']},
+  {codigo:'EMB',nome:'Revestimento Argamassado',disciplinas:['ARQ'],classes:['IFCWALL','IFCWALLSTANDARDCASE'],tipos:['EMBOCO']},
+  {codigo:'PVD',nome:'Pele de Vidro',disciplinas:['ARQ'],classes:['IFCCURTAINWALL','IFCPLATE','IFCMEMBER']},
+  {codigo:'GCP',nome:'Guarda-Corpo',disciplinas:['ARQ'],classes:['IFCRAILING']},
+  {codigo:'JAN',nome:'Portas e Janelas de Alumínio',disciplinas:['ARQ'],classes:['IFCWINDOW']},
+  {codigo:'PMD',nome:'Portas de Madeira',disciplinas:['ARQ'],classes:['IFCDOOR']},
+  {codigo:'ALV',nome:'Alvenaria',disciplinas:['ALV','ARQ'],classes:['IFCWALL','IFCWALLSTANDARDCASE'],tipos:['ALVENARIA','BLOCO']},
   {codigo:'ESQ',nome:'Esquadrias',disciplinas:['ARQ'],classes:['IFCDOOR','IFCWINDOW']},
   {codigo:'FAC',nome:'Fachada',disciplinas:['ARQ'],classes:['IFCCURTAINWALL','IFCPLATE','IFCMEMBER']},
   {codigo:'REV',nome:'Revestimentos',disciplinas:['ARQ'],classes:['IFCCOVERING']},
@@ -184,7 +192,30 @@ function servicoDe(t){ const n=_n(t.nome);
   for(const s of O.serv) for(const e of (s.etapas||[])) if(n.startsWith(_n(e.nome))) return {...s,_etapa:e.codigo};
   return O.serv.find(s=>n.startsWith(_n(s.nome))||n.startsWith(_n(s.codigo)+' ')||n.includes(_n(s.nome))); }
 function etapaDe(cod,etp){ const s=O.serv.find(x=>x.codigo===cod); return s&&etp?(s.etapas||[]).find(e=>e.codigo===etp)||null:null; }
+// chave canônica do pavimento: cronograma ("Tipo 10", "Subsolo 03", "Sobressolo 01") e IFC
+// ("10º PAVIMENTO", "SUBSOLO 3_(P.A_0,07)", "SOBRE1", "TIPO1-004") caem na mesma chave.
+// Tipo NN: ARQ numera direto (NNº PAVIMENTO); EST usa 1oPAV + TIPOx-nnn em sequência.
+let _seqEst=null;
+function chavePav(s){ let n=_n(s).replace(/_\(p\.a.*$/,'').trim();
+  let m;
+  if((m=n.match(/^tipo\s*0*(\d+)$/))) return 'pav'+(+m[1]);
+  if((m=n.match(/^0*(\d+)\s*(º|o|°)?\s*pav(imento)?$/))) return 'pav'+(+m[1]);
+  if(_seqEst&&_seqEst.has(n)) return 'pav'+_seqEst.get(n);
+  if((m=n.match(/^subsolo\s*0*(\d+)$/))) return 'ss'+(+m[1]);
+  if((m=n.match(/^sobre(ssolo)?\s*0*(\d+)$/))) return 'so'+(+m[2]);
+  if(/^terreo/.test(n)) return 'terreo';
+  if(/^lazer/.test(n)) return 'lazer';
+  if(/^rooftop/.test(n)) return 'rooftop';
+  if(/^heliponto/.test(n)) return 'heliponto';
+  if(/^(casa de maquina|cmaq|cxdagua|fundo caixa)/.test(n)) return 'cmaq';
+  return null; }
+function seqEst(todos){ if(_seqEst) return; _seqEst=new Map();
+  const l=todos.map(p=>_n(p).replace(/_\(p\.a.*$/,'').trim()).filter(n=>/^1o\s*pav$|^tipo\d+-\d+$/.test(n));
+  const u=[...new Set(l)].sort((a,b)=>(/^1o/.test(a)?-1:/^1o/.test(b)?1:a.localeCompare(b,'pt',{numeric:true})));
+  u.forEach((n,i)=>_seqEst.set(n,i+1)); }
 function pavsDe(t){ if(!O.idx) return []; const todos=[...new Set(O.idx.flatMap(m=>Object.keys(m.pavs)))];
+  seqEst(todos);
+  const ch=t.pav?chavePav(t.pav):null; if(ch){ const l=todos.filter(p=>chavePav(p)===ch); if(l.length) return l; }
   const alvo=_n(t.pav||''); const ex=todos.filter(p=>alvo&&_n(p).replace(/[^a-z0-9]/g,'')===alvo.replace(/[^a-z0-9]/g,'')); if(ex.length) return ex;
   const fonte=alvo||_n(t.nome);
   const num=(fonte.match(/(\d+)\s*(º|o|°)?\s*(pav|andar)/)||fonte.match(/(?:pav\w*|andar|t)\s*0?(\d+)/)||[])[1];
@@ -193,10 +224,11 @@ function pavsDe(t){ if(!O.idx) return []; const todos=[...new Set(O.idx.flatMap(
     if(pal==='terreo') return /terreo/.test(pn); if(pal==='cobert') return /cobert/.test(pn);
     if(pal==='subsolo'){ const ns=(fonte.match(/(?:subsolo|ss)\s*0?(\d+)/)||[])[1]; return /subsolo|ss/.test(pn)&&(!ns||pd===ns); }
     return num&&pd&&parseInt(pd,10)===parseInt(num,10)&&!/subsolo|ss/.test(pn); }); }
-function regraDe(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
-  const s=servicoDe(t); if(!s) return null; return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pavsDe(t),classes:s.classes||[],adicionados:[],removidos:[]}; }
+function regraDe(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
+  const s=servicoDe(t); if(!s) return null; return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pavsDe(t),classes:s.classes||[],tipos:s.tipos||[],adicionados:[],removidos:[]}; }
 async function resolverTudo(){
   O.porT={};
+  const clsT=new Set(); O.serv.forEach(s=>{ if((s.tipos||[]).length) (s.classes||[]).forEach(c=>clsT.add(c)); }); if(clsT.size&&B3.nomes4D) await B3.nomes4D(F3D,O.idx,[...clsT]);
   for(const t of O.T){ if(t.fase) continue; const r=regraDe(t); if(!r){ O.porT[t.uid]={}; continue; }
     const pm=B3.resolverRegra4D(O.idx,r);
     const doMi=doc=>O.idx.find(m=>m.doc===doc);

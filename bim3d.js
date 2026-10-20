@@ -3360,9 +3360,19 @@ export function resolverRegra4D(idx, regra){
     let ids=[]; cs.forEach(c=>{ const l=m.porCat[c]; if(l) ids=ids.concat(l); });
     if(!ids.length) return;
     if(ps.size){ const ok=new Set(); ps.forEach(p=>(m.pavs[p]||[]).forEach(i=>ok.add(i))); ids=ids.filter(i=>ok.has(i)); }
+    // tipos: trechos do nome da peça/tipo (ex.: "BLOCO CERAMICO") — precisa de nomes4D antes
+    if((regra.tipos||[]).length){ const ts=regra.tipos.map(_n4); const nm=m.nomes||{}; ids=ids.filter(i=>{ const n=nm[i]; return n&&ts.some(t=>n.includes(t)); }); }
     if(ids.length) porMod[m.mi]=[...new Set(ids)];
   });
   return porMod;
+}
+const _n4=s=>String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+// Nome (Name/ObjectType) normalizado das peças das classes pedidas, guardado em idx[*].nomes (uma vez por classe).
+export async function nomes4D(V, idx, classes){
+  for(const m of idx){ const x=V.modelos[m.mi]; if(!x||!x.model) continue; m.nomes=m.nomes||{}; m._nomesCls=m._nomesCls||new Set();
+    for(const c of (classes||[]).map(c=>String(c).toUpperCase())){ if(m._nomesCls.has(c)) continue; m._nomesCls.add(c); const ids=m.porCat[c]; if(!ids||!ids.length) continue;
+      for(let i=0;i<ids.length;i+=4000){ const fat=ids.slice(i,i+4000); let d=[]; try{ d=await x.model.getItemsData(fat,{attributesDefault:false,attributes:['Name','ObjectType'],relationsDefault:{attributes:false,relations:false}})||[]; }catch(_){}
+        d.forEach((o,j)=>{ const v=o&&((o.Name&&o.Name.value)||(o.ObjectType&&o.ObjectType.value)); if(v) m.nomes[fat[j]]=_n4(v); }); } } }
 }
 export async function guids4D(V, mi, ids){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) return [];
   try{ if(x.model.getGuidsByLocalIds) return await x.model.getGuidsByLocalIds(ids); }catch(_){}
