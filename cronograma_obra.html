@@ -427,12 +427,14 @@ function status(t){ if(t.prog>=100) return ['ok','Concluída']; if(t.fim!=null&&
 function atrasoBase(t){ const b=baseDe(t); return (b&&t.fim!=null&&b.fim!=null)?(t.fim>=b.fim?uteisEntre(b.fim+1,t.fim):-uteisEntre(t.fim+1,b.fim)):null; }
 
 // ══════════════ carga ══════════════
+// a API devolve no máximo 1000 linhas por consulta: busca em páginas até acabar
+async function tudoPaginado(q){ const out=[]; for(let a=0;;a+=1000){ const r=await q().range(a,a+999); if(r.error) return {data:out.length?out:null,error:r.error}; out.push(...(r.data||[])); if(!r.data||r.data.length<1000) return {data:out,error:null}; } }
 async function carregar(){
   const [rT,rC,rB,rM]=await Promise.all([
-    sb.from('obra_crono_tarefa_auria').select('*').eq('empreendimento_id',EMP_ID).order('ordem'),
+    tudoPaginado(()=>sb.from('obra_crono_tarefa_auria').select('*').eq('empreendimento_id',EMP_ID).order('ordem')),
     sb.from('obra_crono_auria').select('*').eq('empreendimento_id',EMP_ID).maybeSingle(),
     sb.from('obra_crono_base_auria').select('*').eq('empreendimento_id',EMP_ID).order('criado_em',{ascending:false}),
-    sb.from('obra_crono_medicao_auria').select('*').eq('empreendimento_id',EMP_ID).order('data',{ascending:false}).order('lancado_em',{ascending:false})]);
+    tudoPaginado(()=>sb.from('obra_crono_medicao_auria').select('*').eq('empreendimento_id',EMP_ID).order('data',{ascending:false}).order('lancado_em',{ascending:false}))]);
   if(rT.error){ toast('Erro ao ler o cronograma: '+rT.error.message,true); }
   CAB=rC.data||{versao:0}; BASES=rB.data||[]; MEDS=rM.data||[];
   { const rc=await sb.from('obra_crono_comentario_auria').select('*').eq('empreendimento_id',EMP_ID).order('criado_em'); COMS=rc.error?null:(rc.data||[]); }   // null = tabela ainda não criada

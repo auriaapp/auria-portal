@@ -171,11 +171,13 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(()=>{ if(O.on) adapta(); 
 function marcaSg(){ [['o4dSgModo','modo'],['o4dSgFut','fut'],['o4dSgConc','conc'],['o4dSgPasso','passo']].forEach(([id,k])=>document.querySelectorAll('#'+id+' span').forEach(x=>x.classList.toggle('on',x.dataset.v===String(O[k])))); }
 
 // ── carga ──
+// a API devolve no máximo 1000 linhas por consulta: busca em páginas até acabar
+async function tudoPaginado(q){ const out=[]; for(let a=0;;a+=1000){ const r=await q().range(a,a+999); if(r.error) return {data:out.length?out:null,error:r.error}; out.push(...(r.data||[])); if(!r.data||r.data.length<1000) return {data:out,error:null}; } }
 async function carregar(){
   const E=EMP.id;
   const [rT,rM,rB,rV,rE]=await Promise.all([
-    sb.from('obra_crono_tarefa_auria').select('*').eq('empreendimento_id',E).order('ordem'),
-    sb.from('obra_crono_medicao_auria').select('tarefa_uid,data,percentual').eq('empreendimento_id',E),
+    tudoPaginado(()=>sb.from('obra_crono_tarefa_auria').select('*').eq('empreendimento_id',E).order('ordem')),
+    tudoPaginado(()=>sb.from('obra_crono_medicao_auria').select('tarefa_uid,data,percentual').eq('empreendimento_id',E)),
     sb.from('obra_crono_base_auria').select('nome,tarefas').eq('empreendimento_id',E).eq('ativa',true).maybeSingle(),
     sb.from('obra_4d_vinculo_auria').select('*').eq('empreendimento_id',E),
     sb.from('empreendimentos_auria').select('construtora_id').eq('id',E).maybeSingle()]);
