@@ -265,7 +265,13 @@ async function resolverTudo(){
     O.porT[t.uid]=pm; }
   montaPecas();
 }
-function montaPecas(){ const M=new Map(); O.T.forEach((t,ti)=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm) return; for(const mi in pm) for(const id of pm[mi]){ const k=mi+':'+id; let l=M.get(k); if(!l) M.set(k,l=[]); l.push(ti); } }); O.pecas=[...M]; }
+// peça → tarefas do serviço que a CONSTRÓI (o que começa primeiro entre os ligados a ela).
+// Outros serviços que tocam a mesma peça (acabamento, prumada, fachada…) não mudam a cor dela.
+function montaPecas(){ const M=new Map(); O.T.forEach((t,ti)=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm) return; for(const mi in pm) for(const id of pm[mi]){ const k=mi+':'+id; let l=M.get(k); if(!l) M.set(k,l=[]); l.push(ti); } });
+  const ini=t=>{ const b=baseDe(t); return b&&b.ini!=null?b.ini:(t.ini==null?Infinity:t.ini); };
+  const out=[]; M.forEach((tis,k)=>{ if(tis.length>1){ const porS=new Map(); tis.forEach(ti=>{ const r=O.regra[O.T[ti].uid]; const sv=(r&&r.servico)||'?'; let g=porS.get(sv); if(!g) porS.set(sv,g={a:Infinity,l:[]}); g.l.push(ti); g.a=Math.min(g.a,ini(O.T[ti])); });
+      if(porS.size>1){ let best=null; porS.forEach(g=>{ if(!best||g.a<best.a) best=g; }); tis=best.l; } }
+    out.push([k,tis]); }); O.pecas=out; }
 const nPecas=pm=>Object.values(pm||{}).reduce((a,l)=>a+l.length,0);
 
 // ── estado no dia ──
@@ -308,9 +314,9 @@ async function pintar(){
       if(l.every(x=>x.s==='fut')){ if(!O.conf) alvo.set(k,'fut'); return; }
       // parte concluída, parte por vir: entre etapas (ex.: concretada, aguardando protensão = escorado)
       const ult=l.filter(x=>x.s==='ok').sort((a,b)=>(b.t.fim||0)-(a.t.fim||0))[0];
-      if(ult&&ult.et) return add(parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16),k);
-      // serviço concluído e o próximo ainda não começou (ex.: estrutura pronta, alvenaria por vir): já está pronta
-      if(O.conc==='verde') add(C4.ok,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
+      // parte das tarefas da peça pronta e parte por vir: ainda em execução (só fica verde quando todas terminam —
+      // assim a cor só avança: cinza → amarelo/vermelho → verde, nunca volta)
+      add(ult&&ult.et?parseInt((ult.et.depois?ult.et.depois.cor:ult.et.cor).slice(1),16):C4.exe,k); });   // sem 'depois': mantém a cor da etapa (ex.: cimbrado aguardando concretagem)
     // Peça sem tarefa ainda não tem execução prevista: segue "Futuras" (fantasma/oculta), como as a iniciar.
     // Na Conferência ela fica em magenta (abaixo), para achar o que falta ligar.
     const st=O._semT||(O._semT=semTarefa()); Object.entries(st).forEach(([mi,ids])=>ids.forEach(id=>alvo.set(mi+':'+id,O.conf?0xFF00FF:'fut')));
