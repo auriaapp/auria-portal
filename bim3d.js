@@ -3355,39 +3355,49 @@ async function _nomesPorCota(x, sts){
     g.forEach(s=>{ if(s.nome!==esc&&!/^p\.a\./i.test(s.nome)) out[s.id]=esc; }); });
   return out;
 }
-// Modelo que joga vários andares num pavimento só (ARQ do PINI: todo o tipo no "2º PAVIMENTO")
-// → reparte as peças do pavimento SOBRECARREGADO pela altura (base da caixa) contra a cota
-// (Elevation) de cada IfcBuildingStorey. Cota do IFC → Y do mundo por ajuste linear, usando
-// os pavimentos que estão certos (mediana da base das peças de cada um). Pavimentos
-// "P.A." / "_(P.A…)" (subníveis de acabamento) não recebem peças.
-async function _redistribuiPorAltura(V, x, sts, pavs){
-  const cont=Object.entries(pavs).map(([n,l])=>[n,l.length]).filter(e=>e[1]>0);
-  if(cont.length<4) return 0;
-  const ord=cont.map(e=>e[1]).sort((a,b)=>a-b), med=ord[Math.floor(ord.length/2)];
-  const cheios=cont.filter(e=>e[1]>Math.max(2000, med*20)).map(e=>e[0]); if(!cheios.length) return 0;
-  // cota de cada storey
+// Peças no pavimento ERRADO ou SEM pavimento (ARQ do PINI: pele de vidro, perfis, portas e
+// guarda-corpos soltos; o tipo inteiro lançado no 2º) → decide pela ALTURA: base da caixa da
+// peça contra a cota (Elevation) dos pavimentos. Cota do IFC → Y do mundo por ajuste linear,
+// calibrado com a mediana da base das peças de cada pavimento. Só mexe quando a peça está
+// sem pavimento ou a mais de 2,5 m do nível do seu pavimento (não troca peça bem colocada).
+// Subníveis "_(P.A…)" e "P.A." não recebem peças.
+const _CLS_ANDAR=/^IFC(WALL|CURTAINWALL|MEMBER|PLATE|DOOR|WINDOW|RAILING|COVERING|SLAB|STAIR|COLUMN|BEAM|BUILDINGELEMENTPROXY|FURNISHING|FLOWTERMINAL)/;
+async function _redistribuiPorAltura(V, x, sts, pavs, canon, porCat){
+  canon=canon||{};
   const elev={}; const ids=sts.map(s=>s.id);
   for(let p=0;p<ids.length;p+=400){ let d=[]; try{ d=await x.model.getItemsData(ids.slice(p,p+400),{attributesDefault:true,relationsDefault:{attributes:false,relations:false}})||[]; }catch(_){}
     d.forEach(o=>{ const lid=o&&o._localId&&o._localId.value; const e=o&&o.Elevation&&o.Elevation.value; if(lid!=null&&e!=null&&isFinite(+e)) elev[lid]=+e; }); }
-  const principal=s=>!/_\(p\.?a|^p\.a\./i.test(s.nome);
-  const base=async l=>{ const out=[]; for(let i=0;i<l.length;i+=3000){ let b=[]; try{ b=await x.model.getBoxes(l.slice(i,i+3000)); }catch(_){} (b||[]).forEach((bx,j)=>out.push([l[i+j], bx&&bx.min&&isFinite(bx.min.y)?bx.min.y:null])); } return out; };
-  // calibração: storeys certos (não cheios, com peças) → mediana da base
+  const nomeDe=s=>canon[s.id]||s.nome;
+  const principal=s=>!/_\(p\.?a|^p\.a\./i.test(nomeDe(s));
+  const caixa=x.model.box&&!x.model.box.isEmpty()?x.model.box:null;
+  const base=async l=>{ const out=new Map(); for(let i=0;i<l.length;i+=3000){ let b=[]; try{ b=await x.model.getBoxes(l.slice(i,i+3000)); }catch(_){}
+      (b||[]).forEach((bx,j)=>{ if(!(bx&&bx.min&&isFinite(bx.min.y))) return; if(caixa&&(bx.min.y<caixa.min.y-1||bx.min.y>caixa.max.y+1)) return; out.set(l[i+j],bx.min.y); }); } return out; };
+  // calibração por pavimento principal (amostra de 150 peças)
   const pares=[];
-  for(const s of sts){ if(!principal(s)||cheios.includes(s.nome)||elev[s.id]==null||s.ids.length<5) continue;
-    const ys=(await base(s.ids.slice(0,200))).map(e=>e[1]).filter(v=>v!=null).sort((a,b)=>a-b); if(ys.length<5) continue;
+  for(const s of sts){ if(!principal(s)||elev[s.id]==null||s.ids.length<5) continue;
+    const ys=[...(await base(s.ids.slice(0,150))).values()].sort((a,b)=>a-b); if(ys.length<5) continue;
     pares.push([elev[s.id], ys[Math.floor(ys.length/2)]]); }
   if(pares.length<3) return 0;
-  const n=pares.length, sx=pares.reduce((a,p)=>a+p[0],0), sy=pares.reduce((a,p)=>a+p[1],0), sxx=pares.reduce((a,p)=>a+p[0]*p[0],0), sxy=pares.reduce((a,p)=>a+p[0]*p[1],0);
-  const a=(n*sxy-sx*sy)/(n*sxx-sx*sx), b=(sy-a*sx)/n; if(!isFinite(a)||a<=0) return 0;
-  const niveis=sts.filter(s=>principal(s)&&elev[s.id]!=null).map(s=>({nome:s.nome,y:a*elev[s.id]+b})).sort((p,q)=>p.y-q.y);
-  if(niveis.length<3) return 0;
-  let mov=0;
-  for(const nome of cheios){ const l=pavs[nome]; const ficam=[];
-    for(const [id,y] of await base(l)){ if(y==null){ ficam.push(id); continue; }
-      let alvo=null; for(const nv of niveis){ if(nv.y<=y+0.3) alvo=nv; else break; }   // 30 cm: base da peça um pouco abaixo do piso
-      if(!alvo||alvo.nome===nome){ ficam.push(id); continue; }
-      (pavs[alvo.nome]=pavs[alvo.nome]||[]).push(id); mov++; }
-    pavs[nome]=ficam; }
+  // ajuste robusto: mediana dos resíduos descarta pavimentos com peças erradas
+  const fit=P=>{ const n=P.length, sx=P.reduce((a,p)=>a+p[0],0), sy=P.reduce((a,p)=>a+p[1],0), sxx=P.reduce((a,p)=>a+p[0]*p[0],0), sxy=P.reduce((a,p)=>a+p[0]*p[1],0); const a=(n*sxy-sx*sy)/(n*sxx-sx*sx); return [a,(sy-a*sx)/n]; };
+  let [a,b]=fit(pares); const ok=pares.filter(p=>Math.abs(a*p[0]+b-p[1])<1.0); if(ok.length>=3) [a,b]=fit(ok);
+  if(!isFinite(a)||a<=0) return 0;
+  const vist=new Set(); const niveis=[];
+  sts.filter(s=>principal(s)&&elev[s.id]!=null).forEach(s=>{ const nm=nomeDe(s); if(vist.has(nm)) return; vist.add(nm); niveis.push({nome:nm,y:a*elev[s.id]+b}); });
+  niveis.sort((p,q)=>p.y-q.y); if(niveis.length<3) return 0;
+  const yDe={}; niveis.forEach(nv=>yDe[nv.nome]=nv.y);
+  const nivelDe=y=>{ let alvo=null; for(const nv of niveis){ if(nv.y<=y+0.3) alvo=nv; else break; } return alvo; };   // 30 cm: base um pouco abaixo do piso
+  // onde cada peça está hoje (nível principal do seu pavimento; subnível conta como o principal)
+  const atual=new Map(); Object.entries(pavs).forEach(([nm,l])=>{ const pr=nm.replace(/_\(p\.?a.*$/i,''); l.forEach(id=>atual.set(id,pr)); });
+  const cand=[]; Object.entries(porCat||{}).forEach(([c,l])=>{ if(_CLS_ANDAR.test(c)) l.forEach(id=>cand.push(id)); });
+  const ys=await base([...new Set(cand)]);
+  let mov=0; const tira=new Map();
+  ys.forEach((y,id)=>{ const cur=atual.get(id); const curY=cur!=null?yDe[cur]:null;
+    if(cur!=null&&(curY==null||Math.abs(y-curY)<2.5)) return;            // bem colocada (ou pavimento sem cota)
+    const nv=nivelDe(y); if(!nv||nv.nome===cur) return;
+    if(cur!=null){ (tira.get(cur)||tira.set(cur,new Set()).get(cur)).add(id); }
+    (pavs[nv.nome]=pavs[nv.nome]||[]).push(id); mov++; });
+  if(tira.size) Object.keys(pavs).forEach(nm=>{ const pr=nm.replace(/_\(p\.?a.*$/i,''); const t=tira.get(pr); if(t) pavs[nm]=pavs[nm].filter(id=>!t.has(id)); });
   return mov;
 }
 export async function indice4D(V){
@@ -3400,7 +3410,7 @@ export async function indice4D(V){
     const porCat={}; Object.entries(cats).forEach(([c,ids])=>{ const k=String(c).toUpperCase(); if(_ESPACIAL.has(k)||/TYPE$|STYLE$/.test(k)||!ids||!ids.length) return; porCat[k]=ids; });
     const stm=st.filter(s=>s.mi===mi); let canon={}; try{ canon=await _nomesPorCota(x, stm); }catch(_){}
     const pavs={}; stm.forEach(s=>{ const nm=canon[s.id]||s.nome; (pavs[nm]=pavs[nm]||[]).push(...s.ids); });
-    let redist=0; try{ redist=await _redistribuiPorAltura(V, x, st.filter(s=>s.mi===mi), pavs); }catch(e){ console.warn('4D altura:', e); }
+    let redist=0; try{ redist=await _redistribuiPorAltura(V, x, stm, pavs, canon, porCat); }catch(e){ console.warn('4D altura:', e); }
     out.push({ mi, doc:x.documentoId||null, nome:x.nome||'', disciplina:String(x.disciplina||'').toUpperCase(), revisao:x.revisao||'', porCat, pavs, redist });
   }
   V._idx4d=out; return out;
