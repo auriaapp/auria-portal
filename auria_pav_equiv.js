@@ -43,13 +43,13 @@
     const ficha=(rf.data||[]).filter(p=>p.tipo!=='grupo');
     const porChave=new Map(); ficha.forEach(p=>{ const k=chave(p.nome)||chave(p.codigo); if(k&&!porChave.has(k)) porChave.set(k,p.codigo); });
     const salvo=new Map(); (re.data||[]).forEach(r=>salvo.set(r.fonte+'\u0001'+r.nome,r));
-    const seqs=new Map();
+    const seqs=new Map(), memo=new Map();
     const PE={ ficha, semTabela:!!re.error, salvo,
       sugerir(fonte,nome,todos){ let seq=null; if(todos){ if(!seqs.has(fonte)) seqs.set(fonte,seqEstrutural(todos)); seq=seqs.get(fonte); }
         const k=chave(nome,seq); if(k&&porChave.has(k)) return porChave.get(k);
         const c=ficha.find(p=>_n(p.codigo)===limpa(nome)||_n(p.nome)===limpa(nome)); return c?c.codigo:null; },
       // código da ficha: o que foi conferido/registrado; senão a sugestão
-      codigo(fonte,nome,todos){ const r=salvo.get(fonte+'\u0001'+nome); if(r) return r.pavimento||null; return PE.sugerir(fonte,nome,todos); },
+      codigo(fonte,nome,todos){ const k=fonte+'\u0001'+nome; const r=salvo.get(k); if(r) return r.pavimento||null; if(memo.has(k)) return memo.get(k); const c=PE.sugerir(fonte,nome,todos); memo.set(k,c); return c; },
       nomeDe(cod){ const p=ficha.find(x=>x.codigo===cod); return p?p.nome:cod; },
       async registrar(fonte,nomes){ if(PE.semTabela||!fonte) return 0; const novos=[...new Set(nomes||[])].filter(n=>n&&!salvo.has(fonte+'\u0001'+n));
         if(!novos.length) return 0; const itens=novos.map(n=>({nome:n,pavimento:PE.sugerir(fonte,n,nomes)||''}));

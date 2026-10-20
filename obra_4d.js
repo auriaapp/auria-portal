@@ -234,7 +234,11 @@ function fonteDe(m){ return m.fonte||m.nome||m.doc||''; }
 function pavsFicha(t){ if(!O.PE||!t.pav) return null; const cod=O.PE.codigo('cronograma',t.pav); if(!cod) return null;
   const out=[]; O.idx.forEach(m=>{ const nomes=Object.keys(m.pavs); nomes.forEach(n=>{ if(O.PE.codigo(fonteDe(m),n,nomes)===cod) out.push(n); }); });
   return out.length?out:null; }
-function pavsDe(t){ if(!O.idx) return []; const pf=pavsFicha(t); if(pf) return pf;
+function pavsFaixa(t){ const m=_n(t.nome).match(/pav\w*\.?\s*0*(\d+)\s*(?:a|ao|-)\s*pav\w*\.?\s*0*(\d+)/); if(!m||!O.PE) return null;
+  const a=+m[1], z=+m[2]; if(!(a>0&&z>=a&&z-a<80)) return null; const out=new Set();
+  for(let i=a;i<=z;i++){ const cod=O.PE.codigo('cronograma','Tipo '+String(i).padStart(2,'0')); if(!cod) continue; O.idx.forEach(mm=>{ const nomes=Object.keys(mm.pavs); nomes.forEach(n=>{ if(O.PE.codigo(fonteDe(mm),n,nomes)===cod) out.add(n); }); }); }
+  return out.size?[...out]:null; }
+function pavsDe(t){ if(!O.idx) return []; const pfx=pavsFaixa(t); if(pfx) return pfx; const pf=pavsFicha(t); if(pf) return pf;
   const todos=[...new Set(O.idx.flatMap(m=>Object.keys(m.pavs)))];
   seqEst(todos);
   const ch=t.pav?chavePav(t.pav):null; if(ch){ const l=todos.filter(p=>chavePav(p)===ch); if(l.length) return l; }
@@ -248,7 +252,8 @@ function pavsDe(t){ if(!O.idx) return []; const pf=pavsFicha(t); if(pf) return p
     return num&&pd&&parseInt(pd,10)===parseInt(num,10)&&!/subsolo|ss/.test(pn); }); }
 function regraDe(t){ O.regra=O.regra||{}; if(t.uid in O.regra) return O.regra[t.uid]; return (O.regra[t.uid]=regraCalc(t)); }
 function regraCalc(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
-  const s=servicoDe(t); if(!s) return null; return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pavsDe(t),classes:s.classes||[],tipos:s.tipos||[],adicionados:[],removidos:[]}; }
+  const s=servicoDe(t); if(!s) return null; const pv=pavsDe(t); if(!pv.length) return null;   // sem pavimento que case: não liga ao modelo inteiro
+  return {salva:false,servico:s.codigo,etapa:s._etapa||'',disciplinas:s.disciplinas||[],pavimentos:pv,classes:s.classes||[],tipos:s.tipos||[],adicionados:[],removidos:[]}; }
 async function resolverTudo(){
   O.porT={}; O.regra={}; O._semT=null; O._legOk=false;
   const clsT=new Set(); O.serv.forEach(s=>{ if((s.tipos||[]).length) (s.classes||[]).forEach(c=>clsT.add(c)); }); if(clsT.size&&B3.nomes4D) await B3.nomes4D(F3D,O.idx,[...clsT]);
@@ -258,7 +263,9 @@ async function resolverTudo(){
     for(const a of (r.adicionados||[])){ const m=doMi(a.doc); if(!m) continue; const ids=await B3.idsDeGuids4D(F3D,m.mi,[a.guid]); if(ids.length){ pm[m.mi]=[...new Set((pm[m.mi]||[]).concat(ids))]; } }
     for(const a of (r.removidos||[])){ const m=doMi(a.doc); if(!m||!pm[m.mi]) continue; const ids=new Set(await B3.idsDeGuids4D(F3D,m.mi,[a.guid])); pm[m.mi]=pm[m.mi].filter(i=>!ids.has(i)); }
     O.porT[t.uid]=pm; }
+  montaPecas();
 }
+function montaPecas(){ const M=new Map(); O.T.forEach((t,ti)=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm) return; for(const mi in pm) for(const id of pm[mi]){ const k=mi+':'+id; let l=M.get(k); if(!l) M.set(k,l=[]); l.push(ti); } }); O.pecas=[...M]; }
 const nPecas=pm=>Object.values(pm||{}).reduce((a,l)=>a+l.length,0);
 
 // ── estado no dia ──
@@ -285,10 +292,10 @@ let _pintando=false, _pend=false;
 async function pintar(){
   if(!O.on||!F3D) return; if(_pintando){ _pend=true; return; } _pintando=true;
   try{
-    const cnt={fut:0,exe:0,atr:0,ok:0}; const P=new Map();   // "mi:id" → [{s, t, etapa}]
-    O.T.forEach(t=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm||!nPecas(pm)) return; const s=estado(t,O.n); cnt[s]++;
-      const r=regraDe(t)||{}, et=etapaDe(r.servico,r.etapa);
-      Object.entries(pm).forEach(([mi,ids])=>ids.forEach(id=>{ const k=mi+':'+id; let l=P.get(k); if(!l) P.set(k,l=[]); l.push({s,t,et}); })); });
+    const cnt={fut:0,exe:0,atr:0,ok:0}; const ST=new Array(O.T.length);   // estado de cada tarefa no dia
+    O.T.forEach((t,ti)=>{ if(t.fase) return; const pm=O.porT[t.uid]; if(!pm||!nPecas(pm)) return; const s=estado(t,O.n); cnt[s]++;
+      const r=regraDe(t)||{}; ST[ti]={s,t,et:etapaDe(r.servico,r.etapa)}; });
+    const P={ forEach(fn){ for(const [k,tis] of (O.pecas||[])) { const l=tis.map(i=>ST[i]).filter(Boolean); if(l.length) fn(l,k); } } };
     const alvo=new Map(); const add=(cor,k)=>alvo.set(k,cor);
     const fut={};
     P.forEach((l,k)=>{
