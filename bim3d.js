@@ -3477,8 +3477,8 @@ export async function pintar4Dinc(V, alvo, futOculto){
   for(const [dest,porMod] of muda){ for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi]; if(!x||!ids.length) continue;
     try{
       if(dest==='real'){ await x.model.resetHighlight(ids); }
-      else if(dest==='fut'){ if(futOculto){ await x.model.resetHighlight(ids); await x.model.setVisible(ids,false); } else { await x.model.setVisible(ids,true); await x.model.highlight(ids,{ color:new T.Color(0x94A3B8), renderedFaces:1, opacity:.12, transparent:true }); } }
-      else await x.model.highlight(ids,{ color:new T.Color(dest), renderedFaces:1, opacity:1, transparent:false });
+      else if(dest==='fut'){ if(futOculto){ await x.model.resetHighlight(ids); await x.model.setVisible(ids,false); } else { await x.model.resetHighlight(ids); await x.model.setVisible(ids,true); await x.model.highlight(ids,{ color:new T.Color(0x94A3B8), renderedFaces:1, opacity:.12, transparent:true }); } }
+      else { await x.model.resetHighlight(ids); await x.model.highlight(ids,{ color:new T.Color(dest), renderedFaces:1, opacity:1, transparent:false }); }
     }catch(_){} } }
   V._c4d=new Map(alvo); V._colorido=true;
   if(muda.size||vis.size) try{ await V.fragments.update(true); }catch(_){}

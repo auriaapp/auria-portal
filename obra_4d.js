@@ -326,7 +326,8 @@ async function pintar(){
     const r=document.getElementById('o4dResumo'); if(r) r.textContent=O.modo==='prev'?'Previsto pela '+(O.base?'linha de base '+O.base.nome:'datas atuais (sem linha de base)'):'Realizado pelas medições';
     const c=document.getElementById('o4dCnt'); if(c) c.innerHTML='<div><span>Tarefas no dia</span><b>'+(cnt.exe+cnt.atr+cnt.ok+cnt.fut)+'</b></div><div><span style="color:'+CSS4.exe+'">Em execução</span><b>'+cnt.exe+'</b></div><div><span style="color:#F87171">Atrasadas</span><b>'+cnt.atr+'</b></div><div><span style="color:#4ADE80">Concluídas</span><b>'+cnt.ok+'</b></div><div><span>A iniciar</span><b>'+cnt.fut+'</b></div>';
     const lc=document.getElementById('o4dLgConf'); if(lc) lc.style.display=O.conf?'':'none';
-  } finally { _pintando=false; if(_pend){ _pend=false; pintar(); } }
+  } catch(e){ console.error('4D pintar:',e); window.__o4dErr=String(e&&e.stack||e); toast('4D: não foi possível pintar ('+(e&&e.message||e)+')',true); }
+  finally { _pintando=false; if(_pend){ _pend=false; pintar(); } }
 }
 function semTarefa(){ const usados={}; Object.values(O.porT).forEach(pm=>Object.entries(pm).forEach(([mi,ids])=>{ const s=usados[mi]=usados[mi]||new Set(); ids.forEach(i=>s.add(i)); }));
   const out={}; const VIS=/^IFC(WALL|SLAB|COLUMN|BEAM|DOOR|WINDOW|STAIR|ROOF|CURTAINWALL|PLATE|MEMBER|COVERING|RAILING|FOOTING|PILE|RAMP|PIPE|FLOW|DUCT|CABLE|VALVE|AIRTERMINAL|ELECTRICDISTRIBUTIONBOARD)/;
@@ -473,6 +474,7 @@ window.o4dToggle=async()=>{
   const [a,z]=faixa(), sl=document.getElementById('o4dSl'); sl.min=a; sl.max=z; sl.value=Math.min(Math.max(HOJE,a),z);
   document.getElementById('o4dMk').innerHTML=[0,.25,.5,.75,1].map(f=>'<span>'+BR(Math.round(a+(z-a)*f))+'</span>').join('');
   ['o4dTl','o4dTar','o4dOpc','o4dCnt','o4dLeg'].forEach(id=>document.getElementById(id).classList.add('on')); adapta(); marcaSg(); O.aba='v'; painel(); o4dData(+sl.value);
+  setTimeout(()=>{ if(O.on&&(!F3D._c4d||!F3D._c4d.size)) pintar(); },1500);   // garantia: a 1ª pintura pode cair durante a carga dos tiles
 };
 // botão na barra do 3D
 function botao(){ const ref=document.getElementById('f3dBtnLocal'); if(!ref||document.getElementById('f3dBtn4d')) return;
