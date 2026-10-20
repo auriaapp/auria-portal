@@ -12,6 +12,13 @@ const CSS4={exe:'#E8C21A', atr:'#C62828', ok:'#2E9E4F', fut:'#94A3B8'};
 const NOME4={fut:'a iniciar', exe:'em execução', atr:'atrasada', ok:'concluída'};
 // serviços padrão (usados enquanto a construtora não salvar os dela)
 const SERV_PADRAO=[
+  // contenção e fundação: modelos sem divisão por andar → semPav (a tarefa pega o modelo todo, filtrado pelo tipo)
+  {codigo:'PDF',nome:'Parede Diafragma',disciplinas:['CON'],classes:['IFCSLAB','IFCWALL','IFCWALLSTANDARDCASE','IFCMEMBER','IFCPLATE'],tipos:['PAREDE DIAFRAGMA','DIAFRAGMA'],semPav:true},
+  {codigo:'TIR',nome:'Tirantes',disciplinas:['CON'],classes:['IFCSLAB','IFCMEMBER','IFCBUILDINGELEMENTPROXY','IFCREINFORCINGBAR'],tipos:['TIRANTE'],semPav:true},
+  {codigo:'VCO',nome:'Viga de Coroamento',disciplinas:['CON'],classes:['IFCBEAM'],semPav:true},
+  {codigo:'FUI',nome:'Fundações Indiretas',disciplinas:['FUN'],classes:['IFCPILE','IFCSLAB','IFCFOOTING'],tipos:['ESTACA'],semPav:true},
+  {codigo:'FUD',nome:'Fundações Diretas',disciplinas:['FUN'],classes:['IFCSLAB','IFCFOOTING','IFCBEAM'],tipos:['BLOCO','SAPATA','VIGA'],semPav:true},
+  {codigo:'LSP',nome:'Laje de Subpressão',disciplinas:['FUN','EST'],classes:['IFCSLAB','IFCFOOTING'],tipos:['SUBPRESS'],semPav:true},
   {codigo:'FUN',nome:'Fundação',disciplinas:['EST','FUN'],classes:['IFCFOOTING','IFCPILE']},
   {codigo:'EST',nome:'Estrutura',disciplinas:['EST'],classes:['IFCSLAB','IFCCOLUMN','IFCBEAM','IFCSTAIR','IFCSTAIRFLIGHT','IFCWALL','IFCWALLSTANDARDCASE','IFCRAMP','IFCMEMBER'],
    // Etapas: tarefas "Cimbramento 5º pav.", "Concretagem 5º pav.", "Protensão 5º pav." usam as MESMAS peças.
@@ -255,7 +262,7 @@ function pavsDe(t){ if(!O.idx) return []; const pfx=pavsFaixa(t); if(pfx) return
     return num&&pd&&parseInt(pd,10)===parseInt(num,10)&&!/subsolo|ss/.test(pn); }); }
 function regraDe(t){ O.regra=O.regra||{}; if(t.uid in O.regra) return O.regra[t.uid]; return (O.regra[t.uid]=regraCalc(t)); }
 function regraCalc(t){ const v=O.vinc[t.uid]; if(v) return {salva:true,servico:v.servico,etapa:v.etapa||'',disciplinas:v.disciplinas||[],pavimentos:v.pavimentos||[],classes:v.classes||[],tipos:v.tipos||((O.serv.find(x=>x.codigo===v.servico)||{}).tipos)||[],adicionados:v.adicionados||[],removidos:v.removidos||[]};
-  const s=servicoDe(t); if(!s) return null; const pv=pavsDe(t); if(!pv.length) return null;   // sem pavimento que case: não liga ao modelo inteiro
+  const s=servicoDe(t); if(!s) return null; const pv=s.semPav?[]:pavsDe(t); if(!s.semPav&&!pv.length) return null;   // sem pavimento que case: não liga ao modelo inteiro
   // trecho de escada: só as peças de escada (a laje do andar segue as outras tarefas e fica verde quando elas terminam)
   const escada=/trecho escada|escada/.test(_n(t.nome)); const ESC=['IFCSTAIR','IFCSTAIRFLIGHT'];
   const cls=escada?(s.classes||[]).filter(c=>ESC.includes(c)):(s.classes||[]);
