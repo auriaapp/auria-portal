@@ -2746,6 +2746,7 @@ function ativarApontar(){
 function alternarModoPin(){ setPinEdit(!PIN_EDIT); }
 function setPinEdit(on){
   PIN_EDIT=!!on;
+  if(PIN_EDIT && DRAW_TOOL) setDrawTool(DRAW_TOOL);   // desenho e edição de pins não ficam ligados juntos (clique ambíguo)
   const be=$('apBtnPin'); if(be){ be.classList.toggle('on', PIN_EDIT); be.textContent = PIN_EDIT ? '✔ Concluir edição de pins' : '✏️ Editar pins'; }
   document.body.classList.toggle('pin-edit', PIN_EDIT);
   $('stage').classList.toggle('modo-pin', PIN_EDIT||APONTAR);
@@ -2869,6 +2870,7 @@ let _drawN0=null;   // nº de desenhos quando a ferramenta foi ligada (p/ oferec
 function setDrawTool(t){
   const antes=DRAW_TOOL;
   DRAW_TOOL=(DRAW_TOOL===t?null:t);
+  if(DRAW_TOOL && PIN_EDIT) setPinEdit(false);   // idem: ligar desenho encerra a edição de pins
   if(!antes && DRAW_TOOL && APT_EDIT) _drawN0=(APT_EDIT.drawings_json||[]).length;
   if(DRAW_TOOL!=='polygon' && _poly){ _poly=null; _polyCur=null; }   // cancela polígono pendente ao trocar
   $('stage').classList.toggle('modo-pin', !!DRAW_TOOL||PIN_EDIT||APONTAR);
@@ -5755,7 +5757,19 @@ function fAiParse(t){
 }
 // Salvos por empreendimento (Fatia 1: localStorage; "equipe" vira Supabase na Fatia 2).
 function _fSvKey(){ return 'auriaFiltros_'+(typeof EMP!=='undefined'&&EMP?(EMP.id||EMP.nome||'default'):'default'); }   // era o OBJETO EMP → '[object Object]': salvos de todos os empreendimentos se misturavam
-function _fSvLoad(){ try{ return JSON.parse(localStorage.getItem(_fSvKey())||'{}'); }catch(_){ return {}; } }
+function _fSvLoad(){
+  try{
+    const k=_fSvKey(); let o=JSON.parse(localStorage.getItem(k)||'{}');
+    // Recupera os salvos antigos da chave quebrada '[object Object]' (uma vez por empreendimento; a chave antiga fica intacta)
+    const velho=localStorage.getItem('auriaFiltros_[object Object]');
+    if(velho && !localStorage.getItem(k+'_migr')){
+      const v=JSON.parse(velho)||{};
+      Object.keys(v).forEach(tab=>{ o[tab]=o[tab]||[]; (v[tab]||[]).forEach(f=>{ if(!o[tab].some(x=>x.nome===f.nome)) o[tab].push(f); }); });
+      localStorage.setItem(k, JSON.stringify(o)); localStorage.setItem(k+'_migr','1');
+    }
+    return o;
+  }catch(_){ return {}; }
+}
 function _fSvSave(o){ try{ localStorage.setItem(_fSvKey(), JSON.stringify(o)); }catch(_){} }
 function fRenderSaved(){
   const list=$('fSvList'); if(!list) return; const arr=(_fSvLoad()[FILT.tab]||[]);
