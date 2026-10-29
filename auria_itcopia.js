@@ -216,5 +216,54 @@
       : ' <span title="Há pedido de revisão aguardando a Qualidade" style="display:inline-block;font-size:10.5px;font-weight:800;border-radius:99px;padding:1px 8px;background:#FEF3C7;color:#B45309">' + info.n + ' pedido' + (info.n > 1 ? 's' : '') + ' de revisão</span>';
   }
 
-  window.AuriaIT = { ver, bytes, copia, textoPdf, textoArquivo, lerNome, podeVer, extDe, solicitar, solicitacoesAbertas, chipNorma, chipSituacao, MOTIVOS, SITUACAO };
+  // ── Leitura obrigatória (Qualidade F1) ───────────────────────────────────
+  //  Quem está na distribuição de um documento deve abrir a revisão vigente e
+  //  confirmar "li e entendi". Selo flutuante em toda página que carrega este
+  //  arquivo; o banco só aceita a confirmação depois da abertura registrada.
+  async function ciencias(sb){
+    const { data, error } = await sb.rpc('it_minhas_ciencias');
+    return error ? [] : (data || []);
+  }
+  async function cienciaSelo(sb){
+    let l = []; try { l = await ciencias(sb); } catch (_){ return; }
+    let b = document.getElementById('aitCie');
+    if (!l.length){ if (b) b.remove(); return; }
+    css();
+    if (!b){ b = document.createElement('button'); b.id = 'aitCie'; document.body.appendChild(b);
+      b.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:8500;border:0;border-radius:999px;padding:9px 16px;background:#1E3A5F;color:#fff;font:700 12.5px inherit;font-family:inherit;box-shadow:0 8px 24px rgba(15,23,42,.3);cursor:pointer;display:flex;gap:8px;align-items:center';
+      b.onclick = () => cienciaLista(sb); }
+    b.innerHTML = '<span style="background:#E8762B;border-radius:99px;min-width:20px;padding:1px 6px">' + l.length + '</span> Leitura obrigatória';
+  }
+  async function cienciaLista(sb){
+    css();
+    const l = await ciencias(sb);
+    const ov = document.createElement('div'); ov.className = 'ait-ov';
+    const linha = x => '<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #E2E8F0"><div style="flex:1"><span style="font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#1E3A5F">' + esc(x.codigo) + '</span> rev. ' + esc(x.revisao) + '<div style="font-size:12.5px;color:#334155">' + esc(x.titulo) + '</div><div style="font-size:11px;color:#64748B">publicada em ' + new Date(x.publicado_em).toLocaleDateString('pt-BR') + '</div></div>'
+      + '<button data-ler="' + x.revisao_id + '" style="border:1px solid #CBD5E1;background:#fff;border-radius:8px;padding:6px 12px;cursor:pointer">Ler</button>'
+      + '<button data-ok="' + x.revisao_id + '"' + (x.lido ? '' : ' disabled title="Abra o documento primeiro"') + ' style="border:0;border-radius:8px;padding:6px 12px;cursor:pointer;background:' + (x.lido ? '#E8762B' : '#CBD5E1') + ';color:#fff;font-weight:700">Li e entendi</button></div>';
+    ov.innerHTML = '<div class="ait-bx" style="max-width:560px"><div class="ait-hd"><b>Leitura obrigatória</b><div style="font-size:12px;color:#64748B;margin-top:4px">A Qualidade revisou estes documentos. Abra cada um e confirme que leu e entendeu — a confirmação fica registrada para auditoria.</div></div>'
+      + '<div style="padding:0 18px;max-height:60vh;overflow:auto" id="aitCl">' + (l.length ? l.map(linha).join('') : '<p style="color:#64748B">Nada pendente. Obrigado!</p>') + '</div>'
+      + '<div style="display:flex;justify-content:flex-end;padding:12px 18px"><button id="aitCx" style="border:1px solid #CBD5E1;background:#fff;border-radius:8px;padding:6px 14px;cursor:pointer">Fechar</button></div></div>';
+    document.body.appendChild(ov);
+    const fechar = () => { ov.remove(); cienciaSelo(sb); };
+    ov.querySelector('#aitCx').onclick = fechar;
+    ov.querySelectorAll('[data-ler]').forEach(bt => bt.onclick = () => {
+      const x = l.find(y => y.revisao_id === bt.dataset.ler);
+      ov.remove();   // o visualizador abre por cima; depois o selo reabre a lista com "Li e entendi" liberado
+      ver(sb, x.revisao_id, { ext:x.ext || 'pdf', codigo:x.codigo + ' · rev. ' + x.revisao, titulo:x.titulo, sub:'leitura obrigatória — depois confirme no selo “Leitura obrigatória”' });
+      setTimeout(() => cienciaSelo(sb), 2500);
+    });
+    ov.querySelectorAll('[data-ok]').forEach(bt => bt.onclick = async () => {
+      bt.disabled = true; bt.textContent = '…';
+      const { error } = await sb.rpc('it_ciente', { p_revisao:bt.dataset.ok });
+      if (error){ bt.disabled = false; bt.textContent = 'Li e entendi'; alert(error.message); return; }
+      bt.textContent = '✓ ciente'; bt.style.background = '#1E8449';
+    });
+  }
+  // Liga sozinho em qualquer página com `sb` global e sessão aberta.
+  setTimeout(async () => {
+    try { if (typeof sb === 'undefined' || !sb.auth) return; const { data:{ session } } = await sb.auth.getSession(); if (session) cienciaSelo(sb); } catch (_){}
+  }, 3500);
+
+  window.AuriaIT = { ver, bytes, copia, textoPdf, textoArquivo, lerNome, podeVer, extDe, solicitar, solicitacoesAbertas, chipNorma, chipSituacao, MOTIVOS, SITUACAO, ciencias, cienciaSelo, cienciaLista };
 })();

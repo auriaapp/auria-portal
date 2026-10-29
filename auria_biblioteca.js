@@ -19,8 +19,13 @@ async function carregarITs(){
   if (error){ ITS = []; return error; }
   ITS = (data || []).map(i => Object.assign(i, { revs: (i.grupo_it_revisao_auria || []).sort((a,b) => new Date(b.publicado_em) - new Date(a.publicado_em)) }));
   try { SOL_AB = await AuriaIT.solicitacoesAbertas(sb, ITS.map(i => i.id)); } catch (_){ SOL_AB = {}; }
+  // F1: revisões em aprovação (só quem mantém enxerga — RLS)
+  MINUTAS = [];
+  if (PODE.its){ try { const r = await sb.from('grupo_it_minuta_auria').select('*').eq('grupo_id', GRUPO).in('situacao', ['verificacao','aprovacao','devolvida']).order('elaborado_em'); MINUTAS = r.data || []; } catch (_){} }
 }
-let SOL_AB = {};
+let SOL_AB = {}, MINUTAS = [];
+const MIN_SIT = { verificacao:'Aguardando verificação', aprovacao:'Aguardando aprovação', devolvida:'Devolvida para correção' };
+function minutaDe(itId){ return MINUTAS.find(m => m.it_id === itId && m.situacao !== 'devolvida') || MINUTAS.find(m => m.it_id === itId) || null; }
 function _itOrdem(a, b){ return a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true }); }
 
 function itAbrir(revId){
@@ -67,14 +72,14 @@ async function itSalvar(id){
 function revForm(id){
   const i = ITS.find(x => x.id === id); const v = i && i.revs.find(r => r.vigente);
   const prox = v && /^\d+$/.test(v.revisao) ? String(+v.revisao + 1).padStart(v.revisao.length, '0') : (v ? '' : '00');
-  ov('<div class="hd"><b>Publicar revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">A revisão atual' + (v ? ' (' + esc(v.revisao) + ')' : '') + ' vai para o histórico; todos passam a ver a nova, e quem tem cópia controlada da antiga recebe e-mail.</div></div><div class="bd">'
+  ov('<div class="hd"><b>Nova revisão — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">Elaboração → verificação → aprovação (ISO 9001 7.5.2). Outra pessoa da Qualidade verifica e aprova; só ao aprovar' + (v ? ' a revisão ' + esc(v.revisao) + ' vai para o histórico e' : '') + ' a nova passa a valer para as obras — quem tem cópia controlada da antiga recebe e-mail e quem está na distribuição deve dar ciência.</div></div><div class="bd">'
     + '<div class="g2"><div><label class="l">Revisão</label><input type="text" id="rvNum" value="' + esc(prox) + '" placeholder="Ex.: 03"></div><div><label class="l">Arquivo (PDF, planilha, Word…)</label><input type="file" id="rvArq"></div></div>'
     + '<label class="l">O que mudou nesta revisão</label><textarea id="rvObs" rows="3"></textarea><div id="rvSols"></div><div class="msg" id="rvMsg"></div></div>'
-    + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Cancelar</button><button class="btn" id="rvOk" onclick="revPublicar(\'' + id + '\')">Publicar</button></div>');
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar();telaITs()">Cancelar</button><button class="btn" id="rvOk" onclick="revPublicar(\'' + id + '\')">Enviar para verificação</button></div>');
   sb.from('grupo_it_solicitacao_auria').select('id,numero,descricao,solicitante_nome,situacao').eq('it_id', id).in('situacao', ['aberta','em_analise']).order('numero').then(({ data }) => {
     const el = $('rvSols'); if (!el || !(data || []).length) return;
     el.innerHTML = '<label class="l">Esta revisão atende os pedidos</label>' + data.map(x => '<label class="chk" style="align-items:flex-start"><input type="checkbox" data-sol="' + x.id + '" checked> <span><b>nº ' + x.numero + '</b> · ' + esc(x.solicitante_nome || '') + ' — ' + esc(x.descricao) + '</span></label>').join('')
-      + '<div class="hint">Os marcados viram "Atendida" e quem pediu recebe e-mail com o número da revisão.</div>';
+      + '<div class="hint">Ao aprovar, os marcados viram "Atendida" e quem pediu recebe e-mail com o número da revisão.</div>';
   });
 }
 async function r2Url(action, path, contentType){
@@ -170,12 +175,104 @@ async function revPublicar(id){
   if (!f) return msg('Escolha o arquivo.');
   $('rvOk').disabled = true; msg('Enviando o arquivo…', true);
   try {
-    const revId = await _itPublicarArquivo(id, rev, f, ($('rvObs').value || '').trim());
-    for (const cb of document.querySelectorAll('#rvSols [data-sol]:checked'))
-      await sb.rpc('it_solicitacao_responder', { p_id: cb.dataset.sol, p_situacao: 'atendida', p_resposta: 'Atendida na revisão ' + rev + '.', p_revisao: revId });
-    await carregarITs(); itDetalhe(id);
+    const path = await _itSubir(id, f);
+    let texto = null; try { texto = await AuriaIT.textoArquivo(f); } catch (_){}
+    const sols = [...document.querySelectorAll('#rvSols [data-sol]:checked')].map(cb => cb.dataset.sol);
+    const { error } = await sb.rpc('it_minuta_enviar', { p_it:id, p_revisao:rev, p_path:path, p_nome:f.name, p_bytes:f.size, p_obs:($('rvObs').value || '').trim(), p_sols:sols, p_texto:texto || null });
+    if (error) throw error;
+    ovFechar(); await carregarITs(); itDetalhe(id);
   }
-  catch (e){ $('rvOk').disabled = false; msg('Não foi possível publicar: ' + (e.message || e)); }
+  catch (e){ $('rvOk').disabled = false; msg('Não foi possível enviar: ' + (e.message || e)); }
+}
+// ── F1: ciclo da revisão (verificar / aprovar / devolver / cancelar) ──────────
+//  Quem elaborou não verifica nem aprova (o banco também recusa).
+function minutaCard(itId){
+  const m = minutaDe(itId); if (!m) return '';
+  const eu = ME && m.elaborado_por === ME.id;
+  const passo = (ok, on, t, q) => '<div class="mp' + (ok ? ' ok' : on ? ' on' : '') + '"><i>' + (ok ? '✓' : on ? '●' : '○') + '</i><b>' + t + '</b><small>' + (q || '') + '</small></div>';
+  const ver = m.situacao === 'aprovacao' || !!m.verificado_em;
+  return '<div class="minuta ' + m.situacao + '"><div class="mh"><span class="cod">rev. ' + esc(m.revisao) + '</span><b>' + MIN_SIT[m.situacao] + '</b><span class="sp"></span>'
+    + '<button class="btn sec sm" onclick="minutaAbrir(\'' + m.id + '\')">Abrir arquivo</button></div>'
+    + '<div class="mps">' + passo(true, false, 'Elaborada', esc(m.elaborado_nome || '') + ' · ' + new Date(m.elaborado_em).toLocaleDateString('pt-BR'))
+    + passo(ver, m.situacao === 'verificacao', 'Verificação', ver ? esc(m.verificado_nome || '') : 'outra pessoa da Qualidade')
+    + passo(false, m.situacao === 'aprovacao', 'Aprovação', 'publica para as obras') + '</div>'
+    + (m.observacao ? '<div class="hint"><b>O que mudou:</b> ' + esc(m.observacao) + '</div>' : '')
+    + (m.situacao === 'devolvida' ? '<div class="alerta rev" style="margin:8px 0 0">Devolvida por ' + esc(m.devolvido_nome || '') + ': ' + esc(m.devolvido_motivo || '') + '</div>' : '')
+    + '<div class="acts">'
+    + (m.situacao === 'verificacao' && !eu ? '<button class="btn" onclick="minutaAgir(\'' + m.id + '\',\'verificar\')">Verificada ✓</button><button class="btn sec" onclick="minutaAgir(\'' + m.id + '\',\'devolver\')">Devolver</button>' : '')
+    + (m.situacao === 'aprovacao' && !eu ? '<button class="btn" onclick="minutaAgir(\'' + m.id + '\',\'aprovar\')">Aprovar e publicar</button><button class="btn sec" onclick="minutaAgir(\'' + m.id + '\',\'devolver\')">Devolver</button>' : '')
+    + (eu && m.situacao !== 'devolvida' ? '<span class="hint">Você elaborou — a verificação e a aprovação são de outra pessoa.</span>' : '')
+    + (m.situacao === 'devolvida' ? '<button class="btn" onclick="revForm(\'' + m.it_id + '\')">Enviar revisão corrigida</button>' : '')
+    + '<button class="btn sec sm" style="margin-left:auto" onclick="minutaAgir(\'' + m.id + '\',\'cancelar\')">Cancelar revisão</button></div></div>';
+}
+async function minutaAbrir(id){
+  const m = MINUTAS.find(x => x.id === id); if (!m) return;
+  try {
+    const url = await r2Url('download', m.arquivo_path);
+    if (/\.pdf$/i.test(m.arquivo_path) && window.AuriaPDF) AuriaPDF.abrir({ url: async () => url, codigo: ((ITS.find(i => i.id === m.it_id) || {}).codigo || '') + ' · rev. ' + m.revisao, titulo: 'Revisão em aprovação', sub: MIN_SIT[m.situacao] });
+    else window.open(url, '_blank');
+  } catch (e){ alert('Não foi possível abrir: ' + (e.message || e)); }
+}
+function minutaAgir(id, acao){
+  const m = MINUTAS.find(x => x.id === id); if (!m) return;
+  const T = { verificar:['Confirmar verificação', 'Conferi o conteúdo contra a norma e o processo. Observação (opcional):', 'Verificada ✓'],
+              aprovar:['Aprovar e publicar', 'A revisão passa a valer para as obras agora. Observação (opcional):', 'Aprovar e publicar'],
+              devolver:['Devolver para correção', 'O que precisa ser corrigido (vai por e-mail para quem elaborou):', 'Devolver'],
+              cancelar:['Cancelar esta revisão', 'A revisão em aprovação é descartada; a vigente continua valendo.', 'Cancelar revisão'] }[acao];
+  ov('<div class="hd"><b>' + T[0] + ' — rev. ' + esc(m.revisao) + '</b></div><div class="bd"><label class="l">' + T[1] + '</label>'
+    + (acao === 'cancelar' ? '' : '<textarea id="mnObs" rows="3"></textarea>') + '<div class="msg" id="mnMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Voltar</button><button class="btn" id="mnOk" onclick="minutaConfirmar(\'' + id + '\',\'' + acao + '\')">' + T[2] + '</button></div>');
+}
+async function minutaConfirmar(id, acao){
+  const m = MINUTAS.find(x => x.id === id), obs = $('mnObs') ? $('mnObs').value.trim() : '';
+  const msg = t => { $('mnMsg').className = 'msg err'; $('mnMsg').textContent = t; };
+  if (acao === 'devolver' && obs.length < 5) return msg('Diga o que precisa ser corrigido.');
+  $('mnOk').disabled = true;
+  const r = acao === 'verificar' ? await sb.rpc('it_minuta_verificar', { p_id:id, p_ok:true, p_obs:obs })
+          : acao === 'aprovar'   ? await sb.rpc('it_minuta_aprovar', { p_id:id, p_ok:true, p_obs:obs })
+          : acao === 'devolver'  ? await sb.rpc(m.situacao === 'aprovacao' ? 'it_minuta_aprovar' : 'it_minuta_verificar', { p_id:id, p_ok:false, p_obs:obs })
+          : await sb.rpc('it_minuta_cancelar', { p_id:id });
+  if (r.error){ $('mnOk').disabled = false; return msg(r.error.message); }
+  ovFechar(); await carregarITs(); itDetalhe(m.it_id);
+}
+// ── F1: distribuição (quem precisa ler e dar ciência) ────────────────────────
+const DIST_PUB = [['eng_chefe','Engenheiro chefe'], ['coord_campo','Coordenador de campo'], ['equipe_campo','Equipe de campo'], ['seguranca','Segurança do trabalho (obra)'],
+                  ['setor:qualidade','Setor · Qualidade'], ['setor:suprimentos','Setor · Suprimentos'], ['setor:seguranca','Setor · Segurança'], ['setor:engenharia','Setor · Engenharia']];
+async function distForm(itId){
+  const i = ITS.find(x => x.id === itId); if (!i) return;
+  const { data:d } = await sb.from('grupo_it_dist_auria').select('*').eq('it_id', itId).maybeSingle();
+  const pub = (d && d.publicos) || [], obras = (d && d.obras) || null;
+  const emps = (typeof EMPS !== 'undefined' && EMPS) || [];
+  ov('<div class="hd"><b>Distribuição — <span class="cod">' + esc(i.codigo) + '</span></b><div class="hint" style="margin-top:4px">Quem precisa ler este documento. A cada revisão publicada, essas pessoas devem abrir e confirmar “li e entendi”; quem não confirmar recebe cobrança por e-mail a cada 2 dias úteis.</div></div><div class="bd">'
+    + '<label class="l">Quem</label><div class="g2">' + DIST_PUB.map(([k, t]) => '<label class="chk"><input type="checkbox" data-pub="' + k + '"' + (pub.includes(k) ? ' checked' : '') + '> ' + t + '</label>').join('') + '</div>'
+    + (emps.length ? '<label class="l" style="margin-top:10px">Em quais obras</label><label class="chk"><input type="checkbox" id="dsTodas"' + (obras ? '' : ' checked') + ' onchange="document.querySelectorAll(\'[data-obra]\').forEach(c=>c.disabled=this.checked)"> Todas as obras do grupo (inclui as futuras)</label>'
+      + '<div class="g2">' + emps.map(e => '<label class="chk"><input type="checkbox" data-obra="' + e.id + '"' + (obras && obras.includes(e.id) ? ' checked' : '') + (obras ? '' : ' disabled') + '> ' + esc(e.nome) + '</label>').join('') + '</div>' : '')
+    + '<div class="msg" id="dsMsg"></div></div><div class="ft"><button class="btn sec" onclick="ovFechar()">Cancelar</button><button class="btn" id="dsOk" onclick="distSalvar(\'' + itId + '\')">Salvar</button></div>');
+}
+async function distSalvar(itId){
+  const pub = [...document.querySelectorAll('[data-pub]:checked')].map(c => c.dataset.pub);
+  const todas = !$('dsTodas') || $('dsTodas').checked;
+  const obras = todas ? null : [...document.querySelectorAll('[data-obra]:checked')].map(c => c.dataset.obra);
+  if (!todas && !obras.length){ $('dsMsg').className = 'msg err'; $('dsMsg').textContent = 'Escolha ao menos uma obra.'; return; }
+  $('dsOk').disabled = true;
+  const { error } = await sb.rpc('it_dist_salvar', { p_it:itId, p_publicos:pub, p_obras:obras });
+  if (error){ $('dsOk').disabled = false; $('dsMsg').className = 'msg err'; $('dsMsg').textContent = error.message; return; }
+  ovFechar(); itDetalhe(itId);
+}
+// ── F1: recolhimento da cópia obsoleta ────────────────────────────────────────
+function copiaRecolher(id, numero){
+  ov('<div class="hd"><b>Recolhimento — cópia nº ' + esc(numero) + '</b></div><div class="bd">'
+    + '<label class="chk"><input type="radio" name="rcD" value="recolhida" checked> Recolhida (guardada como obsoleta, identificada)</label>'
+    + '<label class="chk"><input type="radio" name="rcD" value="destruida"> Destruída</label>'
+    + '<label class="l">Observação (opcional)</label><textarea id="rcObs" rows="2" placeholder="Ex.: 3 vias recolhidas do almoxarifado e do plantão"></textarea><div class="msg" id="rcMsg"></div></div>'
+    + '<div class="ft"><button class="btn sec" onclick="ovFechar()">Cancelar</button><button class="btn" id="rcOk" onclick="copiaRecolherOk(\'' + id + '\')">Registrar</button></div>');
+}
+async function copiaRecolherOk(id){
+  $('rcOk').disabled = true;
+  const d = (document.querySelector('[name=rcD]:checked') || {}).value || 'recolhida';
+  const { error } = await sb.rpc('it_copia_recolher', { p_id:id, p_destino:d, p_obs:$('rcObs').value.trim() });
+  if (error){ $('rcOk').disabled = false; $('rcMsg').className = 'msg err'; $('rcMsg').textContent = error.message; return; }
+  ovFechar(); if (typeof copiaRecolhida === 'function') copiaRecolhida();
 }
 // Importar pasta: código/revisão/família saem do nome ("Cópia controlada - IT 003 (V)R01 Título.pdf");
 // pula duplicatas "(1)"; cria o documento se não existir; publica só se a revisão for nova.

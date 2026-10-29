@@ -217,6 +217,18 @@
   .pdf .pg{background:#fff;box-shadow:0 4px 18px rgba(0,0,0,.35);position:relative;flex:none}
   .pdf .pg canvas{display:block;width:100%;height:100%}
   .pdf .pg.ref{outline:3px solid var(--accent);outline-offset:2px}
+  .minuta{margin:12px 0 0;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:10px 12px;background:var(--card)}
+  .minuta.devolvida{border-left-color:#C0392B}
+  .minuta .mh{display:flex;align-items:center;gap:8px}.minuta .mh b{font-size:13px}.minuta .sp{flex:1}
+  .minuta .mps{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 8px}
+  .minuta .mp{border:1px solid var(--line2);border-radius:8px;padding:6px 8px;display:grid;grid-template-columns:auto 1fr;column-gap:6px}
+  .minuta .mp i{font-style:normal;grid-row:span 2;color:var(--mut)}.minuta .mp b{font-size:12px}.minuta .mp small{font-size:11px;color:var(--mut);grid-column:2}
+  .minuta .mp.ok i{color:var(--ok)}.minuta .mp.on{border-color:var(--accent)}.minuta .mp.on i{color:var(--accent)}
+  .minuta .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .cie{display:grid;grid-template-columns:minmax(120px,1fr) 2fr auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line2);font-size:12.5px}
+  .cie .bar{height:8px}
+  .pdf .pg .hl{position:absolute;background:rgba(232,150,10,.28);border-bottom:2px solid #E8960A;border-radius:2px;pointer-events:none;mix-blend-mode:multiply}
+  .itc.foco{border-color:#E8960A;box-shadow:0 0 0 2px rgba(232,150,10,.25)}
   .pdf .pg .nr{position:absolute;top:-1px;left:-1px;font:700 10px var(--mono);background:#2B323D;color:#fff;padding:1px 6px;border-radius:0 0 5px 0}
   .pdf .pg.ref .nr{background:var(--accent);color:#231703}
   .pdf .pm{color:#C9D6E4;font-size:13px;margin-top:40px;text-align:center;padding:0 20px}
@@ -402,7 +414,7 @@ async function contadores(){
   const [sol, cop, copObs, fic, ficAud, semTxt, leit] = await Promise.all([
     sb.from('grupo_it_solicitacao_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).in('situacao', ['aberta','em_analise']),
     sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).is('obsoleta_em', null),
-    sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null),
+    sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null).is('recolhida_em', null).then(r => r.error ? sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null) : r),
     sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').in('situacao', ['aberta','em_verificacao','aguardando','reprovada']),
     sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').eq('situacao', 'aprovada').gte('aprovado_em', semana),
     revVig.length ? sb.from('grupo_it_revisao_auria').select('id,it_id,arquivo_path').in('id', revVig).or('texto_busca.is.null,texto_busca.eq.') : Promise.resolve({ data:[] }),
@@ -412,10 +424,14 @@ async function contadores(){
     sol: sol.count || 0, cop: cop.count || 0, copObs: copObs.count || 0, fic: fic.count || 0, ficAud: ficAud.count || 0,
     semTxt: semTxt.data || [], leit: leit.count || 0,
     venc: ITS.filter(i => i.ativo && i.validade && i.validade <= hoje30),
-    ras: FVS.filter(m => m.ativo && m.rascunho).length, alerta: FVS.filter(m => m.ativo && fvsAlerta(m)).length
+    ras: FVS.filter(m => m.ativo && m.rascunho).length, alerta: FVS.filter(m => m.ativo && fvsAlerta(m)).length,
+    minVer: MINUTAS.filter(m => m.situacao === 'verificacao' && m.elaborado_por !== ME.id).length,
+    minApr: MINUTAS.filter(m => m.situacao === 'aprovacao' && m.elaborado_por !== ME.id).length,
+    minDev: MINUTAS.filter(m => m.situacao === 'devolvida' && m.elaborado_por === ME.id).length,
+    ciePend: (await cienciaCarregar(true)).filter(x => !x.ciente_em).length
   };
   const n = (id, v, q) => { const el = $(id); el.textContent = v ? v : ''; el.style.display = v ? '' : 'none'; el.classList.toggle('q', !!q); };
-  const fila = CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
+  const fila = CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
   n('nFazer', fila, true); n('nBib', ITS.filter(i => i.ativo).length); n('nFvs', CONT.ras + FVS.filter(m => m.ativo && !m.rascunho && m.revisar_it_rev).length, true);
   n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
   if (TELA === 'fazer') telaFazer();
@@ -442,11 +458,14 @@ function telaFazer(){
   $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Para fazer</h2><p class="sub">O que depende da Qualidade hoje, do mais urgente para o menos. Cada linha abre a tela já filtrada.</p></div></div>'
     + '<div class="t1g"><div>'
     + '<div class="card fila"><div class="hd"><b>Fila de trabalho</b></div>'
+    + linha((C.minVer || 0) + (C.minApr || 0), 'Revisões de documento para verificar ou aprovar', 'Elaboradas por outra pessoa da Qualidade. Ao aprovar, a revisão passa a valer para as obras.', '<button class="btn ac" onclick="BB.f=\'apr\';BB.sel=null;ir(\'biblioteca\')">Revisar agora</button>', true)
+    + (C.minDev ? linha(C.minDev, 'Revisões suas devolvidas para correção', 'Veja o motivo no documento e envie a revisão corrigida.', '<button class="btn sec" onclick="BB.f=\'apr\';BB.sel=null;ir(\'biblioteca\')">Ver</button>', true) : '')
     + linha(C.ras, 'Modelos de FVS em rascunho — a obra ainda não vê', 'Extraídos das ITs e do sistema anterior. Conferir com a IT vigente e publicar.', '<button class="btn ac" onclick="CF.seg=\'ras\';ir(\'conferencia\')">Conferir agora</button>', true)
     + linha(C.alerta, 'Com alerta de validação', 'Tolerância divergente da IT, item duplicado, numeração trocada, critério faltando, IT revisada.', '<button class="btn sec" onclick="CF.seg=\'alerta\';ir(\'conferencia\')">Ver alertas</button>')
     + linha(C.sol, 'Solicitações de revisão abertas', 'Pedidos de obra ou setor para revisar uma norma.', '<button class="btn sec" onclick="abrirSolicitacoes()">Responder</button>', true)
     + linha((C.semTxt || []).length, 'Documento sem texto pesquisável', 'Não aparece na busca por conteúdo. O texto é lido uma vez só.', '<button class="btn sec" id="btIdx" onclick="indexarFaltantes()">Indexar</button>')
-    + linha(C.copObs, 'Cópias controladas obsoletas', 'Saiu revisão nova; o responsável foi avisado por e-mail. Confirme o recolhimento na obra.', '<button class="btn sec" onclick="CP.so=\'obs\';ir(\'copias\')">Ver cópias</button>')
+    + linha(C.ciePend || 0, 'Leituras obrigatórias pendentes', 'Pessoas na distribuição que ainda não confirmaram “li e entendi” da revisão vigente. A cobrança por e-mail é automática.', '<button class="btn sec" onclick="BB.f=\'cie\';BB.sel=null;BB.aba=\'cie\';ir(\'biblioteca\')">Ver</button>')
+    + linha(C.copObs, 'Cópias controladas a recolher', 'Saiu revisão nova; o responsável foi avisado por e-mail. Registre o recolhimento ou a destruição.', '<button class="btn sec" onclick="CP.so=\'obs\';ir(\'copias\')">Ver cópias</button>')
     + linha(C.ficAud, 'Fichas aprovadas na última semana', 'Amostragem para auditoria — a Qualidade pode contestar uma ficha aprovada.', '<button class="btn sec" onclick="FI.sit=\'aprovada\';ir(\'fichas\')">Auditar</button>')
     + linha((C.venc || []).length, 'Validades vencendo em 30 dias', 'Documentos com data de validade cadastrada.', '<button class="btn sec" onclick="BB.f=\'venc\';ir(\'biblioteca\')">Ver</button>')
     + '</div>'
@@ -489,7 +508,7 @@ function itDetalhe(id){ ovFechar(); BB.sel = id; contadores(); if (TELA !== 'bib
 async function telaBiblioteca(soLista){
   const hoje30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   const F = {
-    todos:[ 'Todos', i => i.ativo ], obs:[ 'Obsoletos', i => !i.ativo ], ped:[ 'C/ pedido', i => i.ativo && SOL_AB[i.id] ], venc:[ 'Validade', i => i.ativo && i.validade && i.validade <= hoje30 ],
+    todos:[ 'Todos', i => i.ativo ], obs:[ 'Obsoletos', i => !i.ativo ], ped:[ 'C/ pedido', i => i.ativo && SOL_AB[i.id] ], venc:[ 'Validade', i => i.ativo && i.validade && i.validade <= hoje30 ], apr:[ 'Em aprovação', i => !!minutaDe(i.id) ], cie:[ 'Ciência pendente', i => (_CIE || []).some(x => x.it_id === i.id && !x.ciente_em) ],
     grupo:[ 'Grupo', i => i.ativo && (i.familia || 'grupo') === 'grupo' ], victa:[ 'Victa', i => i.ativo && i.familia === 'victa' ] };
   const tipos = [...new Set(ITS.map(i => i.tipo || 'IT'))].sort((a, b) => ITS.filter(i => (i.tipo || 'IT') === b).length - ITS.filter(i => (i.tipo || 'IT') === a).length);
   tipos.forEach(t => F['t:' + t] = [ t, i => i.ativo && (i.tipo || 'IT') === t ]);
@@ -517,7 +536,7 @@ async function telaBiblioteca(soLista){
     + (PODE.its ? '<button class="btn sec" onclick="itImportar()">Importar pasta</button><button class="btn" onclick="itForm()">＋ Documento</button>' : '') + '</div>'
     + '<div class="bib"><div class="trilho"><div class="g">TIPO</div>' + tr('todos') + tipos.map(t => tr('t:' + t)).join('')
     + '<div class="g" style="margin-top:8px">FAMÍLIA</div>' + tr('grupo') + tr('victa')
-    + '<div class="g" style="margin-top:8px">SITUAÇÃO</div>' + tr('ped') + tr('venc') + (PODE.its ? tr('obs') : '') + '</div>'
+    + '<div class="g" style="margin-top:8px">SITUAÇÃO</div>' + tr('ped') + tr('venc') + (PODE.its ? tr('apr') + tr('cie') + tr('obs') : '') + '</div>'
     + '<div class="lst"><div class="tb"><input type="search" id="bibQ" placeholder="' + (BB.cont ? 'Buscar dentro dos documentos…' : 'Código, título ou palavra') + '" value="' + esc(BB.q) + '" oninput="BB.q=this.value;clearTimeout(window._bq);window._bq=setTimeout(()=>telaBiblioteca(true),280)">'
     + '<div class="tgl"><button class="' + (BB.cont ? '' : 'on') + '" onclick="BB.cont=false;telaBiblioteca()">Título</button><button class="' + (BB.cont ? 'on' : '') + '" title="Buscar no texto dos PDFs" onclick="BB.cont=true;telaBiblioteca()">Conteúdo</button></div></div>'
     + '<div class="hint" id="bibN" style="padding:7px 14px;border-bottom:1px solid var(--line2)">' + cabLista(lista.length, q) + '</div>'
@@ -532,15 +551,15 @@ async function bibDetalhe(){
   if (!i){ el.innerHTML = '<div class="vazio">Selecione um documento.</div>'; return; }
   const v = vigDe(i), ext = v ? AuriaIT.extDe(v.arquivo_path) : '';
   const fvs = FVS.filter(m => m.it_id === i.id && m.ativo);
-  const abas = [['fvs','FVS ligadas · ' + fvs.length], ['copias','Cópias'], ['revs','Revisões · ' + i.revs.length], ['leit','Leituras']];
+  const abas = [['fvs','FVS ligadas · ' + fvs.length], ['copias','Cópias'], ['revs','Revisões · ' + i.revs.length], ['cie','Ciência'], ['leit','Leituras']];
   el.innerHTML = '<div class="top"><span class="cod">' + esc(i.codigo) + '</span> ' + (i.ativo ? '<span class="chip c-pub">vigente</span>' : '<span class="chip c-mut">obsoleto</span>')
     + ' <span class="chip c-nav">' + FAM_N[i.familia || 'grupo'] + ' · ' + esc(TEMA_ROT[i.tema] || '') + '</span>' + AuriaIT.chipNorma(SOL_AB[i.id])
     + '<h3>' + esc(i.titulo) + '</h3>'
     + (v ? '<div class="vig"><div><small>Revisão</small><b>' + esc(v.revisao) + '</b></div><div style="flex:1"><small>Publicada</small>' + dt(v.publicado_em) + ' · ' + esc(v.publicado_nome || '') + '</div><div><small>Validade</small>' + (i.validade ? dt(i.validade + 'T12:00') : '—') + '</div></div>' : '<div class="hint" style="margin-top:8px">Sem revisão publicada.</div>')
     + '<div class="acts">' + (v && AuriaIT.podeVer(ext) ? '<button class="btn" onclick="itAbrir(\'' + v.id + '\')">Abrir</button>' : '')
     + (v && i.ativo ? '<button class="btn sec" onclick="itCopia(\'' + i.id + '\')">Cópia controlada</button>' : '')
-    + (PODE.its ? '<button class="btn sec" onclick="revForm(\'' + i.id + '\')">Publicar revisão</button><button class="btn sec" onclick="itForm(\'' + i.id + '\')">Editar</button>'
-                : (i.ativo ? '<button class="btn sec" onclick="itSolicitar(\'' + i.id + '\')">Solicitar revisão</button>' : '')) + '</div></div>'
+    + (PODE.its ? (minutaDe(i.id) && minutaDe(i.id).situacao !== 'devolvida' ? '' : '<button class="btn sec" onclick="revForm(\'' + i.id + '\')">Nova revisão</button>') + '<button class="btn sec" onclick="distForm(\'' + i.id + '\')">Distribuição</button><button class="btn sec" onclick="itForm(\'' + i.id + '\')">Editar</button>'
+                : (i.ativo ? '<button class="btn sec" onclick="itSolicitar(\'' + i.id + '\')">Solicitar revisão</button>' : '')) + '</div>' + (PODE.its ? minutaCard(i.id) : '') + '</div>'
     + '<div class="dtabs">' + abas.map(([k, t]) => '<button class="' + (BB.aba === k ? 'on' : '') + '" onclick="BB.aba=\'' + k + '\';bibDetalhe()">' + t + '</button>').join('') + '</div>'
     + '<div class="dbody" id="bibAba"><div class="hint">Carregando…</div></div>';
   const ab = $('bibAba');
@@ -559,14 +578,31 @@ async function bibDetalhe(){
     return;
   }
   if (BB.aba === 'copias'){
-    const { data, error } = await sb.from('grupo_it_copia_auria').select('numero,quantidade,emitido_em,obsoleta_em,avisado_em,revisao_id,empreendimentos_auria(nome),usuarios_auria!grupo_it_copia_auria_responsavel_id_fkey(nome,email)').eq('it_id', i.id).order('emitido_em', { ascending:false });
-    const d2 = error ? await sb.from('grupo_it_copia_auria').select('numero,quantidade,emitido_em,obsoleta_em,avisado_em,revisao_id,empreendimentos_auria(nome)').eq('it_id', i.id).order('emitido_em', { ascending:false }) : { data };
+    const { data, error } = await sb.from('grupo_it_copia_auria').select('id,numero,quantidade,emitido_em,obsoleta_em,avisado_em,recolhida_em,recolhida_destino,recolhida_nome,revisao_id,empreendimentos_auria(nome),usuarios_auria!grupo_it_copia_auria_responsavel_id_fkey(nome,email)').eq('it_id', i.id).order('emitido_em', { ascending:false });
+    const d2 = error ? await sb.from('grupo_it_copia_auria').select('id,numero,quantidade,emitido_em,obsoleta_em,avisado_em,recolhida_em,recolhida_destino,recolhida_nome,revisao_id,empreendimentos_auria(nome)').eq('it_id', i.id).order('emitido_em', { ascending:false }) : { data };
     if ($('bibAba') !== ab) return;
     const revN = {}; i.revs.forEach(r => revN[r.id] = r.revisao);
     ab.innerHTML = (d2.data || []).length ? '<table><tr><th>Nº</th><th>Obra</th><th>Rev.</th><th>Situação</th></tr>' + d2.data.map(c => '<tr' + (c.obsoleta_em ? ' style="opacity:.6"' : '') + '><td class="cod">' + c.numero + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—')
         + '<div class="hint">' + (c.usuarios_auria ? esc(c.usuarios_auria.nome || c.usuarios_auria.email) + ' · ' : '') + c.quantidade + ' cópia(s) · ' + dt(c.emitido_em) + '</div></td><td class="cod">' + esc(revN[c.revisao_id] || '') + '</td>'
-        + '<td>' + (c.obsoleta_em ? '<span class="chip c-rev">obsoleta</span>' + (c.avisado_em ? '<div class="hint">avisado por e-mail</div>' : '') : '<span class="chip c-pub">vigente</span>') + '</td></tr>').join('') + '</table>'
+        + '<td>' + copiaSit(c) + '</td></tr>').join('') + '</table>'
       : '<div class="hint">Nenhuma cópia controlada emitida.</div>';
+    return;
+  }
+  if (BB.aba === 'cie'){
+    const [{ data:dist }, cie] = await Promise.all([sb.from('grupo_it_dist_auria').select('*').eq('it_id', i.id).maybeSingle(), cienciaCarregar()]);
+    if ($('bibAba') !== ab) return;
+    const pubs = (dist && dist.publicos) || [], rot = {}; DIST_PUB.forEach(([k, t]) => rot[k] = t);
+    const l = (cie || []).filter(x => x.it_id === i.id);
+    let h = '<p class="hint" style="margin:0 0 10px">' + (pubs.length ? 'Precisam ler: <b>' + pubs.map(k => esc(rot[k] || k)).join(', ') + '</b> · ' + (dist.obras ? dist.obras.length + ' obra(s)' : 'todas as obras') + '. Cada revisão publicada pede “li e entendi”; quem não confirma recebe cobrança a cada 2 dias úteis.'
+      : 'Ninguém está na distribuição deste documento — defina quem precisa ler para cobrar a ciência a cada revisão.') + (PODE.its ? ' <a style="cursor:pointer;color:var(--accent)" onclick="distForm(\'' + i.id + '\')">Editar distribuição</a>' : '') + '</p>';
+    if (l.length){
+      const grupos = {}; l.forEach(x => { const k = x.obra || 'Setores'; (grupos[k] = grupos[k] || []).push(x); });
+      h += Object.keys(grupos).sort().map(k => { const g = grupos[k], ok = g.filter(x => x.ciente_em).length;
+        return '<div class="cie"><b>' + esc(k) + '</b><div class="bar"><i style="width:' + (ok / g.length * 100) + '%;background:var(--ok)"></i></div><span class="cod">' + ok + '/' + g.length + '</span></div>'; }).join('')
+        + '<table style="margin-top:10px"><tr><th>Pessoa</th><th>Papel</th><th>Situação</th></tr>' + l.sort((a, b) => (a.ciente_em ? 1 : 0) - (b.ciente_em ? 1 : 0) || a.nome.localeCompare(b.nome)).map(x => '<tr><td>' + esc(x.nome) + (x.obra ? '<div class="hint">' + esc(x.obra) + '</div>' : '') + '</td><td>' + esc(rot[x.publico] || x.publico) + '</td><td>'
+          + (x.ciente_em ? '<span class="chip c-pub">ciente</span><div class="hint">' + dth(x.ciente_em) + '</div>' : '<span class="chip c-rev">pendente</span><div class="hint">desde ' + dt(x.publicado_em) + '</div>') + '</td></tr>').join('') + '</table>';
+    } else if (pubs.length) h += '<div class="hint">Ninguém com esses papéis nas obras escolhidas ainda.</div>';
+    ab.innerHTML = h;
     return;
   }
   // Leituras: quem abriu cada revisão (prova de ciência para auditoria)
@@ -658,7 +694,7 @@ function cfItensHtml(){
   const dis = PODE.qualidade ? '' : ' disabled';
   const ta = (i, k, v) => '<textarea rows="' + (k === 'item' ? 1 : 2) + '" data-fi="' + k + '"' + dis + '>' + esc(v || '') + '</textarea>';
   // Um cartão por item: "o que verificar" na largura toda; critério/método/tolerância embaixo.
-  $('cfItens').innerHTML = _CF_IT.length ? _CF_IT.map((t, i) => '<div class="itc"><div class="h"><span class="cod">' + String(i + 1).padStart(2, '0') + '</span><span class="sp"></span>'
+  $('cfItens').innerHTML = _CF_IT.length ? _CF_IT.map((t, i) => '<div class="itc" onfocusin="pvAcender(' + i + ')" onclick="pvAcender(' + i + ')"><div class="h"><span class="cod">' + String(i + 1).padStart(2, '0') + '</span><span class="sp"></span>'
       + '<label class="chk"><input type="checkbox" data-fi="exige_foto"' + (t.exige_foto ? ' checked' : '') + dis + '> exige foto</label>'
       + (PODE.qualidade ? '<button class="ib" title="Subir" onclick="cfMover(' + i + ',-1)">↑</button><button class="ib" title="Tirar o item" onclick="cfLerItens();_CF_IT.splice(' + i + ',1);cfItensHtml()">×</button>' : '') + '</div>'
       + '<small>O que verificar</small>' + ta(i, 'item', t.item)
@@ -715,7 +751,7 @@ const _pvRO = new ResizeObserver(() => { const pc = $('pdfC'); if (!pc || !PV.do
 async function pdfMostrar(itId, paginas){
   const tb = $('pdfTb'), pc = $('pdfC'); if (!tb) return;
   const i = itDe(itId), v = vigDe(i);
-  PV.paginas = (paginas || []).map(Number);
+  PV.paginas = (paginas || []).map(Number); PV.hl = null;
   if (!i || !v){ tb.innerHTML = '<span style="color:#C9D6E4">Sem IT de referência</span>'; pc.innerHTML = '<div class="pm">Escolha a IT de referência ao lado para conferir os itens com ela.</div>'; return; }
   const ext = AuriaIT.extDe(v.arquivo_path);
   tb.innerHTML = '<span class="cod">' + esc(i.codigo) + '</span> rev. ' + esc(v.revisao) + '<span class="sp"></span><span id="pvPg" style="font-family:var(--mono)"></span>'
@@ -754,8 +790,66 @@ async function pvDesenhar(irPagina){
     if (!alvo && PV.paginas.includes(n)) alvo = d;
   }
   if (irPagina && alvo) pc.scrollTop = alvo.offsetTop - 12;
+  pvHlDesenhar(false);
   const pgN = () => { const el = $('pvPg'); if (!el) return; const pgs = pc.querySelectorAll('.pg'), meio = pc.scrollTop + pc.clientHeight / 3; let n = 1; pgs.forEach(p => { if (p.offsetTop <= meio) n = +p.dataset.n; }); el.textContent = n + ' / ' + PV.doc.numPages; };
   pc.onscroll = pgN; pgN();
+}
+// ── F0: item da FVS → acende o trecho correspondente na IT ──────────────────
+// Lê o texto do PDF (pdf.js), acha a sequência de linhas que mais cobre as
+// palavras do item (+ critério/método) e marca esses retângulos. Procura
+// primeiro nas páginas de referência do modelo; se não achar, no PDF todo.
+const _pvTxt = {};   // cache: revId:n → itens de texto
+function _pvNorm(t){ return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
+const _PV_VAZIAS = new Set('para com sem que dos das nos nas uma por pelo pela entre sobre deve devem estar esta este caso conforme todo toda todos todas apos antes ser ter'.split(' '));
+function _pvTokens(t){ return [...new Set(_pvNorm(t).split(' ').filter(w => w.length > 2 && !_PV_VAZIAS.has(w)))]; }
+async function _pvTexto(n){
+  const k = PV.revId + ':' + n; if (_pvTxt[k]) return _pvTxt[k];
+  const pg = await PV.doc.getPage(n), tc = await pg.getTextContent();
+  return (_pvTxt[k] = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ s:it.str, w:new Set(_pvNorm(it.str).split(' ')), x:it.transform[4], y:it.transform[5], wd:it.width, h:it.height || Math.abs(it.transform[3]) })));
+}
+async function pvAcender(i){
+  document.querySelectorAll('#cfItens .itc').forEach((c, j) => c.classList.toggle('foco', j === i));
+  if (!PV.doc) return;
+  cfLerItens(); const t = _CF_IT[i]; if (!t) return;
+  const alvo = _pvTokens(t.item), extra = _pvTokens([t.criterio, t.metodo, t.tolerancia].join(' '));
+  if (!alvo.length && !extra.length) return;
+  const peso = new Map(); extra.forEach(w => peso.set(w, 1)); alvo.forEach(w => peso.set(w, 3));   // o "o que verificar" pesa mais
+  const total = [...peso.values()].reduce((a, b) => a + b, 0);
+  const ordem = PV.paginas.concat([...Array(PV.doc.numPages).keys()].map(k => k + 1).filter(n => !PV.paginas.includes(n)));
+  let best = null;
+  for (const n of ordem){
+    const its = await _pvTexto(n);
+    for (let a = 0; a < its.length; a++){
+      const vistos = new Set(); let sc = 0;
+      for (let b = a; b < Math.min(its.length, a + 8); b++){
+        its[b].w.forEach(w => { if (peso.has(w) && !vistos.has(w)){ vistos.add(w); sc += peso.get(w); } });
+        const nota = sc / total - (b - a) * 0.015;   // janela curta vence a longa com a mesma cobertura
+        if (!best || nota > best.nota) best = { nota, n, a, b };
+      }
+    }
+    if (best && best.nota >= 0.6 && PV.paginas.includes(n)) break;   // achou bem na página de referência
+  }
+  const tb = $('pvPg');
+  if (!best || best.nota < 0.3){ PV.hl = null; pvHlDesenhar(false); if (tb) tb.textContent = 'trecho não encontrado'; return; }
+  const its = await _pvTexto(best.n);
+  PV.hl = { n:best.n, r:its.slice(best.a, best.b + 1).filter(it => [...it.w].some(w => peso.has(w)) || best.b - best.a < 3) };
+  pvHlDesenhar(true);
+}
+async function pvHlDesenhar(rolar){
+  const pc = $('pdfC'); if (!pc) return;
+  pc.querySelectorAll('.pg .hl').forEach(e => e.remove());
+  if (!PV.hl || !PV.doc) return;
+  const div = pc.querySelector('.pg[data-n="' + PV.hl.n + '"]'); if (!div) return;
+  const vp = (await PV.doc.getPage(PV.hl.n)).getViewport({ scale:PV.escala });
+  let topo = Infinity;
+  PV.hl.r.forEach(it => {
+    const [x1, y1, x2, y2] = vp.convertToViewportRectangle([it.x, it.y - it.h * 0.25, it.x + it.wd, it.y + it.h]);
+    const e = document.createElement('div'); e.className = 'hl';
+    const l = Math.min(x1, x2), tp = Math.min(y1, y2);
+    e.style.cssText = 'left:' + l + 'px;top:' + tp + 'px;width:' + Math.abs(x2 - x1) + 'px;height:' + Math.abs(y2 - y1) + 'px';
+    div.appendChild(e); topo = Math.min(topo, tp);
+  });
+  if (rolar && topo < Infinity) pc.scrollTo({ top:pc.scrollTop + div.getBoundingClientRect().top - pc.getBoundingClientRect().top + topo - pc.clientHeight / 3, behavior:'smooth' });
 }
 async function pvPagina(div, job){
   if (div.dataset.ok === String(job)) return; div.dataset.ok = String(job);
@@ -844,17 +938,34 @@ async function fichaContestar(id){
 const CP = { so:'' };
 async function telaCopias(){
   $('corpo').innerHTML = '<section class="tela"><div class="load">Carregando cópias…</div></section>';
-  const { data, error } = await sb.from('grupo_it_copia_auria').select('id,numero,it_id,revisao_id,quantidade,emitido_em,obsoleta_em,avisado_em,empreendimentos_auria(nome)').eq('grupo_id', GRUPO).order('emitido_em', { ascending:false });
-  const l = (data || []).filter(c => !CP.so || (CP.so === 'obs' ? c.obsoleta_em : !c.obsoleta_em));
+  const { data, error } = await sb.from('grupo_it_copia_auria').select('id,numero,it_id,revisao_id,quantidade,emitido_em,obsoleta_em,avisado_em,recolhida_em,recolhida_destino,recolhida_nome,empreendimentos_auria(nome)').eq('grupo_id', GRUPO).order('emitido_em', { ascending:false });
+  const l = (data || []).filter(c => !CP.so || (CP.so === 'obs' ? c.obsoleta_em && !c.recolhida_em : CP.so === 'rec' ? c.recolhida_em : !c.obsoleta_em));
   const revN = {}; ITS.forEach(i => (i.revs || []).forEach(r => revN[r.id] = r.revisao));
   $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Cópias controladas</h2><p class="sub">Cada cópia tem número, obra, responsável e quantidade. Quando sai revisão nova, ela fica obsoleta e o responsável recebe e-mail.</p></div>'
-    + '<div class="tgl">' + [['','Todas'], ['vig','Vigentes'], ['obs','Obsoletas']].map(([k, t]) => '<button class="' + (CP.so === k ? 'on' : '') + '" onclick="CP.so=\'' + k + '\';telaCopias()">' + t + '</button>').join('') + '</div></div>'
+    + '<div class="tgl">' + [['','Todas'], ['vig','Vigentes'], ['obs','A recolher'], ['rec','Recolhidas']].map(([k, t]) => '<button class="' + (CP.so === k ? 'on' : '') + '" onclick="CP.so=\'' + k + '\';telaCopias()">' + t + '</button>').join('') + '</div></div>'
     + (error ? '<div class="alerta rev">' + esc(error.message) + '</div>' : '')
     + '<div class="card">' + (l.length ? '<table><tr><th>Nº</th><th>Documento</th><th>Rev.</th><th>Obra</th><th>Emitida</th><th>Situação</th></tr>' + l.map(c => { const i = itDe(c.it_id) || { codigo:'?', titulo:'' };
         return '<tr' + (c.obsoleta_em ? ' style="opacity:.7"' : '') + '><td class="cod">' + c.numero + '</td><td><a style="cursor:pointer" onclick="BB.sel=\'' + c.it_id + '\';BB.aba=\'copias\';BB.f=\'todos\';ir(\'biblioteca\')"><span class="cod">' + esc(i.codigo) + '</span> ' + esc(i.titulo) + '</a></td>'
           + '<td class="cod">' + esc(revN[c.revisao_id] || '') + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—') + '<div class="hint">' + c.quantidade + ' cópia(s)</div></td><td>' + dt(c.emitido_em) + '</td>'
-          + '<td>' + (c.obsoleta_em ? '<span class="chip c-rev">obsoleta</span><div class="hint">desde ' + dt(c.obsoleta_em) + (c.avisado_em ? ' · avisado' : '') + '</div>' : '<span class="chip c-pub">vigente</span>') + '</td></tr>'; }).join('') + '</table>'
+          + '<td>' + copiaSit(c) + '</td></tr>'; }).join('') + '</table>'
       : '<div class="vazio">Nenhuma cópia controlada' + (CP.so ? ' neste filtro' : ' emitida ainda — emita pela Biblioteca, no botão “Cópia controlada”') + '.</div>') + '</div></section>';
+}
+
+// Situação da cópia controlada: vigente → obsoleta (a recolher) → recolhida/destruída.
+function copiaSit(c){
+  if (!c.obsoleta_em) return '<span class="chip c-pub">vigente</span>';
+  if (c.recolhida_em) return '<span class="chip c-mut">' + (c.recolhida_destino === 'destruida' ? 'destruída' : 'recolhida') + '</span><div class="hint">' + dt(c.recolhida_em) + ' · ' + esc(c.recolhida_nome || '') + '</div>';
+  return '<span class="chip c-rev">obsoleta · a recolher</span><div class="hint">desde ' + dt(c.obsoleta_em) + (c.avisado_em ? ' · avisado' : '') + '</div>'
+    + (PODE.its ? '<button class="btn sec sm" style="margin-top:4px" onclick="copiaRecolher(\'' + c.id + '\',\'' + c.numero + '\')">Registrar recolhimento</button>' : '');
+}
+function copiaRecolhida(){ contadores(); if (TELA === 'copias') telaCopias(); else bibDetalhe(); }
+// Ciência (F1): uma consulta por carga de tela, reaproveitada pela fila e pelo detalhe.
+let _CIE = null, _CIEem = 0;
+async function cienciaCarregar(forcar){
+  if (!PODE.its) return [];
+  if (!forcar && _CIE && Date.now() - _CIEem < 30000) return _CIE;
+  const { data, error } = await sb.rpc('it_ciencia_painel', { p_grupo:GRUPO });
+  _CIE = error ? [] : (data || []); _CIEem = Date.now(); return _CIE;
 }
 
 // ── busca do menu: FVS vai para os modelos; o resto, para a biblioteca ─────────
