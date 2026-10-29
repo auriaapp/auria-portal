@@ -11,6 +11,7 @@
 <script src="auria_pdfview.js"></script>
 <script src="auria_word.js"></script>
 <script src="auria_itcopia.js"></script>
+<script src="auria_nc.js"></script>
 <script src="auria_biblioteca.js"></script>
 <!-- ===========================================================================
      Painel da Qualidade (mockup aprovado em 2026-10-18: mockups/painel_qualidade.html)
@@ -316,6 +317,7 @@
     <a data-t="fazer" href="#fazer"><svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Para fazer<span class="n" id="nFazer"></span></a>
     <a data-t="biblioteca" href="#biblioteca"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 13h8M8 17h5"/></svg>Biblioteca normativa<span class="n" id="nBib"></span></a>
     <a data-t="conferencia" href="#conferencia"><svg viewBox="0 0 24 24"><path d="M9 5h10M9 12h10M9 19h10"/><path d="m3.5 5 1.5 1.5L7.5 4M3.5 12l1.5 1.5 2.5-2.5M3.5 19l1.5 1.5 2.5-2.5"/></svg>Modelos de FVS<span class="n" id="nFvs"></span></a>
+    <a data-t="ncs" href="#ncs"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>Não conformidades<span class="n" id="nNc"></span></a>
     <a data-t="fichas" href="#fichas"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>Fichas das obras<span class="n" id="nFic"></span></a>
     <div class="grp">Distribuição</div>
     <a data-t="copias" href="#copias"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M4 7v14h11"/></svg>Cópias controladas<span class="n" id="nCop"></span></a>
@@ -390,6 +392,7 @@ async function boot(){
   $('load').style.display = 'none'; $('app').style.display = '';
   window.__ajudaCfg = { sb, papel:'setor', pagina:'Painel da Qualidade' }; if (window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);
   window.addEventListener('hashchange', rotear);
+  AuriaNC.init({ sb, r2Url, me:ME, grupo:GRUPO, emps:EMPS, qualidade:PODE.qualidade, nivelDe:() => null, aoMudar:() => contadores() });
   rotear();
   contadores();
 }
@@ -399,9 +402,9 @@ async function carregarFvs(){
 }
 function rotear(){
   const t = (location.hash || '#fazer').slice(1).split('?')[0];
-  TELA = ({ fazer:1, biblioteca:1, conferencia:1, fichas:1, copias:1 })[t] ? t : 'fazer';
+  TELA = ({ fazer:1, biblioteca:1, conferencia:1, fichas:1, copias:1, ncs:1 })[t] ? t : 'fazer';
   document.querySelectorAll('#nav a[data-t]').forEach(a => a.classList.toggle('on', a.dataset.t === TELA));
-  ({ fazer:telaFazer, biblioteca:telaBiblioteca, conferencia:telaConferencia, fichas:telaFichas, copias:telaCopias })[TELA]();
+  ({ fazer:telaFazer, biblioteca:telaBiblioteca, conferencia:telaConferencia, fichas:telaFichas, copias:telaCopias, ncs:telaNcs })[TELA]();
 }
 function ir(t){ if (('#' + t) === location.hash) rotear(); else location.hash = t; }
 
@@ -428,12 +431,13 @@ async function contadores(){
     minVer: MINUTAS.filter(m => m.situacao === 'verificacao' && m.elaborado_por !== ME.id).length,
     minApr: MINUTAS.filter(m => m.situacao === 'aprovacao' && m.elaborado_por !== ME.id).length,
     minDev: MINUTAS.filter(m => m.situacao === 'devolvida' && m.elaborado_por === ME.id).length,
-    ciePend: (await cienciaCarregar(true)).filter(x => !x.ciente_em).length
+    ciePend: (await cienciaCarregar(true)).filter(x => !x.ciente_em).length,
+    ...(await ncContadores())
   };
   const n = (id, v, q) => { const el = $(id); el.textContent = v ? v : ''; el.style.display = v ? '' : 'none'; el.classList.toggle('q', !!q); };
-  const fila = CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
+  const fila = CONT.ncPlano + CONT.ncEf + CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
   n('nFazer', fila, true); n('nBib', ITS.filter(i => i.ativo).length); n('nFvs', CONT.ras + FVS.filter(m => m.ativo && !m.rascunho && m.revisar_it_rev).length, true);
-  n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
+  n('nNc', CONT.ncAbertas, CONT.ncPlano + CONT.ncEf > 0); n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
   if (TELA === 'fazer') telaFazer();
 }
 
@@ -458,6 +462,9 @@ function telaFazer(){
   $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Para fazer</h2><p class="sub">O que depende da Qualidade hoje, do mais urgente para o menos. Cada linha abre a tela já filtrada.</p></div></div>'
     + '<div class="t1g"><div>'
     + '<div class="card fila"><div class="hd"><b>Fila de trabalho</b></div>'
+    + linha(C.ncPlano || 0, 'Planos de ação de NC para aprovar', 'A obra registrou contenção, causa raiz e ações. Confira se a causa é a raiz de verdade antes de aprovar.', '<button class="btn ac" onclick="NCF=\'plano\';ir(\'ncs\')">Analisar</button>', true)
+    + linha(C.ncEf || 0, 'Eficácia de NC para verificar', 'Ações concluídas e prazo de observação vencido: confira em campo se o problema voltou.', '<button class="btn sec" onclick="NCF=\'eficacia\';ir(\'ncs\')">Verificar</button>', true)
+    + (C.ncAtr ? linha(C.ncAtr, 'Ações de NC atrasadas nas obras', 'O responsável recebe cobrança diária por e-mail; acompanhe com a obra.', '<button class="btn sec" onclick="NCF=\'execucao\';ir(\'ncs\')">Ver</button>') : '')
     + linha((C.minVer || 0) + (C.minApr || 0), 'Revisões de documento para verificar ou aprovar', 'Elaboradas por outra pessoa da Qualidade. Ao aprovar, a revisão passa a valer para as obras.', '<button class="btn ac" onclick="BB.f=\'apr\';BB.sel=null;ir(\'biblioteca\')">Revisar agora</button>', true)
     + (C.minDev ? linha(C.minDev, 'Revisões suas devolvidas para correção', 'Veja o motivo no documento e envie a revisão corrigida.', '<button class="btn sec" onclick="BB.f=\'apr\';BB.sel=null;ir(\'biblioteca\')">Ver</button>', true) : '')
     + linha(C.ras, 'Modelos de FVS em rascunho — a obra ainda não vê', 'Extraídos das ITs e do sistema anterior. Conferir com a IT vigente e publicar.', '<button class="btn ac" onclick="CF.seg=\'ras\';ir(\'conferencia\')">Conferir agora</button>', true)
@@ -949,6 +956,24 @@ async function telaCopias(){
           + '<td class="cod">' + esc(revN[c.revisao_id] || '') + '</td><td>' + esc(c.empreendimentos_auria ? c.empreendimentos_auria.nome : '—') + '<div class="hint">' + c.quantidade + ' cópia(s)</div></td><td>' + dt(c.emitido_em) + '</td>'
           + '<td>' + copiaSit(c) + '</td></tr>'; }).join('') + '</table>'
       : '<div class="vazio">Nenhuma cópia controlada' + (CP.so ? ' neste filtro' : ' emitida ainda — emita pela Biblioteca, no botão “Cópia controlada”') + '.</div>') + '</div></section>';
+}
+
+// ── Não conformidades (F2) — tela vem do módulo comum auria_nc.js ──────────
+let NCF = '';
+function telaNcs(){
+  $('corpo').innerHTML = '<section class="tela" style="display:flex;flex-direction:column;height:calc(100vh - 92px)"><div class="thd"><div><h2>Não conformidades</h2><p class="sub">Contenção e causa raiz → plano de ação aprovado pela Qualidade → execução com evidência → verificação de eficácia. Reincidência do mesmo serviço é marcada sozinha.</p></div></div><div id="ncBox" style="flex:1;min-height:0;display:flex"></div></section>';
+  if (NCF){ AuriaNC._f('sit', NCF); NCF = ''; }
+  AuriaNC.tela($('ncBox'));
+}
+async function ncContadores(){
+  try {
+    const hj = new Date().toISOString().slice(0, 10);
+    const [{ data:ncs }, { data:atr }] = await Promise.all([
+      sb.from('nc_auria').select('situacao,eficacia_prevista').eq('grupo_id', GRUPO).not('situacao', 'in', '(encerrada,cancelada)'),
+      sb.from('nc_acao_auria').select('id,nc_auria!inner(grupo_id,situacao)').eq('situacao', 'pendente').lt('prazo', hj).eq('nc_auria.grupo_id', GRUPO).eq('nc_auria.situacao', 'execucao')]);
+    const l = ncs || [];
+    return { ncAbertas:l.length, ncPlano:l.filter(n => n.situacao === 'plano').length, ncEf:l.filter(n => n.situacao === 'eficacia' && n.eficacia_prevista && n.eficacia_prevista <= hj).length, ncAtr:(atr || []).length };
+  } catch (_){ return { ncAbertas:0, ncPlano:0, ncEf:0, ncAtr:0 }; }
 }
 
 // Situação da cópia controlada: vigente → obsoleta (a recolher) → recolhida/destruída.

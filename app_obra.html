@@ -2004,6 +2004,7 @@ function roAviso(){ alert('Você é visualizador neste empreendimento: pode cons
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
   { const h=$('obraEmpNome'); if(h) h.textContent = EMP ? EMP.nome : ''; }
+  try{ obraNcInit(); }catch(_){}
   APP_RO = !!(EMP && EMP_PAPEL[EMP.id]==='visualizador');
   document.body.classList.toggle('app-ro', APP_RO);
   if(APP_RO && F3D_APONTAR) { try{ f3dApontarToggle(false); }catch(_){} }
@@ -9218,6 +9219,7 @@ async function localSair(){
 </script>
 <script src="auria_andares.js?v=3"></script>
 <script src="auria_itcopia.js"></script>
+<script src="auria_nc.js"></script>
 <script>
 // ── App Obra · ÍCONES DE LINHA (padrão do CDE: svg.ci 20×20, só traço) ─────
 //  Substituem os emojis (pedido do usuário 2026-10-07: "não devemos usar
@@ -11656,9 +11658,35 @@ function fvsCelula(lista){
   const pior = lista.reduce((a, b) => FVS_SIT[b.situacao].ord > FVS_SIT[a.situacao].ord ? b : a);
   return { sit:pior.situacao, aprov:lista.filter(x => x.situacao === 'aprovada').length, n:lista.length };
 }
+// ── Não conformidades (Qualidade F2) — telas em auria_nc.js ──────────────────
+function obraNcInit(){
+  if (!window.AuriaNC || !EMP) return;
+  AuriaNC.init({ sb, r2Url:segR2Url, me:USER, grupo:EMP.empresa_id, emps:[{ id:EMP.id, nome:EMP.nome }], qualidade:false,
+                 nivelDe:id => OBRA_NIVEL[id] || null, aoMudar:obraNcSelo });
+  obraNcSelo();
+}
+// Selo "Ações de NC": ações pendentes sob minha responsabilidade (plano aprovado).
+async function obraNcSelo(){
+  let l = []; try { l = await AuriaNC.minhasAcoes(); } catch (_){}
+  let b = $('ncSelo');
+  if (!l.length){ if (b) b.remove(); return; }
+  if (!b){ b = document.createElement('button'); b.id = 'ncSelo'; document.body.appendChild(b);
+    b.style.cssText = 'position:fixed;left:16px;bottom:62px;z-index:8500;border:0;border-radius:999px;padding:9px 16px;background:#1E3A5F;color:#fff;font:700 12.5px inherit;font-family:inherit;box-shadow:0 8px 24px rgba(15,23,42,.3);cursor:pointer;display:flex;gap:8px;align-items:center';
+    b.onclick = () => AuriaNC.janela({ emp:EMP.id }); }
+  const atr = l.filter(a => a.prazo < new Date().toISOString().slice(0, 10)).length;
+  b.innerHTML = '<span style="background:' + (atr ? '#C0392B' : '#E8762B') + ';border-radius:99px;min-width:20px;padding:1px 6px">' + l.length + '</span> Ações de NC' + (atr ? ' · ' + atr + ' atrasada' + (atr > 1 ? 's' : '') : '');
+}
+// Abre NC já preenchida a partir da ficha reprovada (1ª reprovação não vira NC sozinha).
+function fvsAbrirNc(id){
+  const x = (window.FVS_INSP || []).find(i => i.id === id); if (!x) return;
+  const itens = (x.itens || []).filter(t => t.resultado === 'nc').map(t => '• ' + t.item + (t.obs ? ' — ' + t.obs : '')).join('\n');
+  segFechar();
+  AuriaNC.nova({ emp:EMP.id, titulo:'FVS reprovada — ' + (x.servico || ''), descricao:[x.reprovado_motivo, itens].filter(Boolean).join('\n\n'), servico:x.servico,
+                 pavimento_id:x.pavimento_id, local_txt:[segPavNome(x.pavimento_id), x.frente, x.local_txt].filter(Boolean).join(' › '), origem:'fvs', origem_id:x.id, origem_ref:(x.codigo || 'FVS') + ' · rodada ' + (x.rodada || 1) });
+}
 function fvsPainel(){
   segOv('<div class="hd"><b>Qualidade — Fichas de Verificação de Serviço</b><p>Pavimento × serviço. Cor = situação mais crítica da célula. Clique numa célula para ver ou abrir fichas.</p></div><div class="ls" id="fvsCorpo"></div>'
-    + '<div class="ft"><button class="b2" onclick="segFechar()">Fechar</button></div>');
+    + '<div class="ft"><button class="b2" style="margin-right:auto" onclick="segFechar();AuriaNC.janela({emp:EMP.id})">Não conformidades</button><button class="b2" onclick="segFechar()">Fechar</button></div>');
   document.querySelector('#segOv .box').classList.add('fvs-larga');
   fvsMatriz();
 }
@@ -11797,7 +11825,7 @@ function fvsFicha(id){
   let acoes = '';
   if (editavel) acoes = '<button class="b2" onclick="fvsSalvarRasc(\'' + id + '\')">Salvar rascunho</button><button class="b1" id="segOk" onclick="fvsEnviar(\'' + id + '\')">' + (SEGI ? 'Concluir inspeção' : 'Enviar') + '</button>';
   else if (x.situacao === 'aguardando' && fvsPodeAprovar()) acoes = '<button class="b2" onclick="fvsReprovarForm(\'' + id + '\')">Reprovar</button><button class="b1" id="segOk" onclick="fvsAprovar(\'' + id + '\')">' + (m.duas_aprovacoes && !x.aprov1_nome ? 'Aprovar (1ª de 2)' : 'Aprovar') + '</button>';
-  else if (x.situacao === 'reprovada' && fvsPodeEditar(x)) acoes = '<button class="b1" onclick="fvsReinspecionar(\'' + id + '\')">Iniciar reinspeção</button>';
+  else if (x.situacao === 'reprovada' && fvsPodeEditar(x)) acoes = (SEGI ? '' : '<button class="b2" onclick="fvsAbrirNc(\'' + id + '\')">Abrir NC</button>') + '<button class="b1" onclick="fvsReinspecionar(\'' + id + '\')">Iniciar reinspeção</button>';
   segOv('<div class="hd"><b>' + esc(x.codigo) + ' — ' + esc(x.servico) + '</b><p><span class="seg-chip" style="--c:' + chipCor(FVS_SIT[x.situacao].cor) + '">' + FVS_SIT[x.situacao].rot + '</span> '
       + '<span class="cod">' + esc(x.modelo_codigo) + ' · rev. ' + String(x.modelo_revisao).padStart(2,'0') + (x.rodada > 1 ? ' · rodada ' + x.rodada : '') + '</span>'
       + (m.duas_aprovacoes ? ' <span class="seg-chip" style="--c:#7C4A03">2 aprovações</span>' : '') + '</p></div>'
