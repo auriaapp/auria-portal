@@ -2632,12 +2632,13 @@ function screenToPage(sx,sy){
 
 // Desenha um marcador limpo: balão circular com o número CENTRADO + ponteiro
 // até a ponta exata (px,py). r=raio do balão, H=altura do centro sobre a ponta.
-// Pin = etiqueta com o CÓDIGO (maquete aprovada 2026-11-01). 2D na cor da criticidade,
+// Pin = etiqueta com o CÓDIGO (maquete aprovada 2026-11-01). 2D na cor do status,
 // BIM em ciano; selo ⛓ (no 2D, ciano) / "2D" (no BIM, vermelho) = existe a outra frente.
 // O centro da etiqueta fica 25px acima da ponta (hit-test do 3D conta com isso).
 function pinSvg(px, py, a, destaque){
   a=a||{};
-  const bim=_aptDim(a)==='bim', cor=bim?'#22D3EE':corPrio(a.prioridade), fg=bim?'#0B2533':'#fff';
+  const bim=_aptDim(a)==='bim', fg=bim?'#0B2533':'#fff';
+  const cor=bim?'#22D3EE' : a.status==='Resolvido'?'#27AE60' : (a.id&&!a._novo&&estaAtrasado(a))?'#E74C3C' : corStatus(a.status);
   const txt=String(a.id||a.id_num||''), h=19, w=Math.max(26, Math.round(txt.length*6.7)+12), H=25, cy=py-H, x0=px-w/2;
   const ptr=`M ${px} ${py} L ${px-5} ${cy+h/2-1} L ${px+5} ${cy+h/2-1} Z`;
   const halo=destaque?`<rect x="${x0-3.5}" y="${cy-h/2-3.5}" width="${w+7}" height="${h+7}" rx="9" fill="none" stroke="#F28C28" stroke-width="2"/>`:'';
@@ -7966,7 +7967,9 @@ function apDiscMudou(){
 function abrirEditor(){
   const a=APT_EDIT;
   _apLocalManual=new Set(); _apPinsN=(a.pontos_json||[]).length;   // antes de qualquer renderPinsList
-  $('aptModalT').textContent=(a._novo?'📌 Novo apontamento':'📌 '+a.id)+(APP_RO?' · consulta':'');
+  { const bim=_aptDim(a)==='bim';
+    $('aptModalT').innerHTML=`<span class="dtag ${bim?'bim':'d2'}">${bim?'BIM':'2D'}</span><span class="ap-cod">${esc(a.id||'')}</span>`
+      +`<span style="font-size:12px;font-weight:500;color:var(--mut)">${a._novo?' · novo apontamento':''}${APP_RO?' · consulta':''}</span>`; }
   $('apId').value=a.id;
   { const d=$('apIdDica'); if(d) d.style.display='none'; }
   { const dFull=discFullName(a.disciplina); const ds=discsEd().slice(); if(dFull && !ds.includes(dFull)) ds.unshift(dFull);
@@ -8002,6 +8005,7 @@ function abrirEditor(){
   // recusa via status, não apaga o registro do autor).
   $('apExcluir').style.display=(a._novo||_lock)?'none':'';
   abrirWin('apt', a._novo?'📌 Novo apontamento':('📌 '+a.id));
+  { const t=document.querySelector('.win[data-win="apt"] .ttl'); if(t) t.innerHTML=$('aptModalT').innerHTML; }   // tag 2D/BIM + código (maquete)
   renderPins(); renderDrawings();
 }
 function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
@@ -8021,12 +8025,11 @@ function frentesDoGrupo(a){
 function renderFrentes(){
   const el=$('apFrentes'); if(!el) return;
   const a=APT_EDIT;
-  if(!a || a._novo){ el.style.display='none'; return; }
-  const irmas=frentesDoGrupo(a);
+  if(!a){ el.style.display='none'; return; }
+  const irmas=a._novo ? [a] : frentesDoGrupo(a);
+  if(!irmas.some(x=>x.id===a.id)) irmas.unshift(a);
   const temBim = irmas.some(x=>(x.dimensao||'2d')==='bim');
   const tem2d  = irmas.some(x=>(x.dimensao||'2d')==='2d');
-  // Sem contraparte e sem nada a oferecer: não polui a tela.
-  if(irmas.length<2 && temBim && !tem2d && !F3D){ el.style.display='none'; return; }
   el.style.display='';
   const cartao=(x)=>{
     const dim=(x.dimensao||'2d');
@@ -8036,7 +8039,7 @@ function renderFrentes(){
     return `<div style="flex:1;min-width:0;border:1.5px solid ${atual?'#F28C28':'var(--line)'};border-radius:9px;
         padding:7px 9px;background:${atual?'var(--panel2)':'var(--panel)'};cursor:${atual?'default':'pointer'}"
         ${atual?'':`onclick="abrirFrente('${esc(x.id)}')"`} title="${atual?'Frente aberta':'Abrir esta frente'}">
-      <div style="font-size:10.5px;color:var(--mut);display:flex;align-items:center;gap:5px"><span class="dtag ${dim==='bim'?'bim':'d2'}" style="margin:0">${dim==='bim'?'BIM':'2D'}</span>${dim==='bim'?'modelo':'prancha'}${atual?' · aberta':''}</div>
+      <div style="font-size:10.5px;color:var(--mut);display:flex;align-items:center;gap:5px"><span class="dtag ${dim==='bim'?'bim':'d2'}" style="margin:0">${dim==='bim'?'BIM':'2D'}</span>${dim==='bim'?'modelo':'prancha'}${atual?(x._novo?' · novo':' · aberta'):''}</div>
       <div class="ap-cod" style="font-size:12px;font-weight:700;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.id)}</div>
       <div style="font-size:11px;color:${cor}">${esc(x.status||'—')}${prazo?(' · '+esc(prazo)):''}</div>
     </div>`;
@@ -8047,8 +8050,11 @@ function renderFrentes(){
   // Resolver uma frente NÃO fecha a outra (cada uma tem dono) — só avisa.
   const resol=irmas.filter(x=>x.id!==a.id && x.status==='Resolvido');
   const aviso = (a.status!=='Resolvido' && resol.length) ? `<div style="font-size:11px;color:#F28C28;margin-top:6px">⛓ ${resol.map(x=>esc(x.id)).join(', ')} já foi resolvido — confira se esta frente ainda procede.</div>` : '';
-  if(!temBim) html+=`<button class="btn-sec" style="flex:1;font-size:11.5px;border-style:dashed" onclick="criarFrenteBim()"
-      title="Abrir a frente BIM deste mesmo problema, com prazo e responsável próprios">＋ frente BIM</button>`;
+  const _sep='<div style="display:flex;align-items:center;color:var(--line);font-size:14px">⛓</div>';
+  if(!temBim && !APP_RO) html+=_sep+`<button class="btn-sec" style="flex:1;font-size:11.5px;border-style:dashed;border-color:#22D3EE;color:#22D3EE" onclick="apNovaFrente('bim')"
+      title="Abrir a frente BIM deste mesmo problema, com prazo e responsável próprios${a._novo?' (salva este primeiro)':''}">＋ frente BIM</button>`;
+  if(!tem2d && !APP_RO) html+=_sep+`<button class="btn-sec" style="flex:1;font-size:11.5px;border-style:dashed;border-color:#5B7FD6;color:#9DB6F0" onclick="apNovaFrente('2d')"
+      title="Abrir a frente 2D (prancha) deste mesmo problema, com prazo e responsável próprios${a._novo?' (salva este primeiro)':''}">＋ frente 2D</button>`;
   html+='</div>'+aviso;
   el.innerHTML=html;
 }
@@ -8062,6 +8068,43 @@ function abrirFrente(id){
 // Cria a contraparte BIM do apontamento aberto: mesmo grupo, mesma
 // identificação do problema, mas prazo/responsável/resolução separados. O
 // ponto 3D fica para a pessoa marcar no modelo — daí exigir o 3D aberto.
+// "＋ frente" no editor. Rascunho ainda não salvo: salva primeiro (a frente nova
+// precisa do código do original para o grupo) e então cria a outra frente.
+async function apNovaFrente(dim){
+  const a=APT_EDIT; if(!a) return;
+  if(a._novo){
+    await salvarApt();
+    if(APT_EDIT===a) return;                       // não salvou (validação/cancelou)
+    const i=APTS.findIndex(x=>x.id===a.id); if(i<0) return;
+    abrirAptIdx(i);
+  }
+  if(dim==='bim') await criarFrenteBim(); else criarFrente2d();
+}
+// Frente 2D de um apontamento BIM: mesmo grupo; o pin vai na prancha em foco.
+function criarFrente2d(){
+  if(APP_RO){ roAviso(); return; }
+  const a=APT_EDIT; if(!a) return;
+  const Lf=LAYERS[FOCO_LI]||LAYERS[0], pr=(Lf&&Lf.prancha)||PRANCHA;
+  if(!pr){ alert('Abra a prancha (2D) onde o problema aparece — no menu, ou "+ 2D/3D" — e clique de novo em "＋ frente 2D".'); return; }
+  const g=proximoId(a.disciplina);
+  const fornEmails=(FORN_DISC[a.disciplina]&&FORN_DISC[a.disciplina].emails.join(', '))||'';
+  APT_EDIT={
+    id:g.id, id_num:g.num, titulo:a.titulo||'', descricao:'',
+    tipo:a.tipo||'', prioridade:a.prioridade||'',
+    disciplina:a.disciplina, status:'Em aberto', visibilidade:a.visibilidade||'Projeto',
+    local_txt:a.local_txt||'', data_criacao:hojeBr(), dimensao:'2d',
+    grupo_id:a.grupo_id||a.id,
+    participantes:{ [a.disciplina]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
+    log_json:[{data:hojeBr(),texto:'Frente 2D de '+a.id+' criada por '+USER.nome+'.',tipo:'sistema'}],
+    pontos_json:[], drawings_json:[],
+    prancha_id:pr.id, cde_revisao_id:pr._cde_revisao_id||null,
+    _novo:true
+  };
+  APT_IMGS=[];
+  abrirEditor();
+  setPinEdit(true);
+  $('modoHint').textContent='frente 2D '+APT_EDIT.id+': clique na prancha onde está o problema e depois Salvar';
+}
 async function criarFrenteBim(){
   if(APP_RO){ roAviso(); return; }
   const a=APT_EDIT; if(!a) return;
