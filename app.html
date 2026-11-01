@@ -2590,22 +2590,42 @@ async function carregarFornecedores(){
     // Projetistas DESIGNADOS por disciplina: quando há, SÓ eles viram participantes
     // (recebem o apontamento e as cobranças). Sem designado, regra antiga.
     let desig=[];
-    try{ const r=await sb.from('projetista_designado_auria').select('disciplina, fornecedor_id, projetista_id').eq('empreendimento_id', EMP.id); desig=r.data||[]; }catch(_){}
+    try{ const r=await sb.from('projetista_designado_auria').select('disciplina, fornecedor_id, projetista_id, escopo').eq('empreendimento_id', EMP.id); desig=r.data||[]; }catch(_){}
     const visto={};
     (atr||[]).forEach(a=>{
       const f=porId[a.fornecedor_id]; if(!f) return;
       const ativos=(f.projetistas_auria||[]).filter(p=>p.ativo!==false && p.email);
-      const ids=desig.filter(d=>d.disciplina===a.disciplina && d.fornecedor_id===a.fornecedor_id).map(d=>d.projetista_id);
+      const dsg=desig.filter(d=>d.disciplina===a.disciplina && d.fornecedor_id===a.fornecedor_id);
+      const ids=dsg.map(d=>d.projetista_id);
       let emails=ids.length ? ativos.filter(p=>ids.includes(p.id)).map(p=>p.email) : [];
       if(!emails.length) emails=ativos.filter(p=>(p.disciplinas||[]).includes(a.disciplina)).map(p=>p.email);
       if(!emails.length) emails=ativos.map(p=>p.email);
+      // Escopo do designado (item 31): 2D → apontamentos de prancha; Modelo → frentes
+      // BIM; Ambos → os dois. Vínculo sem designado vale para os dois (regra antiga).
+      const porEsc=fora=>ativos.filter(p=>dsg.some(d=>d.projetista_id===p.id && (d.escopo||'ambos')!==fora)).map(p=>p.email);
+      const e2d = dsg.length ? porEsc('bim') : emails.slice();
+      const eBim = dsg.length ? porEsc('2d') : emails.slice();
       // Mais de um fornecedor na mesma disciplina: soma os e-mails.
-      if(visto[a.disciplina]){ const o=FORN_DISC[a.disciplina]; emails.forEach(e=>{ if(!o.emails.includes(e)) o.emails.push(e); }); o.empresa+=' + '+(f.nome||''); return; }
+      if(visto[a.disciplina]){ const o=FORN_DISC[a.disciplina];
+        const soma=(arr,add)=>add.forEach(e=>{ if(!arr.includes(e)) arr.push(e); });
+        soma(o.emails,emails); soma(o.emails2d,e2d); soma(o.emailsBim,eBim); o.empresa+=' + '+(f.nome||''); return; }
       visto[a.disciplina]=true;
-      FORN_DISC[a.disciplina]={ empresa:f.nome||'', emails };
+      FORN_DISC[a.disciplina]={ empresa:f.nome||'', emails, emails2d:e2d, emailsBim:eBim };
     });
   }catch(e){ console.warn('fornecedores:', e.message||e); }
 }
+
+// E-mails sugeridos como participante da disciplina, pelo TIPO do apontamento:
+// 'bim' → designados Modelo/Ambos; '2d' → designados 2D/Ambos. Sem designado
+// daquele escopo, cai nos e-mails gerais da disciplina (fornecedorSemEscopo avisa).
+function fornEmails(d, dim){
+  const f=FORN_DISC[d]; if(!f) return '';
+  if(!dim) dim=(typeof APT_EDIT!=='undefined' && APT_EDIT && APT_EDIT.dimensao==='bim') ? 'bim' : '2d';
+  const l=(dim==='bim'?f.emailsBim:f.emails2d);
+  return ((l&&l.length)?l:f.emails).join(', ');
+}
+const fornEmails_=(d,dim)=>fornEmails(d,dim);
+function fornSemModelador(d){ const f=FORN_DISC[d]; return !!(f && f.emailsBim && !f.emailsBim.length); }
 
 async function carregarApts(){
   APTS=[];
@@ -4733,7 +4753,7 @@ function f3dNovoApontamento(pt, m, grupo){
   if(APP_RO){ roAviso(); return; }
   const mdisc = m.disciplina || m.nome || 'Modelo';
   const g = f3dProximoId(mdisc);
-  const fornEmails=(FORN_DISC[mdisc]&&FORN_DISC[mdisc].emails.join(', '))||'';
+  const fornEmails=fornEmails_(mdisc,'bim');
   APT_EDIT={
     id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
     disciplina:mdisc, status:'Em aberto', visibilidade:'Projeto',
@@ -7553,7 +7573,7 @@ function novoApontamentoBim(pt){
   if(APP_RO){ roAviso(); return; }
   const mdisc=BIM_PROJ.discipline||BIM_PROJ.name||'Modelo';
   const g=proximoIdBim(mdisc);
-  const fornEmails=(FORN_DISC[mdisc]&&FORN_DISC[mdisc].emails.join(', '))||'';
+  const fornEmails=fornEmails_(mdisc,'bim');
   APT_EDIT={
     id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
     disciplina:mdisc, status:'Em aberto', visibilidade:'Projeto',
@@ -7782,7 +7802,7 @@ function novoApontamento(nx,ny){
   const pr=(Lf&&Lf.prancha)||PRANCHA;
   const disc=discAtiva()||(pr&&pr.disciplina)||discsEd()[0]||'Arquitetura';
   const g=proximoId(disc);
-  const fornEmails=(FORN_DISC[disc]&&FORN_DISC[disc].emails.join(', '))||'';
+  const fornEmails=fornEmails_(disc,'2d');
   APT_EDIT={
     id:g.id, id_num:g.num, titulo:'', descricao:'', tipo:'', prioridade:'',
     disciplina:disc, status:'Em aberto', visibilidade:'Projeto',
@@ -7798,7 +7818,7 @@ function novoApontamento(nx,ny){
   // Split 2D/2D: a disciplina da prancha do outro lado já entra como participante.
   const dPeer=peerCall('__peerDisc');
   if(dPeer && dPeer!==disc && !APT_EDIT.participantes[dPeer])
-    APT_EDIT.participantes[dPeer]={nivel:'Pendência',emails:(FORN_DISC[dPeer]&&FORN_DISC[dPeer].emails.join(', '))||'',prazo:'',conclusao:''};
+    APT_EDIT.participantes[dPeer]={nivel:'Pendência',emails:fornEmails_(dPeer,'2d'),prazo:'',conclusao:''};
   APT_IMGS=[];
   const pic=capturarPrintLocal(nx,ny); if(pic) APT_IMGS.push({data:pic});   // print automático do local
   abrirEditor();
@@ -7969,7 +7989,7 @@ function apDiscMudou(){
   }
   // Responsável padrão: troca só se a linha única ainda é a que nasceu sozinha.
   const ps=lerParts(), ks=Object.keys(ps);
-  const emailsDe=d=>(FORN_DISC[d]&&FORN_DISC[d].emails.join(', '))||'';
+  const emailsDe=d=>fornEmails(d);
   if(ks.length===1 && !ps[nova]){
     const k=ks[0], q=ps[k];
     if((q.nivel||'Pendência')==='Pendência' && !q.prazo && !q.conclusao && (q.emails||'')===emailsDe(k)){
@@ -8103,7 +8123,7 @@ function criarFrente2d(){
   const Lf=LAYERS[FOCO_LI]||LAYERS[0], pr=(Lf&&Lf.prancha)||PRANCHA;
   if(!pr){ alert('Abra a prancha (2D) onde o problema aparece — no menu, ou "+ 2D/3D" — e clique de novo em "＋ frente 2D".'); return; }
   const g=proximoId(a.disciplina);
-  const fornEmails=(FORN_DISC[a.disciplina]&&FORN_DISC[a.disciplina].emails.join(', '))||'';
+  const fornEmails=fornEmails_(a.disciplina,'2d');
   APT_EDIT={
     id:g.id, id_num:g.num, titulo:a.titulo||'', descricao:'',
     tipo:a.tipo||'', prioridade:a.prioridade||'',
@@ -8134,7 +8154,7 @@ async function criarFrenteBim(){
     m=F3D.modelos.find(x=>x.arquivoId===md.arquivoId);
   }
   const g=f3dProximoId(m.disciplina||m.nome||'Modelo');
-  const fornEmails=(FORN_DISC[a.disciplina]&&FORN_DISC[a.disciplina].emails.join(', '))||'';
+  const fornEmails=fornEmails_(a.disciplina,'bim');
   APT_EDIT={
     id:g.id, id_num:g.num,
     titulo:a.titulo||'', descricao:'',          // mesmo problema; a ORIENTAÇÃO é própria
@@ -8155,7 +8175,8 @@ async function criarFrenteBim(){
   APT_IMGS=[];
   abrirEditor();
   setPinEdit(true);   // já pronto: o clique no modelo marca o pin da frente BIM
-  try{ f3dDica('Frente BIM '+APT_EDIT.id+' criada — clique no modelo onde está o problema e depois Salvar.'); }catch(_){}
+  try{ f3dDica('Frente BIM '+APT_EDIT.id+' criada — clique no modelo onde está o problema e depois Salvar.'
+    + (fornSemModelador(a.disciplina)?' Sem modelador designado em '+a.disciplina+': entrou o responsável geral da disciplina.':'')); }catch(_){}
 }
 
 function renderPinsList(){
@@ -8317,7 +8338,7 @@ function onPartDisc(sel){
   const forn=FORN_DISC[sel.value];
   const em=row.querySelector('[data-f="emails"]');
   if(forn){
-    if(em && !em.value.trim()) em.value=forn.emails.join(', ');
+    if(em && !em.value.trim()) em.value=fornEmails(sel.value);
     if(em){ em.placeholder=forn.empresa; em.title='Fornecedor: '+forn.empresa; }
   }
   APT_EDIT.participantes=lerParts();
