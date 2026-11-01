@@ -1151,6 +1151,7 @@
       <div id="apPinsList" style="font-size:12px;color:var(--txt)"></div>
       <button class="btn-sec" id="apBtnPin" style="font-size:11px;padding:6px 11px;margin-top:5px" onclick="alternarModoPin()">✏️ Editar pins</button>
       <span style="font-size:10.5px;color:var(--mut);margin-left:6px">clique vazio adiciona · clique num pin remove</span>
+      <div id="apPinsAcoes" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
     </div>
     <div class="fg">
       <label>Desenhos na prancha</label>
@@ -3887,6 +3888,7 @@ function f3dBotaoVoltar(mostrar){ const b=$('f3dVoltar'); if(b) b.style.display 
 function f3dProcessando(b){ const el=$('f3dStop'); if(el) el.style.display = b ? 'block' : 'none'; if(b) f3dBotaoVoltar(false); }
 function f3dPararProc(){ if(F3D && B3 && B3.cancelar) B3.cancelar(F3D); f3dDica('Interrompendo…'); }
 async function f3dVoltarModelo(){
+  const ps=$('f3dPavSel'); if(ps) ps.value='';   // seletor não fica mostrando o pavimento que já não está isolado
   if(F3D && B3){
     try{ await B3.limparDestaqueCategoria(F3D); }catch(_){}
     try{ await B3.limparPeDireito(F3D); }catch(_){}   // remove tb. as cotas do pé-direito
@@ -4378,7 +4380,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-10-14a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-01a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -7997,18 +7999,26 @@ function renderFrentes(){
 }
 function abrirFrente(id){
   const i=APTS.findIndex(x=>x.id===id);
-  if(i>=0) abrirAptIdx(i);
+  if(i<0) return;
+  abrirAptIdx(i);
+  if(APTS[i].dimensao==='bim') apVerNoModelo();        // frente BIM → vai ao modelo
+  else if((APTS[i].pontos_json||[]).some(p=>p&&!p.k3d&&!_pinVisivel(APTS[i],p))) apVerPrancha();   // frente 2D → abre a prancha dela
 }
 // Cria a contraparte BIM do apontamento aberto: mesmo grupo, mesma
 // identificação do problema, mas prazo/responsável/resolução separados. O
 // ponto 3D fica para a pessoa marcar no modelo — daí exigir o 3D aberto.
-function criarFrenteBim(){
+async function criarFrenteBim(){
+  if(APP_RO){ roAviso(); return; }
   const a=APT_EDIT; if(!a) return;
-  if(!F3D || !F3D.modelos.length){
-    alert('Abra o modelo no 3D primeiro (🏗 Só BIM) e marque no modelo onde está o problema.');
-    return;
+  // 3D fechado: abre ao lado já com o modelo da disciplina (antes só alertava).
+  let m=F3D && F3D.modelos && (F3D.modelos.find(x=>x.disciplina===a.disciplina||COD_DISC[x.disciplina]===a.disciplina)||F3D.modelos[0]);
+  if(!m){
+    const md=await f3dModeloDaDisciplina(a.disciplina);
+    if(!md){ alert('Não há modelo 3D convertido da disciplina '+(a.disciplina||'')+' no CDE. Converta no CDE (aba BIM) e tente de novo.'); return; }
+    if(!(await f3dGarantirModelos([md.arquivoId]))){ alert('Não consegui carregar o modelo '+md.nome+'.'); return; }
+    if(APT_EDIT!==a) return;
+    m=F3D.modelos.find(x=>x.arquivoId===md.arquivoId);
   }
-  const m=F3D.modelos[0];
   const g=f3dProximoId(m.disciplina||m.nome||'Modelo');
   const fornEmails=(FORN_DISC[a.disciplina]&&FORN_DISC[a.disciplina].emails.join(', '))||'';
   APT_EDIT={
@@ -8030,7 +8040,8 @@ function criarFrenteBim(){
   };
   APT_IMGS=[];
   abrirEditor();
-  alert('Frente BIM criada. Ligue “Editar pins” e clique no modelo para marcar onde está o problema.');
+  setPinEdit(true);   // já pronto: o clique no modelo marca o pin da frente BIM
+  try{ f3dDica('Frente BIM '+APT_EDIT.id+' criada — clique no modelo onde está o problema e depois Salvar.'); }catch(_){}
 }
 
 function renderPinsList(){
@@ -8042,6 +8053,80 @@ function renderPinsList(){
     : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha ou no modelo 3D.</span>';
   if(APT_EDIT && pts.length>_apPinsN) _apLocalSugerir();   // pin novo → pavimento dele entra (só acrescenta)
   _apPinsN=pts.length;
+  renderPinsAcoes();
+}
+// Atalhos do editor para ver/marcar os pins onde eles moram: apontamento BIM →
+// modelo 3D (abre ao lado se preciso); 2D → outra prancha (split 2D/2D). Sem
+// eles, marcar no outro ambiente exigia abrir tudo à mão ANTES do editor.
+function renderPinsAcoes(){
+  const el=$('apPinsAcoes'); if(!el) return;
+  const a=APT_EDIT; if(!a){ el.innerHTML=''; return; }
+  const pts=a.pontos_json||[], bim=(a.dimensao==='bim');
+  const b=(fn,txt,tit)=>`<button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="${fn}" title="${tit}">${txt}</button>`;
+  let h='';
+  if(bim) h+=b('apVerNoModelo()', pts.some(p=>p&&p.k3d)?'🧊 Ver no modelo':'🧊 Abrir o modelo', 'Abre o 3D ao lado e vai até o pin deste apontamento');
+  else{
+    if(pts.some(p=>p&&!p.k3d&&!_pinVisivel(a,p))) h+=b('apVerPrancha()','📐 Abrir a prancha do pin','O pin está numa prancha que não está aberta — abre ela');
+    if(!APP_RO) h+=b('apMarcarOutraPrancha()','📐＋ Marcar em outra prancha','Abre outra prancha ao lado; com Editar pins ligado, o clique nela acrescenta pin a ESTE apontamento');
+  }
+  el.innerHTML=h;
+}
+// Garante o 3D aberto (ao lado do 2D se houver prancha) com os modelos pedidos
+// carregados. Devolve true quando o F3D tem todos eles na cena.
+async function f3dGarantirModelos(arqIds){
+  const tem=()=>F3D && F3D.modelos && arqIds.every(id=>F3D.modelos.some(m=>m.arquivoId===id));
+  if(tem()) return true;
+  if(!F3D_MODO){
+    if(LAYERS && LAYERS.length){ SPLIT_PRIM='2d'; document.body.classList.add('split'); _splitBtns(true); }
+    await f3dModo(true, arqIds); _splitResize();
+  }else{
+    arqIds.forEach(id=>{ const i=F3D_LISTA.findIndex(m=>m.arquivoId===id); if(i>=0 && !F3D_SEL.has(i)) f3dTogglSel(i,true); });
+  }
+  for(let t=0;t<240 && !tem();t++) await new Promise(r=>setTimeout(r,250));   // carga do .frag (até ~60 s)
+  return tem();
+}
+// Modelo "da disciplina" do apontamento: código do CDE (ARQ) ↔ nome (Arquitetura).
+async function f3dModeloDaDisciplina(disc){
+  if(!F3D_LISTA || !F3D_LISTA.length){ try{ F3D_LISTA=await f3dModelosDoCde(); }catch(_){ F3D_LISTA=[]; } }
+  const cands=F3D_LISTA.filter(m=>m.disciplina===disc || COD_DISC[m.disciplina]===disc);
+  if(!cands.length) return null;
+  const ords=cands.map(m=>etapaOrdem(m.etapa)); const topo=Math.max(...ords);
+  return cands[ords.indexOf(topo)] || cands[0];   // etapa mais avançada (EX antes de PE)
+}
+async function f3dIrAoPin(pt){
+  if(!F3D || !pt || pt.localId==null) return;
+  const mi=F3D.modelos.findIndex(m=>m.arquivoId===pt.cde_arquivo_id); if(mi<0) return;
+  try{ await B3.enquadrarIds(F3D, {[mi]:[pt.localId]}); }catch(e){ console.warn('ir ao pin:', e); }
+}
+async function apVerNoModelo(){
+  const a=APT_EDIT; if(!a) return;
+  const p3=(a.pontos_json||[]).filter(p=>p&&p.k3d&&p.cde_arquivo_id);
+  let ids=[...new Set(p3.map(p=>p.cde_arquivo_id))];
+  if(!ids.length){ const m=await f3dModeloDaDisciplina(a.disciplina); if(m) ids=[m.arquivoId]; }
+  if(!ids.length){ alert('Não há modelo 3D convertido desta disciplina no CDE.'); return; }
+  const ok=await f3dGarantirModelos(ids);
+  if(!ok){ alert('Não consegui carregar o modelo deste apontamento.'); return; }
+  if(APT_EDIT!==a) return;
+  if(p3.length) await f3dIrAoPin(p3[0]);
+  else if(!APP_RO) setPinEdit(true);   // sem pin ainda: já deixa pronto para marcar
+}
+async function apVerPrancha(){
+  const a=APT_EDIT; if(!a) return;
+  const pt=(a.pontos_json||[]).find(p=>p&&!p.k3d&&!_pinVisivel(a,p)); if(!pt) return;
+  const pid=pt.pid||a.prancha_id;
+  const { data }=await sb.from('pranchas_auria').select('cde_documento_id').eq('id',pid).maybeSingle();
+  const doc=data&&data.cde_documento_id;
+  if(!doc){ alert('Essa prancha foi aberta do computador (não está no CDE). Abra o PDF dela pelo “＋ Carregar arquivo”.'); return; }
+  if(LAYERS && LAYERS.length && !EMBED){ if(document.body.classList.contains('split')) await f3dSplitToggle(); split2dAbrir(doc); }
+  else await abrirDoCDE(doc, null, false);
+  renderPinsAcoes();
+}
+async function apMarcarOutraPrancha(){
+  if(APP_RO){ roAviso(); return; }
+  if(!APT_EDIT) return;
+  if(!(LAYERS&&LAYERS.length)){ alert('Abra primeiro uma prancha deste apontamento.'); return; }
+  if(document.body.classList.contains('split2d')) split2dTrocar(); else await split2dToggle();
+  setPinEdit(true);   // o clique na prancha da direita acrescenta pin (pid) a ESTE apontamento
 }
 function removerPinApt(i){
   if(!APT_EDIT) return;

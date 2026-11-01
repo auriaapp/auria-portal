@@ -1,4 +1,4 @@
-// bim3d version: 2026-10-19a  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-11-01a  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -2883,6 +2883,7 @@ async function medirPonto(V, ev){
   V.cont.appendChild(el);
   M.medidas.push(medida);
   M.pend=null;
+  dica(V,'Medida: '+texto+' — clique para medir outra.');   // senão ficava "Agora o segundo ponto."
   if(V.on.medir)   V.on.medir(dist);
   if(V.on.medidas) V.on.medidas(V);   // avisa o host para redesenhar o painel de cotas
 }
