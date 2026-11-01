@@ -1889,20 +1889,36 @@ async function boot(){
     const { data }=await sb.from('usuarios_auria').select('nome,email,role').eq('id',session.user.id).maybeSingle();
     perfil=data;
   }catch(e){}
-  if(!perfil || perfil.role!=='obra'){ location.replace('./'); return; }
+  // 2026-11-01: a coordenação (analista coordenador, gerência, admin) entra em
+  // CONSULTA — vê tudo, não grava nada. O banco já barra as tabelas da obra
+  // (obra_meu_nivel); o que ele deixaria (apontamentos, camadas, análises,
+  // diário, leitura) é travado aqui por OBRA_CONSULTA/APP_RO.
+  if(!perfil || !['obra','analista','gerente','super_admin'].includes(perfil.role)){ location.replace('./'); return; }
+  OBRA_CONSULTA = perfil.role!=='obra';
   USER={ id:session.user.id, nome:perfil.nome||session.user.email, email:session.user.email };
   $('uName').textContent=USER.nome; $('uEmail').textContent=USER.email;
-  window.__ajudaCfg={ sb, papel:'obra', pagina:'Auria App Obra', lado:'right', encosta:'#sideRight', /* item 102: como no CDE — à direita, encostado na coluna que recolhe */ contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  window.__ajudaCfg={ sb, papel:(OBRA_CONSULTA?'analista':'obra'), pagina:'Auria App Obra', lado:'right', encosta:'#sideRight', /* item 102: como no CDE — à direita, encostado na coluna que recolhe */ contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
 
   // Empreendimentos atribuídos (mesmo embed do painel do analista)
   try{
     // App Obra: as obras vêm de obra_empreendimento_auria (mesma fonte do
     // Painel da Obra). O nível (eng_chefe/coord_campo/equipe_campo) fica em
     // OBRA_NIVEL — a aprovação de FVS (fase 3) depende dele.
-    const { data }=await sb.from('obra_empreendimento_auria')
-      .select('ativo, nivel, empreendimentos_auria(*)').eq('usuario_id',USER.id).eq('ativo',true);
-    EMP_PAPEL={}; OBRA_NIVEL={}; (data||[]).forEach(r=>{ if(r.empreendimentos_auria) OBRA_NIVEL[r.empreendimentos_auria.id]=r.nivel||'equipe_campo'; });
-    EMPS=(data||[]).map(r=>r.empreendimentos_auria).filter(e=>e&&!e.deleted_at);
+    EMP_PAPEL={}; OBRA_NIVEL={};
+    if(!OBRA_CONSULTA){
+      const { data }=await sb.from('obra_empreendimento_auria')
+        .select('ativo, nivel, empreendimentos_auria(*)').eq('usuario_id',USER.id).eq('ativo',true);
+      (data||[]).forEach(r=>{ if(r.empreendimentos_auria) OBRA_NIVEL[r.empreendimentos_auria.id]=r.nivel||'equipe_campo'; });
+      EMPS=(data||[]).map(r=>r.empreendimentos_auria).filter(e=>e&&!e.deleted_at);
+    } else if(perfil.role==='analista'){
+      // Só onde é COORDENADOR — o visualizador não tem acesso a nenhum app.
+      const { data }=await sb.from('analista_empreendimento_auria')
+        .select('ativo, papel, empreendimentos_auria(*)').eq('analista_id',USER.id).eq('ativo',true);
+      EMPS=(data||[]).filter(r=>(r.papel||'coordenador')==='coordenador').map(r=>r.empreendimentos_auria).filter(e=>e&&!e.deleted_at);
+    } else {
+      const { data }=await sb.from('empreendimentos_auria').select('*').is('deleted_at',null).order('nome');
+      EMPS=data||[];
+    }
   }catch(e){ EMPS=[]; }
   $('selEmp').innerHTML = EMPS.length
     ? '<option value="">— selecione —</option>'+EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('')
@@ -2000,13 +2016,13 @@ function focarApontamento(aptId){
 }
 
 // Papel do analista POR empreendimento (item 13): 'visualizador' = só consulta.
-var EMP_PAPEL={}, APP_RO=false;
-function roAviso(){ alert('Você é visualizador neste empreendimento: pode consultar, mas não criar nem alterar apontamentos.'); }
+var EMP_PAPEL={}, APP_RO=false, OBRA_CONSULTA=false;
+function roAviso(){ alert(OBRA_CONSULTA ? 'No App Obra a coordenação só consulta: não cria nem altera nada.' : 'Você é visualizador neste empreendimento: pode consultar, mas não criar nem alterar apontamentos.'); }
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
-  { const h=$('obraEmpNome'); if(h) h.textContent = EMP ? EMP.nome : ''; }
+  { const h=$('obraEmpNome'); if(h) h.textContent = EMP ? EMP.nome+(OBRA_CONSULTA?' · consulta':'') : ''; }
   try{ obraNcInit(); }catch(_){}
-  APP_RO = !!(EMP && EMP_PAPEL[EMP.id]==='visualizador');
+  APP_RO = OBRA_CONSULTA || !!(EMP && EMP_PAPEL[EMP.id]==='visualizador');
   document.body.classList.toggle('app-ro', APP_RO);
   if(APP_RO && F3D_APONTAR) { try{ f3dApontarToggle(false); }catch(_){} }
   // troca de empreendimento zera a prancha/camadas abertas
@@ -2150,6 +2166,7 @@ function renderAnalises(){
   const b=$('btnSalvarAnalise'); if(b) b.disabled=!(EMP&&LAYERS.length);
 }
 async function salvarAnalise(){
+  if(OBRA_CONSULTA){ roAviso(); return; }
   if(!EMP){ alert('Selecione o empreendimento.'); return; }
   if(!LAYERS.length){ alert('Abra ao menos a prancha base antes de salvar a análise.'); return; }
   const nomeDefault=(LAYERS[0].prancha.arquivo_nome||'Análise')+' — '+new Date().toLocaleDateString('pt-BR');
@@ -2237,6 +2254,7 @@ async function restaurarAnalise(an, localFilesByHash){
   if(faltando.length) alert('Análise aberta. Faltaram: '+faltando.join(', ')+'.');
 }
 async function excluirAnaliseSel(){
+  if(OBRA_CONSULTA){ roAviso(); return; }
   const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
   const an=ANALISES.find(a=>a.id===id); if(!an) return;
   if(!confirm('Excluir a análise "'+an.nome+'"? (as pranchas e apontamentos NÃO são apagados)')) return;
@@ -2479,6 +2497,7 @@ async function carregarEstadoCamada(L){
 }
 let _saveCamTimer=null;
 function salvarEstadoCamada(L){
+  if(OBRA_CONSULTA) return;   // consulta: o ajuste vale só nesta tela
   clearTimeout(_saveCamTimer);
   _saveCamTimer=setTimeout(async()=>{
     try{
@@ -3673,6 +3692,7 @@ async function carregarTrena(){
 }
 let _saveTrenaTimer=null;
 function salvarTrena(){
+  if(OBRA_CONSULTA) return;
   if(!(EMP&&PRANCHA)) return;
   clearTimeout(_saveTrenaTimer);
   _saveTrenaTimer=setTimeout(async()=>{
@@ -9372,6 +9392,7 @@ function obraFecharAvisos(){ const ov = $('obraAvisos'); if (ov) ov.classList.re
 function obraAbrirAviso(i){ obraFecharAvisos(); obraTab('alertas'); clicarAptLista(i); }
 
 async function obraConfirmar(ids){
+  if(OBRA_CONSULTA) return;   // "li" é da equipe da obra, não da coordenação
   const lista = ids || obraPendentes().map(a => a.id).concat(segPendentes().map(x => 'seg:' + x.id));
   if (!lista.length) return;
   if (OBRA_LEIT_DB){
@@ -11463,6 +11484,7 @@ function ocForm(){
 }
 (function(){ const _n = segNovo; segNovo = function(editId, voltando){ if (voltando && SEG_ARASC && SEG_ARASC._kind === 'oc') { ocForm(); return; } return _n(editId, voltando); }; })();
 async function ocSalvar(){
+  if(OBRA_CONSULTA){ roAviso(); return; }
   ocLerForm();
   const r = SEG_ARASC, msg = t => { $('segMsg').textContent = t; };
   if ((r.descricao || '').trim().length < 10) return msg('Descreva o que aconteceu (mínimo 10 caracteres).');
