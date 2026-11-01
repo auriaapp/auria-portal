@@ -91,9 +91,11 @@
   async function carregar(){
     let q = C.sb.from('nc_auria').select('*').eq('grupo_id', C.grupo).order('numero', { ascending:false });
     if (F.emp) q = q.eq('empreendimento_id', F.emp);
-    const [{ data, error }, emp] = await Promise.all([q, C.sb.from('nc_empreiteiro_auria').select('id,nome').eq('grupo_id', C.grupo).eq('ativo', true).order('nome')]);
+    const { data, error } = await q;
     if (error) throw error;
-    NCS = data || []; EMPREIT = emp.data || [];
+    NCS = data || [];
+    // sugestões de equipe/frente: as já usadas nas NCs do grupo
+    EMPREIT = [...new Set(NCS.map(n => n.equipe).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   }
   const filtro = n => {
     if (F.sit === 'abertas' && ['encerrada','cancelada'].includes(n.situacao)) return false;
@@ -156,7 +158,7 @@
     if (editAnalise){
       h += '<div class="g3"><div><label class="l">Tipo</label><select id="anTipo">' + Object.keys(TIPO).map(k => '<option value="' + k + '"' + (n.tipo === k ? ' selected' : '') + '>' + TIPO[k] + '</option>').join('') + '</select></div>'
         + '<div><label class="l">Gravidade</label><select id="anGrav">' + Object.keys(GRAV).map(k => '<option value="' + k + '"' + (n.gravidade === k ? ' selected' : '') + '>' + GRAV[k] + '</option>').join('') + '</select></div>'
-        + '<div><label class="l">Empreiteiro</label><select id="anEmp" onchange="if(this.value===\'+\')AuriaNC._novoEmpreit(this)"><option value="">— próprio / não se aplica —</option>' + EMPREIT.map(e => '<option value="' + e.id + '"' + (n.empreiteiro_id === e.id ? ' selected' : '') + '>' + esc(e.nome) + '</option>').join('') + '<option value="+">＋ cadastrar empreiteiro…</option></select></div></div>'
+        + '<div><label class="l">Equipe / frente responsável</label><input id="anEq" list="anEqL" value="' + esc(n.equipe || '') + '" placeholder="Ex.: Equipe de alvenaria — Torre A"><datalist id="anEqL">' + EMPREIT.map(e => '<option value="' + esc(e) + '">').join('') + '</datalist></div></div>'
         + '<label class="l">Serviço</label><input id="anServ" value="' + esc(n.servico || '') + '" style="width:100%;box-sizing:border-box">'
         + '<label class="l">Contenção — o que foi feito na hora para conter o problema</label><textarea id="anCont" rows="2">' + esc(n.contencao || '') + '</textarea>'
         + '<label class="l">Método de análise da causa</label><select id="anMet" onchange="AuriaNC._metodo(this.value)"><option value="5porques"' + (n.causa_metodo !== 'ishikawa' ? ' selected' : '') + '>5 porquês</option><option value="ishikawa"' + (n.causa_metodo === 'ishikawa' ? ' selected' : '') + '>Ishikawa (6M)</option></select>'
@@ -164,7 +166,7 @@
         + '<label class="l">Causa raiz (conclusão)</label><textarea id="anRaiz" rows="2">' + esc(n.causa_raiz || '') + '</textarea>'
         + '<div style="display:flex;gap:8px;margin-top:8px"><button class="bt" onclick="AuriaNC._salvarAnalise(\'' + n.id + '\')">Salvar análise</button><span class="msg" id="anMsg"></span></div>';
     } else {
-      h += '<div class="kv"><span>Tipo</span><b>' + esc(TIPO[n.tipo] || n.tipo) + '</b><span>Gravidade</span><b>' + esc(GRAV[n.gravidade]) + '</b><span>Empreiteiro</span><b>' + esc((EMPREIT.find(e => e.id === n.empreiteiro_id) || {}).nome || '—') + '</b>'
+      h += '<div class="kv"><span>Tipo</span><b>' + esc(TIPO[n.tipo] || n.tipo) + '</b><span>Gravidade</span><b>' + esc(GRAV[n.gravidade]) + '</b><span>Equipe / frente</span><b>' + esc(n.equipe || '—') + '</b>'
         + '<span>Serviço</span><b>' + esc(n.servico || '—') + '</b><span>Contenção</span><b>' + esc(n.contencao || '—') + (n.contencao_nome ? ' <span style="color:var(--a-mut);font-weight:400">— ' + esc(n.contencao_nome) + '</span>' : '') + '</b>'
         + '<span>Análise</span><b>' + causaTexto(n) + '</b><span>Causa raiz</span><b>' + esc(n.causa_raiz || '—') + '</b></div>';
     }
@@ -262,9 +264,8 @@
   }
   async function salvarAnalise(id, silencioso){
     const n = NCS.find(x => x.id === id), k = lerCausa();
-    const emp = document.getElementById('anEmp').value;
     const { error } = await C.sb.rpc('nc_analise_salvar', { p_id:id, p_contencao:document.getElementById('anCont').value, p_metodo:k.m, p_causa:k.c, p_causa_raiz:document.getElementById('anRaiz').value,
-      p_tipo:document.getElementById('anTipo').value, p_gravidade:document.getElementById('anGrav').value, p_empreiteiro:emp && emp !== '+' ? emp : null, p_servico:document.getElementById('anServ').value });
+      p_tipo:document.getElementById('anTipo').value, p_gravidade:document.getElementById('anGrav').value, p_equipe:document.getElementById('anEq').value, p_servico:document.getElementById('anServ').value });
     if (error){ msg('anMsg', error.message); return false; }
     if (!silencioso){ msg('anMsg', 'Análise salva.', true); const { data } = await C.sb.from('nc_auria').select('*').eq('id', id).single(); Object.assign(n, data); }
     return true;
