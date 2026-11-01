@@ -66,6 +66,27 @@
          font-weight:800;font-size:11px;letter-spacing:.04em;color:#8FA6C0}
   header .ecod{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-weight:700;color:#F0A72A;margin-right:4px}
   header .tt .ecod{display:inline;margin:0 4px 0 0;font-size:inherit;color:#E2E8F0}
+  header .tt #hSub.esel{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:1px 6px 1px 7px;border:1px solid rgba(232,150,10,.75);border-radius:5px;background:rgba(232,150,10,.10);color:#FFD6A0;cursor:pointer}
+  header .tt #hSub.esel:hover{background:rgba(232,150,10,.22)}
+  header .esel-ico{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  .selemp{position:fixed;z-index:9000;width:360px;max-width:calc(100vw - 16px);background:#fff;border:1px solid #d5dbe3;border-radius:10px;box-shadow:0 10px 28px rgba(19,41,75,.18);color:#1e2a3a;font-size:13px;overflow:hidden}
+  .selemp-busca{display:flex;align-items:center;gap:6px;margin:10px;padding:0 9px;border:1px solid #d5dbe3;border-radius:6px}
+  .selemp-busca svg{width:15px;height:15px;fill:none;stroke:#7a8696;stroke-width:1.8;stroke-linecap:round}
+  .selemp-busca input{flex:1;border:0;outline:0;padding:7px 0;font:inherit;background:transparent}
+  .selemp-lista{max-height:min(60vh,420px);overflow:auto}
+  .selemp-gh{display:flex;justify-content:space-between;padding:8px 12px 4px;border-top:1px solid #eef1f5;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#7a8696}
+  .selemp-it{display:flex;align-items:center;gap:10px;padding:7px 12px;cursor:pointer;border-left:3px solid transparent}
+  .selemp-it:hover,.selemp-it.foco{background:#f4f6f9}
+  .selemp-it.atual{background:#fff4ea;border-left-color:#E8960A}
+  .selemp-cod{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-weight:700;font-size:12px;color:#13294b;min-width:46px}
+  .selemp-nm{flex:1;min-width:0}
+  .selemp-nm small{display:block;font-size:11px;color:#7a8696}
+  .selemp .fapt{display:inline-flex;align-items:center;gap:3px;padding:0 7px 0 5px;border:1px solid #f5a25d;background:#fff4ea;color:#b4530a;border-radius:10px;font:600 11px/17px ui-monospace,Consolas,monospace}
+  .selemp .fapt svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .selemp .fapt.atr{border-color:#e07a6e;background:#fdeeec;color:#b03a2e}
+  .selemp-vazio{padding:14px 12px;color:#7a8696}
+  .selemp-pe{display:flex;justify-content:space-between;padding:8px 12px;border-top:1px solid #eef1f5;font-size:11px;color:#7a8696}
+  .selemp-pe kbd{font-family:ui-monospace,Consolas,monospace;border:1px solid #d5dbe3;border-radius:4px;padding:0 4px}
   .hbtn{background:#1B2942;border:1px solid #2A3850;color:#C9D6E4;border-radius:8px;
         padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;text-decoration:none}
   .hbtn:hover{background:#243452}
@@ -1342,6 +1363,7 @@ async function boot(){
   const sigla=(e.codigo||'').trim().toUpperCase();
   $('hSub').innerHTML = (sigla?'<span class="ecod">'+sigla+'</span>· ':'') + esc(e.nome) + (e.cidade? ' · '+esc(e.cidade)+(e.estado?'/'+esc(e.estado):'') : '')
                       + (VISUALIZADOR ? ' · Visualizador (só consulta)' : '');
+  montarSeletorEmp();   // não espera: a lista chega depois, o CDE já segue carregando
   // logo do empreendimento (item 45): com logo = slot branco; sem logo = sigla tracejada
   const el=$('hElogo');
   if(e.logo_url){ el.className='elogo'; el.innerHTML='<img src="'+esc(e.logo_url)+'" alt="">'; }
@@ -1643,6 +1665,105 @@ async function carregarPranchasVinculadas(){
       .select('cde_documento_id').eq('empreendimento_id',EMP_ID).not('cde_documento_id','is',null);
     CDE_LINKED_DOCS = new Set((data||[]).map(r=>r.cde_documento_id));
   }catch(e){ CDE_LINKED_DOCS = new Set(); console.warn('pranchas vinculadas:', e.message||e); }
+}
+
+// ── Seletor de empreendimento (cabeçalho) ─────────────────────────────────
+// Lista o que o usuário acessa: a RLS de empreendimentos_auria decide (gestão =
+// grupo, projetista = contratos/CDE); o analista é recortado pelos vínculos
+// ativos (a RLS do grupo deixaria ver todos). Obra e setor não têm seletor
+// (item 233 do backlog Obra: gerente de obra terá). Selo = apontamentos abertos
+// do empreendimento inteiro, o que a RLS deixa este usuário ver.
+let SEL_EMPS = [];
+const _RECENTES_K = 'cde_emp_recentes';
+function _recentes(){ try{ return JSON.parse(localStorage.getItem(_RECENTES_K)||'[]'); }catch(_){ return []; } }
+function _marcarRecente(id){ try{ const r=_recentes().filter(x=>x!==id); r.unshift(id); localStorage.setItem(_RECENTES_K, JSON.stringify(r.slice(0,3))); }catch(_){} }
+async function montarSeletorEmp(){
+  _marcarRecente(EMP_ID);
+  if(USER_ROLE==='obra' || USER_ROLE==='setor') return;
+  try{
+    let q = sb.from('empreendimentos_auria').select('id,nome,codigo,construtora_id').is('deleted_at',null).order('nome');
+    if(USER_ROLE==='analista'){
+      const { data: v } = await sb.from('analista_empreendimento_auria').select('empreendimento_id').eq('analista_id',USER.id).eq('ativo',true);
+      const ids=[...new Set((v||[]).map(r=>r.empreendimento_id).concat([EMP_ID]))];
+      q = q.in('id', ids);
+    }
+    const { data: emps } = await q;
+    SEL_EMPS = emps||[];
+    if(SEL_EMPS.length<2) return;
+    const cids=[...new Set(SEL_EMPS.map(e=>e.construtora_id).filter(Boolean))];
+    const ids=SEL_EMPS.map(e=>e.id);
+    const [cs, ap, dc] = await Promise.all([
+      cids.length ? sb.from('construtoras_auria').select('id,nome').in('id',cids) : Promise.resolve({data:[]}),
+      _inLotes(l=>sb.from('apontamentos').select('empreendimento_id,atrasado').neq('status','Resolvido').in('empreendimento_id',l), ids),
+      // contagem no servidor (head): uma obra passa fácil de 1000 documentos, o teto de linhas da API
+      Promise.all(ids.map(id=>sb.from('cde_documento_auria').select('id',{count:'exact',head:true}).eq('empreendimento_id',id)
+        .then(r=>({ empreendimento_id:id, n:r.count||0 }))))
+    ]);
+    const cn={}; (cs.data||[]).forEach(c=>{ cn[c.id]=c.nome; });
+    const ab={}; (ap.data||[]).forEach(a=>{ const o=ab[a.empreendimento_id]=ab[a.empreendimento_id]||{ab:0,at:0}; o.ab++; if(a.atrasado) o.at++; });
+    const nd={}; (dc||[]).forEach(d=>{ nd[d.empreendimento_id]=d.n; });
+    SEL_EMPS.forEach(e=>{ e._emp=cn[e.construtora_id]||'Sem empresa'; e._apt=ab[e.id]||{ab:0,at:0}; e._docs=nd[e.id]||0; });
+  }catch(e){ console.warn('seletor emp:', e.message||e); return; }
+  const h=$('hSub');
+  h.classList.add('esel'); h.title='Trocar de empreendimento (Ctrl+K)';
+  h.insertAdjacentHTML('beforeend','<svg class="esel-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8 3.5-3.5L13.5 8M6.5 12l3.5 3.5 3.5-3.5"/></svg>');
+  h.onclick=ev=>{ ev.stopPropagation(); selEmpAbrir(); };
+  document.addEventListener('keydown', ev=>{ if((ev.ctrlKey||ev.metaKey) && (ev.key==='k'||ev.key==='K')){ ev.preventDefault(); selEmpAbrir(); } });
+}
+function _seloEmp(o){
+  if(!o||!o.ab) return '';
+  const tit=`${o.ab} ${o.ab===1?'apontamento aberto':'apontamentos abertos'}, ${o.at} em atraso`;
+  return `<span class="fapt${o.at?' atr':''}" title="${tit}">${_ICO_APT}${o.ab}</span>`;
+}
+let _selIdx=0;
+function selEmpAbrir(){
+  let p=$('selEmpPop');
+  if(p){ selEmpFechar(); return; }
+  p=document.createElement('div'); p.id='selEmpPop'; p.className='selemp';
+  p.innerHTML='<div class="selemp-busca"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.6" cy="8.6" r="5.2"/><path d="m12.6 12.6 4 4"/></svg><input id="selEmpQ" placeholder="Buscar por código ou nome" autocomplete="off"></div><div id="selEmpLista" class="selemp-lista"></div><div class="selemp-pe"><span><kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>Enter</kbd> abrir</span><span>Ctrl+K</span></div>';
+  document.body.appendChild(p);
+  const r=$('hSub').getBoundingClientRect();
+  p.style.top=(r.bottom+6)+'px'; p.style.left=Math.max(8,Math.min(r.left, innerWidth-p.offsetWidth-8))+'px';
+  const q=$('selEmpQ');
+  q.oninput=()=>{ _selIdx=0; selEmpRender(); };
+  q.onkeydown=ev=>{
+    const its=[...document.querySelectorAll('#selEmpLista .selemp-it')];
+    if(ev.key==='ArrowDown'){ ev.preventDefault(); _selIdx=Math.min(its.length-1,_selIdx+1); selEmpRender(); }
+    else if(ev.key==='ArrowUp'){ ev.preventDefault(); _selIdx=Math.max(0,_selIdx-1); selEmpRender(); }
+    else if(ev.key==='Enter'){ const it=its[_selIdx]; if(it) selEmpIr(it.dataset.id); }
+    else if(ev.key==='Escape') selEmpFechar();
+  };
+  _selIdx=0; selEmpRender(); q.focus();
+  setTimeout(()=>document.addEventListener('mousedown', _selFora, true),0);
+}
+function _selFora(ev){ if(!ev.target.closest('#selEmpPop') && !ev.target.closest('#hSub')) selEmpFechar(); }
+function selEmpFechar(){ const p=$('selEmpPop'); if(p) p.remove(); document.removeEventListener('mousedown', _selFora, true); }
+function selEmpRender(){
+  const t=(($('selEmpQ')||{}).value||'').trim().toLowerCase();
+  const casa=e=>!t || (e.codigo||'').toLowerCase().includes(t) || (e.nome||'').toLowerCase().includes(t);
+  const lista=SEL_EMPS.filter(casa);
+  const rec=t?[]:_recentes().map(id=>lista.find(e=>e.id===id)).filter(Boolean);
+  const recIds=new Set(rec.map(e=>e.id));
+  const grupos={}; lista.filter(e=>!recIds.has(e.id)).forEach(e=>{ (grupos[e._emp]=grupos[e._emp]||[]).push(e); });
+  let i=0;
+  const item=(e,sub)=>`<div class="selemp-it${e.id===EMP_ID?' atual':''}${i===_selIdx?' foco':''}" data-id="${esc(e.id)}" data-i="${i++}" onclick="selEmpIr('${esc(e.id)}')">
+      <span class="selemp-cod">${esc((e.codigo||'').toUpperCase()||'—')}</span>
+      <span class="selemp-nm">${esc(e.nome)}<small>${esc(sub)}</small></span>${_seloEmp(e._apt)}</div>`;
+  const nDocs=e=>e._docs.toLocaleString('pt-BR')+(e._docs===1?' documento':' documentos');
+  let h='';
+  if(rec.length) h+='<div class="selemp-gh"><span>Recentes</span></div>'+rec.map(e=>item(e,e._emp)).join('');
+  Object.keys(grupos).sort((a,b)=>a.localeCompare(b)).forEach(g=>{
+    h+=`<div class="selemp-gh"><span>${esc(g)}</span><span>${grupos[g].length}</span></div>`+grupos[g].map(e=>item(e,nDocs(e))).join('');
+  });
+  $('selEmpLista').innerHTML = h || '<div class="selemp-vazio">Nenhum empreendimento encontrado.</div>';
+  const f=document.querySelector('#selEmpLista .foco'); if(f) f.scrollIntoView({block:'nearest'});
+}
+function selEmpIr(id){
+  if(id===EMP_ID){ selEmpFechar(); return; }
+  const n = (typeof WIN_STATE!=='undefined') ? WIN_STATE.list.filter(w=>w.DOC_SEL||w.isCmp||w.isFed).length : 0;
+  if(n && !confirm(`Você tem ${n} ${n===1?'prancha aberta':'pranchas abertas'}. Trocar de empreendimento fecha todas. Continuar?`)) return;
+  const u=new URL(location.href); u.searchParams.set('emp', id); u.hash='';
+  location.href=u.toString();
 }
 
 // Selo de apontamentos abertos no card: { docId: {ab, at} }. Prancha 2D chega
