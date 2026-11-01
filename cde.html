@@ -411,7 +411,9 @@
   .cdeHl.on{border-width:3px;background:rgba(232,118,43,.38);box-shadow:0 0 0 3px rgba(232,118,43,.25)}
   .cdeHlBar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:6px;background:#0F1B2D;color:#fff;border-radius:999px;padding:5px 6px 5px 14px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
   .cdeHlBar button{background:#E8762B;color:#fff;border:none;border-radius:999px;width:26px;height:24px;cursor:pointer;font-size:11px}
-  .cdePin{position:absolute;width:26px;height:34px;margin-left:-13px;margin-top:-32px;pointer-events:auto;cursor:pointer;
+  /* Pin = gota + código em cima, na cor do STATUS (padrão do App, aprovado 2026-11-01).
+     Largura varia com o código; a ponta da gota fica no ponto (margens no render). */
+  .cdePin{position:absolute;pointer-events:auto;cursor:pointer;transform-origin:50% 100%;
           filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));transition:transform .12s}
   .cdePin svg{display:block}
   .cdePin.sel,.cdePin:hover{transform:scale(1.18)}
@@ -419,6 +421,15 @@
               box-shadow:0 14px 40px rgba(8,14,26,.45);padding:12px 14px;min-width:250px;max-width:340px;font-size:12.5px}
   .cdePinCard .tit{font-weight:800;color:var(--txt);font-size:13px;margin:0 0 4px}
   .cdePinCard .cod{font-family:var(--mono);color:var(--navy);font-weight:700;font-size:11px}
+  .cdePinCard.critL{border-left:3px solid var(--c);border-bottom:3px solid var(--c);border-bottom-left-radius:9px}
+  .cdePinCard .hd{display:flex;align-items:center;gap:6px}
+  .cdePinCard .hd .cod{font-size:12.5px}
+  .cdePinCard .dtag{font-size:9px;font-weight:800;letter-spacing:.06em;border-radius:5px;padding:1px 5px;background:#1E3A8A;color:#DBE7FF}
+  .cdePinCard .dtag.bim{background:#22D3EE;color:#0B2533}
+  .cdePinCard .crit{font-size:9.5px;font-weight:800;border:1.2px solid var(--c);color:var(--ct);border-radius:5px;padding:0 6px;margin-left:auto;white-space:nowrap}
+  .cdePinCard .stp{font-size:10px;font-weight:800;border-radius:8px;padding:1px 7px}
+  .cdePinCard .vinc{margin-top:8px;padding-top:7px;border-top:1px dashed var(--line);font-size:11px;color:var(--mut)}
+  .cdePinCard .vinc b{font-family:var(--mono);color:var(--txt)}
   .cdePinCard .row{display:flex;gap:6px;align-items:center;margin-top:5px;color:var(--txt2);font-size:11.5px;flex-wrap:wrap}
   .cdePinCard .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:700;color:#fff}
   .cdePinCard .desc{margin-top:8px;color:var(--txt2);line-height:1.5;font-size:12px;max-height:120px;overflow:auto}
@@ -1354,6 +1365,8 @@ async function boot(){
   _barraPronta();
   await carregarDocs();
   await carregarGrupos();
+  // Vindo da Fila da coordenação (?q=CÓDIGO): já abre a busca filtrada no documento recebido.
+  { const _q=new URLSearchParams(location.search).get('q'); const _i=$('navBusca'); if(_q && _i){ _i.value=_q; onBuscaInput(_q); } }
   pedObraCarregar();          // item 147: fila de liberação para a obra (não bloqueia o boot)
   $('load').style.display='none';
   // "Me leva lá" (item 52 fase 2): ações que o assistente pode executar nesta tela.
@@ -6031,13 +6044,13 @@ class CdeWin {
     // o que abriram; equipe/coordenação veem Coordenação também). Não filtramos
     // Coordenação no cliente — quem pode ver, vê; quem não pode, a RLS barra.
     let { data: apts, error } = await sb.from('apontamentos')
-      .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json')
+      .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json,dimensao,grupo_id,empreendimento_id')
       // Split 2D/2D do App: apontamento de outra prancha pode ter pin NESTA (pin.pid).
       .or('prancha_id.eq.'+pr.id+',pontos_json.cs.[{"pid":"'+pr.id+'"}]');
     if(error){   // filtro jsonb recusado → volta ao filtro só por prancha (comportamento anterior)
       console.warn('apts CDE (pid):', error.message);
       ({ data: apts, error } = await sb.from('apontamentos')
-        .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json')
+        .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json,dimensao,grupo_id,empreendimento_id')
         .eq('prancha_id', pr.id));
     }
     if(error){ console.warn('apts CDE:', error.message); this.CDE_APTS=[]; }
@@ -6120,7 +6133,9 @@ class CdeWin {
         el.style.left = x+'px'; el.style.top = y+'px';
         el.title = a.id + ' — ' + (a.titulo || '');
         el.dataset.apt = a.id; el.dataset.pi = idx;
-        el.innerHTML = cdePinSvg(a.id_num, cdeCorPrio(a.prioridade));
+        const pv = cdePinSvg(a);
+        el.innerHTML = pv.svg;
+        el.style.marginLeft = (-pv.w/2)+'px'; el.style.marginTop = (-pv.h+1)+'px';
         wrap.appendChild(el);
       });
     });
@@ -7921,7 +7936,7 @@ async function confirmarRecepcao(auto){
         _cdeToast('✓ Recepção confirmada — projetista avisado ('+data.enviados+' destinatário(s)).');
         if(DOC_SEL && DOC_SEL.id===docId) renderDetalhe();
       }else if(!auto){
-        _cdeToast((data&&data.aviso)||'Nenhum projetista cadastrado para essa disciplina. Cadastre-o no painel do analista (Fornecedores).');
+        _cdeToast((data&&data.aviso)||'Nenhum projetista cadastrado para essa disciplina. Cadastre-o no Painel da Coordenação (Fornecedores).');
       }
     }catch(e){ if(!auto) _cdeToast('Não foi possível avisar o projetista: '+((e&&e.message)||e)); }
   })();
@@ -7960,17 +7975,27 @@ function cdeCorPrio(p){
   if(!p) return '#7F8C8D';
   if(p.indexOf('Severa')>=0) return '#E74C3C';
   if(p.indexOf('Importante')>=0) return '#E67E22';
-  if(p.indexOf('Observação')>=0) return '#C29D0B';
+  if(p.indexOf('Observação')>=0) return '#EAB308';
   return '#7F8C8D';
 }
-function cdePinSvg(num, cor){
-  const px=13, py=32, r=9, H=19, cy=py-H;
-  const ptr=`M ${px} ${py} L ${(px-6).toFixed(1)} ${(cy+r*0.55).toFixed(1)} L ${(px+6).toFixed(1)} ${(cy+r*0.55).toFixed(1)} Z`;
-  return `<svg viewBox="0 0 26 34" width="26" height="34">`
-    + `<path d="${ptr}" fill="${cor}"/>`
-    + `<circle cx="${px}" cy="${cy}" r="${r}" fill="${cor}" stroke="#fff" stroke-width="1.6"/>`
-    + `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="800" fill="#fff">${esc(String(num||''))}</text>`
-    + `</svg>`;
+function cdeCritRot(p){ const m=/Severa|Importante|Observação/.exec(p||''); return m?m[0]:''; }
+function cdeCritTxt(p){ return {Severa:'#C0392B',Importante:'#B9561A','Observação':'#A16207'}[cdeCritRot(p)]||'#6B7280'; }
+// Cor do pin = STATUS (igual ao App): resolvido verde, reprovado cinza, atrasado vermelho; BIM ciano.
+function cdeCorPin(a){
+  if(a.dimensao==='bim') return '#22D3EE';
+  if(a.status==='Resolvido') return '#27AE60';
+  if(a.status==='Reprovado') return '#9CA3AF';
+  if(a.atrasado) return '#E74C3C';
+  return {'Em aberto':'#E67E22','Em análise':'#F39C12'}[a.status]||'#7F8C8D';
+}
+function cdePinSvg(a){
+  const cor=cdeCorPin(a), bim=a.dimensao==='bim', fg=bim?'#0B2533':'#fff', bd=bim?'#0E1726':'#fff';
+  const txt=String(a.id||a.id_num||''), w=Math.max(26, Math.round(txt.length*6.6)+12), h=52;
+  return { w, h, svg:`<svg width="${w}" height="${h}" style="display:block;overflow:visible">`
+    + `<rect x=".65" y=".65" width="${w-1.3}" height="17" rx="5" fill="${cor}" stroke="${bd}" stroke-width="1.3"/>`
+    + `<text x="${w/2}" y="9.2" text-anchor="middle" dominant-baseline="central" font-family="Cascadia Mono,Consolas,monospace" font-size="10.5" font-weight="800" fill="${fg}">${esc(txt)}</text>`
+    + `<g transform="translate(${w/2-13},18)"><path d="M13 33 L7 18 L19 18 Z" fill="${cor}"/>`
+    + `<circle cx="13" cy="13" r="9" fill="${cor}" stroke="${bd}" stroke-width="1.6"/><circle cx="13" cy="13" r="3" fill="${bd}"/></g></svg>` };
 }
 
 // ── Card de detalhes do pin (Elo C) — global, opera na janela que abriu ────
@@ -8004,13 +8029,18 @@ function mostrarCdePinCard(a, cx, cy, win){
     ? '<div style="margin:6px 0 2px;padding:6px 9px;border-radius:7px;font-size:11.5px;font-weight:700;'
       + (st==='Reprovado' ? 'background:#FADBD8;color:#7B241C"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="8.6" width="12" height="8.8" rx="1.6"/><path d="M6.8 8.6V6.4a3.2 3.2 0 0 1 6.4 0v2.2"/><path d="M10 12v2.2"/></svg> Encerrado — Reprovado' : 'background:#D5F5E3;color:#145A32"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="8.6" width="12" height="8.8" rx="1.6"/><path d="M6.8 8.6V6.4a3.2 3.2 0 0 1 6.4 0v2.2"/><path d="M10 12v2.2"/></svg> Encerrado — Resolvido')
       + '</div>' : '';
+  const bim = a.dimensao==='bim', crit = cdeCritRot(a.prioridade), cc = cdeCorPrio(a.prioridade);
+  const stp = (t,cor)=>'<span class="stp" style="background:'+cor+'22;color:'+cor+'">'+esc(t)+'</span>';
+  c.className = 'cdePinCard' + (crit ? ' critL' : '');
+  c.style.setProperty('--c', cc);
   c.innerHTML =
-    '<div class="cod">'+esc(a.id||'')+'</div>'
+    '<div class="hd"><span class="dtag'+(bim?' bim':'')+'">'+(bim?'BIM':'2D')+'</span><span class="cod">'+esc(a.id||'')+'</span>'
+    + (crit ? '<span class="crit" style="--c:'+cc+';--ct:'+cdeCritTxt(a.prioridade)+'">'+crit+'</span>' : '') + '</div>'
     + '<div class="tit">'+esc(a.titulo||'(sem título)')+'</div>'
     + encInfo
-    + '<div class="row"><span class="pill" style="background:'+stCor+'">'+esc(st)+'</span>'
-    + (a.prioridade?'<span class="pill" style="background:'+prCor+'">'+esc(a.prioridade)+'</span>':'')
+    + '<div class="row">' + (a.atrasado && !encerrado ? stp('Em atraso','#E74C3C') : '') + stp(st, stCor)
     + (a.disciplina?'<span style="color:var(--mut)">· '+esc(a.disciplina)+'</span>':'')+'</div>'
+    + '<div id="cdeCardVinc"></div>'
     + (a.tipo?'<div class="row"><span style="color:var(--txt2)"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.6 4.2v5.6l7.8 7.8 5.6-5.6L8.2 4.2z"/><circle cx="6" cy="7.6" r="1.2"/></svg> '+esc(a.tipo)+'</span></div>':'')
     + '<div class="row"><span style="color:var(--mut)">'+esc(a.analista||'')+(dt?' · '+esc(dt):'')+'</span></div>'
     + (a.prazo_min?'<div class="row"><span style="color:var(--mut)"><svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.6" y="4.2" width="14.8" height="13.2" rx="1.6"/><path d="M2.6 8h14.8"/><path d="M6.6 2.6v3.2M13.4 2.6v3.2"/><path d="M6.4 11.4h2M9.4 11.4h2M12.4 11.4h2"/></svg> prazo '+esc(a.prazo_min)+(a.atrasado?' · ⚠ atrasado':'')+'</span></div>':'')
@@ -8031,6 +8061,18 @@ function mostrarCdePinCard(a, cx, cy, win){
   if(T + h > window.innerHeight - 8) T = window.innerHeight - h - 8;
   if(T < 8) T = 8;
   c.style.left = L+'px'; c.style.top = T+'px';
+  cdeCardVinculo(a);
+}
+// Frente vinculada (mesmo grupo — 2D ↔ BIM), como no balão do pin do App.
+async function cdeCardVinculo(a){
+  const g = a.grupo_id || a.id; if(!g || !a.empreendimento_id) return;
+  let irmas=[];
+  try{ const { data } = await sb.from('apontamentos').select('id,dimensao,status,atrasado')
+         .eq('empreendimento_id', a.empreendimento_id).eq('grupo_id', g).neq('id', a.id);
+       irmas = data || []; }catch(_){ return; }
+  const el = $('cdeCardVinc'); if(!el || !irmas.length) return;
+  el.className = 'vinc';
+  el.innerHTML = irmas.map(x=>'⛓ Vinculado · <span class="dtag'+(x.dimensao==='bim'?' bim':'')+'">'+(x.dimensao==='bim'?'BIM':'2D')+'</span> <b>'+esc(x.id)+'</b> · '+esc(x.status||'—')+(x.atrasado?' · atrasado':'')).join('<br>');
 }
 function esconderCdePinCard(){
   const c=$('cdePinCard'); if(c) c.style.display='none';
