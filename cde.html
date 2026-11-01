@@ -597,6 +597,10 @@
   .fdoc.fed .fcomp{font-size:10.5px;color:var(--mut);margin-top:2px;display:block;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .fdoc .fstatus-txt{font-size:10px;font-weight:700;letter-spacing:.02em;display:inline-block;margin-top:3px}
+  .fdoc .fstatus-lin{display:flex;align-items:center;justify-content:space-between;gap:6px}
+  .fdoc .fapt{display:inline-flex;align-items:center;gap:3px;margin-top:3px;padding:0 7px 0 5px;border:1px solid #f5a25d;background:#fff4ea;color:#b4530a;border-radius:10px;font:600 11px/17px var(--mono,ui-monospace,Consolas,monospace);cursor:default}
+  .fdoc .fapt svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .fdoc .fapt.atr{border-color:#e07a6e;background:#fdeeec;color:#b03a2e}
   .fdoc .fcoluna{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;align-self:flex-start;padding-top:1px}
   .fdoc .fdata{font-family:var(--mono);font-size:9.5px;color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap}
   .fdoc .fdata.velha{color:var(--accent);font-weight:700}
@@ -1574,7 +1578,7 @@ async function carregarDocs(){
   const ids = (docs||[]).map(d=>d.id);
   let revs=[], arqs=[];
   // pavimentos e pranchas vinculadas não dependem das revisões: já saem em paralelo
-  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas(), carregarFederacoes(), mpCarregarCfg()]);
+  const paralelo = Promise.all([carregarPavimentos(), carregarPranchasVinculadas(), carregarAptsPorDoc(), carregarFederacoes(), mpCarregarCfg()]);
   if(ids.length){
     // 'motivo' (item 110) é coluna nova: sem o SQL rodado, cai para a lista sem ela.
     const RCOLS='id,documento_id,revisao,estado,status,recebido_em,aprovado_em,ressalvas';
@@ -1639,6 +1643,35 @@ async function carregarPranchasVinculadas(){
       .select('cde_documento_id').eq('empreendimento_id',EMP_ID).not('cde_documento_id','is',null);
     CDE_LINKED_DOCS = new Set((data||[]).map(r=>r.cde_documento_id));
   }catch(e){ CDE_LINKED_DOCS = new Set(); console.warn('pranchas vinculadas:', e.message||e); }
+}
+
+// Selo de apontamentos abertos no card: { docId: {ab, at} }. Prancha 2D chega
+// por prancha_id (ou pin.pid do split) → pranchas_auria.cde_documento_id;
+// modelo IFC pelo pin.cde_doc. Aberto = tudo que não está Resolvido.
+let APT_DOC = {};
+async function carregarAptsPorDoc(){
+  try{
+    const [pr, ap] = await Promise.all([
+      sb.from('pranchas_auria').select('id,cde_documento_id').eq('empreendimento_id',EMP_ID).not('cde_documento_id','is',null),
+      sb.from('apontamentos').select('id,prancha_id,atrasado,pontos_json').eq('empreendimento_id',EMP_ID).neq('status','Resolvido')
+    ]);
+    const p2d={}; (pr.data||[]).forEach(r=>{ p2d[r.id]=r.cde_documento_id; });
+    const m={};
+    (ap.data||[]).forEach(a=>{
+      const docs=new Set();
+      if(a.prancha_id && p2d[a.prancha_id]) docs.add(p2d[a.prancha_id]);
+      (Array.isArray(a.pontos_json)?a.pontos_json:[]).forEach(p=>{
+        if(!p) return; if(p.cde_doc) docs.add(p.cde_doc); if(p.pid && p2d[p.pid]) docs.add(p2d[p.pid]); });
+      docs.forEach(d=>{ const o=m[d]=m[d]||{ab:0,at:0}; o.ab++; if(a.atrasado) o.at++; });
+    });
+    APT_DOC=m;
+  }catch(e){ APT_DOC={}; console.warn('apts por doc:', e.message||e); }
+}
+const _ICO_APT='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><path d="M12 7v3.5M12 13.2v.1"/></svg>';
+function _seloApt(d){
+  const o=APT_DOC[d.id]; if(!o||!o.ab) return '';
+  const tit=`${o.ab} ${o.ab===1?'apontamento aberto':'apontamentos abertos'}, ${o.at} em atraso`;
+  return `<span class="fapt${o.at?' atr':''}" title="${tit}">${_ICO_APT}${o.ab}</span>`;
 }
 
 // ── Elo B: vinculação ASSISTIDA de prancha legada ──────────────────────────
@@ -2068,7 +2101,9 @@ function _colunaData(d){
        + `${d.atual.revisao?`<span class="frev">${esc(d.atual.revisao)}</span>`:''}</span>`;
 }
 // Nome do status por extenso, na cor dele.
-function _statusTxt(s){ return s?`<br><span class="fstatus-txt" style="color:${s.cor}">${esc(s.rotulo)}</span>`:''; }
+function _statusTxt(s,d){ const selo=d?_seloApt(d):'';
+  if(!s&&!selo) return '';
+  return `<br><span class="fstatus-lin">${s?`<span class="fstatus-txt" style="color:${s.cor}">${esc(s.rotulo)}</span>`:'<span></span>'}${selo}</span>`; }
 function _dataLiberacao(d){   // data em que virou PUBLICADO (A1/B1)
   const r=(d.revs||[]).find(x=>x.estado==='PUBLICADO' && x.aprovado_em);
   return r ? +new Date(r.aprovado_em) : 0;
@@ -2289,7 +2324,7 @@ function cardFdocBim(d){
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}" style="flex-wrap:wrap">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
-    <span class="fmeta"><span class="fc">${esc(d.codigo)}${verIfc}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}${verIfc}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s,d)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">${selo}</div>
@@ -2874,7 +2909,7 @@ function cardFdocGrupo(d,gid){
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
-    <span class="fmeta"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s,d)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
     <button class="gx" title="Remover do grupo" onclick="event.stopPropagation();removeDoGrupo('${gid}','${d.id}')">×</button>
@@ -2958,7 +2993,7 @@ function cardFdoc(d){
   return `<div class="fdoc ${DOC_SEL&&DOC_SEL.id===d.id?'sel':''}" data-doc="${d.id}" onclick="${abrir}">
     ${chk}
     <span class="fbarra" style="background:${cor}" title="${esc(s?s.rotulo:'sem revisão')}"></span>
-    <span class="fmeta"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s)}<span class="fchips">${fmtChips(d)}</span></span>
+    <span class="fmeta"><span class="fc">${esc(d.codigo)}${analise}</span>${_docTit(d)?`<br><span class="ft">${esc(_docTit(d))}</span>`:''}${_statusTxt(s,d)}<span class="fchips">${fmtChips(d)}</span></span>
     ${_colunaData(d)}
     <button class="fkebab" title="Opções" onclick="docMenuOpen(event,'${d.id}')">⋮</button>
   </div>`;
