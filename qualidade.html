@@ -12,6 +12,7 @@
 <script src="auria_word.js"></script>
 <script src="auria_itcopia.js"></script>
 <script src="auria_nc.js"></script>
+<script src="auria_auditoria.js"></script>
 <script src="auria_biblioteca.js"></script>
 <!-- ===========================================================================
      Painel da Qualidade (mockup aprovado em 2026-10-18: mockups/painel_qualidade.html)
@@ -318,6 +319,7 @@
     <a data-t="biblioteca" href="#biblioteca"><svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v4h4M8 13h8M8 17h5"/></svg>Biblioteca normativa<span class="n" id="nBib"></span></a>
     <a data-t="conferencia" href="#conferencia"><svg viewBox="0 0 24 24"><path d="M9 5h10M9 12h10M9 19h10"/><path d="m3.5 5 1.5 1.5L7.5 4M3.5 12l1.5 1.5 2.5-2.5M3.5 19l1.5 1.5 2.5-2.5"/></svg>Modelos de FVS<span class="n" id="nFvs"></span></a>
     <a data-t="ncs" href="#ncs"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>Não conformidades<span class="n" id="nNc"></span></a>
+    <a data-t="auditorias" href="#auditorias"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5M8.5 11l2 2 3.5-3.5"/></svg>Auditorias<span class="n" id="nAud"></span></a>
     <a data-t="fichas" href="#fichas"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>Fichas das obras<span class="n" id="nFic"></span></a>
     <div class="grp">Distribuição</div>
     <a data-t="copias" href="#copias"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M4 7v14h11"/></svg>Cópias controladas<span class="n" id="nCop"></span></a>
@@ -402,9 +404,9 @@ async function carregarFvs(){
 }
 function rotear(){
   const t = (location.hash || '#fazer').slice(1).split('?')[0];
-  TELA = ({ fazer:1, biblioteca:1, conferencia:1, fichas:1, copias:1, ncs:1 })[t] ? t : 'fazer';
+  TELA = ({ fazer:1, biblioteca:1, conferencia:1, fichas:1, copias:1, ncs:1, auditorias:1 })[t] ? t : 'fazer';
   document.querySelectorAll('#nav a[data-t]').forEach(a => a.classList.toggle('on', a.dataset.t === TELA));
-  ({ fazer:telaFazer, biblioteca:telaBiblioteca, conferencia:telaConferencia, fichas:telaFichas, copias:telaCopias, ncs:telaNcs })[TELA]();
+  ({ fazer:telaFazer, biblioteca:telaBiblioteca, conferencia:telaConferencia, fichas:telaFichas, copias:telaCopias, ncs:telaNcs, auditorias:AuriaAud.tela })[TELA]();
 }
 function ir(t){ if (('#' + t) === location.hash) rotear(); else location.hash = t; }
 
@@ -432,12 +434,13 @@ async function contadores(){
     minApr: MINUTAS.filter(m => m.situacao === 'aprovacao' && m.elaborado_por !== ME.id).length,
     minDev: MINUTAS.filter(m => m.situacao === 'devolvida' && m.elaborado_por === ME.id).length,
     ciePend: (await cienciaCarregar(true)).filter(x => !x.ciente_em).length,
-    ...(await ncContadores())
+    ...(await ncContadores()),
+    ...(await AuriaAud.contadores())
   };
   const n = (id, v, q) => { const el = $(id); el.textContent = v ? v : ''; el.style.display = v ? '' : 'none'; el.classList.toggle('q', !!q); };
-  const fila = CONT.ncPlano + CONT.ncEf + CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
+  const fila = CONT.audAtr + CONT.ncPlano + CONT.ncEf + CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
   n('nFazer', fila, true); n('nBib', ITS.filter(i => i.ativo).length); n('nFvs', CONT.ras + FVS.filter(m => m.ativo && !m.rascunho && m.revisar_it_rev).length, true);
-  n('nNc', CONT.ncAbertas, CONT.ncPlano + CONT.ncEf > 0); n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
+  n('nAud', CONT.audAtr + CONT.audProx, CONT.audAtr > 0); n('nNc', CONT.ncAbertas, CONT.ncPlano + CONT.ncEf > 0); n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
   if (TELA === 'fazer') telaFazer();
 }
 
@@ -462,6 +465,7 @@ function telaFazer(){
   $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Para fazer</h2><p class="sub">O que depende da Qualidade hoje, do mais urgente para o menos. Cada linha abre a tela já filtrada.</p></div></div>'
     + '<div class="t1g"><div>'
     + '<div class="card fila"><div class="hd"><b>Fila de trabalho</b></div>'
+    + (C.audAtr ? linha(C.audAtr, 'Auditorias internas atrasadas', 'Programadas com data vencida e ainda não realizadas. Realize ou reprograme.', '<button class="btn sec" onclick="ir(\'auditorias\')">Ver programa</button>', true) : '')
     + linha(C.ncPlano || 0, 'Planos de ação de NC para aprovar', 'A obra registrou contenção, causa raiz e ações. Confira se a causa é a raiz de verdade antes de aprovar.', '<button class="btn ac" onclick="NCF=\'plano\';ir(\'ncs\')">Analisar</button>', true)
     + linha(C.ncEf || 0, 'Eficácia de NC para verificar', 'Ações concluídas e prazo de observação vencido: confira em campo se o problema voltou.', '<button class="btn sec" onclick="NCF=\'eficacia\';ir(\'ncs\')">Verificar</button>', true)
     + (C.ncAtr ? linha(C.ncAtr, 'Ações de NC atrasadas nas obras', 'O responsável recebe cobrança diária por e-mail; acompanhe com a obra.', '<button class="btn sec" onclick="NCF=\'execucao\';ir(\'ncs\')">Ver</button>') : '')
