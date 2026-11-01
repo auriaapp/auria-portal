@@ -385,6 +385,13 @@
   .pin-balao.ext::after{border-top-color:#E8F1FB}
   .pin-balao.ext.below::after{border-top-color:transparent;border-bottom-color:#E8F1FB}
   .ap-st{display:inline-block;font-size:9px;font-weight:800;border-radius:8px;padding:1px 6px;margin-right:4px}
+  /* Frentes 2D × BIM (maquete aprovada 2026-11-01): 2D azul-escuro, BIM ciano; laranja = vínculo/foco */
+  .dtag{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.06em;border-radius:5px;padding:1px 5px;margin-right:6px;vertical-align:1px}
+  .dtag.d2{background:#1E3A8A;color:#DBE7FF} .dtag.bim{background:#22D3EE;color:#0B2533}
+  .ap-cod{font-family:'Cascadia Mono',Consolas,monospace}
+  .ap-elo{font-size:10px;font-weight:600;color:#F28C28;white-space:nowrap}
+  .ap-filho{margin-left:20px;position:relative}
+  .ap-filho:before{content:'';position:absolute;left:-13px;top:-8px;width:9px;height:24px;border-left:1.5px solid #F28C28;border-bottom:1.5px solid #F28C28;border-bottom-left-radius:6px;opacity:.75}
 
   /* Janela flutuante (arrastável + minimizável) */
   .win{position:fixed;top:70px;left:calc(50% - 340px);width:680px;max-width:94vw;max-height:86vh;
@@ -2625,15 +2632,26 @@ function screenToPage(sx,sy){
 
 // Desenha um marcador limpo: balão circular com o número CENTRADO + ponteiro
 // até a ponta exata (px,py). r=raio do balão, H=altura do centro sobre a ponta.
-function pinSvg(px, py, num, cor, destaque){
-  const r=11, H=25, cy=py-H;
-  // ponteiro: da ponta até a base do balão (levemente dentro do círculo)
-  const ptr=`M ${px} ${py} L ${px-7} ${cy+r*0.55} L ${px+7} ${cy+r*0.55} Z`;
-  const halo=destaque?`<circle cx="${px}" cy="${cy}" r="${r+3.5}" fill="none" stroke="${cor}" stroke-width="2" opacity=".45"/>`:'';
+// Pin = etiqueta com o CÓDIGO (maquete aprovada 2026-11-01). 2D na cor da criticidade,
+// BIM em ciano; selo ⛓ (no 2D, ciano) / "2D" (no BIM, vermelho) = existe a outra frente.
+// O centro da etiqueta fica 25px acima da ponta (hit-test do 3D conta com isso).
+function pinSvg(px, py, a, destaque){
+  a=a||{};
+  const bim=_aptDim(a)==='bim', cor=bim?'#22D3EE':corPrio(a.prioridade), fg=bim?'#0B2533':'#fff';
+  const txt=String(a.id||a.id_num||''), h=19, w=Math.max(26, Math.round(txt.length*6.7)+12), H=25, cy=py-H, x0=px-w/2;
+  const ptr=`M ${px} ${py} L ${px-5} ${cy+h/2-1} L ${px+5} ${cy+h/2-1} Z`;
+  const halo=destaque?`<rect x="${x0-3.5}" y="${cy-h/2-3.5}" width="${w+7}" height="${h+7}" rx="9" fill="none" stroke="#F28C28" stroke-width="2"/>`:'';
+  let selo='';
+  if(a.id && typeof APTS!=='undefined' && _aptTemVinculo(a)){
+    const sx=x0+w-1, sy=cy-h/2+1;
+    selo = bim
+      ? `<circle cx="${sx}" cy="${sy}" r="7.5" fill="#E74C3C" stroke="#0E1726" stroke-width="1.5"/><text x="${sx}" y="${sy}" text-anchor="middle" dominant-baseline="central" font-size="7" font-weight="800" fill="#fff" style="pointer-events:none">2D</text>`
+      : `<circle cx="${sx}" cy="${sy}" r="7.5" fill="#22D3EE" stroke="#fff" stroke-width="1.5"/><text x="${sx}" y="${sy+.5}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#0B2533" style="pointer-events:none">⛓</text>`;
+  }
   return halo+
     `<path d="${ptr}" fill="${cor}"/>`+
-    `<circle cx="${px}" cy="${cy}" r="${r}" fill="${cor}" stroke="#fff" stroke-width="1.8"/>`+
-    `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="800" fill="#fff" style="pointer-events:none">${esc(String(num||''))}</text>`;
+    `<rect x="${x0}" y="${cy-h/2}" width="${w}" height="${h}" rx="6" fill="${cor}" stroke="${bim?'#0E1726':'#fff'}" stroke-width="1.4"/>`+
+    `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-family="Cascadia Mono,Consolas,monospace" font-size="11" font-weight="800" fill="${fg}" style="pointer-events:none">${esc(txt)}</text>`+selo;
 }
 
 // Camada (prancha) carregada e VISÍVEL a que um apontamento pertence — base ou
@@ -2720,7 +2738,7 @@ function renderPins(){
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClick(${ai},${pi});event.stopPropagation()">
-        ${pinSvg(p.x,p.y, a.id_num, corPrio(a.prioridade), false)}</g>`;
+        ${pinSvg(p.x,p.y,a,false)}</g>`;
     });
   });
   // Apontamento em EDIÇÃO (novo ou existente): pins desenhados AO VIVO do APT_EDIT
@@ -2730,7 +2748,7 @@ function renderPins(){
       if(pt.pid && !_pinVisivel(APT_EDIT,pt)) return;   // pin na prancha do outro lado
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
-      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y,APT_EDIT,true)}</g>`;
     });
   }
   // Apontamento em edição no OUTRO lado do split: os pins dele que caem NESTA prancha
@@ -2738,7 +2756,7 @@ function renderPins(){
     (PEER_EDIT.pontos||[]).forEach((pt,pi)=>{
       if(pt.k3d || !pt.pid || !_pinVisivel(PEER_EDIT,pt) || (pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
-      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="peerCall('__peerRmPin',${pi});event.stopPropagation()">${pinSvg(p.x,p.y, PEER_EDIT.id_num, corPrio(PEER_EDIT.prioridade), true)}</g>`;
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="peerCall('__peerRmPin',${pi});event.stopPropagation()">${pinSvg(p.x,p.y,PEER_EDIT,true)}</g>`;
     });
   }
   svg.innerHTML=out;
@@ -2811,6 +2829,7 @@ function mostrarBalaoPin(a, ai, sx, sy){
     <div class="pb-m">${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade):''}</div>
     <div class="pb-m">📅 ${prazo}${a.local_txt?(' · 📍 '+esc(a.local_txt)):''}</div>
     ${a.descricao?`<div class="pb-d">${esc(a.descricao)}</div>`:''}
+    ${_balaoFrentes(a)}
     <button class="pb-open" onclick="abrirAptIdx(${ai});fecharPinBalao()">Abrir apontamento ›</button>`;
   document.body.appendChild(b);
   const bw=b.offsetWidth, bh=b.offsetHeight;
@@ -2820,6 +2839,16 @@ function mostrarBalaoPin(a, ai, sx, sy){
   b.classList.toggle('below', below);
   b.style.left=left+'px'; b.style.top=top+'px';
   setTimeout(()=>document.addEventListener('mousedown', fecharPinBalaoOut),0);
+}
+// Frentes ligadas (mesmo grupo) no balão do pin: código, status e o atalho para a outra.
+function _balaoFrentes(a){
+  const g=a.grupo_id||a.id, irmas=APTS.filter(x=>x!==a && (x.grupo_id||x.id)===g);
+  if(!irmas.length) return '';
+  const lin=irmas.map(x=>{ const bim=_aptDim(x)==='bim';
+    const ac=bim?`🧊 Ver ${esc(x.id)} no modelo`:`📐 Abrir ${esc(x.id)} na prancha`;
+    return `<div class="pb-m" style="display:flex;align-items:center;gap:6px;margin-top:6px"><span class="dtag ${bim?'bim':'d2'}" style="margin:0">${bim?'BIM':'2D'}</span><b class="ap-cod">${esc(x.id)}</b><span style="color:${estaAtrasado(x)?'#E74C3C':corStatus(x.status)}">${esc(x.status||'—')}${estaAtrasado(x)?' · atrasado':''}</span></div>
+      <button class="pb-open" style="margin-top:6px;background:transparent;border:1px solid ${bim?'#22D3EE':'#F28C28'};color:${bim?'#22D3EE':'#F28C28'}" onclick="fecharPinBalao();abrirFrente('${esc(x.id)}')">${ac}</button>`; }).join('');
+  return `<div style="border-top:1px dashed var(--line);margin-top:8px;padding-top:2px"><div class="pb-m" style="color:#F28C28;font-weight:700">⛓ Vinculado</div>${lin}</div>`;
 }
 function fecharPinBalao(){ const b=$('pinBalao'); if(b) b.remove(); document.removeEventListener('mousedown', fecharPinBalaoOut); }
 function fecharPinBalaoOut(e){
@@ -4622,14 +4651,14 @@ function f3dRenderPins(E, svg){
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       // pinSvg desenha o círculo 25px acima da âncora (a ponta = p.y)
       E._pinHits.push({ ai, cx:p.x, cy:p.y-25, ty:p.y });
-      out+=pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false);
+      out+=pinSvg(p.x,p.y,a,false);
     });
   });
   if(APT_EDIT){
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const w=f3dPinWorld(E, pt); const p=f3dWorldToScreen(E, w.x,w.y,w.z); if(!p) return;
-      out+=pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true);
+      out+=pinSvg(p.x,p.y,APT_EDIT,true);
     });
   }
   svg.innerHTML=out;
@@ -7630,14 +7659,14 @@ function bimRenderPins(){
       if(!pt.k3d||pt.model!==BIM_PROJ.id) return;
       const p=bimWorldToScreen(pt.x,pt.y,pt.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinClick('+ai+');event.stopPropagation()">'+pinSvg(p.x,p.y,a.id_num,corPrio(a.prioridade),false)+'</g>';
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinClick('+ai+');event.stopPropagation()">'+pinSvg(p.x,p.y,a,false)+'</g>';
     });
   });
   if(APT_EDIT){  // pins do apontamento em edição, AO VIVO
     (APT_EDIT.pontos_json||[]).forEach((pt,pi)=>{
       if(!pt.k3d||pt.model!==BIM_PROJ.id) return;
       const p=bimWorldToScreen(pt.x,pt.y,pt.z); if(!p) return;
-      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinEditClick('+pi+');event.stopPropagation()">'+pinSvg(p.x,p.y,APT_EDIT.id_num,corPrio(APT_EDIT.prioridade),true)+'</g>';
+      out+='<g style="pointer-events:auto;cursor:pointer" onclick="bimPinEditClick('+pi+');event.stopPropagation()">'+pinSvg(p.x,p.y,APT_EDIT,true)+'</g>';
     });
   }
   svg.innerHTML=out;
@@ -8004,20 +8033,23 @@ function renderFrentes(){
     const atual = x.id===a.id;
     const prazo = (x.participantes && Object.values(x.participantes)[0] || {}).prazo || '';
     const cor = /resolv|conclu/i.test(x.status||'') ? '#1E8449' : (x.atrasado ? '#A32D2D' : 'var(--mut)');
-    return `<div style="flex:1;min-width:0;border:1.5px solid ${atual?'var(--accent)':'var(--line)'};border-radius:9px;
+    return `<div style="flex:1;min-width:0;border:1.5px solid ${atual?'#F28C28':'var(--line)'};border-radius:9px;
         padding:7px 9px;background:${atual?'var(--panel2)':'var(--panel)'};cursor:${atual?'default':'pointer'}"
         ${atual?'':`onclick="abrirFrente('${esc(x.id)}')"`} title="${atual?'Frente aberta':'Abrir esta frente'}">
-      <div style="font-size:11px;color:var(--mut)">${F_ROT[dim]||dim}</div>
-      <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.id)}</div>
+      <div style="font-size:10.5px;color:var(--mut);display:flex;align-items:center;gap:5px"><span class="dtag ${dim==='bim'?'bim':'d2'}" style="margin:0">${dim==='bim'?'BIM':'2D'}</span>${dim==='bim'?'modelo':'prancha'}${atual?' · aberta':''}</div>
+      <div class="ap-cod" style="font-size:12px;font-weight:700;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.id)}</div>
       <div style="font-size:11px;color:${cor}">${esc(x.status||'—')}${prazo?(' · '+esc(prazo)):''}</div>
     </div>`;
   };
   let html='<div style="font-size:11px;color:var(--mut);margin-bottom:5px">Frentes deste problema</div>'
-         + '<div style="display:flex;gap:7px">'
-         + irmas.map(cartao).join('');
+         + '<div style="display:flex;gap:7px;align-items:stretch">'
+         + irmas.map(cartao).join('<div style="display:flex;align-items:center;color:#F28C28;font-size:14px" title="Vinculadas: mesmo problema">⛓</div>');
+  // Resolver uma frente NÃO fecha a outra (cada uma tem dono) — só avisa.
+  const resol=irmas.filter(x=>x.id!==a.id && x.status==='Resolvido');
+  const aviso = (a.status!=='Resolvido' && resol.length) ? `<div style="font-size:11px;color:#F28C28;margin-top:6px">⛓ ${resol.map(x=>esc(x.id)).join(', ')} já foi resolvido — confira se esta frente ainda procede.</div>` : '';
   if(!temBim) html+=`<button class="btn-sec" style="flex:1;font-size:11.5px;border-style:dashed" onclick="criarFrenteBim()"
       title="Abrir a frente BIM deste mesmo problema, com prazo e responsável próprios">＋ frente BIM</button>`;
-  html+='</div>';
+  html+='</div>'+aviso;
   el.innerHTML=html;
 }
 function abrirFrente(id){
@@ -8074,6 +8106,13 @@ function renderPinsList(){
         ${pt.k3d?('🧊 3D · '+esc(pt.mdisc||'modelo')):('📍 pág. '+(pt.pg||1))}
         <button class="btn-sec" style="padding:1px 6px;font-size:11px;border-radius:10px" onclick="removerPinApt(${i})">✕</button></span>`).join('')
     : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha ou no modelo 3D.</span>';
+  if(APT_EDIT && !APT_EDIT._novo){
+    const g=APT_EDIT.grupo_id||APT_EDIT.id;
+    const outras=APTS.filter(x=>x.id!==APT_EDIT.id && (x.grupo_id||x.id)===g && (x.pontos_json||[]).length);
+    $('apPinsList').innerHTML += outras.map(x=>{ const bim=_aptDim(x)==='bim', n=(x.pontos_json||[]).length;
+      return `<div style="font-size:11px;color:var(--mut);margin-top:3px;cursor:pointer" onclick="abrirFrente('${esc(x.id)}')" title="Pins da frente vinculada (só leitura) — clique para abrir">
+        <span class="dtag ${bim?'bim':'d2'}">${bim?'BIM':'2D'}</span>${n} pin${n>1?'s':''} em <b class="ap-cod" style="color:var(--txt)">${esc(x.id)}</b> <i>(frente vinculada, só leitura)</i></div>`; }).join('');
+  }
   if(APT_EDIT && pts.length>_apPinsN) _apLocalSugerir();   // pin novo → pavimento dele entra (só acrescenta)
   _apPinsN=pts.length;
   renderPinsAcoes();
@@ -8511,6 +8550,7 @@ async function excluirApt(){
 let APT_VIEW='resumo';   // 'resumo' | 'estendido'
 const STATUS_TOKENS=['Em aberto','Em análise','Resolvido','Reprovado','Em atraso'];
 let APT_FILT=new Set();  // tokens de status/atraso ativos (multi-seleção)
+const DIM_TOKENS=['2D','BIM','⛓ Vínculo'];   // frente (2D/BIM: OU entre si) + só com vínculo (E)
 function toggleAptView(){ APT_VIEW=(APT_VIEW==='resumo'?'estendido':'resumo'); const b=$('fApView'); if(b) b.textContent=(APT_VIEW==='resumo'?'▤':'▦'); renderListaApts(); }
 function _dispData(s){ if(!s) return ''; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); return m?`${m[3]}/${m[2]}/${m[1]}`:String(s); }
 function _parseData(s){ if(!s) return null; s=String(s); let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s); if(m) return new Date(+m[1],+m[2]-1,+m[3]); m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if(m) return new Date(+m[3],+m[2]-1,+m[1]); return null; }
@@ -8527,8 +8567,15 @@ function renderFiltroChips(){
   el.innerHTML=STATUS_TOKENS.map(t=>{
     const on=APT_FILT.has(t), col=(t==='Em atraso'?'#E74C3C':t==='Resolvido'?'#27AE60':'#3B82F6');
     return `<button onclick="toggleFiltro('${t}')" style="font-size:11px;padding:4px 9px;border-radius:14px;cursor:pointer;border:1.5px solid ${on?col:'var(--line)'};background:${on?col:'transparent'};color:${on?'#fff':'var(--txt)'};font-weight:600">${t}</button>`;
+  }).join('') + '<span style="width:100%"></span>' + DIM_TOKENS.map(t=>{
+    const on=APT_FILT.has(t), col=(t==='BIM'?'#22D3EE':t==='2D'?'#1E3A8A':'#F28C28'), fg=(t==='BIM'?'#0B2533':'#fff');
+    const n=APTS.filter(a=>_aptDimOk(a,t)).length;
+    return `<button onclick="toggleFiltro('${t}')" style="font-size:11px;padding:4px 9px;border-radius:14px;cursor:pointer;border:1.5px solid ${on?col:'var(--line)'};background:${on?col:'transparent'};color:${on?fg:'var(--txt)'};font-weight:600">${t} <span style="opacity:.7">${n}</span></button>`;
   }).join('');
 }
+function _aptDim(a){ return (a&&a.dimensao)==='bim'?'bim':'2d'; }
+function _aptTemVinculo(a){ const g=a.grupo_id||a.id; return APTS.some(x=>x!==a && (x.grupo_id||x.id)===g); }
+function _aptDimOk(a,t){ return t==='2D'?_aptDim(a)==='2d' : t==='BIM'?_aptDim(a)==='bim' : _aptTemVinculo(a); }
 function toggleFiltro(t){ if(APT_FILT.has(t)) APT_FILT.delete(t); else APT_FILT.add(t); renderFiltroChips(); renderListaApts();  if(t==='Resolvido'){ renderPins(); renderDrawings(); } }
 function toggleFiltros(){ const p=$('fApPanel'); if(!p) return; const open=(p.style.display==='none'||!p.style.display); p.style.display=open?'block':'none'; const b=$('fApFiltBtn'); if(b){ b.textContent=(open?'⏷':'⏵')+' Filtros'+_nFiltrosTxt(); } }
 function _nFiltros(){ return APT_FILT.size + (($('fApPrio')&&$('fApPrio').value)?1:0) + (($('fApDisc')&&$('fApDisc').value)?1:0); }
@@ -8549,11 +8596,14 @@ function aptsFiltrados(){
   // projetista) às vezes vinham com espaço/caixa diferente, e a comparação exata
   // filtrava TUDO por engano.
   const _norm=(s)=>String(s==null?'':s).trim().toLowerCase();
-  const statuses=[...APT_FILT].filter(t=>t!=='Em atraso').map(_norm);   // status são OR entre si
+  const statuses=[...APT_FILT].filter(t=>t!=='Em atraso' && !DIM_TOKENS.includes(t)).map(_norm);   // status são OR entre si
+  const dims=['2D','BIM'].filter(t=>APT_FILT.has(t)), vincOn=APT_FILT.has('⛓ Vínculo');
   const atrasoOn=APT_FILT.has('Em atraso');                   // "Em atraso" é filtro adicional (AND)
   return APTS.filter(a=>{
     if(statuses.length && statuses.indexOf(_norm(a.status))<0) return false;
     if(atrasoOn && !estaAtrasado(a)) return false;
+    if(dims.length && !dims.some(t=>_aptDimOk(a,t))) return false;
+    if(vincOn && !_aptTemVinculo(a)) return false;
     if(prio && a.prioridade!==prio) return false;
     if(disc && discFullName(a.disciplina)!==disc) return false;
     if(txt && !((a.id||'')+' '+(a.titulo||'')+' '+discFullName(a.disciplina||'')+' '+(a.descricao||'')).toLowerCase().includes(txt)) return false;
@@ -8569,7 +8619,7 @@ function aptFiltroTxt(){
 }
 function renderListaApts(){
   const el=$('aptLista'); if(!el) return;
-  try{ _atualizaBtnFiltro(); }catch(e){}
+  try{ _atualizaBtnFiltro(); renderFiltroChips(); }catch(e){}
   if(!EMP){ el.innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
   const txt=($('fApTxt').value||'').toLowerCase();
   const prio=($('fApPrio')&&$('fApPrio').value)||'';
@@ -8606,29 +8656,41 @@ function renderListaApts(){
     const pillOrig=orig?`<span class="ap-st" style="background:#5B9BD522;color:#2E6DA4;margin-left:4px">${esc(orig.rot)}</span>`:'';
     const tags=pillSt+pillAtr+pillOrig;
     // 🗺 no canto superior direito: abre o documento/modelo original onde estão os pins.
+    const dim=_aptDim(a), g=a.grupo_id||a.id, irmas=APTS.filter(x=>x!==a && (x.grupo_id||x.id)===g);
+    const dtag=`<span class="dtag ${dim==='bim'?'bim':'d2'}">${dim==='bim'?'BIM':'2D'}</span>`;
+    const pai=irmas.find(x=>_aptDim(x)==='2d'), nBim=irmas.filter(x=>_aptDim(x)==='bim').length;
+    const elo = !irmas.length ? '' : `<span class="ap-elo">⛓ ${dim==='bim' ? 'de '+esc((pai||irmas[0]).id) : (nBim? nBim+' frente'+(nBim>1?'s':'')+' BIM' : irmas.length+' vínculo'+(irmas.length>1?'s':''))}</span>`;
+    const tituloHtml=`${dtag}<span class="ap-cod">${esc(a.id)}</span> — ${esc(a.titulo||'Sem título')}`;
     const mapBtn=`<button onclick="event.stopPropagation();irParaApt(${i})" title="Abrir o documento/modelo onde estão os pins" style="position:absolute;top:5px;right:6px;background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:2px;opacity:.8">🗺️</button>`;
     if(APT_VIEW==='estendido'){
       const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" onclick="event.stopPropagation();abrirImg(this.src)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:zoom-in">`).join('');
       const prazo=a.prazo_min?('📅 '+_dispData(a.prazo_min)):'';
       const local=a.local_txt?(' · 📍 '+esc(a.local_txt)):'';
-      return `<div class="ap-card" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+      return `<div class="ap-card${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
         ${mapBtn}
-        <div class="t" style="padding-right:26px">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
+        <div class="t" style="padding-right:26px">${tituloHtml}</div>${elo?`<div style="margin-top:2px">${elo}</div>`:''}
         <div class="m" style="color:${mc};margin-top:3px">${tags} ${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade.replace(/^[^\wÀ-ÿ]+/,'')):''}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
         ${(prazo||local||nesta)?`<div style="font-size:10.5px;color:${mc};margin-top:5px;opacity:.9">${prazo}${local}${nesta?' · 📌 nesta prancha':''}</div>`:''}
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
       </div>`;
     }
-    return `<div class="ap-card" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+    return `<div class="ap-card${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
       ${mapBtn}
-      <div class="t" style="padding-right:26px">${esc(a.id)} — ${esc(a.titulo||'Sem título')}</div>
-      <div class="m" style="color:${mc}">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</div>
+      <div class="t" style="padding-right:26px">${tituloHtml}</div>
+      <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${elo}</div>
     </div>`;
   };
   // ORGANIZAÇÃO: com uma prancha aberta e SEM filtro de disciplina específico,
   // separa em 3 blocos — (1) desta prancha, (2) outros da mesma disciplina,
   // (3) "Demais Apontamentos" (outras disciplinas). Fora disso, lista plana.
+  // Frente BIM logo abaixo da 2D original (mesmo grupo), mesmo que a ordenação/seção a jogasse longe.
+  const filhosDe=new Map(), ehFilho=new Set();
+  rows.forEach(a=>{ if(_aptDim(a)!=='bim') return; const g=a.grupo_id||a.id;
+    const pai=rows.find(x=>x!==a && _aptDim(x)==='2d' && (x.grupo_id||x.id)===g); if(!pai) return;
+    ehFilho.add(a); if(!filhosDe.has(pai)) filhosDe.set(pai,[]); filhosDe.get(pai).push(a); });
+  rows.forEach(a=>{ a._filho=ehFilho.has(a); });
+  const cardComFilhos=(a)=>ehFilho.has(a)?'' : aptCardHtml(a)+(filhosDe.get(a)||[]).map(aptCardHtml).join('');
   const sec=(t)=>`<div class="ap-sec">${esc(t)}</div>`;
   const discAberta = PRANCHA ? discFullName(discAtiva()||PRANCHA.disciplina||'') : '';
   let html='';
@@ -8637,11 +8699,12 @@ function renderListaApts(){
     const A=ordena(rows.filter(a=>nestaFn(a)));
     const B=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)===discAberta));
     const C=ordena(rows.filter(a=>!nestaFn(a) && discFullName(a.disciplina)!==discAberta));
-    if(A.length) html+=sec('📍 Apontamentos desta prancha')+A.map(aptCardHtml).join('');
-    if(B.length) html+=sec('Outros de '+(discAberta||'—'))+B.map(aptCardHtml).join('');
-    if(C.length) html+=sec('Demais Apontamentos')+C.map(aptCardHtml).join('');
+    const so=(X)=>X.filter(a=>!ehFilho.has(a));
+    if(so(A).length) html+=sec('📍 Apontamentos desta prancha')+A.map(cardComFilhos).join('');
+    if(so(B).length) html+=sec('Outros de '+(discAberta||'—'))+B.map(cardComFilhos).join('');
+    if(so(C).length) html+=sec('Demais Apontamentos')+C.map(cardComFilhos).join('');
   } else {
-    html=ordena(rows).map(aptCardHtml).join('');
+    html=ordena(rows).map(cardComFilhos).join('');
   }
   el.innerHTML=html;
 }
