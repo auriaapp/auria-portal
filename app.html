@@ -1274,6 +1274,9 @@ async function boot(){
     const { data }=await sb.from('usuarios_auria').select('nome,email,role').eq('id',session.user.id).maybeSingle();
     perfil=data;
   }catch(e){}
+  // Link do App vindo do App Obra (BCF/Excel) aberto por quem é da obra:
+  // leva para o App Obra com o mesmo contexto, em vez de cair no login.
+  if(perfil && perfil.role==='obra'){ location.replace('app_obra.html'+location.search); return; }
   if(!perfil || perfil.role!=='analista'){ location.replace('./'); return; }
   USER={ id:session.user.id, nome:perfil.nome||session.user.email, email:session.user.email };
   $('uName').textContent=USER.nome; $('uEmail').textContent=USER.email;
@@ -1294,6 +1297,7 @@ async function boot(){
   const _qs=new URLSearchParams(location.search);
   const _empUrl=_qs.get('emp');
   if(_empUrl && EMPS.some(e=>e.id===_empUrl)){ $('selEmp').value=_empUrl; trocarEmp(); }
+  else if(_empUrl) setTimeout(()=>alert('Você não tem acesso a este empreendimento (ou ele foi removido). Escolha um da lista.'), 50);
   renderFiltroChips(); renderSideRight();
   // Contexto vindo do CDE: ?cde_doc=<id>&cde_rev=<id> abre a prancha do CDE
   // já amarrada ao documento. Requer ?emp=<id> antes (trocarEmp acima).
@@ -1316,6 +1320,9 @@ async function boot(){
     abrirDoCDE(_cdeDoc, _cdeRev)
       .then(()=>{ if(_apt) focarApontamento(_apt); })
       .catch(e=>alert('Erro ao abrir do CDE: '+(e.message||e)));
+  }else if(_apt && EMP){
+    // Link direto p/ apontamento (busca do painel, BCF/Excel): sem prancha.
+    focarApontamento(_apt);
   }
 }
 
@@ -1347,8 +1354,8 @@ function focarApontamento(aptId){
     tent++;
     const idx = (APTS||[]).findIndex(a=>String(a.id)===String(aptId));
     if(idx>=0){ abrirAptIdx(idx); return; }
-    if(tent<12) setTimeout(tentar, 250);
-    else console.warn('apontamento', aptId, 'não encontrado em APTS');
+    if(tent<40) setTimeout(tentar, 250);
+    else alert('Apontamento '+aptId+' não encontrado neste empreendimento.');
   };
   tentar();
 }
