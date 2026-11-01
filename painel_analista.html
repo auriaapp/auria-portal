@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Auria — Painel do Analista</title>
+<title>Auria — Painel da Coordenação</title>
 <link rel="icon" href="favicon.png" type="image/png">
 <script src="auria_busy.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -548,6 +548,8 @@
     .pa-row>.pa-num,.pa-row>.pa-impl,.pa-row>.pa-done,.pa-row>.pa-mut{display:none}
     .pa-row .elogo{width:44px;height:34px}
   }
+  .pa-aviso{margin:10px 22px 0;padding:8px 12px;border:1px solid #E67E22;border-left-width:4px;border-radius:8px;background:rgba(230,126,34,.08);color:var(--txt);font-size:12.5px}
+  .pa-aviso a{color:var(--navy);font-weight:700;margin-left:6px}
 </style>
 <link rel="stylesheet" href="auria_barra.css">
 </head>
@@ -556,7 +558,7 @@
 <header class="cdh">
   <div class="cdh-l">
     <img src="logo_auria_branco.png" alt="Auria">
-    <div class="tt"><b>Painel do Analista</b><span>Analista · coordenação de projetos</span></div>
+    <div class="tt"><b>Painel da Coordenação</b><span>Coordenação de projetos</span></div>
   </div>
   <div class="cdh-c"><div class="glogo ph" id="hLogoGrupo" style="display:none"></div><div class="ctxt"><b id="hGrupo"></b><span id="hConstr"></span></div></div>
   <div class="cdh-r">
@@ -587,7 +589,7 @@
 
       <section>
         <div class="cd-tabs" id="tabs">
-          <button class="tb on" data-aba="fila" onclick="paAba('fila')">Fila da coordenação</button>
+          <button class="tb on" data-aba="fila" onclick="if(PA_FILTRO==='nf'){PA_FILTRO='';paVtool();paFila();}paAba('fila')">Fila da coordenação</button>
           <button class="tb" data-aba="agenda" onclick="paAba('agenda')">Agenda</button>
           <button class="tb" data-aba="kanban" onclick="paAba('kanban')">Kanban</button>
           <button class="tb" data-aba="msg" onclick="paAba('msg')">Mensagens<span class="msg-badge" id="tMsg"></span></button>
@@ -620,7 +622,6 @@
         <span id="peSub"></span>
       </div>
       <span onclick="fecharEmp()" style="cursor:pointer;color:var(--navy);font-size:13px;font-weight:700;margin-left:auto;align-self:center;white-space:nowrap">← Voltar à fila</span>
-      <button onclick="fecharEmp()" title="Fechar">×</button>
     </div>
     <div class="pemp-b">
       <div class="ptools" id="peTools"></div>
@@ -644,7 +645,6 @@
     <div class="pemp-h">
       <div><b>Fornecedores</b><span>Empresas projetistas e seus profissionais, todos os empreendimentos</span></div>
       <span onclick="fecharFornecedoresView()" style="cursor:pointer;color:var(--navy);font-size:13px;font-weight:700;margin-left:auto;align-self:center;white-space:nowrap">← Voltar à fila</span>
-      <button onclick="fecharFornecedoresView()" title="Fechar">×</button>
     </div>
     <div class="pemp-b">
       <div class="ctr-head">
@@ -667,11 +667,13 @@
   <div class="cmodal" style="width:780px">
     <div class="cmodal-h"><span id="contratoModalT">Novo contrato</span><button class="cmodal-x" onclick="fecharContrato()">×</button></div>
     <div class="cmodal-b">
-      <label>Projetista *</label>
+      <label>Fornecedor (empresa contratada) *</label>
       <div style="display:flex;gap:8px">
-        <select id="ct-projetista" style="flex:1" onchange="onSelProj()"></select>
-        <button class="ctr-btn sec" onclick="abrirFornecedor()" type="button">＋ Novo fornecedor / projetista</button>
+        <select id="ct-forn" style="flex:1" onchange="onSelForn()"></select>
+        <button class="ctr-btn sec" onclick="abrirFornecedor()" type="button">＋ Novo fornecedor</button>
       </div>
+      <label>Responsável técnico nesta disciplina</label>
+      <select id="ct-projetista" onchange="onSelProj()"></select>
       <div id="ct-proj-info" style="font-size:11px;color:var(--mut);margin-top:4px"></div>
       <div class="row">
         <div><label>Disciplina *</label><select id="ct-disc"></select></div>
@@ -920,7 +922,10 @@ async function boot(){
   // Carga essencial (empreendimentos + apontamentos + NF). Com teto de tempo:
   // se uma consulta ficar lenta, a tela abre mesmo assim em vez de travar.
   const _timeout = new Promise(r=>setTimeout(()=>r('timeout'), 12000));
-  await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
+  const _carga = await Promise.race([ Promise.all([carregarEmps(), carregarApts(), carregarNF()]), _timeout ]);
+  if(_carga==='timeout'){ const av=document.createElement('div'); av.className='pa-aviso';
+    av.innerHTML='A carga demorou mais que o normal — alguns números podem estar incompletos. <a href="#" onclick="location.reload();return false">Recarregar</a>';
+    $('app').insertBefore(av, $('app').firstChild); }
   carregarPrazos();   // depende de APTS já carregado
   // "Me leva lá" (item 52c): ações do assistente nesta tela. As de empreendimento usam o que está em foco
   //  (PA_EMP) ou, se só há um, ele; com vários e nenhum em foco a ação não é oferecida.
@@ -940,7 +945,7 @@ async function boot(){
     cde:           { rotulo:'Abrir o CDE do empreendimento', quando:()=>!!_empFoco(), run:()=>{ location.href='cde.html?emp='+encodeURIComponent(_empFoco()); } },
     app:           { rotulo:'Abrir o Auria App do empreendimento', quando:()=>!!_empFoco(), run:()=>{ location.href='app.html?emp='+encodeURIComponent(_empFoco()); } }
   };
-  window.__ajudaCfg={ sb, papel:'analista', pagina:'Painel do Analista', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: PA_EMP ? empRotulo(empPorId(PA_EMP)) : '', extra: 'aba: '+PA_ABA }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  window.__ajudaCfg={ sb, papel:'analista', pagina:'Painel da Coordenação', acoes:AJUDA_ACOES, contexto:()=>({ empreendimento: PA_EMP ? empRotulo(empPorId(PA_EMP)) : '', extra: 'aba: '+PA_ABA }) }; if(window.AuriaAjuda) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
   carregarImplantacao().then(()=>{ try{ paCards(); }catch(_){ } });   // item 47: checklist no card
 
   // Painéis internos viram filhos do painel de abas (abrem abaixo, não por cima).
@@ -1080,21 +1085,13 @@ function statsDe(emp){
 
 // (Visão geral em KPIs e grade de ferramentas saíram: a faixa e as abas do
 //  painel novo fazem esse papel — item 25.)
-function irPara(k){
-  const rotas = { msg:'mensagens.html', agenda:'agenda.html', kanban:'kanban.html', bi:'bi.html' };
-  location.href = rotas[k] || './';
-}
 // Abre direto a aba Contratos & Faturas do primeiro empreendimento com
 // solicitação de NF pendente (mesmo comportamento do antigo painel do analista).
 function abrirCustosGeral(){
-  if(!EMPS.length){ alert('Nenhum empreendimento atribuído a você ainda.'); return; }
-  // A solicitação pode referenciar um empreendimento ao qual você não tem
-  // mais acesso (contrato órfão/antigo) — nesse caso cai pro primeiro válido
-  // em vez de silenciosamente não abrir nada.
-  let empId = Object.keys(SOLICIT).find(k=>SOLICIT[k]>0 && EMPS.some(e=>e.id===k));
-  if(!empId) empId = EMPS[0].id;
-  abrirEmp(empId);
-  setTimeout(()=>{ try{ abrirEmpContratos(empId); }catch(e){} }, 60);
+  // Fila filtrada em "solicitações de NF" de TODOS os empreendimentos (antes abria só o 1º);
+  //  cada linha leva aos Contratos & Faturas do seu empreendimento.
+  if(PA_EMP) fecharEmp();
+  PA_FILTRO='nf'; PA_LIMITE=40; paAba('fila'); paVtool(); paFila();
   document.querySelectorAll('#tabs .tb').forEach(b=>b.classList.toggle('on', b.getAttribute('data-aba')==='custos'));
 }
 
@@ -1171,6 +1168,7 @@ async function carregarFornecedoresLeve(){
   try{ const r=await sb.from('fornecedores_auria').select('*,projetistas_auria(*)').order('nome'); FORNECEDORES=r.data||[]; }catch(e){}
 }
 function fornPorId(id){ const f=FORNECEDORES.find(x=>x.id===id); return f?f.nome:''; }
+function ctrEmpresa(c){ return (c&&(fornPorId(c.fornecedor_id)||c.projetista_nome||c.projetista_email))||'—'; }
 function fornPorEmail(email){
   email=String(email||'').trim().toLowerCase(); if(!email) return '';
   for(const f of FORNECEDORES){ if((f.projetistas_auria||[]).some(p=>String(p.email||'').toLowerCase()===email)) return f.nome; }
@@ -1387,7 +1385,6 @@ function paSelEmp(id){
   if(PA_EMP===id && PA_ABA==='emp'){ PA_EMP=''; PA_LIMITE=40; paCards(); paFila(); paAba('fila'); return; }
   PA_EMP=id; PA_LIMITE=40; paCards(); paFila(); abrirEmp(id);
 }
-function renderEmps(){ paCards(); }   // compatibilidade com chamadas antigas
 
 // Trilho: disciplinas presentes (apontamentos + CDE) — filtro da fila.
 function paRail(){
@@ -1468,14 +1465,14 @@ function paItens(){
     itens.push({ tipo:'rec', peso:1, urg:true, ord:new Date(r.recebido_em||0).getTime(), emp:e, disc:discCod(r.disciplina), cod:r.codigo,
       item:'Revisão '+esc(r.revisao||'')+' recebida'+(forn?' — '+esc(forn):''), quem:esc(forn||'—'), prazo:haDias(r.recebido_em),
       sit:'<span class="cd-pill acc-sol">Recebido (S0) · analisar</span>', filtros:{rec:true},
-      href:'cde.html?emp='+encodeURIComponent(e.id), busca:[r.codigo,forn,e.nome].join(' ') });
+      href:'cde.html?emp='+encodeURIComponent(e.id)+'&q='+encodeURIComponent(r.codigo||''), busca:[r.codigo,forn,e.nome].join(' ') });
   }));
   NF_PARCS.forEach(pq=>{
-    const e=empPorId(pq.empreendimento_id); if(!e) return;
-    const v=pdata(pq.vencimento);
+    const e=empPorId(pq.empreendimento_id); if(!e || !mostra(e)) return;
+    const v=pdata(pq.vencimento), vis=souVisualizador(e.id);
     itens.push({ tipo:'nf', peso:3, urg:false, ord:v?v.getTime():9e15, emp:e, disc:discCod(pq.disciplina), cod:'NF · '+(pq.contrato_numero||'contrato')+' · '+(pq.numero||'?'),
       item:'Solicitação de faturamento — parcela '+(pq.numero||'?')+(pq.valor?' · '+brl(Number(pq.valor)):''), quem:esc(pq.projetista_nome||'—'), prazo:v?fmtBR(v):haDias(pq.data_solicitacao),
-      sit:'<span class="cd-pill acc">Autorizar?</span>', filtros:{nf:true}, acao:"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpContratos('"+e.id+"')},60)",
+      sit:vis?'<span class="cd-pill mut">Aguardando coordenador</span>':'<span class="cd-pill acc">Autorizar?</span>', filtros:{nf:true}, acao:"abrirEmp('"+e.id+"');setTimeout(function(){abrirEmpContratos('"+e.id+"')},60)",
       busca:[pq.projetista_nome,pq.contrato_numero,e.nome].join(' ') });
   });
   itens.sort((x,y)=>x.peso-y.peso || x.ord-y.ord);
@@ -1836,7 +1833,7 @@ function renderContratos(){
       return `<div class="ctr-card" style="${nSol?'border:1.5px solid #E8960A':''}">
         ${nSol?`<div style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;margin-bottom:8px">💵 ${nSol} solicitaç${nSol>1?'ões':'ão'} de fatura aguardando você</div>`:''}
         <div class="ctr-nome">${esc(c.objeto||c.numero||'Contrato')}</div>
-        <div class="ctr-sub">${esc(c.projetista_nome||c.projetista_email||'—')}${c.numero?(' · '+esc(c.numero)):''}</div>
+        <div class="ctr-sub">${esc(ctrEmpresa(c))}${c.numero?(' · '+esc(c.numero)):''}</div>
         <div class="ctr-fin">
           <div><div class="v${_vLongo(tot,faturado)}" title="${fmtBRL(tot)}">${fmtBRL(tot)}</div><div class="l">Total</div></div>
           <div><div class="v${_vLongo(tot,faturado)}" style="color:#10B981" title="${fmtBRL(faturado)}">${fmtBRL(faturado)}</div><div class="l">Faturado</div></div>
@@ -1862,13 +1859,26 @@ function renderContratos(){
   v.innerHTML=html;
 }
 
-function _projOptions(){
-  if(!PROJETISTAS.length) return '<option value="">— Cadastre um fornecedor antes —</option>';
-  return '<option value="">— Selecione —</option>'+PROJETISTAS.map(p=>{
-    const ds=(p.disciplinas||[]).join(', ');
-    return `<option value="${p.id}">${esc(p.fornecedor_nome||'')} · ${esc(p.nome||'')} (${esc(p.email)})${ds?(' — '+esc(ds)):''}</option>`;
-  }).join('');
+// Contrato é da EMPRESA (fornecedor). A pessoa escolhida só responde pela disciplina no
+//  CDE; quem vê contratos/parcelas/NF é quem tem FIN na empresa (pj_no_contrato).
+function _fornOptions(){
+  if(!(FORNECEDORES||[]).length) return '<option value="">— Cadastre um fornecedor antes —</option>';
+  return '<option value="">— Selecione —</option>'+FORNECEDORES.map(f=>`<option value="${f.id}">${esc(f.nome||'')}</option>`).join('');
 }
+function _projOptions(){
+  const fid=$('ct-forn')?$('ct-forn').value:'';
+  if(!fid) return '<option value="">— escolha o fornecedor —</option>';
+  const ps=PROJETISTAS.filter(p=>p.fornecedor_id===fid && p.ativo!==false).sort((a,b)=>(b.eh_rt?1:0)-(a.eh_rt?1:0));
+  if(!ps.length) return '<option value="">— esta empresa não tem pessoas cadastradas —</option>';
+  return ps.map(p=>{ const ds=(p.disciplinas||[]).join(', ');
+    return `<option value="${p.id}">${esc(p.nome||p.email)}${p.eh_rt?' · RT':''}${ds?(' — '+esc(ds)):''}</option>`; }).join('');
+}
+function _ctSetForn(fid, pid){
+  $('ct-forn').value=fid||''; $('ct-projetista').innerHTML=_projOptions();
+  if(pid && PROJETISTAS.some(p=>p.id===pid && p.fornecedor_id===fid)) $('ct-projetista').value=pid;
+  onSelProj();
+}
+function onSelForn(){ _ctSetForn($('ct-forn').value, null); }
 function _discOptions(sel){
   return '<option value="">— Selecione —</option>'+DISC_OPTS.map(d=>`<option value="${esc(d)}"${sel===d?' selected':''}>${esc(d)}</option>`).join('');
 }
@@ -1953,7 +1963,7 @@ function abrirContrato(pre, ctrId){
   { const b=$('ct-save'); if(b) b.textContent='💾 Salvar contrato'; }
   { const h=$('ct-hist'); if(h){ h.style.display='none'; h.innerHTML=''; } }
   { const l=$('ct-pdf-lbl'); if(l) l.textContent='PDF do contrato assinado *'; }
-  $('ct-projetista').innerHTML=_projOptions();
+  $('ct-forn').innerHTML=_fornOptions(); $('ct-projetista').innerHTML=_projOptions();
   $('ct-disc').innerHTML=_discOptions('');
   ['ct-num','ct-obj','ct-valor','ct-assinatura','ct-ini','ct-fim'].forEach(id=>$(id).value='');
   $('ct-nparc').value='1';
@@ -1963,9 +1973,8 @@ function abrirContrato(pre, ctrId){
   modalAbrir('contratoModal');
   // Pré-preenchimento vindo do vínculo disciplina→fornecedor→responsável (Fase B).
   if(pre && typeof pre==='object'){
-    let pid=pre.projetista_id;
-    if(!pid && pre.fornecedor_id){ const p=PROJETISTAS.find(x=>x.fornecedor_id===pre.fornecedor_id); pid=p&&p.id; }
-    if(pid && PROJETISTAS.some(p=>p.id===pid)){ $('ct-projetista').value=pid; onSelProj(); }
+    const fid=pre.fornecedor_id || ((PROJETISTAS.find(x=>x.id===pre.projetista_id)||{}).fornecedor_id);
+    if(fid) _ctSetForn(fid, pre.projetista_id);
     if(pre.disciplina){ if(!DISC_OPTS.includes(pre.disciplina)) DISC_OPTS.push(pre.disciplina); $('ct-disc').innerHTML=_discOptions(pre.disciplina); }
     if(pre.objeto) $('ct-obj').value=pre.objeto;
     if(pre.valor_total){ $('ct-valor').value=Number(pre.valor_total).toFixed(2); }
@@ -1985,12 +1994,12 @@ function abrirContrato(pre, ctrId){
 function ctrCarregarNoModal(ctrId){
   const c=(CTR_LIST||[]).find(x=>x.id===ctrId); if(!c){ alert('Contrato não encontrado na lista — atualize a página.'); return; }
   CT_EDIT={ id:c.id, antes:{
-      projetista_id:c.projetista_id||'', disciplina:c.disciplina||'', numero:c.numero||'', objeto:c.objeto||'',
+      fornecedor_id:c.fornecedor_id||'', projetista_id:c.projetista_id||'', disciplina:c.disciplina||'', numero:c.numero||'', objeto:c.objeto||'',
       valor_total:Number(c.valor_total||0), data_assinatura:c.data_assinatura||'', data_inicio:c.data_inicio||'', data_fim:c.data_fim||'' } };
   $('contratoModalT').textContent='Contrato '+(c.numero||c.objeto||'')+' — ver / editar';
   { const b=$('ct-save'); if(b) b.textContent='💾 Salvar alterações'; }
   { const l=$('ct-pdf-lbl'); if(l) l.textContent='PDF do contrato assinado (só se for trocar)'; }
-  if(c.projetista_id && PROJETISTAS.some(p=>p.id===c.projetista_id)){ $('ct-projetista').value=c.projetista_id; onSelProj(); }
+  if(c.fornecedor_id) _ctSetForn(c.fornecedor_id, c.projetista_id);
   if(c.disciplina){ if(!DISC_OPTS.includes(c.disciplina)) DISC_OPTS.push(c.disciplina); $('ct-disc').innerHTML=_discOptions(c.disciplina); }
   $('ct-num').value=c.numero||''; $('ct-obj').value=c.objeto||'';
   $('ct-valor').value=c.valor_total!=null?Number(c.valor_total).toFixed(2):'';
@@ -2049,7 +2058,9 @@ async function cotContratar(cid, pid){
 function onSelProj(){
   const id=$('ct-projetista').value;
   const p=PROJETISTAS.find(x=>x.id===id); if(!p){ $('ct-proj-info').textContent=''; return; }
-  $('ct-proj-info').innerHTML=`🏢 <b>${esc(p.fornecedor_nome||'')}</b> · ${esc(p.nome||'')} (${esc(p.email)}) — Disciplinas: ${esc((p.disciplinas||[]).join(', ')||'—')}`;
+  const f=(FORNECEDORES||[]).find(x=>x.id===p.fornecedor_id), nFin=f?(f.projetistas_auria||[]).filter(x=>x.ativo!==false&&x.eh_adm_fin).length:0;
+  $('ct-proj-info').innerHTML=`${esc(p.nome||'')} (${esc(p.email)}) — Disciplinas: ${esc((p.disciplinas||[]).join(', ')||'—')}<br>`
+    +(nFin?`Contrato e parcelas visíveis para ${nFin} pessoa${nFin>1?'s':''} com FIN na empresa.`:`<span style="color:#B45309">Ninguém com FIN nesta empresa: o fornecedor não verá este contrato. Marque FIN em Fornecedores.</span>`);
   if((p.disciplinas||[]).length===1){
     const sel=$('ct-disc'); const v=p.disciplinas[0];
     if(!DISC_OPTS.includes(v)) DISC_OPTS.push(v);
@@ -2183,9 +2194,12 @@ async function salvarContrato(){
   }
 }
 async function _salvarContrato(){
+  const fornId=$('ct-forn').value;
+  if(!fornId){ alert('Selecione o fornecedor (empresa) contratado.'); return; }
   const projId=$('ct-projetista').value;
-  if(!projId){ alert('Selecione um projetista (ou cadastre um fornecedor).'); return; }
-  const proj=PROJETISTAS.find(p=>p.id===projId); if(!proj){ alert('Projetista inválido.'); return; }
+  const proj=PROJETISTAS.find(p=>p.id===projId && p.fornecedor_id===fornId);
+  if(!proj){ alert('Escolha o responsável técnico desta disciplina (cadastre a pessoa no fornecedor, se faltar).'); return; }
+  const forn=(FORNECEDORES||[]).find(x=>x.id===fornId)||{};
   const disc=($('ct-disc').value||'').trim();
   if(!disc){ alert('Selecione a disciplina.'); return; }
   const tot=Number($('ct-valor').value||0);
@@ -2201,8 +2215,8 @@ async function _salvarContrato(){
   let pdfData=null; if(f){ try{ pdfData=await _fileToDataURL(f); }catch(e){ alert('Falha ao ler o PDF.'); return; } }
   const obj={
     empreendimento_id:CTR_EMP_ID,
-    projetista_id:proj.id, fornecedor_id:proj.fornecedor_id,
-    projetista_email:proj.email, projetista_nome:proj.nome||'',
+    fornecedor_id:fornId, projetista_id:proj.id,
+    projetista_email:proj.email, projetista_nome:forn.nome||proj.nome||'',
     disciplina:disc,
     numero:($('ct-num').value||'').trim(),
     objeto:($('ct-obj').value||'').trim(),
@@ -2243,10 +2257,11 @@ async function ctrSalvarEdicao(obj, pdfData, arquivo){
     valor_total:obj.valor_total, data_assinatura:obj.data_assinatura, data_inicio:obj.data_inicio, data_fim:obj.data_fim,
     atualizado_em:new Date().toISOString() };
   if(pdfData){ upd.pdf_data=pdfData; upd.pdf_nome=arquivo.name; }
-  const rotulos={ projetista_id:'Projetista', disciplina:'Disciplina', numero:'Nº do contrato', objeto:'Objeto',
+  const rotulos={ fornecedor_id:'Fornecedor', projetista_id:'Responsável técnico', disciplina:'Disciplina', numero:'Nº do contrato', objeto:'Objeto',
     valor_total:'Valor total', data_assinatura:'Assinatura', data_inicio:'Início', data_fim:'Fim' };
   const fmt=(k,v)=> k==='valor_total' ? fmtBRL(Number(v||0))
                   : k==='projetista_id' ? ((PROJETISTAS.find(p=>p.id===v)||{}).nome||v||'—')
+                  : k==='fornecedor_id' ? (fornPorId(v)||v||'—')
                   : (v||'—');
   const eventos=[];
   Object.keys(rotulos).forEach(k=>{
@@ -2880,7 +2895,7 @@ async function salvarFornecedor(){
     fecharFornecedor();
     if(CTR_EMP_ID) await loadContratos(CTR_EMP_ID);
     if($('ovForn').classList.contains('on')) await renderFornecedoresPage();
-    if($('contratoModal').classList.contains('on')) $('ct-projetista').innerHTML=_projOptions();
+    if($('contratoModal').classList.contains('on')){ const fv=$('ct-forn').value; $('ct-forn').innerHTML=_fornOptions(); _ctSetForn(fv,$('ct-projetista').value); }
     alert(_resumoConvites(res, nome));
   }catch(e){ alert('Erro: '+(e.message||e)); }
   btn.disabled=false; btn.textContent=t;
@@ -2921,7 +2936,7 @@ async function _salvarFornecedorEdicao(fid, obj, validos, btn){
   fecharFornecedor();
   if(CTR_EMP_ID) await loadContratos(CTR_EMP_ID);
   if($('ovForn').classList.contains('on')) await renderFornecedoresPage();
-  if($('contratoModal').classList.contains('on')) $('ct-projetista').innerHTML=_projOptions();
+  if($('contratoModal').classList.contains('on')){ const fv=$('ct-forn').value; $('ct-forn').innerHTML=_fornOptions(); _ctSetForn(fv,$('ct-projetista').value); }
   let m=_resumoConvites(res, nome).replace(' salvo.',' atualizado.');
   if(remover.length) m+='\n'+remover.length+' projetista(s) desativado(s): '+remover.map(x=>x.email).join(', ');
   alert(m);
@@ -2974,7 +2989,7 @@ function renderContratoDet(){
   const tot=Number(c.valor_total||0);
   const somaParcs=parcs.reduce((s,p)=>s+Number(p.valor||0),0);
   const faturado=parcs.filter(p=>['faturada','paga'].includes(p.status)).reduce((s,p)=>s+Number(p.valor||0),0);
-  $('ctd-t').textContent=(c.numero?(c.numero+' — '):'')+(c.projetista_nome||c.projetista_email||'Contrato');
+  $('ctd-t').textContent=(c.numero?(c.numero+' — '):'')+ctrEmpresa(c);
   const marcosHtml=CRON_TASKS.map(m=>`<option value="${m.id}">${esc(m.nome||'')}${m.data_fim?(' ('+fmtDate(m.data_fim)+')'):''}</option>`).join('');
   // Item 77d: marcos do Prevision (fase padrão) — só folhas; concluídas ficam no fim, marcadas
   const PV_ON=PV_TASKS.length>0;
@@ -2982,7 +2997,7 @@ function renderContratoDet(){
   window._pvById=pvById;
   const libIds=new Set(PV_LIBERAVEIS.map(l=>l.parcela_id));
   let h=`<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--txt2);margin-bottom:10px">
-    <div><b>Projetista:</b> ${esc(c.projetista_email||'')}</div>
+    <div><b>Fornecedor:</b> ${esc(ctrEmpresa(c))}</div><div><b>RT:</b> ${esc(c.projetista_email||'—')}</div>
     <div><b>Disciplina:</b> ${esc(c.disciplina||'—')}</div>
     <div><b>Total:</b> ${fmtBRL(tot)}</div>
     <div><b>Faturado:</b> <span style="color:#10B981">${fmtBRL(faturado)}</span></div>
@@ -3169,7 +3184,7 @@ function renderFinanceiro(contratos, parcelas, aditivos, eventos){
   });
   const porForn={};
   contratos.forEach(c=>{
-    const k=c.projetista_nome||c.projetista_email||'—';
+    const k=ctrEmpresa(c);
     if(!porForn[k]) porForn[k]={total:0,faturado:0,ctr:0};
     porForn[k].total+=Number(c.valor_total||0);
     porForn[k].ctr++;
@@ -3182,7 +3197,7 @@ function renderFinanceiro(contratos, parcelas, aditivos, eventos){
   const proximos = parcelas.filter(p=>!['paga','cancelada','faturada'].includes(p.status) && p.vencimento && new Date(p.vencimento)>=hoje && new Date(p.vencimento)<=em30)
     .sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
   const _kpi=(l,vv,cor)=>`<div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:3px solid ${cor};box-shadow:0 2px 8px rgba(0,0,0,.06)"><div style="font-size:22px;font-weight:800;color:${cor}">${vv}</div><div style="font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em">${l}</div></div>`;
-  function _ctrNome(c){ const x=contratos.find(y=>y.id===c); return (x&&(x.projetista_nome||x.projetista_email))||'—'; }
+  function _ctrNome(c){ const x=contratos.find(y=>y.id===c); return x?ctrEmpresa(x):'—'; }
   let html=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:14px">
     ${_kpi('Contratado',fmtBRL(totContratado),'#3B82F6')}
     ${_kpi('Faturado',fmtBRL(totFaturado),'#10B981')}
