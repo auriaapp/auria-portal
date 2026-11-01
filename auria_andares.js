@@ -30,7 +30,21 @@
     if (r.filter(x => x.r != null).length < 2) return pavs;          // sem como ordenar: mantém o cadastro
     return r.sort((a, b) => (a.r == null ? 1e9 + a.i : a.r) - (b.r == null ? 1e9 + b.i : b.r)).map(x => x.p);
   }
-  function parear(nomes, pavsTodos){
+  // Com as COTAS (zs, de ler()) e nomes repetidos — andar-tipo como grupo do Revit:
+  // "2º PAVIMENTO" aparece em todas as cotas do 2º ao 46º — o nome não identifica o
+  // andar. Pareia cada nome uma vez (na 1ª cota em que aparece) e cada andar herda o
+  // pavimento da âncora mais alta que está na sua cota ou abaixo.
+  function parear(nomes, pavsTodos, zs){
+    if (zs && zs.length === nomes.length && zs.every(z => isFinite(z))){
+      const base = n => norm(n).replace(/_?\(P\.?A[^)]*\)/g, '').trim();
+      const cont = {}; nomes.forEach(n => { const b = base(n); cont[b] = (cont[b] || 0) + 1; });
+      if (Object.values(cont).some(c => c > 2)){
+        const z1 = {}; nomes.forEach((n, i) => { if (norm(n) === base(n) && !(n in z1 && z1[n] <= zs[i])) z1[n] = zs[i]; });
+        const unicos = Object.keys(z1), sug = parear(unicos, pavsTodos);
+        const anc = unicos.map((n, k) => [z1[n], sug[k]]).filter(a => a[1]).sort((a, b) => a[0] - b[0]);
+        return zs.map(z => { let p = null; for (const [za, pa] of anc){ if (za <= z + 0.02) p = pa; else break; } return p; });
+      }
+    }
     const pavs = ordemFisica((pavsTodos || []).filter(p => p.tipo !== 'grupo' && p.tipo !== 'vista'));
     const chP = pavs.map(p => chave(p.nome) || chave(p.codigo));
     const chM = nomes.map(chave);

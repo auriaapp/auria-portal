@@ -3920,7 +3920,7 @@ async function f3dVolumePorPav(classes, prop){
     let cat={}; try{ cat=await md.getItemsOfCategories(rx)||{}; }catch(_){}
     const daClasse=new Set(Object.values(cat).flat()); if(!daClasse.size) continue;
     const andares=await AuriaAndares.ler(md);
-    const sug=AuriaAndares.parear(andares.map(a=>a.nome), PV);
+    const sug=AuriaAndares.parear(andares.map(a=>a.nome), PV, andares.map(a=>a.z));
     andares.forEach((a,k)=>{ a._pav = (mp && (a.nome in mp)) ? mp[a.nome] : (sug[k]&&sug[k].id); });
     for(const a of andares){
       const ids=a.ids.filter(id=>daClasse.has(id)); if(!ids.length) continue;
@@ -3961,7 +3961,7 @@ async function idsDoPavimento(pav){
     const md=F3D.modelos[mi].model; if(!md) continue;
     const and=await AuriaAndares.ler(md); if(!and.length) continue;
     const mp=(typeof OBRA_MODELO!=='undefined' && OBRA_MODELO && OBRA_MODELO.pav_map) || {};
-    const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[]);
+    const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[], and.map(a=>a.z));
     const set=new Set();
     and.forEach((a,k)=>{ const id=(a.nome in mp) ? mp[a.nome] : (sug[k]&&sug[k].id); if(id===pav.id) a.ids.forEach(x=>set.add(x)); });
     out[mi]=set;
@@ -4872,8 +4872,21 @@ async function f3dPavSelPop(){
   sel.dataset.carregando='1';
   const atual=sel.value;
   sel.innerHTML='<option value="">Carregando pavimentos…</option>';   // feedback imediato (1º clique)
-  let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
-  sel.innerHTML='<option value="">Pavimento…</option>'+(pavs||[]).map(p=>'<option value="'+esc(p.nome)+'">'+esc(p.nome)+'</option>').join('');
+  // Preferência: pavimentos do CADASTRO (cde_pavimento_auria) que têm elementos nos
+  // modelos abertos — não os níveis auxiliares do Revit. Sem cadastro → níveis do IFC.
+  let ops='';
+  try{
+    const cad=(CDE_PAVS||[]).filter(p=>p.tipo!=='grupo'&&p.tipo!=='vista');
+    if(cad.length && window.AuriaAndares){
+      const mapas=await mapaIdPav(), comEl=new Set();
+      mapas.forEach(m=>{ if(m) m.forEach(id=>comEl.add(id)); });
+      ops=AuriaAndares.ordemFisica(cad).filter(p=>comEl.has(p.id))
+        .map(p=>'<option value="@pav:'+p.id+'">'+esc([(p.codigo||'').toUpperCase(),p.nome].filter(Boolean).join(' — '))+'</option>').join('');
+    }
+  }catch(e){ console.warn('pav cadastro:',e); }
+  if(!ops){ let pavs=[]; try{ pavs=await B3.listaPavimentos(F3D); }catch(_){}
+    ops=(pavs||[]).map(p=>'<option value="'+esc(p.nome)+'">'+esc(p.nome)+'</option>').join(''); }
+  sel.innerHTML='<option value="">Pavimento…</option>'+ops;
   if(atual && [...sel.options].some(o=>o.value===atual)) sel.value=atual;
   sel.dataset.pronto='1'; sel.dataset.carregando='';
 }
@@ -4881,7 +4894,11 @@ async function f3dPavSelChange(nome){
   if(!F3D||!B3) return;
   if(!nome){ try{ await B3.limparDestaqueCategoria(F3D); }catch(_){} f3dBotaoVoltar(false); return; }
   f3dProcessando(true);
-  try{ const r=await B3.isolarPavimento(F3D, nome);
+  try{
+    if(nome.startsWith('@pav:')){ const pv=(CDE_PAVS||[]).find(p=>p.id===nome.slice(5));
+      F3D._pavSets=pv?await idsDoPavimento(pv):null; F3D._pavRot=pv?((pv.codigo||'').toUpperCase()+' — '+(pv.nome||'')):null; }
+    const r=await B3.isolarPavimento(F3D, nome);
+    F3D._pavSets=null;
     if(r&&r.n>0){ f3dBotaoVoltar(true); f3dDica('✓ Pavimento '+((r.nomes&&r.nomes[0])||nome)+' isolado ('+r.n+').'); }
     else f3dDica('Não achei elementos nesse pavimento.'); }
   catch(e){ console.warn('pav sel:',e); }
@@ -5329,7 +5346,7 @@ async function mapaIdPav(){
   const mp=(om && om.pav_map) || {}, out=[];
   for(let mi=0; mi<F3D.modelos.length; mi++){
     const md=F3D.modelos[mi].model, mapa=new Map(); out[mi]=mapa; if(!md) continue;
-    const and=await AuriaAndares.ler(md); const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[]);
+    const and=await AuriaAndares.ler(md); const sug=AuriaAndares.parear(and.map(a=>a.nome), CDE_PAVS||[], and.map(a=>a.z));
     and.forEach((a,k)=>{ const id=(a.nome in mp)?mp[a.nome]:(sug[k]&&sug[k].id); if(id) a.ids.forEach(x=>mapa.set(x,id)); });
   }
   F3D._idPav=out; F3D._idPavChave=chave; return out;
@@ -8770,7 +8787,7 @@ function voltarPortal(){
 boot();
 </script>
 <script src="auria_ajuda.js"></script>
-<script src="auria_andares.js?v=3"></script>
+<script src="auria_andares.js?v=4"></script>
 <div id="pinEditSelo" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()">✏️ Edição de pins ABERTA · clique vazio adiciona, clique no pin remove <button onclick="setPinEdit(false)">Concluir</button></div>
 </body>
 </html>
