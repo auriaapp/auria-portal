@@ -363,6 +363,13 @@
   .ap-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid #7F8C8D;border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer;font-size:12px}
   .ap-card:hover{border-color:var(--accent)}
   .ap-card .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Cards (maquete cards_pins_v2, opção D): criticidade = L (esquerda + base) + etiqueta vazada */
+  .ap-card.critL{border-left:3px solid var(--c);border-bottom:3px solid var(--c);border-bottom-left-radius:8px}
+  .ap-card.critL:hover{border-left-color:var(--c);border-bottom-color:var(--c)}   /* hover não apaga a criticidade */
+  .ap-crit{font-size:9px;font-weight:800;letter-spacing:.03em;border:1.2px solid var(--c);color:var(--ct);border-radius:5px;padding:0 5px;white-space:nowrap;flex-shrink:0}
+  /* Pins: sombra e crescer no hover, como no CDE */
+  .apin{filter:drop-shadow(0 3px 4px rgba(0,0,0,.35));transform-box:fill-box;transform-origin:50% 100%;transition:transform .12s}
+  #pinsSvg g:hover > .apin{transform:scale(1.18)}
   .ap-card .m{font-size:10.5px;color:var(--mut);margin-top:2px}
   .ap-sec{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);opacity:.9;margin:12px 2px 6px;padding-top:8px;border-top:1px solid var(--line)}
   .ap-sec:first-child{margin-top:0;padding-top:0;border-top:none}
@@ -2524,9 +2531,11 @@ function corPrio(p){
   if(!p) return '#7F8C8D';
   if(p.indexOf('Severa')>=0) return '#E74C3C';
   if(p.indexOf('Importante')>=0) return '#E67E22';
-  if(p.indexOf('Observação')>=0) return '#C29D0B';
+  if(p.indexOf('Observação')>=0) return '#EAB308';
   return '#7F8C8D';
 }
+function critRot(p){ const m=/Severa|Importante|Observação/.exec(p||''); return m?m[0]:''; }
+function corPrioTxt(p){ return {Severa:'#C0392B',Importante:'#B9561A','Observação':'#A16207'}[critRot(p)]||'#6B7280'; }
 function corStatus(s){
   return {'Em aberto':'#E67E22','Em análise':'#F39C12','Resolvido':'#27AE60','Reprovado':'#E74C3C'}[s]||'#7F8C8D';
 }
@@ -2632,27 +2641,32 @@ function screenToPage(sx,sy){
 
 // Desenha um marcador limpo: balão circular com o número CENTRADO + ponteiro
 // até a ponta exata (px,py). r=raio do balão, H=altura do centro sobre a ponta.
-// Pin = etiqueta com o CÓDIGO (maquete aprovada 2026-11-01). 2D na cor do status,
-// BIM em ciano; selo ⛓ (no 2D, ciano) / "2D" (no BIM, vermelho) = existe a outra frente.
-// O centro da etiqueta fica 25px acima da ponta (hit-test do 3D conta com isso).
+// Pin = gota do CDE marcando o ponto + etiqueta com o CÓDIGO acima, na mesma cor
+// (maquete cards_pins_v2, modelo 4 — aprovado 2026-11-01). 2D na cor do status,
+// BIM em ciano; selo ⛓ (no 2D) / "2D" (no BIM) = existe a outra frente. Sombra e
+// crescer no hover vêm do CSS (.apin), como no CDE. Centro do conjunto ≈ 30px
+// acima da ponta (hit-test do 3D conta com isso).
 function pinSvg(px, py, a, destaque){
   a=a||{};
-  const bim=_aptDim(a)==='bim', fg=bim?'#0B2533':'#fff';
+  const bim=_aptDim(a)==='bim', fg=bim?'#0B2533':'#fff', bd=bim?'#0E1726':'#fff';
   const cor=bim?'#22D3EE' : a.status==='Resolvido'?'#27AE60' : (a.id&&!a._novo&&estaAtrasado(a))?'#E74C3C' : corStatus(a.status);
-  const txt=String(a.id||a.id_num||''), h=19, w=Math.max(26, Math.round(txt.length*6.7)+12), H=25, cy=py-H, x0=px-w/2;
-  const ptr=`M ${px} ${py} L ${px-5} ${cy+h/2-1} L ${px+5} ${cy+h/2-1} Z`;
-  const halo=destaque?`<rect x="${x0-3.5}" y="${cy-h/2-3.5}" width="${w+7}" height="${h+7}" rx="9" fill="none" stroke="#F28C28" stroke-width="2"/>`:'';
+  const txt=String(a.id||a.id_num||''), h=17, w=Math.max(26, Math.round(txt.length*6.6)+12);
+  const r=9, gy=py-19, ly=py-32-h, x0=px-w/2;          // gota: centro gy; etiqueta: topo ly
+  const ptr=`M ${px} ${py} L ${px-6} ${gy+r*0.55} L ${px+6} ${gy+r*0.55} Z`;
+  const halo=destaque?`<circle cx="${px}" cy="${gy}" r="${r+4}" fill="none" stroke="#F28C28" stroke-width="2"/>`:'';
   let selo='';
   if(a.id && typeof APTS!=='undefined' && _aptTemVinculo(a)){
-    const sx=x0+w-1, sy=cy-h/2+1;
+    const sx=x0+w-1, sy=ly+1;
     selo = bim
-      ? `<circle cx="${sx}" cy="${sy}" r="7.5" fill="#E74C3C" stroke="#0E1726" stroke-width="1.5"/><text x="${sx}" y="${sy}" text-anchor="middle" dominant-baseline="central" font-size="7" font-weight="800" fill="#fff" style="pointer-events:none">2D</text>`
-      : `<circle cx="${sx}" cy="${sy}" r="7.5" fill="#22D3EE" stroke="#fff" stroke-width="1.5"/><text x="${sx}" y="${sy+.5}" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#0B2533" style="pointer-events:none">⛓</text>`;
+      ? `<circle cx="${sx}" cy="${sy}" r="7" fill="#E74C3C" stroke="#0E1726" stroke-width="1.4"/><text x="${sx}" y="${sy}" text-anchor="middle" dominant-baseline="central" font-size="6.5" font-weight="800" fill="#fff" style="pointer-events:none">2D</text>`
+      : `<circle cx="${sx}" cy="${sy}" r="7" fill="#22D3EE" stroke="#fff" stroke-width="1.4"/><text x="${sx}" y="${sy+.5}" text-anchor="middle" dominant-baseline="central" font-size="7.5" fill="#0B2533" style="pointer-events:none">⛓</text>`;
   }
-  return halo+
+  return `<g class="apin">`+halo+
+    `<rect x="${x0}" y="${ly}" width="${w}" height="${h}" rx="5" fill="${cor}" stroke="${bd}" stroke-width="1.3"/>`+
+    `<text x="${px}" y="${ly+h/2}" text-anchor="middle" dominant-baseline="central" font-family="Cascadia Mono,Consolas,monospace" font-size="10.5" font-weight="800" fill="${fg}" style="pointer-events:none">${esc(txt)}</text>`+
     `<path d="${ptr}" fill="${cor}"/>`+
-    `<rect x="${x0}" y="${cy-h/2}" width="${w}" height="${h}" rx="6" fill="${cor}" stroke="${bim?'#0E1726':'#fff'}" stroke-width="1.4"/>`+
-    `<text x="${px}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-family="Cascadia Mono,Consolas,monospace" font-size="11" font-weight="800" fill="${fg}" style="pointer-events:none">${esc(txt)}</text>`+selo;
+    `<circle cx="${px}" cy="${gy}" r="${r}" fill="${cor}" stroke="${bd}" stroke-width="1.6"/>`+
+    `<circle cx="${px}" cy="${gy}" r="3" fill="${bd}"/>`+selo+`</g>`;
 }
 
 // Camada (prancha) carregada e VISÍVEL a que um apontamento pertence — base ou
@@ -4650,8 +4664,8 @@ function f3dRenderPins(E, svg){
       if(!pt.k3d || !arqs.has(pt.cde_arquivo_id)) return;
       const w=f3dPinWorld(E, pt); const p=f3dWorldToScreen(E, w.x,w.y,w.z); if(!p) return;
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      // pinSvg desenha o círculo 25px acima da âncora (a ponta = p.y)
-      E._pinHits.push({ ai, cx:p.x, cy:p.y-25, ty:p.y });
+      // pinSvg: gota + etiqueta acima — o conjunto fica ~30px acima da ponta (p.y)
+      E._pinHits.push({ ai, cx:p.x, cy:p.y-30, ty:p.y });
       out+=pinSvg(p.x,p.y,a,false);
     });
   });
@@ -8689,40 +8703,42 @@ function renderListaApts(){
     const orig=aptOrigem(a);   // obra/projetista → destaque de origem externa
     // Cores do desktop: atrasado #FADBD8, resolvido #D5F5E3, texto escuro (resolvido vence).
     // Origem externa tinge azul-claro, mas SÓ sem status forte (resolvido/atrasado vencem).
-    const tint = a.status==='Resolvido' ? {bg:'#D5F5E3',fg:'#145A32',mt:'#1E8449'}
-               : late ? {bg:'#FADBD8',fg:'#7B241C',mt:'#A93226'}
-               : orig ? {bg:'#E8F1FB',fg:'#1B4F72',mt:'#2E6DA4'} : null;
-    const cs = tint ? `background:${tint.bg};color:${tint.fg};border-left-color:${corPrio(a.prioridade)}` : `border-left-color:${corPrio(a.prioridade)}`;
+    // Fundos: resolvido › reprovado › atrasado › obra (azul-claro só para a OBRA).
+    const tint = a.status==='Resolvido' ? {bg:'#D5F5E3',fg:'#145A32',mt:'#1E8449',bd:'#AEE6C6'}
+               : a.status==='Reprovado' ? {bg:'#E5E7EB',fg:'#374151',mt:'#6B7280',bd:'#CDD1D8'}
+               : late ? {bg:'#FADBD8',fg:'#7B241C',mt:'#A93226',bd:'#F1B9B2'}
+               : (orig&&orig.rot==='Obra') ? {bg:'#E8F1FB',fg:'#1B4F72',mt:'#2E6DA4',bd:'#C9DDF3'} : null;
+    const cc=corPrio(a.prioridade);
+    const cs = `--c:${cc};` + (tint ? `background:${tint.bg};color:${tint.fg};border-top-color:${tint.bd};border-right-color:${tint.bd}` : '');
+    const crit=critRot(a.prioridade);
+    const critTag = crit ? `<span class="ap-crit" style="--c:${cc};--ct:${tint?corPrioTxt(a.prioridade):cc}">${crit}</span>` : '';
     const mc = tint ? tint.mt : 'var(--mut)';
     // Tags: status + "Em atraso" (vermelho) + origem externa (azul) quando aplicável
     const pillSt=`<span class="ap-st" style="background:${corStatus(a.status)}22;color:${corStatus(a.status)}">${esc(a.status||'—')}</span>`;
     const pillAtr=late?`<span class="ap-st" style="background:#E74C3C22;color:#E74C3C;margin-left:4px">Em atraso</span>`:'';
     const pillOrig=orig?`<span class="ap-st" style="background:#5B9BD522;color:#2E6DA4;margin-left:4px">${esc(orig.rot)}</span>`:'';
     const tags=pillSt+pillAtr+pillOrig;
-    // 🗺 no canto superior direito: abre o documento/modelo original onde estão os pins.
     const dim=_aptDim(a), g=a.grupo_id||a.id, irmas=APTS.filter(x=>x!==a && (x.grupo_id||x.id)===g);
     const dtag=`<span class="dtag ${dim==='bim'?'bim':'d2'}">${dim==='bim'?'BIM':'2D'}</span>`;
     const pai=irmas.find(x=>_aptDim(x)==='2d'), nBim=irmas.filter(x=>_aptDim(x)==='bim').length;
     const elo = !irmas.length ? '' : `<span class="ap-elo">⛓ ${dim==='bim' ? 'de '+esc((pai||irmas[0]).id) : (nBim? nBim+' frente'+(nBim>1?'s':'')+' BIM' : irmas.length+' vínculo'+(irmas.length>1?'s':''))}</span>`;
     const tituloHtml=`${dtag}<span class="ap-cod">${esc(a.id)}</span> — ${esc(a.titulo||'Sem título')}`;
-    const mapBtn=`<button onclick="event.stopPropagation();irParaApt(${i})" title="Abrir o documento/modelo onde estão os pins" style="position:absolute;top:5px;right:6px;background:none;border:none;cursor:pointer;font-size:15px;line-height:1;padding:2px;opacity:.8">🗺️</button>`;
+    // (O 🗺 saiu — o clique no card já leva à prancha/modelo do pin e abre o editor.)
     if(APT_VIEW==='estendido'){
       const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" onclick="event.stopPropagation();abrirImg(this.src)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:zoom-in">`).join('');
       const prazo=a.prazo_min?('📅 '+_dispData(a.prazo_min)):'';
       const local=a.local_txt?(' · 📍 '+esc(a.local_txt)):'';
-      return `<div class="ap-card${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
-        ${mapBtn}
-        <div class="t" style="padding-right:26px">${tituloHtml}</div>${elo?`<div style="margin-top:2px">${elo}</div>`:''}
-        <div class="m" style="color:${mc};margin-top:3px">${tags} ${esc(discFullName(a.disciplina)||'')}${a.prioridade?' · '+esc(a.prioridade.replace(/^[^\wÀ-ÿ]+/,'')):''}</div>
+      return `<div class="ap-card critL${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+        <div class="t">${tituloHtml}</div>${elo?`<div style="margin-top:2px">${elo}</div>`:''}
+        <div class="m" style="color:${mc};margin-top:3px;display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0">${tags} ${esc(discFullName(a.disciplina)||'')}</span>${critTag}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
         ${(prazo||local||nesta)?`<div style="font-size:10.5px;color:${mc};margin-top:5px;opacity:.9">${prazo}${local}${nesta?' · 📌 nesta prancha':''}</div>`:''}
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
       </div>`;
     }
-    return `<div class="ap-card${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
-      ${mapBtn}
-      <div class="t" style="padding-right:26px">${tituloHtml}</div>
-      <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${elo}</div>
+    return `<div class="ap-card critL${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+      <div class="t">${tituloHtml}</div>
+      <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${elo}${critTag}</div>
     </div>`;
   };
   // ORGANIZAÇÃO: com uma prancha aberta e SEM filtro de disciplina específico,
@@ -8778,9 +8794,10 @@ async function clicarAptLista(i){
     }
   }
   abrirAptIdx(i);
+  if(_aptDim(a)==='bim' && (a.pontos_json||[]).some(p=>p&&p.k3d)) apVerNoModelo();
 }
 
-// 🗺 do card: só NAVEGA até os pins (não abre o editor). 2D → abre o documento
+// 🗺 do card (removido do card em 2026-11-01; irParaApt segue usado por outros atalhos): só NAVEGA até os pins (não abre o editor). 2D → abre o documento
 // original do CDE e centraliza no pin; 3D → entra no modo 3D federando o modelo
 // do apontamento (F3D) ou acorda o viewer legado (xeokit).
 async function irParaApt(i){
