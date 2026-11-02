@@ -1681,10 +1681,16 @@ function _recentes(){ try{ return JSON.parse(localStorage.getItem(_RECENTES_K)||
 function _marcarRecente(id){ try{ const r=_recentes().filter(x=>x!==id); r.unshift(id); localStorage.setItem(_RECENTES_K, JSON.stringify(r.slice(0,3))); }catch(_){} }
 async function montarSeletorEmp(){
   _marcarRecente(EMP_ID);
-  if(USER_ROLE==='obra' || USER_ROLE==='setor') return;
+  if(USER_ROLE==='setor') return;
   try{
     let q = sb.from('empreendimentos_auria').select('id,nome,codigo,construtora_id').is('deleted_at',null).order('nome');
-    if(USER_ROLE==='analista'){
+    if(USER_ROLE==='obra'){
+      // só o gerente de obras tem seletor: as obras da abrangência dele
+      const { data: gob } = await sb.rpc('gerente_obras_meu');
+      if(!gob) return;
+      const { data: v } = await sb.from('obra_empreendimento_auria').select('empreendimento_id').eq('usuario_id',USER.id).eq('ativo',true);
+      q = q.in('id', [...new Set((v||[]).map(r=>r.empreendimento_id).concat([EMP_ID]))]);
+    } else if(USER_ROLE==='analista'){
       const { data: v } = await sb.from('analista_empreendimento_auria').select('empreendimento_id').eq('analista_id',USER.id).eq('ativo',true);
       const ids=[...new Set((v||[]).map(r=>r.empreendimento_id).concat([EMP_ID]))];
       q = q.in('id', ids);

@@ -1292,6 +1292,25 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#F0F4F8;color:var(--
   </div>
 </div>
 
+<!-- Gerente de obras (item 233 Obra): eng. chefe em todas as obras da abrangência -->
+<div class="modal-bg" id="modalGerObras" onclick="if(event.target===this)closeModal('modalGerObras')">
+  <div class="modal" style="width:560px">
+    <div class="modal-title">Gerente de obras</div>
+    <div class="modal-sub" style="margin-bottom:12px" id="gobSub"></div>
+    <label style="display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--gray-border);border-radius:10px;font-size:13px;cursor:pointer;margin-bottom:8px">
+      <input type="radio" name="gobAbr" value="grupo" onchange="gobAbrMuda()"> <span><b>Grupo inteiro</b><br><span style="font-size:11.5px;color:var(--text-soft)">Todas as obras de todas as empresas do grupo, inclusive as futuras.</span></span></label>
+    <label style="display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--gray-border);border-radius:10px;font-size:13px;cursor:pointer">
+      <input type="radio" name="gobAbr" value="empresas" onchange="gobAbrMuda()"> <span><b>Empresas escolhidas</b><br><span style="font-size:11.5px;color:var(--text-soft)">Todas as obras das empresas marcadas, inclusive as futuras.</span></span></label>
+    <div id="gobConstr" style="border:1px solid var(--gray-border);border-radius:10px;max-height:24vh;overflow:auto;margin:8px 0 0 26px"></div>
+    <div style="font-size:11.5px;color:var(--text-soft);margin-top:10px">Mesmo acesso do engenheiro chefe em cada obra coberta. Vínculos feitos à mão nas obras não mudam. Avisos por e-mail: desligados por padrão — o próprio gerente liga (todos ou só os críticos) no App Obra.</div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="cd-btn" id="btnGobRem" onclick="gobSalvar(false)" style="margin-right:auto;color:var(--red)">Deixar de ser gerente</button>
+      <button class="cd-btn" onclick="closeModal('modalGerObras')">Cancelar</button>
+      <button class="cd-btn navy" id="btnGob" onclick="gobSalvar(true)">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Disciplinas → aplicar a outras empresas do grupo (item 48) -->
 <div class="modal-bg" id="modalDiscAplicar" onclick="if(event.target===this)closeModal('modalDiscAplicar')">
   <div class="modal" style="width:520px">
@@ -1946,6 +1965,7 @@ async function loadApontamentosLive(){
   });
 }
 
+var GER_OBRAS={};   // usuario_id → abrangência do gerente de obras
 var GESTORES=[], CONVITES=[], USUARIOS=null;   // USUARIOS = retorno de gestao_usuarios_do_grupo (item 121)
 async function loadAnalistas(){
   // Sem embed PostgREST (o relacionamento falha); busca os vínculos à parte.
@@ -1971,6 +1991,10 @@ async function loadAnalistas(){
     const ru=await sb.rpc('gestao_usuarios_do_grupo');
     USUARIOS = ru.error ? null : (ru.data||[]);
   }catch(_){ USUARIOS=null; }
+  try{
+    const rg=await sb.from('gerente_obras_auria').select('usuario_id,grupo_todo,construtoras');
+    GER_OBRAS={}; (rg.data||[]).forEach(g=>{ GER_OBRAS[g.usuario_id]=g; });
+  }catch(_){ GER_OBRAS={}; }
   if(ANALISTAS.length){
     const ids = ANALISTAS.map(a=>a.id);
     const { data: aes } = await sb.from('analista_empreendimento_auria')
@@ -3695,6 +3719,42 @@ async function finEscopoSalvar(){
   }catch(e){ showToast('Não salvou: '+((e&&e.message)||e)+(/financeiro_escopo_set|schema cache/i.test((e&&e.message)||'')?' (rode supabase_gestao_usuarios.sql)':''),'red'); }
   b.disabled=false; b.textContent='Salvar escopo';
 }
+// Gerente de obras: abrangência grupo inteiro ou empresas; o banco mantém os vínculos.
+var GOB_USR=null;
+function gobAbrir(uid){
+  const u=(USUARIOS||[]).find(x=>x.sujeito_id===uid); if(!u) return;
+  GOB_USR=uid;
+  const g=GER_OBRAS[uid]; const sel=new Set((g&&g.construtoras)||[]);
+  setHTML('gobSub', esc(u.nome||u.email||'')+(g?' — gerente de obras.':' — ainda não é gerente de obras.'));
+  setHTML('gobConstr', (CONSTRUTORAS||[]).map(c=>`<label style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-bottom:1px solid #F1F5F9;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="gob-c" value="${c.id}" ${sel.has(c.id)?'checked':''}> <b>${esc(c.nome)}</b></label>`).join('')
+      || '<div style="padding:10px;font-size:12.5px;color:var(--text-soft)">Nenhuma empresa cadastrada no grupo.</div>');
+  const todo=!g || g.grupo_todo;
+  document.querySelectorAll('input[name=gobAbr]').forEach(r=>{ r.checked=(r.value==='grupo')===todo; });
+  document.getElementById('btnGobRem').style.display=g?'':'none';
+  gobAbrMuda();
+  document.getElementById('modalGerObras').classList.add('open');
+}
+function gobAbrMuda(){
+  const emp=(document.querySelector('input[name=gobAbr]:checked')||{}).value==='empresas';
+  const box=document.getElementById('gobConstr');
+  box.style.opacity=emp?'1':'.45'; box.querySelectorAll('input').forEach(i=>{ i.disabled=!emp; });
+}
+async function gobSalvar(ativo){
+  if(!ativo && !confirm('Remover o papel de gerente de obras? Ele perde o acesso às obras que vieram por esse papel (vínculos feitos à mão continuam).')) return;
+  const todo=(document.querySelector('input[name=gobAbr]:checked')||{}).value!=='empresas';
+  const cs=[...document.querySelectorAll('.gob-c:checked')].map(x=>x.value);
+  if(ativo && !todo && !cs.length){ showToast('Marque ao menos uma empresa.','red'); return; }
+  const b=document.getElementById('btnGob'); b.disabled=true;
+  try{
+    const r=await sb.rpc('gerente_obras_salvar',{ p_user:GOB_USR, p_ativo:ativo, p_grupo_todo:todo, p_construtoras:todo?[]:cs });
+    if(r.error) throw r.error;
+    closeModal('modalGerObras');
+    showToast(ativo?'Gerente de obras salvo.':'Deixou de ser gerente de obras.','green');
+    await loadAnalistas(); renderAnalistasPage();
+  }catch(e){ showToast('Não salvou: '+((e&&e.message)||e),'red'); }
+  b.disabled=false;
+}
 function _usrSecao(t, n){ return '<div style="grid-column:1/-1;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-soft);margin:6px 0 -2px">'+t+(n!=null?(' · '+n):'')+'</div>'; }
 function _cardGestor(g){
   const av=(g.nome||g.email||'?')[0].toUpperCase();
@@ -3763,6 +3823,9 @@ function _usrEsc(u){
             p.length?(p.length+' profissional(is)'+(p.some(x=>x.rt)?' · RT cadastrado':'')):''].filter(Boolean).join(' · ');
   }
   // setor e obra (a obra é a que tem papel = nível de campo)
+  const gob=GER_OBRAS[u.sujeito_id];
+  if(gob) return '<b>Gerente de obras</b> · '+(gob.grupo_todo ? 'grupo inteiro'
+    : 'empresas: '+(gob.construtoras||[]).map(id=>{ const c=(CONSTRUTORAS||[]).find(x=>x.id===id); return esc(c?c.nome:'?'); }).join(', '));
   return [u.papel?('<b>'+esc(OBRA_NIVEL_ROTULO[u.papel]||u.papel)+'</b>'):'',
           emps.length?emps.map(x=>esc(x.sigla||x.nome)).join(', '):'sem empreendimento',
           discs.length?('disciplinas: '+discs.map(esc).join(', ')):'todas as disciplinas liberadas'].filter(Boolean).join(' · ');
@@ -3785,7 +3848,9 @@ function _usrCard(u){
       ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('distribuicao')">Atribuir</button>${btnGer}</div>`
       : (u.tipo==='fornecedor'
         ? `<div class="analista-card-actions"><button class="btn-sm" onclick="goPage('fornecedores')">Abrir</button></div>`
-        : (btnGer ? `<div class="analista-card-actions">${btnGer}</div>` : '')));
+        : (corTipo==='obra' && !eu
+          ? `<div class="analista-card-actions"><button class="btn-sm" onclick="gobAbrir('${u.sujeito_id}')" title="Engenheiro chefe em todas as obras do grupo ou das empresas escolhidas">${GER_OBRAS[u.sujeito_id]?'Gerente de obras':'Tornar gerente de obras'}</button>${btnGer}</div>`
+          : (btnGer ? `<div class="analista-card-actions">${btnGer}</div>` : ''))));
   return `<div class="analista-card">
     <div class="analista-card-av" style="background:${cores[corTipo]||'#64748B'}">${u.tipo==='convite'?'✉':av}</div>
     <div class="analista-card-info">

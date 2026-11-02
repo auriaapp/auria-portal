@@ -1129,6 +1129,13 @@ function qrPararCam(){
       <div>
         <label>Empreendimento</label>
         <select id="selEmp" onchange="trocarEmp()"></select>
+        <div id="gobBox" style="display:none;margin-top:6px;font-size:11.5px;color:#64748B">
+          <b style="color:#13294b">Gerente de obras</b> · <span id="gobAbrTxt"></span>
+          <label style="display:flex;align-items:center;gap:6px;margin-top:4px">Avisos por e-mail
+            <select id="gobNotif" onchange="gobNotifSalvar(this)" style="flex:1;font-size:11.5px;padding:2px 4px">
+              <option value="nenhum">Nenhum</option><option value="criticos">Só os críticos</option><option value="todos">Todos</option>
+            </select></label>
+        </div>
         <span class="ro-banner" id="roBanner" title="Você é visualizador neste empreendimento: consulta pranchas, modelos e apontamentos, mas não altera nada.">👁 Visualizador · só consulta</span>
       </div>
       <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="abrirPdfLocal(this.files[0], PDF_OVERLAY)">
@@ -1920,6 +1927,18 @@ async function boot(){
       EMPS=data||[];
     }
   }catch(e){ EMPS=[]; }
+  // Gerente de obras (item 233): eng. chefe em todas as obras da abrangência;
+  // o próprio gerente escolhe os e-mails (padrão: nenhum).
+  if(!OBRA_CONSULTA){
+    try{
+      const { data: gob }=await sb.rpc('gerente_obras_meu');
+      if(gob){
+        $('gobAbrTxt').textContent = gob.grupo_todo ? 'grupo inteiro' : ((gob.construtoras||[]).length+' empresa(s)');
+        $('gobNotif').value = gob.notif || 'nenhum';
+        $('gobBox').style.display='';
+      }
+    }catch(_){}
+  }
   $('selEmp').innerHTML = EMPS.length
     ? '<option value="">— selecione —</option>'+EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('')
     : '<option value="">Nenhum empreendimento atribuído</option>';
@@ -9508,6 +9527,11 @@ const SEG_NIVEL = {
   interdicao:  { rot:'Interdição',  cor:'#A32D2D', bg:'#FBEAEA' }
 };
 function segMeuNivel(){ return (EMP && (OBRA_NIVEL || {})[EMP.id]) || ''; }
+async function gobNotifSalvar(sel){
+  const { error } = await sb.rpc('gerente_obras_notif', { p_notif: sel.value });
+  if (error){ alert('Não salvou: ' + error.message); return; }
+  sel.title = 'Salvo';
+}
 function segSouTecnico(){ return segMeuNivel() === 'seguranca'; }
 function segAtivos(){ return SEG.filter(x => x.situacao === 'ativo'); }
 function segPendentes(){ return segAtivos().filter(x => !OBRA_LIDOS.has('seg:' + x.id)); }
