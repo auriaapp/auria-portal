@@ -133,7 +133,7 @@ function crItens(){
     out.push({ tipo:'parcela', id:p.id, emp_id:c.empreendimento_id, emp:c.empreendimento, construtora:c.construtora||'', disc:c.disciplina||'Sem disciplina',
                ctr_id:c.contrato_id, ctr:(c.numero?c.numero+' · ':'')+(c.projetista||c.objeto||'contrato'), num:p.numero, desc:p.descricao||'', valor:Number(p.valor||0), data:p.vencimento?String(p.vencimento).slice(0,10):null, status:p.status }); }); });
   (CC.nfs||[]).forEach(n=>{
-    if(n.contrato_id || n.status==='cancelada') return;
+    if(n.contrato_id || ['devolvida','recusada','cancelada'].includes(n.status)) return;   // fora do fluxo não entra na soma
     const eid=n.empreendimento_id||('nf-'+(n.construtora||'x'));
     out.push({ tipo:'nf', id:n.id, emp_id:eid, emp:n.empreendimento||'— sem empreendimento —', construtora:n.construtora||'', disc:n.disciplina||'Sem disciplina',
                ctr_id:'nf-'+eid+'-'+(n.disciplina||''), ctr:'NFs sem contrato', num:null, desc:(n.nf_numero?'NF '+n.nf_numero+' · ':'')+(n.projetista||''), valor:Number(n.valor||0),
