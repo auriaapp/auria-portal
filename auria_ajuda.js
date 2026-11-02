@@ -12,8 +12,19 @@
 //    AuriaAjuda.init({ sb, papel:'analista', pagina:'Painel do Analista',
 //                      contexto:()=>({ empreendimento:'PINI · Diagonal…' }), lado:'right' });
 // ============================================================================
+//  Guias (2026-11): cada app tem a SUA ajuda (CFG.app, ou deduzido de CFG.pagina) com guias
+//  passo a passo da tabela ajuda_guia_auria (RPC ajuda_guias, recortada por papel). A resposta
+//  é o guia — nunca um trecho cru do manual — e cada passo pode ter "Mostrar na tela", que
+//  destaca o botão de verdade na página. App sem guias ainda cai no fluxo antigo (manual).
 (function(){
   let CFG=null, MANUAL='', CONV=[], ABERTO=false, ULT={pergunta:'',resposta:''};
+  let APP='', GUIAS=null, SPOT=null;
+  const APP_POR_PAGINA={'CDE':'cde','Consulta ao CDE':'cde','Auria App':'app','Auria App Obra':'obra','Página da Obra':'obra',
+    'Painel da Coordenação':'coordenacao','Painel do Analista':'coordenacao','Painel da Gestão':'gestao','Painel do Projetista':'projetista',
+    'Painel Administrativo Financeiro':'financeiro','Painel da Qualidade':'qualidade'};
+  const APP_TITULO={cde:'Ajuda do CDE',app:'Ajuda do Auria App',obra:'Ajuda do App Obra',coordenacao:'Ajuda da Coordenação',gestao:'Ajuda da Gestão',
+    projetista:'Ajuda do Projetista',financeiro:'Ajuda do Adm-Fin',qualidade:'Ajuda da Qualidade'};
+  const APP_ONDE={cde:'no CDE',app:'no Auria App',obra:'no App Obra',coordenacao:'na Coordenação',gestao:'na Gestão',projetista:'no seu painel',financeiro:'no Adm-Fin',qualidade:'na Qualidade'};
 
   const CSS=`
   .aj-btn{position:fixed;bottom:var(--aj-bottom,14px);RIGHTSIDE:var(--aj-side,14px);z-index:8900;width:32px;height:32px;border-radius:50%;border:2px solid #E8960A;background:#1E3A5F;color:#fff;
@@ -53,6 +64,27 @@
   .aj-in button{background:#1E3A5F;color:#fff;border:none;border-radius:9px;padding:0 14px;font-weight:700;cursor:pointer;font-family:inherit}
   .aj-in button:disabled{opacity:.5;cursor:default}
   .aj-ft{font-size:10.5px;color:#64748B;padding:0 12px 8px;background:#fff}
+  .aj-m.g{white-space:normal;max-width:96%}
+  .aj-m.g .aj-gt{display:block;color:#1E3A5F;font-size:13.5px;margin-bottom:4px}
+  .aj-m.g p{margin:0 0 6px}
+  .aj-m.g ol{margin:4px 0 6px;padding-left:20px}
+  .aj-m.g ol li{margin:0 0 7px;padding-left:2px}
+  .aj-m.g ol li::marker{color:#E8960A;font-weight:800}
+  .aj-mostra{display:inline-flex;align-items:center;gap:5px;margin-top:4px;background:#fff;border:1px solid #E8960A;color:#7C3E06;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .aj-mostra:hover{background:rgba(232,150,10,.12)}
+  .aj-oculto{display:block;margin-top:4px;font-size:11.5px;color:#64748B;font-style:italic}
+  .aj-fim{border-top:1px solid #E2E8F0;padding-top:6px;margin-top:2px;color:#0F5132}
+  .aj-dica{margin-top:5px;font-size:12px;color:#475569}
+  .aj-dica b{color:#475569}
+  .aj-spot{position:fixed;z-index:9600;border:2px solid #E8960A;border-radius:9px;box-shadow:0 0 0 9999px rgba(11,18,32,.45);pointer-events:none;animation:ajPulse 1.4s ease-in-out infinite}
+  @keyframes ajPulse{0%,100%{outline:0 solid rgba(232,150,10,.55)}50%{outline:6px solid rgba(232,150,10,0)}}
+  .aj-bal{position:fixed;z-index:9601;width:280px;max-width:calc(100vw - 24px);background:#fff;border:1px solid #E2E8F0;border-top:3px solid #E8960A;border-radius:10px;box-shadow:0 14px 40px rgba(15,23,42,.3);
+    padding:10px 12px;font:13px/1.5 'Segoe UI',system-ui,sans-serif;color:#0F172A}
+  .aj-bal small{display:block;font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#64748B;margin-bottom:3px}
+  .aj-bal code{font-family:ui-monospace,Consolas,monospace;background:#F6F9FC;border:1px solid #E2E8F0;border-radius:4px;padding:0 4px;font-size:12px}
+  .aj-bal .aj-bb{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
+  .aj-bal .aj-bb button{border-radius:7px;padding:4px 10px;font:700 12px 'Segoe UI',system-ui,sans-serif;cursor:pointer;border:1px solid #E2E8F0;background:#fff;color:#334155}
+  .aj-bal .aj-bb button.pri{background:#1E3A5F;border-color:#1E3A5F;color:#fff}
   @media (max-width:600px){ .aj-pan{width:calc(100vw - 24px);height:calc(100vh - 100px)} }`;
 
   const SUGESTOES={
@@ -88,7 +120,7 @@
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   // markdown mínimo → HTML (negrito, código, listas, quebras)
   function md(s){
-    let h=esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/_\(([^)]+)\)_/g,'<i class="man">($1)</i>');
+    let h=esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\*([^*\s][^*]*)\*/g,'<i>$1</i>').replace(/_\(([^)]+)\)_/g,'<i class="man">($1)</i>');
     const lines=h.split('\n'); let out='', inList=false;
     for(const l of lines){
       const m=/^\s*[-•]\s+(.*)$/.exec(l);
@@ -106,9 +138,17 @@
     try{ const r=await CFG.sb.rpc('ajuda_manual'); if(!r.error && r.data) MANUAL=String(r.data); }catch(_){}
     return MANUAL;
   }
+  // Guias do app atual (já recortados pelo papel no servidor). [] = app ainda sem guias.
+  async function carregarGuias(){
+    if(GUIAS) return GUIAS;
+    try{ const r=await CFG.sb.rpc('ajuda_guias',{p_app:APP}); GUIAS=(!r.error && Array.isArray(r.data))?r.data:[]; }catch(_){ GUIAS=[]; }
+    if(GUIAS.length) render();   // troca as sugestões pelas dos guias
+    return GUIAS;
+  }
 
   // Palavras vazias da busca local (item 72)
-  const STOP=new Set(['a','o','os','as','de','do','da','dos','das','um','uma','e','em','no','na','nos','nas','para','pra','por','que','como','onde','qual','quais','é','eu','meu','minha','se','ao','à','com','não','ser','ter','faço','fazer','posso','consigo','uso','usar','isso','esse','essa','este','esta','aqui','ali','tem','há','the','of']);
+  const STOP=new Set(['a','o','os','as','de','do','da','dos','das','um','uma','e','em','no','na','nos','nas','para','pra','por','que','como','onde','qual','quais','é','eu','meu','minha','se','ao','à','com','não','ser','ter','faço','fazer','posso','consigo','uso','usar','isso','esse','essa','este','esta','aqui','ali','tem','há','the','of',
+    'quero','queria','gostaria','preciso','saber','favor','ajuda','sobre','funciona','funcionam','dar','vou','sei','algum','alguma','pelo','pela','mais','ja','já','so','só','quem'].map(_norm1));   // toks() compara sem acento
   // ── "Me leva lá" (fase 2): a página registra ações (CFG.acoes = {chave:{rotulo, run, quando?}}).
   //    O prompt lista as chaves disponíveis; a IA termina a resposta com [[acao:chave]] quando
   //    a resposta é exatamente essa ação; o painel vira isso num botão que executa na hora.
@@ -136,14 +176,14 @@
     if(CFG.encosta){ const el=document.querySelector(CFG.encosta); if(el){ const side=()=>{ const r=el.getBoundingClientRect(); const w=lado==='left'?r.right:(window.innerWidth-r.left);
       document.documentElement.style.setProperty('--aj-side',(w>0&&w<window.innerWidth?w+10:14)+'px'); };
       side(); if(window.ResizeObserver) new ResizeObserver(side).observe(el); window.addEventListener('resize',side); el.addEventListener('transitionend',side); } }
-    const btn=document.createElement('button'); btn.className='aj-btn'; btn.title='Ajuda do Auria — pergunte como usar'; btn.innerHTML='?<span class="aj-dot"></span>';
+    const btn=document.createElement('button'); btn.className='aj-btn'; btn.title=(APP_TITULO[APP]||'Ajuda do Auria')+' — pergunte como fazer'; btn.innerHTML='?<span class="aj-dot"></span>';
     btn.onclick=toggle; document.body.appendChild(btn);
     const pan=document.createElement('div'); pan.className='aj-pan'; pan.id='ajPan';
-    pan.innerHTML='<div class="aj-hd"><img src="logo_symbol.png" alt=""><div><b>Ajuda do Auria</b><span>Responde pelo manual do Auria</span></div><button onclick="AuriaAjuda.limpar()" title="Limpar conversa">Limpar</button><button onclick="AuriaAjuda.fechar()">✕</button></div><div class="aj-line"></div>'
+    pan.innerHTML='<div class="aj-hd"><img src="logo_symbol.png" alt=""><div><b>'+esc(APP_TITULO[APP]||'Ajuda do Auria')+'</b><span>Passo a passo de como fazer</span></div><button onclick="AuriaAjuda.limpar()" title="Limpar conversa">Limpar</button><button onclick="AuriaAjuda.fechar()">✕</button></div><div class="aj-line"></div>'
       +'<div class="aj-msgs" id="ajMsgs"></div><div class="aj-sug" id="ajSug"></div>'
       +'<div class="aj-esc" id="ajEsc"><span>Não resolveu? Fale com o suporte — a pergunta vai com o contexto da sua tela.</span><button onclick="AuriaAjuda.escalar()">Enviar ao suporte</button></div>'
-      +'<div class="aj-in"><textarea id="ajIn" placeholder="Pergunte como fazer algo no Auria…"></textarea><button id="ajGo" onclick="AuriaAjuda.enviar()">➤</button></div>'
-      +'<div class="aj-ft">Busca no manual do Auria, aqui mesmo — sem IA externa e sem internet. Perguntas ficam registradas para melhorar o manual.</div>';
+      +'<div class="aj-in"><textarea id="ajIn" placeholder="Pergunte como fazer algo '+esc(APP_ONDE[APP]||'no Auria')+'…"></textarea><button id="ajGo" onclick="AuriaAjuda.enviar()">➤</button></div>'
+      +'<div class="aj-ft">Roda aqui mesmo, sem IA externa. As perguntas ficam registradas para melhorar a ajuda.</div>';
     document.body.appendChild(pan);
     document.getElementById('ajIn').addEventListener('keydown',ev=>{ if(ev.key==='Enter'&&!ev.shiftKey){ ev.preventDefault(); AuriaAjuda.enviar(); } });
     render();
@@ -152,16 +192,68 @@
     const box=document.getElementById('ajMsgs'); if(!box) return;
     if(!CONV.length){
       const papel=PAPEL_NOME[CFG.papel]||'';
-      box.innerHTML='<div class="aj-m a">Olá! Sou a ajuda do Auria. Pergunte <b>como fazer</b> alguma coisa, <b>onde fica</b> uma função ou o que significa uma mensagem. '+(papel?'Vejo que você está como <b>'+esc(papel)+'</b>'+(CFG.pagina?' no '+esc(CFG.pagina):'')+'.':'')+'</div>';
-    } else box.innerHTML=CONV.map(m=>'<div class="aj-m '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):md(m.content))
+      box.innerHTML=(GUIAS&&GUIAS.length)
+        ? '<div class="aj-m a">Olá! Me pergunte como fazer alguma coisa '+esc(APP_ONDE[APP]||'aqui')+' — eu explico o passo a passo e mostro onde clicar.</div>'
+        : '<div class="aj-m a">Olá! Sou a ajuda do Auria. Pergunte <b>como fazer</b> alguma coisa, <b>onde fica</b> uma função ou o que significa uma mensagem. '+(papel?'Vejo que você está como <b>'+esc(papel)+'</b>'+(CFG.pagina?' no '+esc(CFG.pagina):'')+'.':'')+'</div>';
+    } else box.innerHTML=CONV.map((m,ci)=>m.guia?guiaHtml(m,ci):'<div class="aj-m '+(m.role==='user'?'u':'a')+'">'+(m.role==='user'?esc(m.content):md(m.content))
         +(m.acao&&acoesDisponiveis()[m.acao]?'<br><button class="aj-go" onclick="AuriaAjuda.acao(\''+m.acao+'\')">➜ Me leva lá: '+esc(acoesDisponiveis()[m.acao].rotulo)+'</button>':'')
         +(m.extras&&m.extras.length?'<div class="aj-veja">Veja também: '+m.extras.map(t=>'<a href="#" onclick="AuriaAjuda.perguntar('+JSON.stringify(t).replace(/"/g,'&quot;')+');return false">'+esc(t)+'</a>').join(' · ')+'</div>':'')+'</div>').join('')+(CONV.length&&CONV[CONV.length-1].pensando?'<div class="aj-m a" style="color:#64748B">pensando…</div>':'');
     box.scrollTop=box.scrollHeight;
     const sug=document.getElementById('ajSug');
     const lista=SUGESTOES[PAPEL_NOME[CFG.papel]==='adm-fin'?'financeiro':(PAPEL_NOME[CFG.papel]||'').replace(' interno','')]||SUGESTOES.padrao;
-    sug.innerHTML=CONV.length?'':lista.map(q=>'<button onclick="AuriaAjuda.perguntar('+JSON.stringify(q).replace(/"/g,'&quot;')+')">'+esc(q)+'</button>').join('');
+    const listaG=(GUIAS||[]).slice(0,4).map(g=>(g.perguntas&&g.perguntas[0])||g.titulo);
+    sug.innerHTML=CONV.length?'':(listaG.length?listaG:lista).map(q=>'<button onclick="AuriaAjuda.perguntar('+JSON.stringify(q).replace(/"/g,'&quot;')+')">'+esc(q)+'</button>').join('');
   }
-  function toggle(){ ABERTO=!ABERTO; document.getElementById('ajPan').classList.toggle('on',ABERTO); if(ABERTO){ carregarManual(); setTimeout(()=>{ const i=document.getElementById('ajIn'); if(i) i.focus(); },0); } }
+  // Resposta em forma de guia: título, introdução, passos numerados (com "Mostrar na tela"), resultado e dicas.
+  function guiaHtml(m,ci){
+    const g=m.guia, av=m.avisos||{};
+    const passos=(g.passos||[]).map((p,si)=>'<li>'+md(p.t)
+      +(p.mostrar?'<br><button class="aj-mostra" onclick="AuriaAjuda.mostrar('+ci+','+si+')">Mostrar na tela</button>':'')
+      +(av[si]?'<span class="aj-oculto">'+esc(av[si])+'</span>':'')+'</li>').join('');
+    const fim=g.fim?'<div class="aj-fim">'+md(g.fim).replace(/^Pronto:/,'<b>Pronto:</b>')+'</div>':'';
+    const dicas=(g.dicas||[]).map(d=>'<div class="aj-dica"><b>Dica:</b> '+md(d)+'</div>').join('');
+    const extras=m.extras&&m.extras.length?'<div class="aj-veja">Veja também: '+m.extras.map(t=>'<a href="#" onclick="AuriaAjuda.perguntar('+JSON.stringify(t).replace(/"/g,'&quot;')+');return false">'+esc(t)+'</a>').join(' · ')+'</div>':'';
+    return '<div class="aj-m a g"><b class="aj-gt">'+esc(g.titulo)+'</b>'+(g.intro?'<p>'+md(g.intro)+'</p>':'')+'<ol>'+passos+'</ol>'+fim+dicas+extras+'</div>';
+  }
+
+  // ── "Mostrar na tela": destaca o botão do passo na própria página ──────────
+  function visivel(el){ if(!el||el.closest('#ajPan')) return false; const r=el.getBoundingClientRect(); if(r.width<2||r.height<2) return false;
+    const cs=getComputedStyle(el); return cs.visibility!=='hidden' && (el.offsetParent!==null || cs.position==='fixed'); }
+  function achar(sel){ try{ return [...document.querySelectorAll(sel)].find(visivel)||null; }catch(_){ return null; } }
+  function fecharSpot(){ if(!SPOT) return; cancelAnimationFrame(SPOT.raf); SPOT.spot.remove(); SPOT.bal.remove();
+    document.removeEventListener('mousedown',SPOT.fora,true); document.removeEventListener('keydown',SPOT.esc,true); SPOT=null; }
+  async function mostrar(ci,si){
+    const m=CONV[ci]; const p=m&&m.guia&&m.guia.passos[si]; if(!p||!p.mostrar) return;
+    fecharSpot();
+    let el=achar(p.mostrar);
+    if(!el && p.prep){ const a=acoesDisponiveis()[p.prep]; if(a){ try{ a.run(); }catch(_){} await new Promise(r=>setTimeout(r,350)); el=achar(p.mostrar); } }
+    if(!el){ m.avisos=m.avisos||{}; m.avisos[si]=p.oculto||'Esse botão não está visível nesta tela agora.'; render(); return; }
+    if(m.avisos) delete m.avisos[si];
+    ABERTO=false; document.getElementById('ajPan').classList.remove('on');
+    el.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+    const spot=document.createElement('div'); spot.className='aj-spot';
+    const bal=document.createElement('div'); bal.className='aj-bal';
+    bal.innerHTML='<small>Passo '+(si+1)+' de '+m.guia.passos.length+'</small>'+md(p.t)
+      +'<div class="aj-bb"><button onclick="AuriaAjuda.fecharDestaque()">Fechar</button><button class="pri" onclick="AuriaAjuda.voltar()">Voltar à ajuda</button></div>';
+    document.body.appendChild(spot); document.body.appendChild(bal);
+    // clicar fora do balão (inclusive no próprio botão destacado) só tira o destaque — o clique segue normal
+    const fora=ev=>{ if(!bal.contains(ev.target)) fecharSpot(); };
+    const esc_=ev=>{ if(ev.key==='Escape') fecharSpot(); };
+    document.addEventListener('mousedown',fora,true); document.addEventListener('keydown',esc_,true);
+    SPOT={spot,bal,fora,esc:esc_,raf:0};
+    const pos=()=>{ if(!SPOT) return;
+      if(!document.contains(el)){ fecharSpot(); return; }
+      const r=el.getBoundingClientRect(), pad=5;
+      Object.assign(spot.style,{left:(r.left-pad)+'px',top:(r.top-pad)+'px',width:(r.width+pad*2)+'px',height:(r.height+pad*2)+'px'});
+      const bw=bal.offsetWidth, bh=bal.offsetHeight, vw=window.innerWidth, vh=window.innerHeight;
+      let top=r.bottom+12; if(top+bh>vh-8) top=Math.max(8, r.top-bh-12);
+      let left=Math.min(Math.max(8, r.left+r.width/2-bw/2), vw-bw-8);
+      bal.style.top=top+'px'; bal.style.left=left+'px';
+      SPOT.raf=requestAnimationFrame(pos); };
+    pos();
+  }
+
+  function toggle(){ ABERTO=!ABERTO; document.getElementById('ajPan').classList.toggle('on',ABERTO); if(ABERTO){ fecharSpot(); carregarManual(); carregarGuias(); setTimeout(()=>{ const i=document.getElementById('ajIn'); if(i) i.focus(); },0); } }
 
   // ── Item 72: "IA própria" — busca no manual + FAQ, sem modelo externo ─────
   //  Para "como faço X / onde fica Y" não precisa de gerador: precisa de busca boa.
@@ -179,7 +271,7 @@
     ['obra','canteiro','campo','engenheiro'],['gestor','gerente','gestao','diretoria'],['analista','coordenador','coordenacao'],['grupo','pasta','colecao'],['pavimento','andar','nivel','piso'],
     ['agenda','calendario','compromisso'],['kanban','quadro'],['mensagem','conversa','chat','responder','resposta'],['cronograma','prazo','marco'],['logo','marca','imagem da empresa'],
     ['acesso temporario','link temporario','24h','convidado'],['medir','trena','medida','cota','distancia'],['corte','secao','cortar'],['caminhar','walk','andar dentro'],['propriedade','pset','atributo','informacao'],
-    ['quantitativo','quantidade','area','volume','m2','m3'],['exportar','excel','bcf','relatorio','planilha'],['ficha','briefing','cadastro do empreendimento'],['empreendimento','projeto','obra nova','emp']];
+    ['quantitativo','quantidade','area','volume','m2','m3'],['exportar','excel','bcf','relatorio','planilha'],['ficha','briefing','cadastro do empreendimento'],['empreendimento','projeto','obra nova','emp'],['ver','vejo','visualizar','enxergar','aparece','aparecer']];
   const SIN_MAP={}; SIN.forEach((g,i)=>g.forEach(w=>{ if(w.includes(' ')) return; SIN_MAP[_norm1(w)]='~'+i; SIN_MAP[_stem(_norm1(w))]='~'+i; }));
   function _norm1(w){ return String(w||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
   // radical leve para PT: tira plural e terminações verbais/nominais comuns (enviar/envio/enviando → envi; girar/gira → gir)
@@ -254,6 +346,33 @@
     const cobriuTudo = bfn>0 && bsf>=bfn && bs>=1.2;
     return ((firme && bs-bs2>=0.8) || (cobriuTudo && bs-bs2>=0.5)) ? best : null;
   }
+  // Busca nos guias do app, por CONCEITO (palavra e seus sinônimos contam uma vez só).
+  //  conf = quanto dos conceitos da pergunta o guia cobre, pesado por raridade (IDF):
+  //  no título/jeitos de perguntar vale 1, só no texto dos passos vale 0,5. Palavra da
+  //  pergunta que não existe em guia nenhum pesa contra (é o assunto que falta).
+  let IDX_G=null, IDX_G_SRC=null;
+  function buscarGuia(pergunta){
+    if(IDX_G_SRC!==GUIAS){
+      const itens=(GUIAS||[]).map(g=>({tipo:'guia', g, titulo:g.titulo,
+        tt:_concSet([g.titulo].concat(g.perguntas||[]).join(' ')),
+        fr:[g.titulo].concat(g.perguntas||[]).map(_concSet),
+        tb:_concSet([g.intro, g.fim].concat((g.passos||[]).map(p=>p.t), g.dicas||[]).join(' '))}));
+      const df={}; itens.forEach(it=>{ new Set([...it.tt,...it.tb]).forEach(t=>{ df[t]=(df[t]||0)+1; }); });
+      const N=itens.length||1; itens.idf=t=>{ const d=df[t]; if(!d) return 1; return Math.max(0.15, Math.log((N+1)/(d+0.5))/Math.log(N+1)); };
+      IDX_G=itens; IDX_G_SRC=GUIAS;
+    }
+    const q=[..._concSet(pergunta)]; if(!q.length) return [];
+    const idf=IDX_G.idf, base=q.reduce((s,t)=>s+idf(t),0)||1;
+    return IDX_G.map(it=>{ let sc=0, casou=0;
+      let st=0; q.forEach(t=>{ if(it.tt.has(t)){ sc+=idf(t); st+=idf(t); casou++; } else if(it.tb.has(t)){ sc+=idf(t)*0.5; casou++; } });
+      // desempate: a pergunta cadastrada mais parecida com a do usuário ("não vejo a prancha" × "acho a prancha")
+      const fr=Math.max(0,...it.fr.map(f=>{ let i=0; q.forEach(t=>{ if(f.has(t)) i++; }); return i/(q.length+f.size-i||1); }));
+      return {it, conf:sc/base, titulo:st/base, casou, nq:q.length, fr}; })
+      .filter(r=>r.casou>0).sort((a,b)=>b.conf-a.conf||b.fr-a.fr||b.casou-a.casou).slice(0,4);
+  }
+  // Fora dos guias, só as perguntas frequentes (respostas curtas, escritas para gente) — nunca uma seção crua do manual.
+  function buscarFaq(pergunta){ return buscar(pergunta, manualParaPapel(MANUAL||'', CFG.papel)).filter(r=>r.it.tipo==='faq'); }
+
   function secaoHtmlTexto(it){
     let corpo=it.corpo; if(corpo.length>1100){ const cut=corpo.slice(0,1100); corpo=cut.slice(0, Math.max(cut.lastIndexOf('\n'), 700))+'\n…'; }
     return '📖 **'+it.titulo+'**'+(it.cap&&it.cap!==it.titulo?'  _(manual › '+it.cap.replace(/^\d+\.\s*/,'')+')_':'')+'\n'+corpo;
@@ -264,7 +383,8 @@
     const go=document.getElementById('ajGo'); go.disabled=true;
     document.getElementById('ajEsc').style.display='none';
     try{
-      await carregarManual();
+      await Promise.all([carregarManual(), carregarGuias()]);
+      if(GUIAS.length && !/(me lev|leva l[aá]|leve l[aá])/i.test(q)){ responderComGuia(q); go.disabled=false; return; }
       const man=manualParaPapel(MANUAL||'', CFG.papel);
       let resp='', acao=null, naoSabe=false, extras=[];
       // "me leva lá" / "abre pra mim" como continuação da resposta anterior
@@ -305,6 +425,31 @@
     }
     go.disabled=false;
   }
+  function responderComGuia(q){
+    const r=buscarGuia(q);
+    let msg, naoSabe=false, resumo;
+    // aceita quando cobre a maior parte da pergunta E o assunto principal está no título do guia
+    // (o 1º que passa — um guia que só casa no corpo não tampa o que casa no título)
+    const top=r.find(x=>x.conf>=0.55 && x.titulo>=0.4 && (x.casou>=2 || x.nq<=1));
+    if(top){
+      msg={role:'assistant', guia:top.it.g, extras:r.filter(x=>x.conf>=0.55&&x.titulo>=0.4&&x.it.titulo!==top.it.titulo).map(x=>x.it.titulo).slice(0,2)};
+      resumo='[guia] '+top.it.g.titulo;
+    } else {
+      const f=buscarFaq(q)[0];
+      if(f && f.conf>=0.42 && f.casou>=2){ msg={role:'assistant', content:f.it.resposta}; resumo=f.it.resposta; }
+      else {
+        naoSabe=true;
+        const sug=r.filter(x=>x.conf>=0.15).map(x=>x.it.titulo).slice(0,3);
+        msg={role:'assistant', content:'Ainda não tenho um passo a passo sobre isso '+(APP_ONDE[APP]||'aqui')+'.'
+          +(sug.length?' Talvez seja um destes:':' Se quiser, mande para o suporte — a gente responde por e-mail e transforma a sua pergunta num guia.'), extras:sug};
+        resumo=msg.content;
+      }
+    }
+    CONV.pop(); CONV.push(msg); ULT={pergunta:q, resposta:resumo, acao:null};
+    registrar(q, resumo, naoSabe, false);
+    render(); document.getElementById('ajEsc').style.display=naoSabe?'flex':'none';   // com guia, o suporte não ocupa a tela
+  }
+
   async function registrar(pergunta, resposta, semResposta, escalado){
     try{ const ctx=(CFG.contexto&&CFG.contexto())||{};
       await CFG.sb.rpc('ajuda_registrar',{ p_pergunta:pergunta, p_resposta:resposta||null, p_pagina:CFG.pagina||null, p_papel:CFG.papel||null,
@@ -324,7 +469,10 @@
   }
 
   window.AuriaAjuda={
-    init(cfg){ CFG=cfg||{}; if(!CFG.sb){ console.warn('AuriaAjuda: sem cliente supabase'); return; } if(document.getElementById('ajPan')) return; ui(); carregarManual(); },
+    init(cfg){ CFG=cfg||{}; if(!CFG.sb){ console.warn('AuriaAjuda: sem cliente supabase'); return; } if(document.getElementById('ajPan')) return;
+      APP=CFG.app||APP_POR_PAGINA[CFG.pagina]||''; ui(); carregarManual(); carregarGuias(); },
+    mostrar(ci,si){ mostrar(ci,si); }, fecharDestaque(){ fecharSpot(); },
+    voltar(){ fecharSpot(); ABERTO=true; document.getElementById('ajPan').classList.add('on'); },
     enviar(){ enviar(); }, perguntar(q){ enviar(q); }, escalar, fechar(){ ABERTO=false; document.getElementById('ajPan').classList.remove('on'); },
     limpar(){ CONV=[]; ULT={pergunta:'',resposta:''}; render(); document.getElementById('ajEsc').style.display='none'; },
     contexto(fn){ if(CFG) CFG.contexto=fn; },
