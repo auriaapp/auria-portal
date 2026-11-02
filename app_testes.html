@@ -638,6 +638,7 @@ html[data-tema=claro] .rvNav .cod{color:#1E3A8A}
 .rvCwB{border:1px solid var(--line);background:var(--panel);color:var(--txt);border-radius:8px;padding:6px 8px;font:inherit;font-size:11.5px;cursor:pointer}
 .rvCwB:hover{border-color:var(--rvLar)}.rvCwB.on{background:var(--rvLar);border-color:var(--rvLar);color:#1a1205;font-weight:800}
 .rvCwX{width:100%;margin-top:10px;color:#FF9C90}
+.rvCwPer{background:#C0392B;border-color:#C0392B;color:#fff;font-weight:800}.rvCwPer:hover{background:#A93226;border-color:#A93226}
 html[data-tema=claro] .rvCwX{color:#C0392B}
 /* barra inferior de análises (padrão taskbar do CDE) */
 #rvAnBar{flex-shrink:0;background:var(--panel);border-top:1px solid var(--line);padding:5px 10px}
@@ -4634,7 +4635,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021152').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021155').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -9300,7 +9301,7 @@ async function rvAbrir2d(docId, modo){
       if(F3D_MODO && !B.contains('split')){ SPLIT_PRIM='3d'; B.add('split','split-3dleft'); _splitBtns(true); _splitResize(); }
       await abrirDoCDE(docId, null, modo==='camada' && rvTem2d());
     }
-  }catch(e){ alert('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
+  }catch(e){ rvAlerta('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
   rvLayoutPintar(); rvNavRender();
 }
 let RV_F3D_PROM=null;   // abertura do 3D em curso: cliques seguintes esperam por ela
@@ -9315,7 +9316,7 @@ async function rvAbrirMod(arqId, modo){
     }
     let i=F3D_LISTA.findIndex(m=>m.arquivoId===arqId);
     if(i<0){ try{ F3D_LISTA=await f3dModelosDoCde(); f3dRenderLista(); }catch(_){} i=F3D_LISTA.findIndex(m=>m.arquivoId===arqId); }
-    if(i<0){ alert('Modelo não encontrado na lista do 3D.'); return; }
+    if(i<0){ rvAlerta('Modelo não encontrado na lista do 3D.'); return; }
     f3dTogglSel(i, !F3D_SEL.has(i));
     _splitResize();
   }catch(e){ console.warn('abrir modelo:',e); }
@@ -9622,7 +9623,7 @@ async function rvAnSalvar(comoNova){
     await carregarAnalises();
     const an=ANALISES.find(a=>a.id===ANALISE_ATUAL); rvAviso('Salva: '+(an?an.nome:'análise'));
     return true;
-  }catch(e){ alert('Erro ao salvar análise: '+_anErroMsg(e)); return false; }
+  }catch(e){ rvAlerta('Erro ao salvar análise: '+_anErroMsg(e)); return false; }
 }
 // Pergunta Salvar / Não salvar / Cancelar. Resolve true = pode seguir.
 function rvAnPerguntar(acao){
@@ -9652,7 +9653,7 @@ async function rvAnAbrir(id){
   if(!await rvAnPerguntar('abrir “'+an.nome+'”')) return;
   await rvAnLimpar();
   if((an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
-  try{ await restaurarAnalise(an,{}); }catch(e){ alert('Erro ao abrir a análise: '+((e&&e.message)||e)); }
+  try{ await restaurarAnalise(an,{}); }catch(e){ rvAlerta('Erro ao abrir a análise: '+((e&&e.message)||e)); }
   rvNavRender();
 }
 async function rvAnNova(){
@@ -9683,13 +9684,13 @@ async function rvAnRenomear(id, n){
   const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO) return;
   if(n==null) return rvAnEditar(id);
   try{ const { data, error }=await sb.from('analises_auria').update({ nome:n.trim() }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security'); await carregarAnalises(); }
-  catch(e){ alert('Erro ao renomear: '+_anErroMsg(e)); }
+  catch(e){ rvAlerta('Erro ao renomear: '+_anErroMsg(e)); }
 }
 async function rvAnExcluir(id){
   const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO) return;
-  if(!confirm('Excluir a análise “'+an.nome+'”? (pranchas e apontamentos NÃO são apagados)')) return;
+  if(!await rvDialogo('Excluir a análise “'+an.nome+'”?', 'Só a análise sai da lista. As pranchas, os modelos e os apontamentos NÃO são apagados.', [['c','Cancelar'],['s','🗑 Excluir','perigo']])) return;
   try{ const { error }=await sb.from('analises_auria').delete().eq('id',id); if(error) throw error; if(ANALISE_ATUAL===id) ANALISE_ATUAL=null; await carregarAnalises(); }
-  catch(e){ alert('Erro ao excluir: '+_anErroMsg(e)); }
+  catch(e){ rvAlerta('Erro ao excluir: '+_anErroMsg(e)); }
 }
 function rvAnCtx(ev,id){
   ev.preventDefault(); if(APP_RO) return;
@@ -9726,6 +9727,26 @@ window.addEventListener('load',()=>{
 let RV_AN_SAINDO=false;
 window.addEventListener('beforeunload',e=>{ if(!RV_AN_SAINDO && rvAnSujo()){ e.preventDefault(); e.returnValue=''; } });
 setInterval(()=>{ const k=(EMP?EMP.id:'')+'#'+ANALISE_ATUAL+'#'+(rvAnSujo()?1:0)+'#'+(_anTemConteudo()?1:0)+'#'+ANALISES.length; if(k!==rvAnRender._k){ rvAnRender._k=k; rvAnRender(); } }, 700);
+
+
+// ── janela própria de confirmação/aviso ──────────────────────────────────────
+// alert/confirm/prompt nativos são bloqueados no navegador embutido do app
+// (voltavam vazios em silêncio). Resolve true só no botão 's'.
+function rvDialogo(titulo, texto, botoes){
+  return new Promise(res=>{
+    const ov=document.createElement('div'); ov.className='rvAsk';
+    ov.innerHTML=`<div class="bx"><b>${esc(titulo)}</b><div class="rvMini" style="margin:6px 0 14px;white-space:pre-line">${esc(texto||'')}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">${botoes.map(([k,t,c])=>`<button data-r="${k}" class="rvCwB ${c==='perigo'?'rvCwPer':(k==='s'?'on':'')}">${t}</button>`).join('')}</div></div>`;
+    document.body.appendChild(ov);
+    const fim=r=>{ ov.remove(); document.removeEventListener('keydown',kd,true); res(r==='s'); };
+    const kd=e=>{ if(e.key==='Escape'){ e.preventDefault(); fim('c'); } };
+    document.addEventListener('keydown',kd,true);
+    ov.addEventListener('mousedown',e=>{ if(e.target===ov) fim('c'); });
+    ov.querySelectorAll('button').forEach(b=>b.onclick=()=>fim(b.dataset.r));
+    const pri=ov.querySelector('[data-r=c]')||ov.querySelector('button'); if(pri) pri.focus();
+  });
+}
+function rvAlerta(msg){ return rvDialogo('Aviso', msg, [['s','OK']]); }
 
 </script>
 </body>
