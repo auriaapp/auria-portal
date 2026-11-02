@@ -648,6 +648,7 @@ html[data-tema=claro] .rvCwX{color:#C0392B}
 .rvAnT:hover{border-color:var(--rvLar)}
 .rvAnT.act{background:var(--rvLarT);border-color:var(--rvLar);box-shadow:inset 0 -2px 0 var(--rvLar)}
 .rvAnT.rascunho{font-style:italic;cursor:default}
+.rvAnIn{flex:none;background:var(--bg2);border:1px solid var(--rvLar);color:var(--txt);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:600;outline:none;box-shadow:0 0 0 2px var(--rvLarT)}
 .rvAnT.mais{padding:5px 10px;color:var(--mut)}
 .rvAnT .dot{width:7px;height:7px;border-radius:50%;background:var(--rvLar);flex:none}
 .rvAnSv{flex:none;border:1px solid var(--line);background:none;color:var(--mut);border-radius:8px;padding:5px 11px;font:inherit;font-size:12px;cursor:pointer}
@@ -4633,7 +4634,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021147').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021152').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -9615,8 +9616,8 @@ async function rvAnSalvar(comoNova){
       const { data, error }=await sb.from('analises_auria').update({ pranchas:c.pranchas, modelos:c.modelos, vista:c.vista }).eq('id',at.id).select('id');
       if(error) throw error; if(!data||!data.length) throw new Error('row-level security');
     } else {
-      const { data, error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome:rvAnProxNome(), pranchas:c.pranchas, modelos:c.modelos, vista:c.vista, criado_por:USER.id }).select('id').single();
-      if(error) throw error; ANALISE_ATUAL=data.id;
+      const { data, error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome:rvAnNomeNovo(), pranchas:c.pranchas, modelos:c.modelos, vista:c.vista, criado_por:USER.id }).select('id').single();
+      if(error) throw error; ANALISE_ATUAL=data.id; RV_AN_NOME=null;
     }
     await carregarAnalises();
     const an=ANALISES.find(a=>a.id===ANALISE_ATUAL); rvAviso('Salva: '+(an?an.nome:'análise'));
@@ -9626,7 +9627,7 @@ async function rvAnSalvar(comoNova){
 // Pergunta Salvar / Não salvar / Cancelar. Resolve true = pode seguir.
 function rvAnPerguntar(acao){
   if(!rvAnSujo()) return Promise.resolve(true);
-  const at=ANALISES.find(a=>a.id===ANALISE_ATUAL), nome=at?at.nome:rvAnProxNome();
+  const at=ANALISES.find(a=>a.id===ANALISE_ATUAL), nome=at?at.nome:rvAnNomeNovo();
   return new Promise(res=>{
     const ov=document.createElement('div'); ov.className='rvAsk';
     ov.innerHTML=`<div class="bx"><b>Salvar “${esc(nome)}” antes de ${esc(acao)}?</b>
@@ -9656,12 +9657,31 @@ async function rvAnAbrir(id){
 }
 async function rvAnNova(){
   if(!await rvAnPerguntar('começar uma nova')) return;
-  await rvAnLimpar(); ANALISE_ATUAL=null; renderAnalises(); rvNavRender();
-  rvAviso('Análise nova: abra pranchas e modelos pela lista; 💾 salva como '+rvAnProxNome()+'.');
+  await rvAnLimpar(); ANALISE_ATUAL=null; RV_AN_NOME=null; renderAnalises(); rvNavRender();
+  rvAviso('Análise nova: abra pranchas e modelos pela lista; 💾 salva como '+rvAnNomeNovo()+' (duplo clique na aba muda o nome).');
 }
-async function rvAnRenomear(id){
+// Renomear direto na aba (duplo clique ou botão direito). '__novo' = a aba da
+// análise ainda não salva: o nome fica guardado e é usado ao salvar.
+let RV_AN_NOME=null, RV_AN_EDIT=null;
+function rvAnNomeNovo(){ return (RV_AN_NOME&&RV_AN_NOME.trim()) || rvAnProxNome(); }
+function rvAnEditar(id){
+  if(APP_RO) return;
+  const bt=document.querySelector('#rvAnTabs .rvAnT[data-id="'+id+'"]'); if(!bt) return;
+  const an=ANALISES.find(a=>a.id===id), atual= id==='__novo' ? rvAnNomeNovo() : (an&&an.nome); if(atual==null) return;
+  RV_AN_EDIT=id;
+  const inp=document.createElement('input'); inp.className='rvAnIn'; inp.value=atual; inp.title='Enter salva o nome · Esc cancela';
+  inp.style.width=Math.max(90, bt.offsetWidth)+'px';
+  bt.replaceWith(inp); inp.focus(); inp.select();
+  let feito=false;
+  const fim=async(ok)=>{ if(feito) return; feito=true; RV_AN_EDIT=null; const n=inp.value.trim();
+    if(ok && n && n!==atual){ if(id==='__novo'){ RV_AN_NOME=n; } else await rvAnRenomear(id, n); }
+    rvAnRender(); };
+  inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); fim(true); } else if(e.key==='Escape'){ e.preventDefault(); fim(false); } };
+  inp.onblur=()=>fim(true);
+}
+async function rvAnRenomear(id, n){
   const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO) return;
-  const n=prompt('Nome da análise:', an.nome); if(!n||!n.trim()||n.trim()===an.nome) return;
+  if(n==null) return rvAnEditar(id);
   try{ const { data, error }=await sb.from('analises_auria').update({ nome:n.trim() }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security'); await carregarAnalises(); }
   catch(e){ alert('Erro ao renomear: '+_anErroMsg(e)); }
 }
@@ -9673,21 +9693,21 @@ async function rvAnExcluir(id){
 }
 function rvAnCtx(ev,id){
   ev.preventDefault(); if(APP_RO) return;
-  const ops=[{ic:'✎', t:'Renomear', f:()=>rvAnRenomear(id)}];
+  const ops=[{ic:'✎', t:'Renomear', f:()=>rvAnEditar(id)}];
   if(id===ANALISE_ATUAL) ops.push({ic:'⧉', t:'Salvar como nova', f:()=>rvAnSalvar(true)});
   ops.push({ic:'🗑', t:'Excluir análise', f:()=>rvAnExcluir(id)});
   rvMenu(ev, ops);
 }
 function rvAnRender(){
-  const el=$('rvAnTabs'); if(!el) return;
+  const el=$('rvAnTabs'); if(!el || RV_AN_EDIT) return;
   if(!EMP){ el.innerHTML='<span class="rvMini">Selecione um empreendimento.</span>'; return; }
   const sujo=rvAnSujo(), lista=ANALISES.slice().sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em)));
   let h='<span class="rvAnLbl">Análises</span>';
-  h+=lista.map(a=>`<button class="rvAnT ${a.id===ANALISE_ATUAL?'act':''}" title="${esc(a.nome+' · '+_anResumo(a)+(APP_RO?'':' · duplo clique renomeia · botão direito: opções'))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnRenomear('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')"><span class="l">${esc(a.nome)}</span>${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
-  if(!ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" title="Ainda não salva"><span class="l">${esc(rvAnProxNome())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
+  h+=lista.map(a=>`<button class="rvAnT ${a.id===ANALISE_ATUAL?'act':''}" data-id="${a.id}" title="${esc(a.nome+' · '+_anResumo(a)+(APP_RO?'':' · duplo clique renomeia · botão direito: opções'))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')"><span class="l">${esc(a.nome)}</span>${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
+  if(!ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
   if(!APP_RO) h+=`<button class="rvAnT mais" title="Nova análise (fecha o que está aberto)" onclick="rvAnNova()">＋</button>`;
   h+='<span style="flex:1"></span>';
-  if(!APP_RO) h+=`<button class="rvAnSv ${sujo?'on':''}" ${sujo?'':'disabled'} onclick="rvAnSalvar(false)" title="${ANALISE_ATUAL?'Grava o que está aberto nesta análise':'Salva como '+esc(rvAnProxNome())}">💾 Salvar</button>`;
+  if(!APP_RO) h+=`<button class="rvAnSv ${sujo?'on':''}" ${sujo?'':'disabled'} onclick="rvAnSalvar(false)" title="${ANALISE_ATUAL?'Grava o que está aberto nesta análise':'Salva como '+esc(rvAnNomeNovo())}">💾 Salvar</button>`;
   el.innerHTML=h;
 }
 window.addEventListener('load',()=>{
