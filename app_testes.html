@@ -624,6 +624,26 @@ html[data-tema=claro] .rvNav .cod{color:#1E3A8A}
 .rvRailIn{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;display:flex;flex-direction:column;align-items:center;gap:4px;padding:3px 0}
 .rvRailIn::-webkit-scrollbar{display:none}#rvLista::-webkit-scrollbar-corner{background:transparent}
 .rvTag{writing-mode:vertical-rl;font-family:Consolas,monospace;font-weight:700;font-size:11px;letter-spacing:.05em;color:var(--mut);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 2px;cursor:pointer;min-height:40px;display:flex;align-items:center;justify-content:center;user-select:none;flex:none;transform:rotate(180deg)}
+.rvSo{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--mut);cursor:pointer;user-select:none;margin-left:auto}
+.rvSo input{accent-color:var(--rvLar);margin:0}.rvSo b{color:#E9B44C;font-weight:700}.rvSo.apag{opacity:.4}
+.rvEt{display:flex;align-items:center;gap:6px;padding:4px 6px;margin:1px 2px;border-radius:7px;cursor:pointer;user-select:none}
+.rvEt:hover{background:var(--panel)}
+.rvEt .cv{color:var(--mut);font-size:10px;width:9px}
+.rvEt .sig{font-family:Consolas,monospace;font-weight:800;font-size:11px;color:var(--rvLar)}
+.rvEt .nm{font-size:11.5px;color:var(--txt)}
+.rvEt .ct{margin-left:auto;font-size:10.5px;color:var(--mut)}
+.rvEt .bd{font-size:9px;font-weight:800;letter-spacing:.4px;border-radius:5px;padding:1px 5px}
+.rvEt .bd.atual{background:rgba(52,211,153,.14);color:#34D399}
+.rvEt .bd.ant{background:rgba(233,180,76,.12);color:#E9B44C}
+.rvEt.ant .sig{color:#E9B44C}.rvEt.ant .nm{color:var(--mut)}
+.rvEtC{margin-left:9px;border-left:1px dashed var(--line);padding-left:3px}
+.rvEtC.ant .rvIt:not(.ab){opacity:.62}
+.rvWarn{color:#E9B44C;font-size:12px;flex:none}
+.rvPrEt{font-family:Consolas,monospace;font-size:10px;font-weight:800;padding:0 5px;border-radius:5px;color:var(--rvLar);border:1px solid var(--rvLarB)}
+.rvPrEt.ant{color:#E9B44C;border-color:rgba(233,180,76,.5);background:rgba(233,180,76,.12)}
+.rvPr.ant:not(.f){box-shadow:inset 3px 0 0 #E9B44C}
+.rvVazio{font-size:11.5px;color:var(--mut);padding:10px;text-align:center;border:1px dashed var(--line);border-radius:10px}
+#modList .mcard{margin:0}#modList .mcard+.mcard{border-top:1px solid var(--line)}
 #secPranchas>label{display:none}
 .rvPrHd{display:flex;align-items:center;gap:8px;margin-bottom:8px}.rvPrHd .lbl{flex:1;font-size:10.5px;font-weight:800;letter-spacing:.6px;color:var(--mut);text-transform:uppercase}
 .rvLock{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
@@ -4714,7 +4734,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021601').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021636').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -9271,6 +9291,24 @@ function rvAviso(m){ try{ if(typeof f3dDica==='function' && F3D_MODO) f3dDica(m)
 
 // ── navegador único ──────────────────────────────────────────────────────────
 let RV_DOCS=[], RV_MODS=[], RV_FILTRO='tudo', RV_FECH=new Set(), RV_EMP=null, RV_DISC=null;
+// Etapas (mockups/app_etapas_navegador.html): pasta de etapa dentro da disciplina;
+// "atual" = etapa mais avançada daquela disciplina para o mesmo tipo (2D ou BIM).
+let RV_ETAPA={}, RV_ETF={};
+const ETAPA_NOME={LV:'Levantamento',EV:'Estudo de Viabilidade',EP:'Estudo Preliminar',AP:'Anteprojeto',PL:'Projeto Legal',PB:'Projeto Básico',PE:'Pré-executivo',EX:'Executivo',PX:'Projeto Executivo',DE:'Detalhamento',CO:'Compatibilização',AB:'As-Built',LB:'Liberado para obra',MA:'Manutenção'};
+function rvSoKey(){ return 'rvSoAtual:'+((typeof EMP!=='undefined'&&EMP&&EMP.id)||''); }
+function rvSo(){ try{ return localStorage.getItem(rvSoKey())!=='0'; }catch(_){ return true; } }
+function rvSoSet(v){ try{ localStorage.setItem(rvSoKey(), v?'1':'0'); }catch(_){} rvNavRender(); }
+// topo[t][disc] = maior ordem de etapa presente (só pranchas OU só modelos)
+function rvTopos(){
+  const T={'2d':{},bim:{}};
+  const pega=(t,k,o)=>{ if(T[t][k]==null||o>T[t][k]) T[t][k]=o; };
+  RV_DOCS.forEach(d=>pega('2d', d.disciplina||'—', etapaOrdem(RV_ETAPA[d.id])));
+  RV_MODS.forEach(m=>pega('bim', m.disciplina||'—', etapaOrdem(m.etapa)));
+  return T;
+}
+function rvEhAnt(t,disc,e,T){ T=T||rvTopos(); const o=etapaOrdem(e), tp=(T[t]||{})[disc||'—']; return o>=0 && tp!=null && o<tp; }
+function rvEtapaAtual(t,disc,T){ T=T||rvTopos(); const tp=(T[t]||{})[disc||'—']; return tp!=null&&tp>=0 ? ETAPA_ORDEM_PAD[tp] : ''; }
+function rvEtF(k,ant){ RV_ETF[k]=!(RV_ETF[k]!=null?RV_ETF[k]:!ant); rvNavRender(); }
 async function rvNavCarregar(){
   if(!EMP){ RV_DOCS=[]; RV_MODS=[]; rvNavRender(); return; }
   RV_EMP=EMP.id;
@@ -9279,11 +9317,11 @@ async function rvNavCarregar(){
   // lista de modelos demorar/travar, as pranchas não ficam presas em "Carregando".
   const emp=EMP.id, tempo=(p,ms)=>Promise.race([p, new Promise((_,r)=>setTimeout(()=>r(new Error('tempo esgotado')),ms))]);
   let docs=null, erro='';
-  const pDocs=tempo(sb.from('cde_documento_auria').select('id,codigo,titulo,disciplina').eq('empreendimento_id',emp).eq('arquivado',false).order('codigo'), 20000)
+  const pDocs=tempo(sb.from('cde_documento_auria').select('id,codigo,titulo,disciplina,campos').eq('empreendimento_id',emp).eq('arquivado',false).order('codigo'), 20000)
     .then(({data,error})=>{ if(error) throw error; docs=data||[]; })
     .catch(e=>{ erro='Não consegui ler as pranchas do CDE ('+((e&&e.message)||e)+').'; console.warn('navegador docs:',e); });
   const pMods=tempo(f3dModelosDoCde(), 30000).then(m=>{ RV_MODS=m||[]; }).catch(e=>{ RV_MODS=[]; console.warn('navegador modelos:',e); });
-  const montar=()=>{ if(emp!==RV_EMP || (docs===null && !erro && !RV_MODS.length)) return; const doc3d=new Set(RV_MODS.map(m=>m.documentoId).filter(Boolean)); RV_DOCS=(docs||[]).filter(d=>!doc3d.has(d.id)); rvNavRender(); if(erro) $('rvLista').insertAdjacentHTML('afterbegin','<div class="hint" style="color:#FF9C90">'+esc(erro)+' <a href="#" onclick="RV_EMP=null;return false">tentar de novo</a></div>'); };
+  const montar=()=>{ if(emp!==RV_EMP || (docs===null && !erro && !RV_MODS.length)) return; const doc3d=new Set(RV_MODS.map(m=>m.documentoId).filter(Boolean)); (docs||[]).forEach(d=>{ RV_ETAPA[d.id]=_etapaDoDoc(d); }); RV_DOCS=(docs||[]).filter(d=>!doc3d.has(d.id)); rvNavRender(); if(erro) $('rvLista').insertAdjacentHTML('afterbegin','<div class="hint" style="color:#FF9C90">'+esc(erro)+' <a href="#" onclick="RV_EMP=null;return false">tentar de novo</a></div>'); };
   RV_MODS=[]; pDocs.then(montar); pMods.then(montar);
   await Promise.all([pDocs,pMods]);
   montar();
@@ -9317,10 +9355,22 @@ function rvNavRender(){
   if(!EMP){ el.innerHTML='<div class="hint">Selecione um empreendimento.</div>'; return; }
   const q=(($('rvBusca')||{}).value||'').toLowerCase().trim();
   const itens=[];
-  RV_DOCS.forEach(d=>itens.push({t:'2d', id:d.id, disc:d.disciplina||'—', cod:d.codigo||'', tt:d.titulo||'', ab:rv2dAberto(d.id)}));
-  RV_MODS.forEach((m,i)=>itens.push({t:'bim', id:m.arquivoId, mi:i, disc:m.disciplina||'—', cod:m.nome||'', tt:(m.titulo||'')+(m.revisao?' · rev '+m.revisao:''), ab:rvModAberto(m)}));
+  RV_DOCS.forEach(d=>itens.push({t:'2d', id:d.id, disc:d.disciplina||'—', e:RV_ETAPA[d.id]||'', cod:d.codigo||'', tt:d.titulo||'', ab:rv2dAberto(d.id)}));
+  RV_MODS.forEach((m,i)=>itens.push({t:'bim', id:m.arquivoId, mi:i, disc:m.disciplina||'—', e:m.etapa||'', cod:m.nome||'', tt:(m.titulo||'')+(m.revisao?' · rev '+m.revisao:''), ab:rvModAberto(m)}));
+  const T=rvTopos(); itens.forEach(x=>{ x.ant=rvEhAnt(x.t,x.disc,x.e,T); });
   rvRail(itens);
-  const vis=itens.filter(x=>(RV_FILTRO==='tudo'||(RV_FILTRO==='ab'?x.ab:x.t===RV_FILTRO)) && (!RV_DISC||x.disc===RV_DISC) && (!q||(x.cod+' '+x.tt).toLowerCase().includes(q)));
+  const so=rvSo(), soAb=RV_FILTRO==='ab';
+  let vis=itens.filter(x=>(RV_FILTRO==='tudo'||(soAb?x.ab:x.t===RV_FILTRO)) && (!RV_DISC||x.disc===RV_DISC) && (!q||(x.cod+' '+x.tt).toLowerCase().includes(q)));
+  // "Só etapa atual": esconde etapa anterior, mas nunca o que já está aberto
+  const ocultos=(so&&!soAb)?vis.filter(x=>x.ant&&!x.ab).length:0;
+  if(so&&!soAb) vis=vis.filter(x=>!x.ant||x.ab);
+  const lb=$('rvSoLbl');
+  if(lb){
+    lb.classList.toggle('apag',soAb);
+    lb.title=soAb?'Em Abertos aparece tudo o que está aberto, de qualquer etapa':'Esconde a etapa anterior quando a disciplina já tem uma mais nova';
+    const n=lb.querySelector('b'); if(n) n.textContent=ocultos?'('+ocultos+' ocultos)':'';
+    const c=lb.querySelector('input'); if(c) c.checked=so;
+  }
   if(!vis.length){ el.innerHTML='<div class="hint">Nada encontrado.</div>'; return; }
   const por={}; vis.forEach(x=>(por[x.disc]=por[x.disc]||[]).push(x));
   let h='';
@@ -9328,14 +9378,73 @@ function rvNavRender(){
     const fe=RV_FECH.has(d), nome=(typeof COD_DISC!=='undefined'&&COD_DISC[d])||'';
     h+=`<div class="rvGrp" onclick="rvGrp('${esc(d)}')">${fe?'▸':'▾'} ${esc(d)}${nome?' · '+esc(nome):''}<span class="ct">${por[d].length}</span></div>`;
     if(fe) return;
-    por[d].sort((a,b)=>a.t===b.t?a.cod.localeCompare(b.cod):(a.t==='2d'?-1:1)).forEach(x=>{
-      const st = x.t==='bim' ? (x.ab?'<span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">● no 3D</span>':'')
-        : (x.ab?'<span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">'+(rvEhBase(x.id)?'base':(RV_PEER_DOC===x.id?'ao lado':'camada'))+'</span>':'');
-      h+=`<div class="rvIt ${x.ab?'ab':''}" title="${x.ab?(x.t==='bim'?'Clique: descarrega · botão direito: opções':'Clique: ajustes da camada · botão direito: remover'):'Clique para abrir'}" draggable="true" ondragstart="rvDragIni(event,'${x.t}','${x.id}')" onclick="rvClicar(event,'${x.t}','${x.id}')" oncontextmenu="rvCtx(event,'${x.t}','${x.id}')">`
-        +`<span class="rvDt ${x.t==='bim'?'rvD3':'rvD2'}">${x.t==='bim'?'BIM':'2D'}</span><div class="tx"><span class="cod" title="${esc(x.cod)}">${esc(x.cod)}</span><span class="tt" title="${esc(x.tt)}">${esc(x.tt)}</span></div>${st}</div>`;
+    const ets=[...new Set(por[d].map(x=>x.e))].sort((a,b)=>etapaOrdem(b)-etapaOrdem(a));
+    const varias=new Set(itens.filter(x=>x.disc===d).map(x=>x.e)).size>1;
+    ets.forEach(e=>{
+      const cs=por[d].filter(x=>x.e===e), ant=cs.every(x=>x.ant), k=d+'::'+e;
+      const pasta=soAb?true:(RV_ETF[k]!=null?RV_ETF[k]:!ant);
+      const nm=e?(ETAPA_NOME[e]||''):'Sem etapa';
+      h+=`<div class="rvEt ${ant?'ant':''}" onclick="rvEtF('${esc(k)}',${ant})"><span class="cv">${pasta?'▾':'▸'}</span><span class="sig">${esc(e||'—')}</span><span class="nm">${esc(nm)}</span>${(varias&&e)?`<span class="bd ${ant?'ant':'atual'}">${ant?'ANTERIOR':'ATUAL'}</span>`:''}<span class="ct">${cs.length}</span></div>`;
+      if(!pasta) return;
+      h+=`<div class="rvEtC ${ant?'ant':''}">`;
+      cs.sort((a,b)=>a.t===b.t?a.cod.localeCompare(b.cod):(a.t==='2d'?-1:1)).forEach(x=>{
+        const st = x.t==='bim' ? (x.ab?'<span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">● no 3D</span>':'')
+          : (x.ab?'<span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">'+(rvEhBase(x.id)?'base':(RV_PEER_DOC===x.id?'ao lado':'camada'))+'</span>':'');
+        const dica=(x.ant?'Etapa anterior — '+rvEtapaAtual(x.t,x.disc,T)+' é a atual. ':'')+(x.ab?(x.t==='bim'?'Clique: descarrega · botão direito: opções':'Clique: ajustes da camada · botão direito: remover'):'Clique para abrir');
+        h+=`<div class="rvIt ${x.ab?'ab':''}" title="${esc(dica)}" draggable="true" ondragstart="rvDragIni(event,'${x.t}','${x.id}')" onclick="rvClicar(event,'${x.t}','${x.id}')" oncontextmenu="rvCtx(event,'${x.t}','${x.id}')">`
+          +`<span class="rvDt ${x.t==='bim'?'rvD3':'rvD2'}">${x.t==='bim'?'BIM':'2D'}</span><div class="tx"><span class="cod" title="${esc(x.cod)}">${esc(x.cod)}</span><span class="tt" title="${esc(x.tt)}">${esc(x.tt)}</span></div>${x.ant?'<span class="rvWarn" title="Etapa anterior">⚠</span>':''}${st}</div>`;
+      });
+      h+='</div>';
     });
   });
   el.innerHTML=h;
+}
+// ── BIM: Modelos na análise (opção A do mockup) ───────────────────────────
+// A lista de baixo deixa de repetir o catálogo: mostra só os modelos escolhidos
+// (F3D_SEL). O olho esconde/mostra sem descarregar (wrapper.visivel já é
+// respeitado pelo raycast do bim3d); ✕ tira da análise (descarrega).
+let RV_MOD_OFF=new Set();
+function rvModWrap(arqId){ return (typeof F3D!=='undefined'&&F3D&&F3D.modelos||[]).find(x=>(x.arquivoId||x.id||x.nome)===arqId); }
+async function rvModVis(i){
+  const m=F3D_LISTA[i]; if(!m) return;
+  const off=!RV_MOD_OFF.has(m.arquivoId); off?RV_MOD_OFF.add(m.arquivoId):RV_MOD_OFF.delete(m.arquivoId);
+  const x=rvModWrap(m.arquivoId);
+  if(x){ x.visivel=!off; try{ x.model.object.visible=!off; }catch(_){} try{ await F3D.fragments.update(true); }catch(_){} }
+  f3dRenderLista();
+}
+function rvModLista(){
+  const el=$('modList'); if(!el) return;
+  if(!F3D_LISTA.length){ el.innerHTML='<div class="hint">Nenhum modelo com 3D pronto. No CDE, aba BIM, use “Converter para 3D”.</div>'; return; }
+  const sel=[...F3D_SEL].filter(i=>F3D_LISTA[i]).sort((a,b)=>(F3D_LISTA[a].disciplina||'').localeCompare(F3D_LISTA[b].disciplina||'')||(F3D_LISTA[a].nome||'').localeCompare(F3D_LISTA[b].nome||''));
+  const lb=document.querySelector('#secModelosBim>label'); if(lb) lb.textContent='Modelos na análise'+(sel.length?' · '+sel.length:'');
+  if(!sel.length){ el.innerHTML='<div class="rvVazio">Nenhum modelo na análise. Clique num modelo BIM na lista de cima.</div>'; return; }
+  const T=rvTopos();
+  el.innerHTML='<div class="rvPrTb">'+sel.map(i=>{
+    const m=F3D_LISTA[i], off=RV_MOD_OFF.has(m.arquivoId), aberto=(F3D_TREE_OPEN===i);
+    const sig=m.disciplina||'—', nome=(typeof COD_DISC!=='undefined'&&COD_DISC[sig])||'', et=m.etapa||'', ant=et&&rvEhAnt('bim',sig,et,T);
+    if(!m.ifc && m.arq) ifcSchemaDetectar(m.arq, cdeSignedUrlApp).then(s=>{ if(s){ m.ifc=s; f3dRenderLista(); } });
+    return `<div class="mcard" data-i="${i}"><div class="rvPr ${off?'oculta':''} ${ant?'ant':''}" style="--cor:#0E7490;cursor:default" title="${esc(m.titulo||m.nome)}${nome?' · '+esc(nome):''}">
+      <button class="rvOlho ${off?'off':''}" onclick="rvModVis(${i})" title="${off?'Mostrar':'Ocultar'} (continua carregado)">${off?'◌':'👁'}</button><span class="bar"></span>
+      <div class="mid"><div class="t1"><span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${ant?'ant':''}" title="${ant?'Etapa anterior — '+esc(rvEtapaAtual('bim',sig,T))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${m.revisao?`<span class="rvPrBase">${esc(m.revisao)}</span>`:''}${m.ifc?`<span class="rvPrBase" title="Versão do IFC (FILE_SCHEMA)" style="color:#22D3EE">${esc(m.ifc)}</span>`:''}</div><span class="cod">${esc(m.nome)}</span></div>
+      <div class="acts"><button class="rvIb" onclick="f3dTreeOpen(${i})" title="${aberto?'Fechar a árvore':'Ver a árvore do modelo'}">${aberto?'▾':'▸'}</button><button class="rvIb del" onclick="f3dTogglSel(${i},false)" title="Tirar da análise (descarrega)">✕</button></div>
+    </div>${aberto?'<div class="mtree" id="mtreeInline"><div class="tvazio">Carregando…</div></div>':''}</div>`;
+  }).join('')+'</div>';
+}
+// Abrir prancha/modelo de etapa anterior: pergunta antes (às vezes é de propósito).
+async function rvConfEtapa(t,id){
+  let disc,e,cod;
+  if(t==='2d'){ const d=RV_DOCS.find(x=>x.id===id); if(!d) return true; disc=d.disciplina||'—'; e=RV_ETAPA[id]||''; cod=d.codigo||''; }
+  else { const m=RV_MODS.find(x=>x.arquivoId===id); if(!m) return true; disc=m.disciplina||'—'; e=m.etapa||''; cod=m.nome||''; }
+  const T=rvTopos(); if(!rvEhAnt(t,disc,e,T)) return true;
+  const at=rvEtapaAtual(t,disc,T);
+  const r=await rvEscolha('Etapa anterior', `${cod} é da etapa ${e}${ETAPA_NOME[e]?' · '+ETAPA_NOME[e]:''}.\nA disciplina ${disc} já tem a etapa ${at}${ETAPA_NOME[at]?' · '+ETAPA_NOME[at]:''}, que é a atual.`,
+    [['c','Cancelar'],['v','Ver a '+at],['s','Abrir mesmo assim']]);
+  if(r==='v'){
+    RV_DISC=disc; RV_ETF[disc+'::'+at]=true;
+    if(RV_FILTRO==='ab'){ const b=document.querySelector('#rvFiltro .rvPill[data-f="tudo"]'); if(b){ rvFiltro(b); return false; } }
+    rvNavRender();
+  }
+  return r==='s';
 }
 function rvGrp(d){ RV_FECH.has(d)?RV_FECH.delete(d):RV_FECH.add(d); rvNavRender(); }
 // ── clique no card ───────────────────────────────────────────────────────────
@@ -9355,10 +9464,12 @@ function rvMenu(ev, ops){
   let left=r.right+6, top=r.top; if(left+w>innerWidth-10) left=Math.max(8,r.left-w-6); if(top+h>innerHeight-10) top=Math.max(8,innerHeight-h-10);
   pop.style.left=left+'px'; pop.style.top=top+'px';
 }
-function rvClicar(ev, t, id){
-  if(t==='bim') return rvClicarMod(ev, id);
+async function rvClicar(ev, t, id){
+  const alvo=ev.currentTarget; ev={currentTarget:alvo, target:ev.target};
+  if(t==='bim'){ const m=RV_MODS.find(x=>x.arquivoId===id); if(!(m&&rvModAberto(m)) && !(await rvConfEtapa('bim',id))) return; return rvClicarMod(ev, id); }
   if(RV_PEER_DOC===id){ rvAviso('Essa prancha já está aberta ao lado (botão direito fecha).'); return; }
-  if(rv2dAberto(id)) return rvCamWin(rvCamIdx(id), ev.currentTarget);
+  if(rv2dAberto(id)) return rvCamWin(rvCamIdx(id), alvo);
+  if(!(await rvConfEtapa('2d',id))) return;
   const B=document.body.classList;
   if(!rvTem2d()){
     if(F3D_MODO) return rvMenu(ev,[
@@ -9814,10 +9925,12 @@ function rvCamadas(){
     const nome=(typeof COD_DISC!=='undefined'&&COD_DISC[sig])||'';
     const cod=(L.prancha.codigo||L.prancha.arquivo_nome||L.nome||'');
     const rec=(L.prancha&&L.prancha._nova===false), foco=(FOCO_LI===i);
+    const did=L.prancha.cde_documento_id, et=(did&&RV_ETAPA[did])||_etapaDoDoc({codigo:cod});
+    const etAnt=et&&rvEhAnt('2d',sig,et);
     const posOff=(i===0||LOCK_POS);
-    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'}" style="--cor:${L.cor||'#8CA0C4'}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
+    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||'#8CA0C4'}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
       <button class="rvOlho ${L.visible?'':'off'}" onclick="event.stopPropagation();camVis(${i},${!L.visible});renderCamadas()" title="${L.visible?'Ocultar':'Mostrar'} esta prancha">${L.visible?'👁':'◌'}</button><span class="bar"></span>
-      <div class="mid"><div class="t1"><span class="rvPrTag">${esc(sig)}</span>${i===0?'<span class="rvPrBase">BASE</span>':''}${foco?'<span class="rvPrFoco">FOCO</span>':''}</div><span class="cod ${rec?'rec':''}" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span></div>
+      <div class="mid"><div class="t1"><span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${etAnt?'ant':''}" title="${etAnt?'Etapa anterior — '+esc(rvEtapaAtual('2d',sig))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${i===0?'<span class="rvPrBase">BASE</span>':''}${foco?'<span class="rvPrFoco">FOCO</span>':''}</div><span class="cod ${rec?'rec':''}" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span></div>
       <div class="acts" onclick="event.stopPropagation()"><input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value);this.title='Opacidade '+Math.round(this.value*100)+'%'" title="Opacidade ${Math.round(L.opacity*100)}%">
         <button class="rvIb" ${posOff?'disabled':''} onclick="abrirPosicao(${i})" title="Posição e escala${i===0?' — a base é a referência':LOCK_POS?' — destrave a posição':''}">⚙</button>
         <button class="rvIb" onclick="abrirCorPopup(${i},event)" title="Cor de visualização">${sw(L.cor)}</button>
@@ -9831,6 +9944,12 @@ function rvCamadas(){
 function rvCamFoco(i,ev){ if(ev&&ev.target.closest('button,input')) return; setFoco(i); }
 window.addEventListener('load',()=>{
   window.renderCamadas=rvCamadas;
+  window.f3dRenderLista=rvModLista;
+  const ts=window.f3dTogglSel; if(typeof ts==='function') window.f3dTogglSel=function(i,on){
+    const m=F3D_LISTA[i]; if(!on && m) RV_MOD_OFF.delete(m.arquivoId);
+    const r=ts.apply(this,arguments); rvModLista(); try{ rvNavRender(); }catch(_){} return r; };
+  const hm=document.querySelector('#secModelosBim .hint'); if(hm) hm.textContent='Escolha na lista de cima. 👁 mostra/oculta sem descarregar; ✕ tira da análise.';
+  const bf=$('rvFiltro'); if(bf && !$('rvSoLbl')) bf.insertAdjacentHTML('beforeend','<label class="rvSo" id="rvSoLbl"><input type="checkbox" onchange="rvSoSet(this.checked)"> Só etapa atual <b></b></label>');
   const sf=window.setFoco; if(typeof sf==='function') window.setFoco=function(){ const r=sf.apply(this,arguments); rvCamadas(); return r; };
   const bac=$('btnAddCam'); if(bac){ bac.innerHTML='＋ Carregar arquivo <small>computador ou CDE</small>'; const hn=bac.nextElementSibling; if(hn&&hn.classList.contains('hint')) hn.textContent='Do computador: o PDF fica local. Do CDE: baixa a revisão vigente e amarra ao documento.'; }
   try{ rvCamadas(); }catch(_){}
@@ -9854,13 +9973,14 @@ setInterval(()=>{ const k=(EMP?EMP.id:'')+'#'+ANALISE_ATUAL+'#'+(rvAnSujo()?1:0)
 // ── janela própria de confirmação/aviso ──────────────────────────────────────
 // alert/confirm/prompt nativos são bloqueados no navegador embutido do app
 // (voltavam vazios em silêncio). Resolve true só no botão 's'.
-function rvDialogo(titulo, texto, botoes){
+function rvDialogo(titulo, texto, botoes){ return rvEscolha(titulo, texto, botoes).then(r=>r==='s'); }
+function rvEscolha(titulo, texto, botoes){
   return new Promise(res=>{
     const ov=document.createElement('div'); ov.className='rvAsk';
     ov.innerHTML=`<div class="bx"><b>${esc(titulo)}</b><div class="rvMini" style="margin:6px 0 14px;white-space:pre-line">${esc(texto||'')}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end">${botoes.map(([k,t,c])=>`<button data-r="${k}" class="rvCwB ${c==='perigo'?'rvCwPer':(k==='s'?'on':'')}">${t}</button>`).join('')}</div></div>`;
     document.body.appendChild(ov);
-    const fim=r=>{ ov.remove(); document.removeEventListener('keydown',kd,true); res(r==='s'); };
+    const fim=r=>{ ov.remove(); document.removeEventListener('keydown',kd,true); res(r); };
     const kd=e=>{ if(e.key==='Escape'){ e.preventDefault(); fim('c'); } };
     document.addEventListener('keydown',kd,true);
     ov.addEventListener('mousedown',e=>{ if(e.target===ov) fim('c'); });
