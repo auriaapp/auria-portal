@@ -675,9 +675,9 @@ html[data-tema=claro] .rvCwX{color:#C0392B}
   <header>
     <img src="logo_auria_branco.png" alt="Auria">
     <h1>App</h1>
-    <button class="btn-logout" onclick="voltarPortal()" title="Voltar ao Painel da Coordenação" style="margin-left:14px">← Painel</button>
-    <span id="rvTesteTag" title="Página paralela de teste (não publicada). Dados reais.">TESTES</span>
+    <span id="rvTesteTag" title="Página paralela de teste. Dados reais.">TESTES</span>
     <span class="rvSeg" id="rvTema" style="margin-left:8px"><button data-t="escuro" class="on" onclick="rvTema('escuro')">● Escuro</button><button data-t="claro" onclick="rvTema('claro')">○ Claro</button></span>
+    <button class="btn-logout" onclick="voltarPortal()" title="Voltar ao Painel da Coordenação" style="margin-left:14px">← Painel</button>
     <button class="btn-logout" onclick="irCDE()" title="Abrir o CDE deste empreendimento" style="margin-left:6px">← CDE</button>
     <div class="who"><span id="uName"></span><br><span id="uEmail" style="font-size:10px"></span></div>
     <button class="btn-logout" onclick="sair()">Sair</button>
@@ -4635,7 +4635,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021155').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d_testes.js?v=202611021201').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -9196,15 +9196,18 @@ async function rvNavCarregar(){
   if(!EMP){ RV_DOCS=[]; RV_MODS=[]; rvNavRender(); return; }
   RV_EMP=EMP.id;
   $('rvLista').innerHTML='<div class="hint">Carregando arquivos do CDE…</div>';
-  try{
-    let mods=[]; try{ mods=await f3dModelosDoCde(); }catch(_){}
-    RV_MODS=mods||[];
-    const doc3d=new Set(RV_MODS.map(m=>m.documentoId).filter(Boolean));
-    const { data:docs }=await sb.from('cde_documento_auria').select('id,codigo,titulo,disciplina')
-      .eq('empreendimento_id',EMP.id).eq('arquivado',false).order('codigo');
-    RV_DOCS=(docs||[]).filter(d=>!doc3d.has(d.id));
-  }catch(e){ console.warn('navegador:',e); }
-  rvNavRender();
+  // Pranchas e modelos carregam em paralelo e cada um aparece quando chega: se a
+  // lista de modelos demorar/travar, as pranchas não ficam presas em "Carregando".
+  const emp=EMP.id, tempo=(p,ms)=>Promise.race([p, new Promise((_,r)=>setTimeout(()=>r(new Error('tempo esgotado')),ms))]);
+  let docs=null, erro='';
+  const pDocs=tempo(sb.from('cde_documento_auria').select('id,codigo,titulo,disciplina').eq('empreendimento_id',emp).eq('arquivado',false).order('codigo'), 20000)
+    .then(({data,error})=>{ if(error) throw error; docs=data||[]; })
+    .catch(e=>{ erro='Não consegui ler as pranchas do CDE ('+((e&&e.message)||e)+').'; console.warn('navegador docs:',e); });
+  const pMods=tempo(f3dModelosDoCde(), 30000).then(m=>{ RV_MODS=m||[]; }).catch(e=>{ RV_MODS=[]; console.warn('navegador modelos:',e); });
+  const montar=()=>{ if(emp!==RV_EMP || (docs===null && !erro && !RV_MODS.length)) return; const doc3d=new Set(RV_MODS.map(m=>m.documentoId).filter(Boolean)); RV_DOCS=(docs||[]).filter(d=>!doc3d.has(d.id)); rvNavRender(); if(erro) $('rvLista').insertAdjacentHTML('afterbegin','<div class="hint" style="color:#FF9C90">'+esc(erro)+' <a href="#" onclick="RV_EMP=null;return false">tentar de novo</a></div>'); };
+  RV_MODS=[]; pDocs.then(montar); pMods.then(montar);
+  await Promise.all([pDocs,pMods]);
+  montar();
 }
 setInterval(()=>{ if(typeof EMP!=='undefined' && EMP && EMP.id!==RV_EMP) rvNavCarregar(); }, 800);
 function rvFiltro(b){ RV_FILTRO=b.dataset.f; document.querySelectorAll('#rvFiltro .rvPill').forEach(x=>x.classList.toggle('on',x===b)); rvNavRender(); }
