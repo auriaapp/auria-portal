@@ -9829,11 +9829,36 @@ window.addEventListener('load',()=>{
   const fa=window.fecharApt;
   if(typeof fa==='function') window.fecharApt=function(){ const r=fa.apply(this, arguments); setTimeout(()=>{ if(!APT_EDIT) RV_PEND=null; }, 0); return r; };
 });
-function rvExportar(){
+// Pavimento de cada peça (mi, expressID): cadastro do empreendimento pelo mesmo de-para
+// do filtro/apontamento (mapaIdPav); sem par no cadastro, fica o nome do andar no IFC.
+async function rvPavMapas(){
+  const chave=F3D.modelos.map(m=>m.arquivoId).join('|')+'#'+(CDE_PAVS||[]).length;
+  if(F3D._rvPav && F3D._rvPavChave===chave) return F3D._rvPav;
+  let cad=[]; try{ if(window.AuriaAndares && (CDE_PAVS||[]).length) cad=await mapaIdPav(); }catch(_){}
+  const out=[];
+  for(let mi=0; mi<F3D.modelos.length; mi++){
+    const m=new Map(); out[mi]=m; const md=F3D.modelos[mi].model; if(!md||!window.AuriaAndares) continue;
+    try{ (await AuriaAndares.ler(md)).forEach(a=>a.ids.forEach(x=>m.set(x,a.nome))); }catch(_){}
+    const c=cad[mi]; if(c) c.forEach((pid,x)=>{ const pv=CDE_PAVS.find(p=>p.id===pid); if(pv) m.set(x,cdePavLabel(pv)); });
+  }
+  F3D._rvPav=out; F3D._rvPavChave=chave; return out;
+}
+function rvPavTxt(mapas, pares){
+  const s=[]; pares.forEach(([mi,id])=>{ const v=mapas[mi]&&mapas[mi].get(id); if(v && !s.includes(v)) s.push(v); });
+  return s.length>6 ? s.slice(0,6).join(' · ')+' +'+(s.length-6) : s.join(' · ');
+}
+function rvPavDoAchado(mapas, a){
+  if(a.tipo==='clash'){ const p=CLASH_PARES[a.pi]; return p ? rvPavTxt(mapas,[[p.aMi,p.aId],[p.bMi,p.bId]]) : ''; }
+  if(a.tipo==='pd'){ const p=PD_ACHADOS[a.pi]; return p ? (rvPavTxt(mapas,[[p.mi,p.id]]) || p.pav || '') : ''; }
+  const r=F3D_ACHADOS[a.ri]; if(!r||!r.modelo) return '';
+  const mi=F3D.modelos.indexOf(r.modelo); return mi<0 ? '' : rvPavTxt(mapas,(r.ids||[]).map(id=>[mi,id]));
+}
+async function rvExportar(){
   if(!RV.ach.length) return;
   const TIPO={dup:'Duplicado',proxy:'Entidade genérica',clash:'Conflito',pd:'Pé-direito'}, ST={novo:'Novo',apt:'Apontado',ign:'Ignorado'};
-  const rows=[['#','Tipo','Achado','Contexto','Status','Apontamento','Motivo']];
-  RV.ach.forEach((a,i)=>rows.push([i+1,TIPO[a.tipo]||'Filtro salvo',a.titulo,a.sub,ST[RV.st[a.key]],RV.cod[a.key]||'',RV.motivo[a.key]||'']));
+  let mapas=[]; try{ if(F3D&&F3D.modelos) mapas=await rvPavMapas(); }catch(e){ console.warn('pavimento no relatório:', e); }
+  const rows=[['#','Tipo','Achado','Pavimento','Contexto','Status','Apontamento','Motivo']];
+  RV.ach.forEach((a,i)=>rows.push([i+1,TIPO[a.tipo]||'Filtro salvo',a.titulo,rvPavDoAchado(mapas,a),a.sub,ST[RV.st[a.key]],RV.cod[a.key]||'',RV.motivo[a.key]||'']));
   const csv=rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
   const u=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
   const l=document.createElement('a'); l.href=u; l.download='revisao_modelo.csv'; document.body.appendChild(l); l.click(); setTimeout(()=>{ URL.revokeObjectURL(u); l.remove(); },600);
