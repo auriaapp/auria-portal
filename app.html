@@ -9869,7 +9869,14 @@ async function rvPavCompletar(mapas, pares){
       const amostra=[]; and.forEach(a=>a.ids.slice(0,5).forEach(x=>amostra.push([a.id,x])));
       let bx=[]; try{ bx=await md.getBoxes(amostra.map(p=>p[1])); }catch(_){}
       const ys=new Map(); amostra.forEach(([sid],i)=>{ const b=bx&&bx[i]; if(b&&isFinite(b.min.y)) (ys.get(sid)||ys.set(sid,[]).get(sid)).push(b.min.y); });
-      ys.forEach((v,sid)=>{ v.sort((a,b)=>a-b); st.niveis.push({ y:v[Math.floor(v.length/2)], rot:rot.get(sid) }); });
+      // Régua: Elevation do IFC + UM deslocamento (mediana de todos os andares). A amostra de
+      // um andar sozinho pode mentir (Diagonal: "SUBSOLO 1_(P.A_0,09)" amostrou 27,32 m);
+      // se a maioria não concorda com o deslocamento (IFC sem Elevation), fica a amostra.
+      const med={}; ys.forEach((v,sid)=>{ v.sort((a,b)=>a-b); med[sid]=v[Math.floor(v.length/2)]; });
+      const d=and.filter(a=>med[a.id]!=null).map(a=>med[a.id]-a.z).sort((a,b)=>a-b);
+      const off=d.length?d[Math.floor(d.length/2)]:null, q1=d.length?d[Math.floor(d.length*.25)]:null;
+      const reguaIfc = off!=null && Math.abs(off-q1)<1;
+      and.forEach(a=>{ const y = reguaIfc ? a.z+off : med[a.id]; if(y!=null && isFinite(y)) st.niveis.push({ y, rot:rot.get(a.id) }); });
       st.niveis.sort((a,b)=>a.y-b.y);
     }
     const resto=[]; set.forEach(id=>{ const d=st.desc.get(id); if(d) m.set(id,d); else resto.push(id); });
