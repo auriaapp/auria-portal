@@ -704,6 +704,9 @@ html[data-tema=claro] .rvPr .cod{color:#1E3A8A}
 .rvIb:hover:not(:disabled){border-color:var(--rvLar);color:var(--txt)}.rvIb:disabled{opacity:.35;cursor:default}
 .rvIb.del:hover:not(:disabled){border-color:#E74C3C;color:#F87171}
 .rvSw{width:12px;height:12px;border-radius:3px;display:inline-block}
+#btnAbrirModelos{margin-top:8px;border:1px dashed var(--line)!important;background:none!important;box-shadow:none!important;color:var(--txt)!important;border-radius:10px;padding:10px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:7px}
+#btnAbrirModelos:hover{border-color:var(--rvLar,#F28C28)!important}
+#btnRecModelos:hover{border-color:var(--rvLar,#F28C28);color:var(--txt)}
 #btnAddCam{margin-top:8px;border:1px dashed var(--line)!important;background:none!important;box-shadow:none!important;color:var(--txt)!important;border-radius:10px;padding:10px;font-weight:700}
 #btnAddCam:hover:not(:disabled){border-color:var(--rvLar)!important;background:var(--rvLarT)!important}
 #btnAddCam small{color:var(--mut);font-weight:400;margin-left:6px}
@@ -861,12 +864,13 @@ body.vz-comp .rvAnT{padding:3px 9px}
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0 6px">
           <div class="hint" style="margin:0;flex:1">Vindos do CDE, revisão vigente. Marque para federar.</div>
           <button id="btnFiltro" class="filtBtn" onclick="fFiltroToggle()" title="Filtro & Análise do modelo" style="display:none">🎛️</button>
+          <button id="btnRecModelos" class="filtBtn" onclick="f3dAbrirSelecionados()" title="Recarregar os modelos (se algo travar)" style="display:none"></button>
         </div>
         <div id="modList" style="margin:6px 0"><div class="hint">Carregando…</div></div>
         <!-- Toggle nos checkboxes agora carrega/descarrega sozinho. Este botão
              existe só como escape se algo travar (mostra "Recarregar modelo(s)"
              quando já há modelo aberto; "Abrir no 3D" na primeira vez). -->
-        <button class="btn" id="btnAbrirModelos" style="width:100%;font-size:13px" onclick="f3dAbrirSelecionados()">🧊 Abrir no 3D</button>
+        <button class="btn" id="btnAbrirModelos" style="width:100%;font-size:13px" onclick="f3dAbrirSelecionados()">Abrir no 3D</button>
       </div>
 
       <!-- Análises salvas -->
@@ -5419,8 +5423,9 @@ async function f3dSincronizarSelecao(){
 // que carrega, vira "Recarregar modelo(s)" — serve como escape se algo
 // travar (usuário força reload manual). Foi pedido do usuário.
 function f3dAbrirBotaoSync(){
-  const b=$('btnAbrirModelos'); if(!b) return;
-  b.innerHTML = F3D ? '🔄 Recarregar modelo(s)' : '🧊 Abrir no 3D';
+  const b=$('btnAbrirModelos'), r=$('btnRecModelos'); if(!b) return;
+  b.innerHTML=_icH('cubo',15)+' Abrir no 3D'; b.style.display = F3D ? 'none' : '';
+  if(r){ if(!r.innerHTML) r.innerHTML=_icH('recarregar',15); r.style.display = F3D ? 'inline-flex' : 'none'; }
 }
 
 async function f3dAbrirSelecionados(){
@@ -9841,7 +9846,45 @@ async function rvPavMapas(){
     try{ (await AuriaAndares.ler(md)).forEach(a=>a.ids.forEach(x=>m.set(x,a.nome))); }catch(_){}
     const c=cad[mi]; if(c) c.forEach((pid,x)=>{ const pv=CDE_PAVS.find(p=>p.id===pid); if(pv) m.set(x,cdePavLabel(pv)); });
   }
-  F3D._rvPav=out; F3D._rvPavChave=chave; return out;
+  F3D._rvPav=out; F3D._rvPavChave=chave; F3D._rvPavSt=[]; return out;
+}
+// Peças que o IFC não liga direto ao andar: (1) netas do andar na estrutura espacial
+// (montantes de fachada, partes agregadas) herdam o andar do avô; (2) as soltas (proxy
+// fora de qualquer andar) vão pela COTA — base da peça × base de cada andar, medida
+// pelas próprias peças do andar. A cota é aproximação e sai com "≈" no relatório.
+async function rvPavCompletar(mapas, pares){
+  const falta={}; pares.forEach(([mi,id])=>{ if(mapas[mi] && !mapas[mi].has(id)) (falta[mi]=falta[mi]||new Set()).add(id); });
+  for(const [k,set] of Object.entries(falta)){
+    const mi=+k, md=F3D.modelos[mi]&&F3D.modelos[mi].model, m=mapas[mi]; if(!md||!set.size) continue;
+    let st=F3D._rvPavSt[mi];
+    if(!st){
+      st={ desc:new Map(), niveis:[] }; F3D._rvPavSt[mi]=st;
+      let and=[]; try{ and=await AuriaAndares.ler(md); }catch(_){}
+      const rot=new Map(); and.forEach(a=>{ const r=a.ids.map(x=>m.get(x)).find(Boolean)||a.nome; rot.set(a.id,r); });
+      try{ const raw=await md.getSpatialStructure();
+        const walk=(n,s)=>{ for(const cn of (n.children||[])){ const c=String(cn.category||'').toUpperCase(); for(const ch of (cn.children||[])){ let s2=s;
+          if(c==='IFCBUILDINGSTOREY') s2=ch.localId; else if(s!=null && ch.localId!=null && rot.has(s)) st.desc.set(ch.localId, rot.get(s)); walk(ch,s2); } } };
+        for(const inst of (raw.children||[])) walk(inst,null); }catch(_){}
+      // base de cada andar = mediana da base (y) de até 5 peças dele
+      const amostra=[]; and.forEach(a=>a.ids.slice(0,5).forEach(x=>amostra.push([a.id,x])));
+      let bx=[]; try{ bx=await md.getBoxes(amostra.map(p=>p[1])); }catch(_){}
+      const ys=new Map(); amostra.forEach(([sid],i)=>{ const b=bx&&bx[i]; if(b&&isFinite(b.min.y)) (ys.get(sid)||ys.set(sid,[]).get(sid)).push(b.min.y); });
+      ys.forEach((v,sid)=>{ v.sort((a,b)=>a-b); st.niveis.push({ y:v[Math.floor(v.length/2)], rot:rot.get(sid) }); });
+      st.niveis.sort((a,b)=>a.y-b.y);
+    }
+    const resto=[]; set.forEach(id=>{ const d=st.desc.get(id); if(d) m.set(id,d); else resto.push(id); });
+    if(resto.length && st.niveis.length){
+      let bx=[]; try{ bx=await md.getBoxes(resto); }catch(_){}
+      resto.forEach((id,i)=>{ const b=bx&&bx[i]; if(!b||!isFinite(b.min.y)) return;
+        let nv=null; for(const n of st.niveis){ if(n.y<=b.min.y+0.10) nv=n; else break; }
+        if(nv&&nv.rot) m.set(id,'≈ '+nv.rot); });
+    }
+  }
+}
+function rvParesDoAchado(a){
+  if(a.tipo==='clash'){ const p=CLASH_PARES[a.pi]; return p?[[p.aMi,p.aId],[p.bMi,p.bId]]:[]; }
+  if(a.tipo==='pd'){ const p=PD_ACHADOS[a.pi]; return p?[[p.mi,p.id]]:[]; }
+  const r=F3D_ACHADOS[a.ri]; if(!r||!r.modelo) return []; const mi=F3D.modelos.indexOf(r.modelo); return mi<0?[]:(r.ids||[]).map(id=>[mi,id]);
 }
 function rvPavTxt(mapas, pares){
   const s=[]; pares.forEach(([mi,id])=>{ const v=mapas[mi]&&mapas[mi].get(id); if(v && !s.includes(v)) s.push(v); });
@@ -9872,7 +9915,7 @@ async function rvExportar(){
   const btn=$('rvBtnXls'), old=btn?btn.innerHTML:''; if(btn){ btn.disabled=true; btn.textContent='…'; }
   try{
     const TIPO={dup:'Duplicado',proxy:'Entidade genérica',clash:'Conflito',pd:'Pé-direito'}, ST={novo:'Novo',apt:'Apontado',ign:'Ignorado'};
-    let mapas=[]; try{ if(F3D&&F3D.modelos) mapas=await rvPavMapas(); }catch(e){ console.warn('pavimento no relatório:', e); }
+    let mapas=[]; try{ if(F3D&&F3D.modelos){ mapas=await rvPavMapas(); if(btn) btn.textContent='Pavimentos…'; await rvPavCompletar(mapas, RV.ach.flatMap(rvParesDoAchado)); } }catch(e){ console.warn('pavimento no relatório:', e); }
     await _fScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
     const ExcelJS=window.ExcelJS; if(!ExcelJS) throw new Error('ExcelJS não carregou');
     const wb=new ExcelJS.Workbook(); wb.creator='Auria'; wb.created=new Date();
@@ -9889,26 +9932,26 @@ async function rvExportar(){
       ws.getRow(1).height=30; ws.getRow(4).height=4;
       for(let c=1;c<=cols;c++) ws.getCell(4,c).fill={type:'pattern',pattern:'solid',fgColor:{argb:LARANJA}};
     };
-    const header=(ws, cols, row)=>{ const hr=ws.getRow(row); cols.forEach((c,i)=>{ const cell=hr.getCell(i+1); cell.value=c.h; cell.font={bold:true,color:{argb:BRANCO},size:11};
+    const header=(ws, cols, row)=>{ const hr=ws.getRow(row); cols.forEach((c,i)=>{ if(c.key==='_') return; const cell=hr.getCell(i+1); cell.value=c.h; cell.font={bold:true,color:{argb:BRANCO},size:11};
       cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}}; cell.alignment={vertical:'middle',horizontal:'center',wrapText:true}; }); hr.height=22; };
     const lin=RV.ach.map((a,i)=>({ n:i+1, tipo:TIPO[a.tipo]||'Filtro salvo', ach:a.titulo||'', pav:rvPavDoAchado(mapas,a), ctx:a.sub||'', st:ST[RV.st[a.key]]||'', apt:RV.cod[a.key]||'', mot:RV.motivo[a.key]||'' }));
     // ── Resumo ──
-    const rCols=[{key:'t',h:'Tipo',w:26},{key:'tot',h:'Total',w:9},{key:'novo',h:'Novos',w:10},{key:'apt',h:'Apontados',w:12},{key:'ign',h:'Ignorados',w:12}];
+    const rCols=[{key:'t',h:'Tipo',w:26},{key:'tot',h:'Total',w:12},{key:'novo',h:'Novos',w:12},{key:'apt',h:'Apontados',w:13},{key:'ign',h:'Ignorados',w:13},{key:'_',h:'',w:26}];   // última = espaço da logo do empreendimento
     const wsR=wb.addWorksheet('Resumo',{ views:[{state:'frozen',ySplit:5}] }); wsR.columns=rCols.map(c=>({key:c.key,width:c.w}));
     cab(wsR,'Revisão do modelo — Resumo',rCols.length); header(wsR,rCols,5);
     const porT={}; lin.forEach(x=>{ const o=porT[x.tipo]||(porT[x.tipo]={tot:0,novo:0,apt:0,ign:0}); o.tot++; if(x.st==='Apontado') o.apt++; else if(x.st==='Ignorado') o.ign++; else o.novo++; });
     const tipos=Object.keys(porT), tot={tot:0,novo:0,apt:0,ign:0};
-    tipos.forEach((t,i)=>{ const o=porT[t], r=wsR.getRow(6+i); rCols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=c.key==='t'?t:o[c.key]; if(c.key!=='t') cell.alignment={horizontal:'center'};
+    tipos.forEach((t,i)=>{ const o=porT[t], r=wsR.getRow(6+i); rCols.forEach((c,ci)=>{ if(c.key==='_') return; const cell=r.getCell(ci+1); cell.value=c.key==='t'?t:o[c.key]; if(c.key!=='t') cell.alignment={horizontal:'center'};
       if(i%2) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:ZEBRA}}; cell.border={bottom:{style:'thin',color:{argb:LINHA}}}; }); Object.keys(tot).forEach(k=>tot[k]+=o[k]); });
-    { const r=wsR.getRow(6+tipos.length); rCols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=c.key==='t'?'TOTAL':tot[c.key]; cell.font={bold:true,color:{argb:NAVY}};
+    { const r=wsR.getRow(6+tipos.length); rCols.forEach((c,ci)=>{ if(c.key==='_') return; const cell=r.getCell(ci+1); cell.value=c.key==='t'?'TOTAL':tot[c.key]; cell.font={bold:true,color:{argb:NAVY}};
       if(c.key!=='t') cell.alignment={horizontal:'center'}; cell.border={top:{style:'medium',color:{argb:NAVY}}}; }); }
     // ── Achados ──
-    const cols=[{key:'n',h:'#',w:6},{key:'tipo',h:'Tipo',w:18},{key:'ach',h:'Achado',w:46},{key:'pav',h:'Pavimento',w:26},{key:'ctx',h:'Contexto',w:30},
-      {key:'st',h:'Status',w:12},{key:'apt',h:'Apontamento',w:14},{key:'mot',h:'Motivo',w:34}];
+    const cols=[{key:'n',h:'#',w:6},{key:'tipo',h:'Tipo',w:18},{key:'ach',h:'Achado',w:46},{key:'pav',h:'Pavimento',w:26},{key:'ctx',h:'Contexto',w:44},
+      {key:'st',h:'Status',w:12},{key:'apt',h:'Apontamento',w:16},{key:'mot',h:'Motivo',w:34}];
     const ws=wb.addWorksheet('Achados',{ views:[{state:'frozen',ySplit:5}] }); ws.columns=cols.map(c=>({key:c.key,width:c.w}));
     cab(ws,'Revisão do modelo — '+emp,cols.length); header(ws,cols,5); ws.autoFilter={ from:{row:5,column:1}, to:{row:5,column:cols.length} };
     lin.forEach((x,ri)=>{ const r=ws.getRow(6+ri);
-      cols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=x[c.key]; cell.alignment={vertical:'top',wrapText:(c.key==='ach'||c.key==='pav'||c.key==='mot')};
+      cols.forEach((c,ci)=>{ const cell=r.getCell(ci+1); cell.value=x[c.key]; cell.alignment={vertical:'top',wrapText:(c.key==='ach'||c.key==='pav'||c.key==='ctx'||c.key==='mot')};
         cell.border={bottom:{style:'thin',color:{argb:LINHA}}}; if(ri%2) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:ZEBRA}};
         if(c.key==='n') cell.alignment={vertical:'top',horizontal:'center'};
         if(c.key==='st') cell.font={bold:true,color:{argb: x.st==='Apontado'?'FF1E8449': x.st==='Ignorado'?CINZA:'FF1B4F72'}};
