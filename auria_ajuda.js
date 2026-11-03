@@ -226,7 +226,9 @@
     const m=CONV[ci]; const p=m&&m.guia&&m.guia.passos[si]; if(!p||!p.mostrar) return;
     fecharSpot();
     let el=achar(p.mostrar);
-    if(!el && p.prep){ const a=acoesDisponiveis()[p.prep]; if(a){ try{ a.run(); }catch(_){} await new Promise(r=>setTimeout(r,350)); el=achar(p.mostrar); } }
+    if(!el && p.prep){ const a=acoesDisponiveis()[p.prep]; if(a){ try{ a.run(); }catch(_){}
+      // a aba pode demorar para carregar (ex.: Entregas busca o CDE) — espera o botão aparecer, até 4 s
+      for(let t=0;t<16 && !el;t++){ await new Promise(r=>setTimeout(r,250)); el=achar(p.mostrar); } } }
     if(!el){ m.avisos=m.avisos||{}; m.avisos[si]=p.oculto||'Esse botão não está visível nesta tela agora.'; render(); return; }
     if(m.avisos) delete m.avisos[si];
     ABERTO=false; document.getElementById('ajPan').classList.remove('on');
@@ -351,12 +353,14 @@
   //  no título/jeitos de perguntar vale 1, só no texto dos passos vale 0,5. Palavra da
   //  pergunta que não existe em guia nenhum pesa contra (é o assunto que falta).
   let IDX_G=null, IDX_G_SRC=null;
+  function _frase(t){ return _norm1(t).replace(/[^a-z0-9]+/g,' ').trim(); }
   function buscarGuia(pergunta){
     if(IDX_G_SRC!==GUIAS){
       const itens=(GUIAS||[]).map(g=>({tipo:'guia', g, titulo:g.titulo,
         tt:_concSet([g.titulo].concat(g.perguntas||[]).join(' ')),
         fr:[g.titulo].concat(g.perguntas||[]).map(_concSet),
         px:new Set(_norm1([g.titulo].concat(g.perguntas||[]).join(' ')).split(/[^a-z0-9]+/)),
+        pf:new Set([g.titulo].concat(g.perguntas||[]).map(_frase)),
         tb:_concSet([g.intro, g.fim].concat((g.passos||[]).map(p=>p.t), g.dicas||[]).join(' '))}));
       const df={}; itens.forEach(it=>{ new Set([...it.tt,...it.tb]).forEach(t=>{ df[t]=(df[t]||0)+1; }); });
       const N=itens.length||1; itens.idf=t=>{ const d=df[t]; if(!d) return 1; return Math.max(0.15, Math.log((N+1)/(d+0.5))/Math.log(N+1)); };
@@ -365,11 +369,13 @@
     const q=[..._concSet(pergunta)]; if(!q.length) return [];
     const idf=IDX_G.idf, base=q.reduce((s,t)=>s+idf(t),0)||1;
     const qx=_norm1(pergunta).split(/[^a-z0-9]+/).filter(w=>w.length>2&&!STOP.has(w));   // palavras como foram escritas (último desempate)
+    const qf=_frase(pergunta);
     return IDX_G.map(it=>{ let sc=0, casou=0;
       let st=0; q.forEach(t=>{ if(it.tt.has(t)){ sc+=idf(t); st+=idf(t); casou++; } else if(it.tb.has(t)){ sc+=idf(t)*0.5; casou++; } });
       // desempate: a pergunta cadastrada mais parecida com a do usuário ("não vejo a prancha" × "acho a prancha")
       const fr=Math.max(0,...it.fr.map(f=>{ let i=0; q.forEach(t=>{ if(f.has(t)) i++; }); return i/(q.length+f.size-i||1); }));
-      const ex=qx.filter(w=>it.px.has(w)).length;   // "reprovada" × "reprovar": mesma raiz, palavra diferente
+      let ex=qx.filter(w=>it.px.has(w)).length;   // "reprovada" × "reprovar": mesma raiz, palavra diferente
+      if(it.pf.has(qf)) ex+=100;                    // a pergunta é exatamente uma das cadastradas ("o que é a minha nota" × "nota fiscal")
       return {it, conf:sc/base, titulo:st/base, casou, nq:q.length, fr, ex}; })
       .filter(r=>r.casou>0).sort((a,b)=>b.conf-a.conf||b.fr-a.fr||b.ex-a.ex||b.casou-a.casou).slice(0,4);
   }
