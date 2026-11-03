@@ -1100,12 +1100,15 @@ async function _faixasPavimento(V){
   //  mais se aproximam. Assim o teto da faixa é o próximo nível REAL, não um
   //  patamar/rebaixo colado (que estreitava a faixa e excluía paredes).
   const votos=new Map();                    // nome -> Map(idxNivel -> contagem)
+  let _st=[]; try{ _st=await _storeysMapa(V); }catch(_){}
+  const _stDe=(mi)=>{ const m=new Map(); _st.filter(s=>s.mi===mi).forEach(s=>s.ids.forEach(id=>m.set(id,s.nome))); return m; };
   for(const x of V.modelos){
+    const _stMap=_stDe(V.modelos.indexOf(x));
     let sids=[]; try{ sids=Object.values(await x.model.getItemsOfCategories([/^IFCSLAB$/])||{}).flat(); }catch(_){}
     if(!sids.length) continue;
     const cache=await _pavimMapModelo(V, x, sids, 'Mapeando pavimentos');   // Pset só das lajes
     let boxes=[]; try{ boxes=await x.model.getBoxes(sids); }catch(_){}
-    sids.forEach((id,i)=>{ const nm=cache.get(id); const b=(boxes||[])[i];
+    sids.forEach((id,i)=>{ const nm=cache.get(id)||_stMap.get(id); const b=(boxes||[])[i];
       if(!nm || !b || !isFinite(b.max.y)) return;
       let idx=0,best=Infinity; ns.forEach((y,j)=>{ const dd=Math.abs(y-b.max.y); if(dd<best){best=dd;idx=j;} });
       if(!votos.has(nm)) votos.set(nm, new Map()); const mm=votos.get(nm); mm.set(idx,(mm.get(idx)||0)+1);
