@@ -1,0 +1,122 @@
+// Ícones próprios do Auria (mockups/app_icones_proprios.html, aprovados 2026-11-02).
+// Família do CDE: viewBox 20×20, traço 1,5, cantos redondos, cor do texto (currentColor).
+// Uso: auIc('salvar') devolve o <svg>; auIcTrocar(raiz, mapa) troca emoji por ícone
+// dentro dos botões de uma área. Emoji não entra em botão — só em texto do usuário.
+(function(){
+const IC={
+ "salvar": "<path d=\"M3.2 4.6a1.4 1.4 0 0 1 1.4-1.4h8.6l3.6 3.6v8.6a1.4 1.4 0 0 1-1.4 1.4H4.6a1.4 1.4 0 0 1-1.4-1.4z\"/><path d=\"M6.4 3.2v4.4h6.2V3.2\"/><rect x=\"6.4\" y=\"11\" width=\"7.2\" height=\"5.8\" rx=\".8\"/>",
+ "lixo": "<path d=\"M3.4 5.4h13.2\"/><path d=\"M5.6 5.4V3.8a1.2 1.2 0 0 1 1.2-1.2h6.4a1.2 1.2 0 0 1 1.2 1.2v1.6\"/><path d=\"M5 5.4l.9 11a1.2 1.2 0 0 0 1.2 1.1h5.8a1.2 1.2 0 0 0 1.2-1.1l.9-11\"/>",
+ "pasta": "<path d=\"M2.4 6.4a1.4 1.4 0 0 1 1.4-1.4h3.2l1.6 2h7a1.4 1.4 0 0 1 1.4 1.4v7a1.4 1.4 0 0 1-1.4 1.4H3.8a1.4 1.4 0 0 1-1.4-1.4z\"/>",
+ "cubo": "<path d=\"M10 2.6 3.4 6.2v7.6L10 17.4l6.6-3.6V6.2z\"/><path d=\"M3.4 6.2 10 9.8l6.6-3.6M10 9.8v7.6\"/>",
+ "camadas": "<path d=\"M10 2.6 3.2 6.2 10 9.8l6.8-3.6z\"/><path d=\"M3.2 10 10 13.6 16.8 10\"/><path d=\"M3.2 13.8 10 17.4l6.8-3.6\"/>",
+ "busca": "<circle cx=\"8.6\" cy=\"8.6\" r=\"5.4\"/><path d=\"M12.6 12.6l4.2 4.2\"/>",
+ "pin": "<path d=\"M10 17.4s5.6-5 5.6-9a5.6 5.6 0 1 0-11.2 0c0 4 5.6 9 5.6 9Z\"/><circle cx=\"10\" cy=\"8.4\" r=\"2.2\"/>",
+ "regua": "<path d=\"M2.6 12.2 12.2 2.6l5.2 5.2L7.8 17.4z\"/><path d=\"M5.6 9.2l1.6 1.6M8 6.8l2.2 2.2M10.6 4.2l1.6 1.6\"/>",
+ "calendario": "<rect x=\"2.6\" y=\"4.2\" width=\"14.8\" height=\"13.2\" rx=\"1.6\"/><path d=\"M2.6 8h14.8\"/><path d=\"M6.6 2.6v3.2M13.4 2.6v3.2\"/><path d=\"M6.4 11.4h2M9.4 11.4h2M12.4 11.4h2\"/>",
+ "relogio": "<circle cx=\"10\" cy=\"10\" r=\"7.2\"/><path d=\"M10 5.6V10l3 1.8\"/>",
+ "enviar": "<path d=\"M10 13.4V3.2M6.4 6.6 10 3l3.6 3.6\"/><path d=\"M3.4 12.6v3.2a1.4 1.4 0 0 0 1.4 1.4h10.4a1.4 1.4 0 0 0 1.4-1.4v-3.2\"/>",
+ "editar": "<path d=\"M10.6 3.4H4.6a1.4 1.4 0 0 0-1.4 1.4v10.8a1.4 1.4 0 0 0 1.4 1.4h10.8a1.4 1.4 0 0 0 1.4-1.4V9.4\"/><path d=\"M14.6 2.6a1.7 1.7 0 0 1 2.4 2.4L10.6 11.4l-3 .8.8-3z\"/>",
+ "vinculo": "<path d=\"M8.4 11.6a3.4 3.4 0 0 0 5 .4l2.2-2.2a3.4 3.4 0 0 0-4.8-4.8l-1.3 1.2\"/><path d=\"M11.6 8.4a3.4 3.4 0 0 0-5-.4L4.4 10.2a3.4 3.4 0 0 0 4.8 4.8l1.3-1.2\"/>",
+ "livros": "<path d=\"M4 3.4h4.6v13.2H4zM8.6 3.4h4.6v13.2H8.6z\"/><path d=\"m13.6 4.2 3.4.9-3 11.4-3.3-.9\"/>",
+ "documento": "<path d=\"M4.4 2.6h6.8l4.4 4.4v10.4H4.4z\"/><path d=\"M11.2 2.6v4.4h4.4\"/><path d=\"M7 10.4h6M7 13.2h4\"/>",
+ "conversa": "<path d=\"M17.2 11.4a6.6 6.6 0 0 1-6.6 6.6H3.4l1.9-2.5a6.6 6.6 0 1 1 11.9-4.1Z\"/><path d=\"M7.2 8.6h6M7.2 11.6h3.8\"/>",
+ "ampulheta": "<path d=\"M5.4 2.8h9.2M5.4 17.2h9.2\"/><path d=\"M6.6 2.8v3.1L10 9.4l3.4-3.5V2.8\"/><path d=\"M6.6 17.2v-3.1L10 10.6l3.4 3.5v3.1\"/>",
+ "check": "<path d=\"M4 10.4 8.2 14.6 16 6.2\"/>",
+ "mais": "<path d=\"M10 4v12M4 10h12\"/>",
+ "ia": "<path d=\"M10 2.8 11.6 8.4 17.2 10l-5.6 1.6L10 17.2l-1.6-5.6L2.8 10l5.6-1.6z\"/>",
+ "alvo": "<circle cx=\"10\" cy=\"10\" r=\"7\"/><circle cx=\"10\" cy=\"10\" r=\"3.4\"/><path d=\"M10 1.8v3M10 15.2v3M1.8 10h3M15.2 10h3\"/>",
+ "lupaIa": "<circle cx=\"8.6\" cy=\"8.6\" r=\"5.4\"/><path d=\"M12.6 12.6l4.2 4.2\"/><path d=\"M8.6 5.8l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z\"/>",
+ "regiao": "<path d=\"M2.6 6V2.6H6M14 2.6h3.4V6M17.4 14v3.4H14M6 17.4H2.6V14\"/><text x=\"10\" y=\"13.1\" font-size=\"7.6\" font-weight=\"800\" text-anchor=\"middle\" fill=\"currentColor\" stroke=\"none\" font-family=\"Segoe UI,Arial,sans-serif\">IA</text>",
+ "olho": "<path d=\"M1.8 10S5 4.4 10 4.4 18.2 10 18.2 10 15 15.6 10 15.6 1.8 10 1.8 10Z\"/><circle cx=\"10\" cy=\"10\" r=\"2.6\"/>",
+ "olhoOff": "<path d=\"M2.6 8.4c2 3 4.6 4.6 7.4 4.6s5.4-1.6 7.4-4.6\"/><path d=\"M4.6 11.2 3.2 13M10 13v2.4M15.4 11.2l1.4 1.8M7.2 12.4l-.8 2.2M12.8 12.4l.8 2.2\"/>",
+ "sliders": "<path d=\"M4 3v14M10 3v14M16 3v14\"/><rect x=\"2.4\" y=\"11\" width=\"3.2\" height=\"3\" rx=\"1\"/><rect x=\"8.4\" y=\"5\" width=\"3.2\" height=\"3\" rx=\"1\"/><rect x=\"14.4\" y=\"9\" width=\"3.2\" height=\"3\" rx=\"1\"/>",
+ "engrenagem": "<path d=\"M15.92 8.17 L18.08 8.61 L18.08 11.39 L15.92 11.83 L15.48 12.89 L16.70 14.73 L14.73 16.70 L12.89 15.48 L11.83 15.92 L11.39 18.08 L8.61 18.08 L8.17 15.92 L7.11 15.48 L5.27 16.70 L3.30 14.73 L4.52 12.89 L4.08 11.83 L1.92 11.39 L1.92 8.61 L4.08 8.17 L4.52 7.11 L3.30 5.27 L5.27 3.30 L7.11 4.52 L8.17 4.08 L8.61 1.92 L11.39 1.92 L11.83 4.08 L12.89 4.52 L14.73 3.30 L16.70 5.27 L15.48 7.11Z\"/><circle cx=\"10\" cy=\"10\" r=\"2.8\"/>",
+ "kanban": "<rect x=\"2.6\" y=\"3\" width=\"4.2\" height=\"14\" rx=\"1\"/><rect x=\"7.9\" y=\"3\" width=\"4.2\" height=\"9\" rx=\"1\"/><rect x=\"13.2\" y=\"3\" width=\"4.2\" height=\"11.6\" rx=\"1\"/>",
+ "carta": "<rect x=\"2.6\" y=\"4.4\" width=\"14.8\" height=\"11.2\" rx=\"1.4\"/><path d=\"m3 5.2 7 5.4 7-5.4\"/>",
+ "gantt": "<path d=\"M2.6 3v14h14.8\"/><path d=\"M5.4 6h5M7.4 9.4h6.4M10 12.8h5\"/>",
+ "grafico": "<path d=\"M2.6 17.4h14.8\"/><rect x=\"4\" y=\"10\" width=\"2.8\" height=\"7.4\" rx=\".6\"/><rect x=\"8.6\" y=\"5.6\" width=\"2.8\" height=\"11.8\" rx=\".6\"/><rect x=\"13.2\" y=\"8\" width=\"2.8\" height=\"9.4\" rx=\".6\"/>",
+ "cadeado": "<rect x=\"4\" y=\"8.6\" width=\"12\" height=\"8.6\" rx=\"1.6\"/><path d=\"M6.6 8.6V6.4a3.4 3.4 0 0 1 6.8 0v2.2\"/>",
+ "cadeadoAb": "<rect x=\"4\" y=\"8.6\" width=\"12\" height=\"8.6\" rx=\"1.6\"/><path d=\"M6.6 8.6V6.4a3.4 3.4 0 0 1 6.6-1.2\"/>",
+ "esquadro": "<path d=\"M3 3v14h14z\"/><path d=\"M6 10.4v3.6h3.6z\"/>",
+ "mover": "<path d=\"M10 2.6v14.8M2.6 10h14.8\"/><path d=\"m7.8 4.8 2.2-2.2 2.2 2.2M7.8 15.2l2.2 2.2 2.2-2.2M4.8 7.8 2.6 10l2.2 2.2M15.2 7.8l2.2 2.2-2.2 2.2\"/>",
+ "alinhar": "<circle cx=\"5\" cy=\"5\" r=\"2\"/><circle cx=\"15\" cy=\"15\" r=\"2\"/><path d=\"M6.6 6.6l6.8 6.8\" stroke-dasharray=\"1.6 1.8\"/>",
+ "baixar": "<path d=\"M10 3v10.2M6.4 9.6 10 13.2l3.6-3.6\"/><path d=\"M3.4 13v2.8a1.4 1.4 0 0 0 1.4 1.4h10.4a1.4 1.4 0 0 0 1.4-1.4V13\"/>",
+ "clipe": "<path d=\"M15.6 9.2 9.8 15a3.6 3.6 0 0 1-5.1-5.1l6.4-6.4a2.4 2.4 0 0 1 3.4 3.4l-6.4 6.3a1.2 1.2 0 0 1-1.7-1.7l5.6-5.6\"/>",
+ "computador": "<rect x=\"2.6\" y=\"3.4\" width=\"14.8\" height=\"10\" rx=\"1.4\"/><path d=\"M7 17h6M10 13.4V17\"/>",
+ "recarregar": "<path d=\"M16.2 8.4A6.4 6.4 0 0 0 4.6 6.2M3.8 11.6a6.4 6.4 0 0 0 11.6 2.2\"/><path d=\"M4.4 2.8v3.6H8M15.6 17.2v-3.6H12\"/>",
+ "mapa": "<path d=\"M2.6 5 7.4 3l5.2 2 4.8-2v12l-4.8 2-5.2-2-4.8 2z\"/><path d=\"M7.4 3v12M12.6 5v12\"/>",
+ "alerta": "<path d=\"M10 3 17.6 16.4H2.4z\"/><path d=\"M10 8.2v3.6M10 14v.1\"/>",
+ "erro": "<circle cx=\"10\" cy=\"10\" r=\"7.2\"/><path d=\"m7.2 7.2 5.6 5.6M12.8 7.2l-5.6 5.6\"/>",
+ "ok": "<circle cx=\"10\" cy=\"10\" r=\"7.2\"/><path d=\"m6.6 10.2 2.4 2.4 4.4-4.8\"/>",
+ "sino": "<path d=\"M5 13.6V9a5 5 0 0 1 10 0v4.6l1.4 1.6H3.6z\"/><path d=\"M8.4 17.4a1.8 1.8 0 0 0 3.2 0\"/>",
+ "cobrar": "<path d=\"M2.6 10 17.4 3l-3.6 14-4.4-5.2z\"/><path d=\"M9.4 11.8 17.4 3\"/>",
+ "bandeira": "<path d=\"M4.4 17.4V2.8\"/><path d=\"M4.4 3.4h10.4l-2.2 3.4 2.2 3.4H4.4\"/>",
+ "vassoura": "<path d=\"M14.6 2.6 9.4 9.2\"/><path d=\"M6.6 8.4 12 12.4l-1.4 5H3.4l1.4-6z\"/><path d=\"M6 17.4l1-3M8.4 17.4l.8-2.6\"/>",
+ "imagem": "<rect x=\"2.6\" y=\"3.4\" width=\"14.8\" height=\"13.2\" rx=\"1.4\"/><circle cx=\"7\" cy=\"7.8\" r=\"1.4\"/><path d=\"m2.6 14.4 4.4-4 3.4 3 2.6-2.2 4.4 3.8\"/>",
+ "corte": "<path d=\"M4 10.6v3.6l6 3 6-3v-3.6\"/><path d=\"M2 10.6 10 6.8l8 3.8-8 3.8z\" fill=\"currentColor\" fill-opacity=\".22\"/><path d=\"M10 10.6V2.6M8.2 4.4 10 2.6l1.8 1.8\"/>",
+ "raiox": "<circle cx=\"10\" cy=\"10\" r=\"7.2\" stroke-dasharray=\"2 2\"/><circle cx=\"10\" cy=\"10\" r=\"3.2\"/>",
+ "lista": "<path d=\"M7 5.4h10M7 10h10M7 14.6h10\"/><path d=\"M3 5.4h.1M3 10h.1M3 14.6h.1\" stroke-width=\"2.4\"/>",
+ "hachura": "<rect x=\"3\" y=\"3\" width=\"14\" height=\"14\" rx=\"1.4\"/><path d=\"M3 9 9 3M3 15 15 3M9 17l8-8\"/>",
+ "dividir": "<rect x=\"2.6\" y=\"3.4\" width=\"14.8\" height=\"13.2\" rx=\"1.4\"/><path d=\"M10 3.4v13.2\"/>",
+ "diagonal": "<path d=\"M4 16 16 4\"/><path d=\"M9 4h7v7\"/>",
+ "tesoura": "<circle cx=\"5.4\" cy=\"14.6\" r=\"2.4\"/><circle cx=\"14.6\" cy=\"14.6\" r=\"2.4\"/><path d=\"M7.2 13 15.6 2.8M12.8 13 4.4 2.8\"/>",
+ "cerebro": "<path d=\"M10 4.2a2.8 2.8 0 0 0-5.2 1.4 2.8 2.8 0 0 0-1.4 5 2.8 2.8 0 0 0 2.4 4.4A2.8 2.8 0 0 0 10 16.2zM10 4.2a2.8 2.8 0 0 1 5.2 1.4 2.8 2.8 0 0 1 1.4 5 2.8 2.8 0 0 1-2.4 4.4A2.8 2.8 0 0 1 10 16.2z\"/>",
+ "predio": "<path d=\"M3.4 17.4h13.2\"/><rect x=\"5\" y=\"3\" width=\"10\" height=\"14.4\" rx=\".8\"/><path d=\"M8 6.2h1M11 6.2h1M8 9.4h1M11 9.4h1M8 12.6h1M11 12.6h1\"/>",
+ "mao": "<path d=\"M7.4 10V4a1.4 1.4 0 0 1 2.8 0v5\"/><path d=\"M10.2 8.6a1.4 1.4 0 0 1 2.8 0v1.4M13 9.4a1.4 1.4 0 0 1 2.8 0v2.8a5.2 5.2 0 0 1-5.2 5.2H9.8a4.6 4.6 0 0 1-3.6-1.8l-2.4-3.2a1.3 1.3 0 0 1 2-1.6l1.6 1.6\"/>",
+ "parar": "<rect x=\"4.4\" y=\"4.4\" width=\"11.2\" height=\"11.2\" rx=\"1.6\"/>",
+ "pausar": "<path d=\"M7 4.4v11.2M13 4.4v11.2\"/>",
+ "nivel": "<path d=\"M4 6.4h12L10 15z\"/><path d=\"M2.6 6.4h14.8\"/>",
+ "parede": "<path d=\"M2.6 5h14.8v10H2.6z\"/><path d=\"M2.6 10h14.8M7.4 5v5M12.6 5v5M5 10v5M10 10v5M15 10v5\"/>",
+ "pilar": "<rect x=\"7\" y=\"2.6\" width=\"6\" height=\"14.8\" rx=\".6\"/><path d=\"M5.4 2.6h9.2M5.4 17.4h9.2\"/>",
+ "viga": "<path d=\"M2.6 6.6h14.8v3.2H2.6z\" fill=\"currentColor\" fill-opacity=\".3\"/><path d=\"M5 9.8 3.2 13h3.6zM15 9.8 13.2 13h3.6z\"/><path d=\"M2.4 15h5.2M12.4 15h5.2\"/><path d=\"M3.4 15l-.8 1.2M5.4 15l-.8 1.2M13.4 15l-.8 1.2M15.4 15l-.8 1.2\" opacity=\".6\"/>",
+ "laje": "<path d=\"M2.6 9 10 5.4l7.4 3.6L10 12.6z\"/><path d=\"M2.6 9v2.2L10 14.8l7.4-3.6V9\"/>",
+ "porta": "<path d=\"M2.4 16.6h3.8M16.6 16.6h1\"/><path d=\"M6.2 16.6V6.2\"/><path d=\"M6.2 6.2a10.4 10.4 0 0 1 10.4 10.4\" stroke-dasharray=\"1.6 1.6\"/><path d=\"M6.2 16.6h10.4\" opacity=\".35\"/>",
+ "janela": "<rect x=\"4\" y=\"2.6\" width=\"12\" height=\"12.6\" rx=\".8\"/><path d=\"M10 2.6v12.6\"/><path d=\"M2.6 15.2h14.8M3.6 17.4h12.8\"/><path d=\"M8.6 8v2M11.4 8v2\"/>",
+ "escada": "<rect x=\"4.4\" y=\"2.6\" width=\"11.2\" height=\"14.8\" rx=\".8\"/><path d=\"M4.4 5.6h11.2M4.4 8.6h11.2M4.4 11.6h11.2M4.4 14.6h11.2\" opacity=\".6\"/><path d=\"M10 16.2V4.2M8.4 5.8 10 4.2l1.6 1.6\"/>",
+ "rampa": "<path d=\"M2.6 16.4h14.8L2.6 8z\"/>",
+ "tubo": "<path d=\"M4.6 6h10.4M4.6 14h10.4\"/><ellipse cx=\"15\" cy=\"10\" rx=\"2.2\" ry=\"4\"/><path d=\"M4.6 6a2.2 4 0 0 0 0 8\"/><path d=\"M8 6v8M11 6v8\" opacity=\".35\"/>",
+ "duto": "<path d=\"M6 9h11.4v5.4H6z\"/><path d=\"M2.6 6.4 6 9v5.4l-3.4-2.6z\"/><path d=\"M2.6 6.4h11.4l3.4 2.6\"/><path d=\"M8.4 11.7h6M12.8 10.4l1.6 1.3-1.6 1.3\"/>",
+ "raio": "<path d=\"M11.4 2.6 4.6 11.2h5l-1 6.2 6.8-8.6h-5z\"/>",
+ "vaso": "<path d=\"M3 3.4h4.4v6H3z\"/><path d=\"M3 9.4h14\"/><path d=\"M4.4 9.4c0 3.2 2.6 5 5.6 5s5.4-1.6 6-5\"/><path d=\"M7.4 14.2l-.6 3.2h5.4l-.6-3.2\"/>",
+ "forro": "<path d=\"M2.6 4.4h14.8\"/><path d=\"M4.4 4.4v3M15.6 4.4v3\"/><rect x=\"2.6\" y=\"7.4\" width=\"14.8\" height=\"3\" rx=\".6\"/><path d=\"M7.4 7.4v3M12.6 7.4v3\"/>",
+ "mobilia": "<path d=\"M5 9.4V4.4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v5\"/><path d=\"M3.4 9.4h13.2v3.4H3.4zM5 12.8v4.6M15 12.8v4.6\"/>",
+ "fundacao": "<path d=\"M2.6 6h14.8\"/><path d=\"M2.6 6l1.4-1.4M5.4 6l1.4-1.4M13.2 6l1.4-1.4M16 6l1.4-1.4\" opacity=\".55\"/><path d=\"M8.6 2.6V8M11.4 2.6V8\"/><path d=\"M4.4 8h11.2v3.4H4.4z\"/><path d=\"M6.6 11.4v6M13.4 11.4v6\"/>",
+ "caixa": "<path d=\"M3 6.4 10 3l7 3.4v7.2L10 17l-7-3.4z\"/><path d=\"M3 6.4 10 9.8l7-3.4M10 9.8V17\"/>"
+};
+function auIc(n,tam){
+  const p=IC[n]; if(!p) return ''; const t=tam||16;
+  return '<svg class="auIc" viewBox="0 0 20 20" width="'+t+'" height="'+t+'" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
+}
+const _esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+// Troca emoji por ícone nos nós de texto dentro de botões/rótulos de `raiz`.
+// mapa = {emoji: nomeDoIcone}. Idempotente: depois de trocado, não sobra o que trocar.
+function auIcTrocar(raiz, mapa, sel){
+  if(!raiz) return 0;
+  const S=sel||'button,.tb,label,.sr-btn';
+  const chaves=Object.keys(mapa).sort((a,b)=>b.length-a.length);
+  const re=new RegExp(chaves.map(k=>_esc(k)+'️?').join('|'),'g');
+  const alvos=(raiz.matches&&raiz.matches(S))?[raiz]:[];
+  raiz.querySelectorAll(S).forEach(e=>alvos.push(e));
+  let n=0;
+  alvos.forEach(el=>{
+    const w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nos=[];
+    while(w.nextNode()){
+      const t=w.currentNode;
+      if(t.parentElement && t.parentElement.closest('select,option,textarea,input,.auIcW')) continue;
+      re.lastIndex=0; if(re.test(t.nodeValue)) nos.push(t);
+    }
+    nos.forEach(t=>{
+      const v=t.nodeValue, frag=document.createDocumentFragment(); let ult=0, m; re.lastIndex=0;
+      while((m=re.exec(v))){
+        if(m.index>ult) frag.appendChild(document.createTextNode(v.slice(ult,m.index)));
+        const sp=document.createElement('span'); sp.className='auIcW'; sp.innerHTML=auIc(mapa[m[0].replace('️','')]);
+        frag.appendChild(sp); ult=m.index+m[0].length; n++;
+      }
+      if(ult<v.length) frag.appendChild(document.createTextNode(v.slice(ult)));
+      t.parentNode.replaceChild(frag,t);
+    });
+  });
+  return n;
+}
+window.AU_IC=IC; window.auIc=auIc; window.auIcTrocar=auIcTrocar;
+})();
