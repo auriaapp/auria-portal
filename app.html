@@ -1248,6 +1248,7 @@ body.vz-comp .rvAnT{padding:3px 9px}
                 <button onclick="fCalcular('volume')">Volume <span style="color:var(--mut)">m³</span></button>
                 <button onclick="fCalcular('comprimento')" style="grid-column:1/-1">Comprimento <span style="color:var(--mut)">m linear</span></button>
               </div>
+              <div class="fres" id="fCalcRes" style="display:none;margin-top:8px"><span class="meta" id="fCalcMeta"></span></div>
               <div class="fsv">
                 <div class="fsvtabs" id="fSvTabs"><button class="on" onclick="fSetTab('mine')">Meus</button><button onclick="fSetTab('team')">Da equipe</button></div>
                 <div id="fSvList"></div>
@@ -5686,9 +5687,11 @@ function fFiltroDrag(ev){
   function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); }
   document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
 }
-function fSetComb(c){ FILT.comb=c; const seg=$('fComb'); if(seg)[...seg.children].forEach((b,i)=>b.classList.toggle('on',(i===0)===(c==='all'))); }
+function fSetComb(c){ FILT.comb=c; fCalcLimpar(); const seg=$('fComb'); if(seg)[...seg.children].forEach((b,i)=>b.classList.toggle('on',(i===0)===(c==='all'))); }
 function _fDiscs(){ try{ return (F3D&&F3D.modelos||[]).map(m=>m.disciplina||m.nome).filter(Boolean); }catch(_){ return []; } }
+function fCalcLimpar(){ const b=$('fCalcRes'); if(b) b.style.display='none'; }
 function fRenderConds(){
+  fCalcLimpar();
   const box=$('fConds'); if(!box) return; box.innerHTML='';
   if(!FILT.conds.length){ box.innerHTML='<div style="font-size:12px;color:var(--mut);padding:5px 2px">Sem condições — clique em “+ condição” ou peça para a IA.</div>'; return; }
   FILT.conds.forEach((c,i)=>box.appendChild(fCondRow(c,i)));
@@ -5765,6 +5768,7 @@ async function fResolverPav(conds){
   return out;
 }
 async function fAplicar(kind){
+  fCalcLimpar();
   if(!F3D||!B3){ f3dDica('Abra um modelo no 3D primeiro.'); return; }
   if(kind==='limpar'){ try{ await B3.limparFiltro(F3D); }catch(_){} $('fCount').textContent='—'; $('fMeta').textContent='Modelo restaurado.'; $('fSwat').style.display='none'; return; }
   const conds=fCondsOk();
@@ -5788,11 +5792,12 @@ async function fCalcular(tipo){
   if(!conds.length){ f3dDica('Monte ao menos uma condição.'); return; }
   const CFG={area:{termo:'area',un:'m²',lbl:'Área'},volume:{termo:'volume',un:'m³',lbl:'Volume'},comprimento:{termo:'length',un:'m',lbl:'Comprimento'}}[tipo];
   f3dProcessando(true); fSpin(true,'Calculando '+CFG.lbl.toLowerCase()+'…'); $('fMeta').textContent='Filtrando…';
+  const box=$('fCalcRes'), cm=$('fCalcMeta'); const res=(h,t)=>{ cm.innerHTML=h; cm.title=t||''; box.style.display='flex'; };
   try{
     const porMod=await B3.filtrar(F3D,{comb:FILT.comb,conds: await fResolverPav(conds)});
     let n=0; for(const ids of Object.values(porMod)) n+=(ids?ids.length:0);
-    $('fCount').textContent=n.toLocaleString('pt-BR');
-    if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; f3dProcessando(false); fSpin(false); return; }
+    $('fCount').textContent=n.toLocaleString('pt-BR'); $('fMeta').textContent=n?'elemento(s) na regra.':'';
+    if(!n){ $('fMeta').textContent='nenhum elemento corresponde.'; fCalcLimpar(); f3dProcessando(false); fSpin(false); return; }
     // Soma SEPARADA por propriedade (NetArea × GrossArea × Área…) — mostra qual
     // usar em vez de misturar. Headline na preferida (Net); as outras ficam visíveis.
     const lista=await B3.somarPorNome(F3D, porMod, CFG.termo);
@@ -5808,7 +5813,7 @@ async function fCalcular(tipo){
         for(let p=0;p<ids.length;p+=500){ try{ v+=+(await md.getItemsVolume(ids.slice(p,p+500)))||0; }catch(_){} } }
       if(v>0) lista.push({ nome:'malha 3D', soma:v, n });
     }
-    if(!lista.length){ $('fMeta').textContent='esses elementos não têm '+CFG.lbl.toLowerCase()+' registrada.'; f3dProcessando(false); fSpin(false); return; }
+    if(!lista.length){ res(esc('Esses elementos não têm '+CFG.lbl.toLowerCase()+' registrada.')); f3dProcessando(false); fSpin(false); return; }
     const fmt=v=>(Math.round(v*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
     const head = tipo==='area' && B3.rankArea ? lista.slice().sort((a,b)=>B3.rankArea(b.nome)-B3.rankArea(a.nome))[0]
                : (lista.find(g=>/net/i.test(g.nome))||lista[0]);   // item 57: parede = NetSideArea, não a pegada
@@ -5816,8 +5821,8 @@ async function fCalcular(tipo){
     let html='<b style="color:var(--accent2);font-size:13px">'+CFG.lbl+' = '+fmt(head.soma)+' '+CFG.un+'</b> '
       +'<span style="color:var(--mut)">('+esc(head.nome)+' · '+head.n+'/'+n+')</span>';
     if(outras.length) html+='<br><span style="color:var(--mut);font-size:10.5px">outras fontes: '+outras.slice(0,3).map(g=>esc(g.nome)+' '+fmt(g.soma)).join(' · ')+'</span>';
-    const meta=$('fMeta'); meta.innerHTML=html; meta.title=lista.map(g=>g.nome+': '+fmt(g.soma)+' '+CFG.un+' ('+g.n+' elem.)').join('\n');
-  }catch(e){ console.warn('calc:',e); $('fMeta').textContent='Erro ao calcular: '+((e&&e.message)||e); }
+    res(html, lista.map(g=>g.nome+': '+fmt(g.soma)+' '+CFG.un+' ('+g.n+' elem.)').join('\n'));
+  }catch(e){ console.warn('calc:',e); res(esc('Erro ao calcular: '+((e&&e.message)||e))); }
   f3dProcessando(false); fSpin(false);
 }
 // Exportar planilha (.csv) com os dados por elemento do filtro.
