@@ -367,6 +367,10 @@ tr:hover td{background:var(--gray-light)}
           </div>
           <div id="saCards" class="kpi-row" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))"><div class="loading-row"><div class="spinner"></div></div></div>
           <div class="tbl-wrap" style="margin-top:18px">
+            <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px"><div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Vencimentos</div><span style="font-size:11.5px;color:var(--text-soft)" id="saServicos"></span><button class="btn-secondary" style="margin-left:auto" onclick="vencNovo()">+ Adicionar</button></div>
+            <div style="padding:0 22px 18px;overflow-x:auto" id="saVenc"></div>
+          </div>
+          <div class="tbl-wrap" style="margin-top:18px">
             <div style="padding:14px 22px 6px;display:flex;align-items:center;gap:10px"><div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.05em">Custo mensal &mdash; hoje e previsão</div><span style="font-size:11.5px;color:var(--text-soft);margin-left:auto" id="saCustoNota"></span></div>
             <div style="padding:0 22px 18px;overflow-x:auto" id="saCusto"></div>
           </div>
@@ -1134,8 +1138,50 @@ function saCusto(P, sbB, dbB, r2B, semPlano){
 function saTaxa(pts){ if(pts.length<2) return null; const n=pts.length, mx=pts.reduce((s,p)=>s+p[0],0)/n, my=pts.reduce((s,p)=>s+p[1],0)/n;
   let a=0,b=0; pts.forEach(([x,y])=>{a+=(x-mx)*(y-my); b+=(x-mx)*(x-mx);}); return b? a/b*30 : null; }
 
+// Agenda de vencimentos: e-mail a 60/30/15/7/1 dia(s) e no dia (ceo_vencimentos_avisar).
+async function vencCarregar(){
+  const [rv, rs] = await Promise.all([
+    sb.from('ceo_vencimento_auria').select('id,item,fornecedor,vence_em,valor').eq('ativo',true).order('vence_em',{ascending:true,nullsFirst:true}),
+    sb.from('ceo_saude_ping_auria').select('servico,falhas').order('servico')
+  ]);
+  setHTML('saServicos', (rs.data||[]).map(s=>esc(s.servico)+(s.falhas?' <b style="color:var(--red)">fora do ar</b>':' ok')).join(' · '));
+  if(rv.error){ setHTML('saVenc','<div style="padding:10px 0;color:var(--red)">Não foi possível ler a agenda: '+esc(rv.error.message)+'</div>'); return; }
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const inp='padding:6px 8px;border:1px solid var(--gray-border);border-radius:6px;font-family:inherit;font-size:13px';
+  setHTML('saVenc','<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="text-align:left;color:var(--text-soft);font-size:11.5px"><th style="padding:6px 8px 6px 0">Item</th><th>Fornecedor</th><th>Vence em</th><th>Situação</th><th>Valor</th><th></th></tr></thead><tbody>'
+    +(rv.data||[]).map(v=>{
+      const dias=v.vence_em?Math.round((new Date(v.vence_em+'T00:00:00')-hoje)/86400000):null;
+      const sit=dias===null?'<b style="color:var(--red)">sem data</b>':dias<0?'<b style="color:var(--red)">venceu há '+(-dias)+' dia(s)</b>':dias<=30?'<b style="color:var(--red)">'+dias+' dia(s)</b>':dias+' dias';
+      return '<tr style="border-top:1px solid var(--gray-border)"><td style="padding:6px 8px 6px 0">'+esc(v.item)+'</td><td>'+esc(v.fornecedor||'')+'</td>'
+        +'<td><input type="date" style="'+inp+'" value="'+esc(v.vence_em||'')+'" onchange="vencSalvar(\''+v.id+'\',\'vence_em\',this.value)"></td>'
+        +'<td>'+sit+'</td>'
+        +'<td><input style="'+inp+';width:110px" value="'+esc(v.valor||'')+'" onchange="vencSalvar(\''+v.id+'\',\'valor\',this.value)"></td>'
+        +'<td style="text-align:right"><button class="btn-secondary" onclick="vencRemover(\''+v.id+'\')">Remover</button></td></tr>';
+    }).join('')+'</tbody></table>');
+}
+async function vencSalvar(id,campo,valor){
+  const upd={ [campo]:valor||null }; if(campo==='vence_em') upd.ultimo_aviso=null;   // data nova: os avisos recomeçam
+  const r=await sb.from('ceo_vencimento_auria').update(upd).eq('id',id);
+  if(r.error){ alert('Não foi possível salvar: '+r.error.message); return; }
+  vencCarregar();
+}
+async function vencNovo(){
+  const item=(prompt('O que vence? (ex.: Cartão de cobrança da Cloudflare)','')||'').trim(); if(!item) return;
+  const fornecedor=(prompt('Fornecedor:','')||'').trim();
+  const r=await sb.from('ceo_vencimento_auria').insert({ item, fornecedor:fornecedor||null });
+  if(r.error){ alert('Não foi possível adicionar: '+r.error.message); return; }
+  vencCarregar();
+}
+async function vencRemover(id){
+  if(!confirm('Tirar este item da agenda? Ele deixa de gerar avisos.')) return;
+  const r=await sb.from('ceo_vencimento_auria').update({ ativo:false }).eq('id',id);
+  if(r.error){ alert('Não foi possível remover: '+r.error.message); return; }
+  vencCarregar();
+}
+
 async function saudeCarregar(){
   setHTML('saCards','<div class="loading-row" style="grid-column:1/-1"><div class="spinner"></div></div>');
+  vencCarregar();
   // 1) no ar? (mesma função que o UptimeRobot consulta)
   let hl={ok:false,ms:null};
   try{ const t0=performance.now(); const r=await fetch(SUPA_URL+'/functions/v1/health',{cache:'no-store'}); const j=await r.json(); hl={ok:r.ok&&j.status==='AURIA_OK', ms:Math.round(performance.now()-t0)}; }catch(_){}
