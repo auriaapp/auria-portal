@@ -1614,7 +1614,7 @@ async function carregarDocs(){
     const revIds=revs.map(x=>x.id);
     if(revIds.length){
       // 'rotacao' (item 60) é coluna nova: se o SQL ainda não rodou, cai para a lista sem ela.
-      const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,frag_status,frag_path,frag_error,frag_progress,frag_inicio,frag_heartbeat,frag_tentativas';
+      const COLS='id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,removido_em,frag_status,frag_path,frag_error,frag_progress,frag_inicio,frag_heartbeat,frag_tentativas';
       let q = await _inLotes(l=>sb.from('cde_arquivo_auria').select(COLS+',rotacao,ifc_schema').in('revisao_id',l), revIds);
       if(q.error) q = await _inLotes(l=>sb.from('cde_arquivo_auria').select(COLS+',rotacao').in('revisao_id',l), revIds);
       if(q.error) q = await _inLotes(l=>sb.from('cde_arquivo_auria').select(COLS).in('revisao_id',l), revIds);
@@ -1624,7 +1624,8 @@ async function carregarDocs(){
   // Anexa os arquivos a cada revisão (o card mostra os formatos; o recebimento
   // sabe o que já existe para não recusar um formato novo da mesma revisão).
   const porRev={}; arqs.forEach(a=>{ (porRev[a.revisao_id]=porRev[a.revisao_id]||[]).push(a); });
-  revs.forEach(r=>{ r.arqs = porRev[r.id]||[]; });
+  // arqs = o que existe de fato; arqsTodos inclui os removidos (o nome continua ocupado).
+  revs.forEach(r=>{ r.arqsTodos = porRev[r.id]||[]; r.arqs = r.arqsTodos.filter(a=>!a.removido_em); });
   const porDoc={}; revs.forEach(r=>{ (porDoc[r.documento_id]=porDoc[r.documento_id]||[]).push(r); });
   DOCS = (docs||[]).map(d=>{
     const rs=(porDoc[d.id]||[]).sort((a,b)=> new Date(b.recebido_em||0)-new Date(a.recebido_em||0));
@@ -7550,7 +7551,7 @@ async function cdeIndexarPendentes(){
   _bcPendentes=docs.length;
   docs.forEach(d=>_bcEnfileirar(async ()=>{
     const { data:revs } = await sb.from('cde_revisao_auria')
-      .select('id,revisao').eq('documento_id',d.id).order('revisao',{ascending:false}).limit(1);
+      .select('id,revisao').eq('documento_id',d.id).neq('status','DEVOLVIDO').order('revisao',{ascending:false}).limit(1);
     const rev=revs&&revs[0]; if(!rev) return;
     const { data:arqs } = await sb.from('cde_arquivo_auria')
       .select('storage_path,storage_provider,extensao,eh_principal').eq('revisao_id',rev.id);
@@ -7785,7 +7786,7 @@ function acaoDoGrupo(g){
   // A revisão já existe. Uma prancha tem vários formatos (PDF, DXF, DWG…) com o
   // MESMO nome: aceitar os formatos que ainda não estão nesta revisão em vez de
   // recusar o lote inteiro como duplicado. Só é 'dup' se nada for novo.
-  const tem=new Set((rev.arqs||[]).map(a=>(a.nome||'').toLowerCase()));
+  const tem=new Set((rev.arqsTodos||rev.arqs||[]).map(a=>(a.nome||'').toLowerCase()));
   const novos=g.arquivos.filter(f=>!tem.has(f.name.toLowerCase()));
   if(!novos.length) return {tipo:'dup',txt:'Arquivo(s) já enviado(s)',doc,rev};
   return {tipo:'add',txt:'Adicionar formato',doc,rev,novos};
@@ -8037,10 +8038,12 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if($('ov').classL
 
 async function renderDetalhe(){
   const d=DOC_SEL; if(!d) return;
-  const revIds=(d.revs||[]).map(r=>r.id); let arqs=[], evs=[];
+  const revIds=(d.revs||[]).map(r=>r.id); let arqs=[], evs=[], removiveis=new Set();
   if(revIds.length){
+    const devIds=(d.revs||[]).filter(r=>r.status==='DEVOLVIDO').map(r=>r.id);
+    if(devIds.length && !SEM_ESCRITA){ const rr=await sb.rpc('cde_revs_removiveis',{ p_revs:devIds }); removiveis=new Set(rr.data||[]); }
     const [ra, re] = await Promise.all([
-      sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal').in('revisao_id',revIds),
+      sb.from('cde_arquivo_auria').select('id,revisao_id,nome,extensao,tamanho_bytes,storage_path,storage_provider,eh_principal,removido_em').in('revisao_id',revIds),
       sb.from('cde_evento_auria').select('revisao_id,acao,de_status,para_status,usuario_nome,nota,quando').in('revisao_id',revIds).order('quando',{ascending:false}).limit(40)
     ]);
     arqs=ra.data||[]; evs=re.data||[];
@@ -8068,17 +8071,22 @@ async function renderDetalhe(){
     // Ramo obra: o botão de baixar só existe na revisão liberada. Na em análise
     // (que só o eng. chefe vê) fica o motivo no lugar do botão.
     const dl = statusBaixavel(r.status);
-    const btnDl = a => dl
+    const btnDl = a => a.removido_em
+      ? `<span style="font-size:11px;color:var(--mut);font-weight:700" title="Removido em ${esc(fmtData(a.removido_em))}">removido</span>`
+      : dl
       ? `<button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button>`
       : `<span style="font-size:11px;color:#7C3E06;font-weight:700" title="Só a revisão liberada para obra pode ser baixada">não liberado</span>`;
     const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span>${btnDl(a)}</div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
-    const trans=TRANSICOES[r.status]||[]; const podeAgir=!SEM_ESCRITA&&idx===0&&r.status!=='SUBSTITUIDO';
-    const acts=podeAgir&&trans.length?`<div class="rev-acts"><span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}</div>`:'';
+    // Revisão sem nenhum arquivo não tem o que reabrir: o reenvio é por revisão nova.
+    const semArq=files.length>0&&files.every(a=>a.removido_em);
+    const trans=semArq?[]:(TRANSICOES[r.status]||[]); const podeAgir=!SEM_ESCRITA&&idx===0&&r.status!=='SUBSTITUIDO';
+    const remover=removiveis.has(r.id)?`<button class="btn sec sm" style="border-color:#A32D2D;color:#A32D2D" onclick="removerArquivosRev('${r.id}')">Remover arquivos (defeito)</button>`:'';
+    const acts=(podeAgir&&trans.length)||remover?`<div class="rev-acts">${podeAgir&&trans.length?`<span class="lbl">Mover para:</span>${trans.map(([to,label])=>`<button class="btn sm" style="background:${STMAP[to]?STMAP[to].cor:'var(--navy)'};color:#fff" onclick="mudarStatus('${r.id}','${to}')">${esc(label)}</button>`).join('')}`:''}${remover}</div>`:'';
     return `<div class="rev-item"><div class="rev-top"><span class="rv">${esc(r.revisao)}</span><span class="st" style="background:${s.cor}">${esc(s.rotulo)}</span><span class="dt">recebida ${fmtData(r.recebido_em)}</span></div>${r.motivo?`<div class="rev-motivo">✎ <b>O que mudou:</b> ${esc(r.motivo)}</div>`:''}${r.ressalvas?`<div class="ressalva">⚠ Ressalvas: ${esc(r.ressalvas)}</div>`:''}<div class="rev-files">${filesHtml}</div>${acts}</div>`;
   }).join('') || '<div style="padding:14px;color:var(--mut)">Sem revisões.</div>';
 
   // Histórico / log do documento
-  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada', titulo:'✎ Descrição editada', renomeado:'<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.6 4.2v5.6l7.8 7.8 5.6-5.6L8.2 4.2z"/><circle cx="6" cy="7.6" r="1.2"/></svg> Disciplina renomeada', recodificado:'✎ Recodificada' };
+  const ACAO={ recebeu:'📥 Recebido', status:'🔁 Status', recepcao:'✓ Recepção confirmada', titulo:'✎ Descrição editada', renomeado:'<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.6 4.2v5.6l7.8 7.8 5.6-5.6L8.2 4.2z"/><circle cx="6" cy="7.6" r="1.2"/></svg> Disciplina renomeada', recodificado:'✎ Recodificada', arquivos_removidos:'🗑 Arquivos removidos' };
   const logHtml = evs.length ? `<div class="det-log"><h4>Histórico</h4>${evs.map(e=>{
       let txt=ACAO[e.acao]||e.acao;
       if(e.acao==='status') txt='🔁 '+(STMAP[e.de_status]?STMAP[e.de_status].rotulo:e.de_status||'')+' → '+(STMAP[e.para_status]?STMAP[e.para_status].rotulo:e.para_status||'');
@@ -8135,8 +8143,25 @@ async function mudarStatus(revId,novo){
       confirmarRecepcao(true);
     }
     if(DOC_SEL){ await renderDetalhe(); ev.then(()=>{ if(DOC_SEL) renderDetalhe(); },()=>{}); } else fecharDoc();
+    if(novo==='DEVOLVIDO'){
+      const { data:rm }=await sb.rpc('cde_revs_removiveis',{ p_revs:[revId] });
+      if(rm&&rm.length) await removerArquivosRev(revId);
+    }
     if(RAMO_OBRA===false && typeof filaObraCarregar==='function'){ /* nada: fila é do perfil obra */ }
   }catch(e){ const m=(e&&e.message)||String(e); alert(/permission|row-level|policy|42501/i.test(m)?'Sem permissão para alterar o status.':'Erro: '+m); }
+}
+
+// Devolvida por defeito do arquivo: apaga os arquivos e mantém o registro da revisão.
+// A regra de quem pode está no banco (cde_rev_removivel).
+async function removerArquivosRev(revId){
+  if(!confirm('O arquivo desta revisão está com defeito?\n\nOK remove os arquivos em definitivo. O histórico da revisão continua, e o projetista reenvia com uma revisão nova.\n\nCancelar mantém os arquivos.')) return;
+  try{
+    const { data, error } = await sb.functions.invoke('cde-r2', { body:{ action:'remover-revisao', revisaoId:revId } });
+    if(error){ let m=error.message; try{ const jb=await error.context.json(); if(jb&&jb.error)m=jb.error; }catch(_){} throw new Error(m); }
+    await carregarDocs(); renderRail(); renderNav();
+    if(DOC_SEL){ DOC_SEL=DOCS.find(x=>x.id===DOC_SEL.id)||null; if(DOC_SEL) await renderDetalhe(); }
+    _cdeToast(data&&data.falhas&&data.falhas.length ? 'Revisão marcada, mas '+data.falhas.length+' arquivo(s) não saíram do armazenamento.' : '✓ Arquivos removidos.');
+  }catch(e){ alert('Não foi possível remover: '+((e&&e.message)||e)); }
 }
 
 // ── Marcador do pin — MESMA estética do Auria App (balão numerado + ponteiro,
