@@ -4803,7 +4803,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-04a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-05a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5401,7 +5401,19 @@ window.addEventListener('load', initSideResize);
 // Padrão Solibri: marcar/desmarcar disciplina não reprocessa a cena inteira.
 // Faz diff entre o que já está carregado e o que o usuário escolheu, adiciona
 // só os novos, remove só os que saíram. Preserva a posição da câmera.
+// Uma sincronização por vez: clique feito durante uma carga marca _sincDeNovo e é
+// atendido quando ela termina. Sem isso, duas rodadas viam o mesmo "carregados"
+// e a primeira carga (F3D ainda nulo) começava de novo do zero.
+let _sincRodando=false, _sincDeNovo=false, _f3dAbrindo=null;
 async function f3dSincronizarSelecao(){
+  if(_sincRodando){ _sincDeNovo=true; return; }
+  _sincRodando=true;
+  try{
+    do{ _sincDeNovo=false; await _f3dSincronizar(); }while(_sincDeNovo && F3D_MODO);
+  }finally{ _sincRodando=false; }
+}
+async function _f3dSincronizar(){
+  if(_f3dAbrindo){ try{ await _f3dAbrindo; }catch(_){} }
   // Primeira carga (nada aberto ainda) — usa o caminho completo, que também
   // trata setup de canvas, callbacks e restauração de config.
   if(!F3D){ return f3dAbrirSelecionados(); }
@@ -5427,15 +5439,13 @@ async function f3dSincronizarSelecao(){
   if(novos.length){
     const msg=(t)=>{ const el=$('bimMsg'); if(el){ el.textContent=t; el.style.display='flex'; } };
     msg(novos.length>1 ? `Carregando ${novos.length} modelos…` : `Carregando ${novos[0].nome}…`);
-    try{
-      const specs = novos.map(m => ({ ...m, id: m.arquivoId, url: () => cdeSignedUrlApp(m.path, 'r2') }));
-      await Promise.all(specs.map(s => B3.adicionarModelo(F3D, s)));
-    }catch(e){
-      console.warn('adicionar modelo:', e);
-      msg('Falhou ao adicionar: '+((e&&e.message)||e));
-      return;
-    }
-    const mel=$('bimMsg'); if(mel) mel.style.display='none';
+    const specs = novos.map(m => ({ ...m, id: m.arquivoId, url: () => cdeSignedUrlApp(m.path, 'r2') }));
+    // Um modelo que falha não derruba os outros, e a tela diz qual ficou de fora.
+    const res = await Promise.allSettled(specs.map(s => B3.adicionarModelo(F3D, s)));
+    const falhas = specs.filter((s,i)=>res[i].status==='rejected');
+    res.forEach(r=>{ if(r.status==='rejected') console.warn('adicionar modelo:', r.reason); });
+    if(falhas.length) msg('Falhou ao adicionar: '+falhas.map(s=>s.nome).join(', ')+'. Use Recarregar para tentar de novo.');
+    else { const mel=$('bimMsg'); if(mel) mel.style.display='none'; }
   }
   f3dAbrirBotaoSync();
   f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
@@ -5478,12 +5488,13 @@ async function f3dAbrirSelecionados(){
   _bimSpinner(false);   // some com o círculo de carregamento NATIVO do xeokit (é um DOM à parte do canvas; ficava preso atrás do F3D)
   cv.style.display='block';
   try{
-    F3D = await f3dCarregar(escolhidos, cv, msg);
+    _f3dAbrindo = f3dCarregar(escolhidos, cv, msg);
+    F3D = await _f3dAbrindo;
   }catch(e){
     console.warn('3D CDE:', e);
     msg('Não foi possível abrir: '+((e&&e.message)||e));
     return;
-  }
+  }finally{ _f3dAbrindo=null; }
   const m=$('bimMsg'); if(m) m.style.display='none';
   f3dAbrirBotaoSync();   // botão passa a mostrar "Recarregar modelo(s)"
   renderAnalises();      // "Salvar análise" passa a valer também só com o 3D

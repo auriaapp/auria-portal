@@ -188,11 +188,31 @@ let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
 //  crítico: NÃO chama enquadrar() — quem já está posicionado numa parte da
 //  cena mantém a mesma vista quando outra disciplina entra. Só a primeira
 //  chamada (V.modelos vazio) enquadra, para o modelo aparecer no centro.
-export async function adicionarModelo(V, m, msg){
+//  Vários modelos podem entrar ao mesmo tempo. Por isso aqui NÃO se incrementa
+//  V._job: isso cancelava em silêncio todo modelo ainda baixando, e só o último
+//  aparecia. V._job muda apenas em carregar()/descartar(), que trocam a cena.
+//  O download é paralelo; a montagem, um modelo por vez (como em carregar()).
+export function adicionarModelo(V, m, msg){
+  const id = m.id||m.nome;
+  V._entrando = V._entrando || new Map();
+  if(V._entrando.has(id)) return V._entrando.get(id);   // pedido repetido: mesma carga
+  const p = _adicionar(V, m, msg).finally(()=>V._entrando.delete(id));
+  V._entrando.set(id, p);
+  return p;
+}
+async function _adicionar(V, m, msg){
   const aviso = msg || (()=>{});
-  const meu = ++V._job;
+  const meu = V._job;
   aviso('Baixando '+(m.nome||'modelo')+'…');
   const bytes = await _baixar(m);
+  if(V._job!==meu || !V.vivo) return null;
+  const antes = V._filaCarga || Promise.resolve();
+  let liberar; V._filaCarga = new Promise(r=>{ liberar=r; });
+  await antes;
+  try{ return await _montar(V, m, bytes, meu, aviso); }
+  finally{ liberar(); }
+}
+async function _montar(V, m, bytes, meu, aviso){
   if(V._job!==meu || !V.vivo) return null;
   aviso('Carregando '+(m.nome||'modelo')+'…');
   const model = await V.fragments.load(bytes, {
