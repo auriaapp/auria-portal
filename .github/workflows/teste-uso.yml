@@ -16,6 +16,11 @@ on:
   schedule:
     - cron: '30 9,15,21 * * *'   # 06:30, 12:30 e 18:30 em Brasília
   workflow_dispatch:
+    inputs:
+      simular_falha:
+        description: 'Simular uma falha para testar o alerta por e-mail'
+        type: boolean
+        default: false
 
 jobs:
   usar:
@@ -24,6 +29,7 @@ jobs:
     env:
       ROBO_EMAIL: ${{ secrets.ROBO_EMAIL }}
       ROBO_SENHA: ${{ secrets.ROBO_SENHA }}
+      SIMULAR_FALHA: ${{ inputs.simular_falha }}
     steps:
       - name: Conferir usuário de teste
         run: |
@@ -58,6 +64,7 @@ jobs:
           const { ROBO_EMAIL, ROBO_SENHA } = process.env;
 
           async function rodada(n) {
+            if (process.env.SIMULAR_FALHA === 'true') throw new Error('Falha simulada a pedido, para testar este alerta. O Auria está normal.');
             const r = await fetch('http://auria.build/', { redirect: 'manual' });
             if (r.status !== 301 || !(r.headers.get('location') || '').startsWith('https://'))
               throw new Error(`http://auria.build não redireciona para https (HTTP ${r.status})`);
@@ -125,11 +132,13 @@ jobs:
           [ -f resultado.json ] || echo '{"ok":false,"erro":"O teste não chegou a rodar (falha ao preparar o navegador)."}' > resultado.json
           OK=$(python3 -c "import json;print(str(json.load(open('resultado.json'))['ok']).lower())")
           ERRO=$(python3 -c "import json;print(json.load(open('resultado.json')).get('erro') or '')")
-          psql "$PROD" -q -v j="$(cat resultado.json)" -c "insert into public.ops_status_auria (tipo, ok, dados) values ('uso', $OK, :'j'::jsonb)"
+          FALHOU=0
+          echo "insert into public.ops_status_auria (tipo, ok, dados) values ('uso', $OK, :'j'::jsonb);" | psql "$PROD" -q -v ON_ERROR_STOP=1 -v j="$(cat resultado.json)" || FALHOU=1
           if [ "$OK" != "true" ]; then
-            psql "$PROD" -q -v e="$ERRO" <<'SQL'
+            psql "$PROD" -q -v ON_ERROR_STOP=1 -v e="$ERRO" <<'SQL' || FALHOU=1
           select public.ceo_alerta('⚠️ Auria — cliente não conseguiria abrir um modelo', 'Teste de uso falhou',
             '<p style="margin:0 0 12px;color:#334155;font-size:14px">O teste automático entrou no Auria e não conseguiu abrir um modelo BIM, nem na segunda tentativa.</p><p style="margin:0 0 12px;color:#334155;font-size:14px"><b>Motivo:</b> '
             || public.auria_esc(:'e') || '</p><p style="margin:0 0 12px;color:#334155;font-size:14px">A tela do momento da falha está nos artefatos da execução, em GitHub › Actions › Teste de uso.</p>');
           SQL
           fi
+          exit $FALHOU
