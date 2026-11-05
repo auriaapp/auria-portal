@@ -155,7 +155,9 @@ export async function carregar(V, modelos, msg){
     aviso(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
     const model = await V.fragments.load(bytes, { modelId:(opts_id(V))+':'+(m.id||m.nome), camera:V.camera });
     if(V._job!==meu || !V.vivo) return;
-    V.modelos.push({ ...m, model, visivel:true });
+    const w={ ...m, model, visivel:true };
+    _ligarCor(V, w);
+    V.modelos.push(w);
     V.scene.add(model.object);
   }
   redimensionar(V);
@@ -221,6 +223,7 @@ async function _montar(V, m, bytes, meu, aviso){
   });
   if(V._job!==meu || !V.vivo){ try{ model.dispose(); }catch(_){} return null; }
   const wrapper = { ...m, model, visivel:true };
+  _ligarCor(V, wrapper);
   const eraVazio = V.modelos.length === 0;
   V.modelos.push(wrapper);
   V.scene.add(model.object);
@@ -239,6 +242,69 @@ async function _montar(V, m, bytes, meu, aviso){
   // mantém a escolha de ocultar ambientes quando entra um modelo novo na federação
   if(V._espacosOn===false){ try{ await setEspacosVisiveis(V,false); }catch(_){} }
   return wrapper;
+}
+// ── Cor do modelo inteiro (escolhida na lista "Modelos na análise") ──────────
+//  Dezenas de rotinas chamam model.resetHighlight() para limpar um destaque. Em
+//  vez de mexer em cada uma, o wrapper embrulha highlight/resetHighlight: guarda
+//  em x._extras as peças pintadas por cima da cor do modelo, e "limpar" devolve a
+//  cor só a elas. Sem x.cor, as duas funções se comportam como as originais.
+const _VIDRO_OPAC_COR=0.35;   // vidro muda de tom, mas continua transparente
+function _ligarCor(V, x){
+  const m=x.model, hl=m.highlight.bind(m), rs=m.resetHighlight.bind(m);
+  x._hl=hl; x._rs=rs; x._extras=new Set();
+  m.highlight=(ids,mat)=>{
+    if(x.cor){ if(ids) for(const i of ids) x._extras.add(i); else x._tudo=true; }
+    return hl(ids,mat);
+  };
+  m.resetHighlight=async ids=>{
+    if(!x.cor) return rs(ids);
+    if(x._tudo){ x._tudo=false; x._extras.clear(); await rs(); return _pintarBase(V,x); }
+    const alvo=ids?[...ids]:[...x._extras];
+    if(ids) alvo.forEach(i=>x._extras.delete(i)); else x._extras.clear();
+    if(alvo.length) await _pintarBase(V,x,alvo);
+  };
+}
+// Ambientes e aberturas ficam de fora: pintados, viram blocos opacos sobre o modelo.
+async function _idsCor(x){
+  if(!x._corIdsP) x._corIdsP=(async()=>{
+    const m=x.model, todos=await m.getItemsIdsWithGeometry();
+    const fora=new Set(Object.values(await m.getItemsOfCategories([/^IFCSPACE$/,/^IFCOPENINGELEMENT$/])||{}).flat());
+    const vidro=new Set(await _idsVidro(x));
+    return { todos, fora, vidro };
+  })();
+  return x._corIdsP;
+}
+async function _pintarBase(V, x, ids){
+  const { todos, fora, vidro }=await _idsCor(x), T=V.THREE, cor=new T.Color(x.cor);
+  const lista=ids||todos, sol=[], gl=[], sem=[];
+  for(const i of lista){ if(fora.has(i)) sem.push(i); else (vidro.has(i)?gl:sol).push(i); }
+  const op=(V._vidroOpac!=null && V._vidroOpac<1)?V._vidroOpac:_VIDRO_OPAC_COR;
+  if(sem.length && ids) await x._rs(sem);
+  if(sol.length) await x._hl(sol,{ color:cor, renderedFaces:1, opacity:1, transparent:false });
+  if(gl.length) await x._hl(gl,{ color:cor, renderedFaces:1, opacity:op, transparent:true });
+}
+async function _aplicarCor(V, x){
+  x._extras.clear(); x._tudo=false;
+  await x._rs();
+  if(x.cor) await _pintarBase(V,x);
+  const mi=V.modelos.indexOf(x);
+  if(V._colorido) for(const g of (V._cores||[])){   // cor de filtro fica por cima da cor do modelo
+    const lids=g.porMod&&g.porMod[mi]; if(lids&&lids.length) await x.model.highlight(lids,{ color:new V.THREE.Color(g.cor), renderedFaces:1, opacity:1, transparent:false });
+  }
+  await _reaplicarVidroRapido(V);
+  await V.fragments.update(true);
+}
+// cor = '#RRGGBB', ou null para voltar ao material do IFC.
+export function corModelo(V, idBusca, cor){
+  const x=V.modelos.find(y=>(y.arquivoId||y.id||y.nome)===idBusca); if(!x) return Promise.resolve(false);
+  x.cor=cor||null;
+  x._corFila=(x._corFila||Promise.resolve()).then(()=>_aplicarCor(V,x)).catch(e=>console.warn('cor do modelo:',e));
+  return x._corFila;
+}
+// Peça clicada em modelo de tom alaranjado: o laranja da seleção não apareceria.
+function _corSelecao(V, x){
+  if(x&&x.cor){ const h={}; new V.THREE.Color(x.cor).getHSL(h); const d=Math.abs(h.h*360-37); if(Math.min(d,360-d)<25 && h.s>.3) return SELECAO; }
+  return LARANJA;
 }
 // Remove um modelo específico da cena e libera memória.
 export async function descarregarUm(V, idBusca){
@@ -970,7 +1036,7 @@ export async function destacar(V, modelo, ids){
   }
   if(modelo && ids && ids.length){
     try{ await modelo.model.highlight(ids, {
-      color:new T.Color(LARANJA), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
+      color:new T.Color(_corSelecao(V,modelo)), renderedFaces:1, opacity:1, transparent:false }); }catch(_){}
   }
   // Reaplica o vidro se (a) reexibimos ocultos ou (b) o vidro está translúcido —
   // nesse caso clicar EM UM painel de vidro o deixa opaco (highlight opacity:1) e

@@ -679,6 +679,28 @@ body.vz-dir-emp .rvDAtal .srTx{display:none}
 #secPranchas{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
 #secModelosBim{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
 #camList,#modList{max-height:32vh;overflow-y:auto}
+/* seletor de cor com disco (mockups/app_modelo_cor.html) */
+#auCorPop{position:fixed;z-index:130;width:196px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+#auCorPop .h{font-size:10.5px;font-weight:700;color:var(--mut);margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#auCorPop .h b{font-family:Consolas,monospace;color:var(--txt);font-weight:700}
+#auCorPop .roda{position:relative;width:156px;height:156px;margin:0 auto 9px;border-radius:50%;cursor:crosshair;touch-action:none;background:radial-gradient(circle closest-side,#fff,rgba(255,255,255,0)),conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);box-shadow:0 0 0 1px var(--line)}
+#auCorPop .sombra{position:absolute;inset:0;border-radius:50%;background:#000;pointer-events:none}
+#auCorPop .ponto{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.6);pointer-events:none}
+#auCorPop .lin{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+#auCorPop .rot{font-size:10.5px;color:var(--mut);flex:none}
+#auCorPop input[type=range]{flex:1;min-width:0;accent-color:var(--rvLar)}
+#auCorPop .amostra{width:24px;height:24px;border-radius:6px;border:1px solid var(--line);flex:none}
+#auCorPop .hex{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:4px 7px;color:var(--txt);font-family:Consolas,monospace;font-size:12px;outline:none}
+#auCorPop .hex:focus{border-color:var(--rvLar)}
+#auCorPop .sub2{font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--mut);margin:0 0 5px}
+#auCorPop .g{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:8px}#auCorPop .g:last-child{margin-bottom:0}
+#auCorPop .g button{width:16px;height:16px;border-radius:5px;cursor:pointer;border:1.5px solid var(--line);padding:0}
+#auCorPop .g button.sel{border-color:#fff}
+html[data-tema=claro] #auCorPop .g button.sel{border-color:#15233B}
+/* barra de cor do modelo: botão com área de clique maior que o traço */
+#modList .rvPr{grid-template-columns:22px 14px 1fr auto;gap:5px}
+.rvCorB{width:14px;height:34px;border:none;background:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:5px;outline:none}
+.rvCorB:hover .bar,.rvCorB:focus-visible .bar{width:8px;box-shadow:0 0 0 1.5px var(--rvLar)}
 /* divisor entre "em análise" e Arquivos do CDE (mockups/app_modelos_cor_divisor.html) */
 .rvDiv{flex:none;height:16px;margin:-6px 0;position:relative;user-select:none;display:flex;align-items:center;justify-content:center;cursor:row-resize;touch-action:none;outline:none}
 .rvDiv::before{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--line)}
@@ -1913,7 +1935,8 @@ function _anColetar(){
   }));
   const modelos=((F3D && F3D.modelos)||[]).map(x=>({
     documento_id:x.documentoId||null, arquivo_id:x.arquivoId||null, revisao_id:x.revisaoId||null,
-    codigo:x.nome||'', revisao:x.revisao||'', disciplina:x.disciplina||''
+    codigo:x.nome||'', revisao:x.revisao||'', disciplina:x.disciplina||'',
+    cor:RV_MOD_COR.get(x.arquivoId)||null
   }));
   let cam=null;
   try{ if(F3D && F3D.camera && F3D.controls){ const c=F3D.camera.position, t=F3D.controls.target; cam={ p:[c.x,c.y,c.z], t:[t.x,t.y,t.z] }; } }catch(_){}
@@ -1960,16 +1983,17 @@ async function salvarAnalise(comoNova){
 // lista vigente abre pela revisão salva (f3dModo busca por arquivo, item 101).
 async function _anRestaurar3D(an){
   const mods=an.modelos||[], vista=an.vista||{};
+  RV_MOD_COR.clear();
   if(!mods.length){ if(F3D_MODO) await f3dModo(false); return []; }
   let lista=[]; try{ lista=await f3dModelosDoCde(); }catch(_){}
   const avisos=[], preSel=[];
   mods.forEach(m=>{
     const v=lista.find(x=>x.documentoId===m.documento_id);
     if(v){
-      preSel.push(v.arquivoId);
+      preSel.push(v.arquivoId); if(m.cor) RV_MOD_COR.set(v.arquivoId,m.cor);
       if(m.revisao_id && v.revisaoId!==m.revisao_id) avisos.push((m.codigo||v.nome)+' abriu na '+(v.revisao||'revisão vigente')+' (análise salva na '+(m.revisao||'revisão anterior')+')');
     } else if(m.arquivo_id){
-      preSel.push(m.arquivo_id);
+      preSel.push(m.arquivo_id); if(m.cor) RV_MOD_COR.set(m.arquivo_id,m.cor);
       avisos.push((m.codigo||'modelo')+' não está mais vigente no CDE — abriu a revisão salva'+(m.revisao?(' '+m.revisao):''));
     }
   });
@@ -4806,7 +4830,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-05a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-05b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5157,6 +5181,7 @@ function f3dPrint(){
 
 // ── Modo "só BIM": o 3D ocupa a tela e a coluna lista os modelos ───────────
 let F3D_MODO=false, F3D_LISTA=[], F3D_SEL=new Set(), F3D_NIVSEL=new Set();
+const RV_MOD_COR=new Map(), RV_COR_ORIG='linear-gradient(180deg,#fff 45%,#111 55%)';
 
 // `preSel` = ids de cde_arquivo_auria vindos do CDE ("Analisar no App"): já
 // entra com eles marcados e abertos, sem a pessoa ter que remarcar o que
@@ -5451,6 +5476,7 @@ async function _f3dSincronizar(){
     else { const mel=$('bimMsg'); if(mel) mel.style.display='none'; }
   }
   f3dAbrirBotaoSync();
+  rvModCorSync();
   f3dPdRefreshSeAberto();   // painel de pé-direito reflete a nova federação
   try{ if(B3.reaplicarVidro) B3.reaplicarVidro(F3D); }catch(_){}   // novo modelo herda a transparência do vidro
   const ps=$('f3dPavSel'); if(ps) ps.dataset.pronto='';   // pavimento repopula sob demanda (federação mudou)
@@ -5500,6 +5526,7 @@ async function f3dAbrirSelecionados(){
   }finally{ _f3dAbrindo=null; }
   const m=$('bimMsg'); if(m) m.style.display='none';
   f3dAbrirBotaoSync();   // botão passa a mostrar "Recarregar modelo(s)"
+  rvModCorSync();
   renderAnalises();      // "Salvar análise" passa a valer também só com o 3D
   // Right-click hide/unhide fica sempre disponível — sem modo pra ligar.
   // O handler é agregado ao canvas atual (o clone limpo trocado no
@@ -9489,6 +9516,79 @@ function rvNavRender(){
   });
   el.innerHTML=h;
 }
+// ── Seletor de cor com disco (comum; a paleta rápida continua embaixo) ─────────
+// auCorAbrir({ titulo, cor, emUso, ancora, aoMover(hex), aoEscolher(hexOuNull) })
+// aoMover só atualiza a barra durante o arraste; aoEscolher aplica ao soltar.
+const AU_COR={ h:0, s:0, v:1, op:null };
+function auHsvHex({h,s,v}){ const f=n=>{ const k=(n+h/60)%6; return Math.round(255*(v-v*s*Math.max(0,Math.min(k,4-k,1)))).toString(16).padStart(2,'0'); }; return ('#'+f(5)+f(3)+f(1)).toUpperCase(); }
+function auHexHsv(x){ const n=parseInt(x.slice(1),16),r=(n>>16)/255,g=(n>>8&255)/255,b=(n&255)/255,mx=Math.max(r,g,b),d=mx-Math.min(r,g,b);
+  let h=0; if(d){ h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4; h=(h*60+360)%360; } return {h,s:mx?d/mx:0,v:mx}; }
+function auCorFechar(){ const p=$('auCorPop'); if(p) p.remove(); AU_COR.op=null; document.removeEventListener('mousedown',auCorFora,true); document.removeEventListener('keydown',auCorTecla); }
+function auCorFora(e){ if(!e.target.closest('#auCorPop')) auCorFechar(); }
+function auCorTecla(e){ if(e.key==='Escape') auCorFechar(); }
+function auCorPintar(){
+  const pop=$('auCorPop'); if(!pop) return;
+  const R=78, a=AU_COR.h*Math.PI/180, hex=auHsvHex(AU_COR), pt=pop.querySelector('.ponto'), hx=pop.querySelector('.hex');
+  pt.style.left=(R+Math.sin(a)*AU_COR.s*R)+'px'; pt.style.top=(R-Math.cos(a)*AU_COR.s*R)+'px'; pt.style.background=hex;
+  pop.querySelector('.sombra').style.opacity=1-AU_COR.v;
+  pop.querySelector('.amostra').style.background=hex;
+  if(document.activeElement!==hx) hx.value=hex;
+  pop.querySelector('input[type=range]').value=Math.round(AU_COR.v*100);
+}
+function auCorAbrir(op){
+  auCorFechar();
+  Object.assign(AU_COR,auHexHsv(op.cor||'#FFFFFF')); AU_COR.op=op;
+  const sw=(cor,nome,sel)=>`<button type="button" title="${esc(nome)}" aria-label="${esc(nome)}" class="${sel?'sel':''}" data-c="${cor||''}" style="background:${cor||'linear-gradient(135deg,#fff 45%,#111 55%)'}"></button>`;
+  const emUso=(op.emUso||[]).filter((c,i,a)=>c&&a.indexOf(c)===i);
+  const pop=document.createElement('div'); pop.id='auCorPop';
+  pop.innerHTML=`<div class="h">${op.titulo||''}</div>
+    <div class="roda" aria-label="Disco de cores"><span class="sombra"></span><span class="ponto"></span></div>
+    <div class="lin"><span class="rot">Brilho</span><input type="range" min="10" max="100" aria-label="Brilho"></div>
+    <div class="lin"><span class="amostra"></span><input class="hex" maxlength="7" spellcheck="false" aria-label="Código da cor"></div>
+    ${emUso.length?`<div class="sub2">Em uso</div><div class="g">${emUso.map(c=>sw(c,c,false)).join('')}</div>`:''}
+    <div class="sub2">Paleta</div><div class="g">${PALETA.map(o=>sw(o.cor,o.nome,(op.cor||null)===o.cor)).join('')}</div>`;
+  document.body.appendChild(pop);
+  const mexeu=()=>{ const f=op.aoMover; if(f) f(auHsvHex(AU_COR)); auCorPintar(); };
+  const escolher=()=>op.aoEscolher(auHsvHex(AU_COR));
+  const roda=pop.querySelector('.roda');
+  const mover=e=>{ const r=roda.getBoundingClientRect(),x=e.clientX-r.left-78,y=e.clientY-r.top-78;
+    AU_COR.s=Math.min(1,Math.hypot(x,y)/78); AU_COR.h=(Math.atan2(x,-y)*180/Math.PI+360)%360; mexeu(); };
+  roda.addEventListener('pointerdown',e=>{ e.preventDefault(); try{ roda.setPointerCapture(e.pointerId); }catch(_){} mover(e);
+    const up=()=>{ roda.removeEventListener('pointermove',mover); roda.removeEventListener('pointerup',up); roda.removeEventListener('pointercancel',up); escolher(); };
+    roda.addEventListener('pointermove',mover); roda.addEventListener('pointerup',up); roda.addEventListener('pointercancel',up); });
+  const sl=pop.querySelector('input[type=range]');
+  sl.addEventListener('input',()=>{ AU_COR.v=sl.value/100; mexeu(); }); sl.addEventListener('change',escolher);
+  const hx=pop.querySelector('.hex');
+  hx.addEventListener('change',()=>{ const v=hx.value.trim().replace(/^#?/,'#').toUpperCase(); hx.blur();
+    if(/^#[0-9A-F]{6}$/.test(v)){ Object.assign(AU_COR,auHexHsv(v)); mexeu(); escolher(); } else auCorPintar(); });
+  pop.addEventListener('click',e=>{ const b=e.target.closest('[data-c]'); if(!b) return; op.aoEscolher(b.dataset.c||null); auCorFechar(); });
+  auCorPintar();
+  const r=op.ancora.getBoundingClientRect();
+  pop.style.left=Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,r.right+6))+'px';
+  pop.style.top=Math.max(8,Math.min(innerHeight-pop.offsetHeight-8,r.top-6))+'px';
+  document.addEventListener('mousedown',auCorFora,true); document.addEventListener('keydown',auCorTecla);
+}
+// Cor do modelo inteiro: fica aqui por arquivo, sobrevive a recarregar e sair do 3D,
+// e vai para analises_auria.modelos ao salvar. O arquivo do CDE não muda.
+function rvModCorBarra(i,c){ const b=document.querySelector('#modList .mcard[data-i="'+i+'"] .rvCorB .bar'); if(b) b.style.background=c; }
+function rvModCorAbrir(i,ev){
+  ev.stopPropagation();
+  const m=F3D_LISTA[i]; if(!m) return;
+  const abertoAqui=AU_COR.op&&AU_COR.op.modelo===m.arquivoId; auCorFechar(); if(abertoAqui) return;
+  const outros=[...F3D_SEL].filter(k=>k!==i&&F3D_LISTA[k]).map(k=>RV_MOD_COR.get(F3D_LISTA[k].arquivoId));
+  auCorAbrir({ modelo:m.arquivoId, titulo:'Cor do modelo <b>'+esc(m.disciplina||m.nome||'')+'</b>', cor:RV_MOD_COR.get(m.arquivoId)||null, emUso:outros, ancora:ev.currentTarget,
+    aoMover:c=>rvModCorBarra(i,c), aoEscolher:c=>rvModCorSet(i,c) });
+}
+function rvModCorSet(i,c){
+  const m=F3D_LISTA[i]; if(!m) return;
+  if(c) RV_MOD_COR.set(m.arquivoId,c); else RV_MOD_COR.delete(m.arquivoId);
+  rvModCorBarra(i,c||RV_COR_ORIG);
+  rvModCorSync();
+}
+function rvModCorSync(){
+  if(typeof F3D==='undefined'||!F3D||!B3||!B3.corModelo) return;
+  (F3D.modelos||[]).forEach(x=>{ const c=RV_MOD_COR.get(x.arquivoId)||null; if((x.cor||null)!==c) B3.corModelo(F3D,x.arquivoId,c); });
+}
 // ── BIM: Modelos na análise (opção A do mockup) ───────────────────────────
 // A lista de baixo deixa de repetir o catálogo: mostra só os modelos escolhidos
 // (F3D_SEL). O olho esconde/mostra sem descarregar (wrapper.visivel já é
@@ -9513,8 +9613,8 @@ function rvModLista(){
     const m=F3D_LISTA[i], off=RV_MOD_OFF.has(m.arquivoId), aberto=(F3D_TREE_OPEN===i);
     const sig=m.disciplina||'—', nome=(typeof COD_DISC!=='undefined'&&COD_DISC[sig])||'', et=m.etapa||'', ant=et&&rvEhAnt('bim',sig,et,T);
     if(!m.ifc && m.arq) ifcSchemaDetectar(m.arq, cdeSignedUrlApp).then(s=>{ if(s){ m.ifc=s; f3dRenderLista(); } });
-    return `<div class="mcard" data-i="${i}"><div class="rvPr ${off?'oculta':''} ${ant?'ant':''}" style="--cor:#0E7490;cursor:default" title="${esc(m.titulo||m.nome)}${nome?' · '+esc(nome):''}">
-      <button class="rvOlho ${off?'off':''}" onclick="rvModVis(${i})" title="${off?'Mostrar':'Ocultar'} (continua carregado)">${off?'◌':'👁'}</button><span class="bar"></span>
+    return `<div class="mcard" data-i="${i}"><div class="rvPr ${off?'oculta':''} ${ant?'ant':''}" style="--cor:${RV_MOD_COR.get(m.arquivoId)||RV_COR_ORIG};cursor:default" title="${esc(m.titulo||m.nome)}${nome?' · '+esc(nome):''}">
+      <button class="rvOlho ${off?'off':''}" onclick="rvModVis(${i})" title="${off?'Mostrar':'Ocultar'} (continua carregado)">${off?'◌':'👁'}</button><button type="button" class="rvCorB" onclick="rvModCorAbrir(${i},event)" title="Cor do modelo" aria-label="Escolher a cor do modelo ${esc(sig)}"><span class="bar"></span></button>
       <div class="mid"><div class="t1"><span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${ant?'ant':''}" title="${ant?'Etapa anterior — '+esc(rvEtapaAtual('bim',sig,T))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${m.revisao?`<span class="rvPrBase">${esc(m.revisao)}</span>`:''}${m.ifc?`<span class="rvPrBase" title="Versão do IFC (FILE_SCHEMA)" style="color:#22D3EE">${esc(m.ifc)}</span>`:''}</div><span class="cod">${esc(m.nome)}</span></div>
       <div class="acts"><button class="rvIb" onclick="f3dTreeOpen(${i})" title="${aberto?'Fechar a árvore':'Ver a árvore do modelo'}">${aberto?'▾':'▸'}</button><button class="rvIb del" onclick="f3dTogglSel(${i},false)" title="Tirar da análise (descarrega)">✕</button></div>
     </div>${aberto?'<div class="mtree" id="mtreeInline"><div class="tvazio">Carregando…</div></div>':''}</div>`;
@@ -10144,9 +10244,9 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('rvCamWin')) r
 // "Análise NN (não salva)". Trocar de aba, de empreendimento ou sair da página
 // pergunta se quer salvar quando há mudança.
 function rvAnSigCur(){ const c=_anColetar();
-  return c.pranchas.map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+c.modelos.map(m=>m.documento_id||m.arquivo_id).join(','); }
+  return c.pranchas.map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+c.modelos.map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
 function rvAnSigDe(an){
-  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+(an.modelos||[]).map(m=>m.documento_id||m.arquivo_id).join(','); }
+  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+(an.modelos||[]).map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
 function rvAnSujo(){
   if(!EMP || APP_RO) return false;
   const at=ANALISES.find(a=>a.id===ANALISE_ATUAL);
