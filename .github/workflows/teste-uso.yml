@@ -1,0 +1,135 @@
+# Teste de uso do Auria
+#
+# Faz o que o cliente faz: entra em https://auria.build com um usuário de teste e
+# abre um modelo BIM no visualizador 3D do App. Só passa se o modelo terminar de
+# carregar. Cobre o que o monitor de serviços não vê: domínio, HTTPS, login,
+# permissão, CORS do R2 e o próprio visualizador (em 04/11 tudo "estava no ar" e
+# nenhum modelo abria, porque o site aceitava http://).
+#
+# Usa o "Empreendimento Teste — Demo": não toca em dado de cliente.
+# Precisa dos segredos ROBO_EMAIL e ROBO_SENHA; sem eles o teste não roda nem alerta.
+# Falhou duas vezes seguidas: e-mail pelo ceo_alerta(). Sempre grava em ops_status_auria.
+
+name: Teste de uso
+
+on:
+  schedule:
+    - cron: '30 9,15,21 * * *'   # 06:30, 12:30 e 18:30 em Brasília
+  workflow_dispatch:
+
+jobs:
+  usar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ROBO_EMAIL: ${{ secrets.ROBO_EMAIL }}
+      ROBO_SENHA: ${{ secrets.ROBO_SENHA }}
+    steps:
+      - name: Conferir usuário de teste
+        run: |
+          if [ -z "$ROBO_EMAIL" ] || [ -z "$ROBO_SENHA" ]; then
+            echo "::warning::Segredos ROBO_EMAIL/ROBO_SENHA ausentes; teste não rodou."
+            echo "SEM_ROBO=1" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: env.SEM_ROBO != '1'
+        with:
+          node-version: '20'
+
+      - name: Instalar navegador
+        if: env.SEM_ROBO != '1'
+        run: |
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.48.2
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Abrir um modelo BIM
+        if: env.SEM_ROBO != '1'
+        run: |
+          cat > teste.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+
+          const BASE = 'https://auria.build';
+          const EMP = '29df7fe5-6c57-40ba-b365-60a4181dafde';   // Empreendimento Teste — Demo
+          const ARQ = '099ceeef-23d5-473e-92fa-bff8a9ecd53b';   // PINI-ELE-EX-0001-ALIM-R01, o menor .frag
+          const { ROBO_EMAIL, ROBO_SENHA } = process.env;
+
+          async function rodada(n) {
+            const r = await fetch('http://auria.build/', { redirect: 'manual' });
+            if (r.status !== 301 || !(r.headers.get('location') || '').startsWith('https://'))
+              throw new Error(`http://auria.build não redireciona para https (HTTP ${r.status})`);
+
+            // WebGL por software: o runner não tem GPU.
+            const nav = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+            const page = await nav.newPage({ viewport: { width: 1400, height: 900 } });
+            const avisos = [];
+            let etapa = 'abrir a página de login';
+            page.on('dialog', async (d) => { avisos.push('alerta: ' + d.message()); await d.dismiss(); });
+            page.on('pageerror', (e) => avisos.push('erro na página: ' + e.message));
+            page.on('requestfailed', (q) => { if (/\.frag/.test(q.url())) avisos.push('download do modelo falhou: ' + q.failure()?.errorText); });
+            page.on('response', (s) => { if (/\.frag|cde-r2/.test(s.url()) && s.status() >= 400) avisos.push(`HTTP ${s.status()} em ${s.url().split('?')[0]}`); });
+            try {
+              await page.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+              etapa = 'fazer login';
+              await page.fill('#email', ROBO_EMAIL);
+              await page.fill('#senha', ROBO_SENHA);
+              await page.click('#btnEntrar');
+              await page.waitForFunction(() => Object.keys(localStorage).some((k) => k.endsWith('-auth-token')), null, { timeout: 30000 });
+              etapa = 'abrir o modelo no App';
+              await page.goto(`${BASE}/app.html?emp=${EMP}&cde_bim=${ARQ}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+              etapa = 'carregar o modelo 3D';
+              await page.waitForFunction(() => typeof F3D !== 'undefined' && F3D && F3D._pronto && F3D.modelos.length > 0, null, { timeout: 180000 });
+              await page.waitForTimeout(3000);
+              await page.screenshot({ path: 'modelo.png' });
+            } catch (e) {
+              await page.screenshot({ path: `falha-${n}.png` }).catch(() => {});
+              throw new Error(`Não conseguiu ${etapa}. ${avisos.slice(0, 4).join(' | ') || String(e.message).split('\n')[0]}`);
+            } finally {
+              await nav.close();
+            }
+          }
+
+          const t0 = Date.now();
+          let erro = null;
+          for (let n = 1; n <= 2; n++) {
+            try { await rodada(n); erro = null; break; }
+            catch (e) {
+              erro = e.message; console.log(`tentativa ${n}: ${erro}`);
+              if (n === 1) await new Promise((ok) => setTimeout(ok, 60000));
+            }
+          }
+          fs.writeFileSync('resultado.json', JSON.stringify({ ok: !erro, erro, seg: Math.round((Date.now() - t0) / 1000) }));
+          console.log(erro ? 'REPROVADO' : 'APROVADO');
+          process.exit(erro ? 1 : 0);
+          JS
+          node teste.mjs
+
+      - name: Guardar a imagem
+        if: always() && env.SEM_ROBO != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tela
+          path: '*.png'
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Registrar e avisar
+        if: always() && env.SEM_ROBO != '1'
+        env:
+          PROD: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set +e
+          [ -f resultado.json ] || echo '{"ok":false,"erro":"O teste não chegou a rodar (falha ao preparar o navegador)."}' > resultado.json
+          OK=$(python3 -c "import json;print(str(json.load(open('resultado.json'))['ok']).lower())")
+          ERRO=$(python3 -c "import json;print(json.load(open('resultado.json')).get('erro') or '')")
+          psql "$PROD" -q -v j="$(cat resultado.json)" -c "insert into public.ops_status_auria (tipo, ok, dados) values ('uso', $OK, :'j'::jsonb)"
+          if [ "$OK" != "true" ]; then
+            psql "$PROD" -q -v e="$ERRO" <<'SQL'
+          select public.ceo_alerta('⚠️ Auria — cliente não conseguiria abrir um modelo', 'Teste de uso falhou',
+            '<p style="margin:0 0 12px;color:#334155;font-size:14px">O teste automático entrou no Auria e não conseguiu abrir um modelo BIM, nem na segunda tentativa.</p><p style="margin:0 0 12px;color:#334155;font-size:14px"><b>Motivo:</b> '
+            || public.auria_esc(:'e') || '</p><p style="margin:0 0 12px;color:#334155;font-size:14px">A tela do momento da falha está nos artefatos da execução, em GitHub › Actions › Teste de uso.</p>');
+          SQL
+          fi
