@@ -677,7 +677,7 @@ body.vz-dir-emp .rvDAtal .srTx{display:none}
 #secModelosBim{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
 #camList,#modList{max-height:32vh;overflow-y:auto}
 /* divisor entre "em análise" e Arquivos do CDE (mockups/app_modelos_cor_divisor.html) */
-.rvDiv{flex:none;height:16px;margin:-6px 0;position:relative;display:flex;align-items:center;justify-content:center;cursor:row-resize;touch-action:none;outline:none}
+.rvDiv{flex:none;height:16px;margin:-6px 0;position:relative;user-select:none;display:flex;align-items:center;justify-content:center;cursor:row-resize;touch-action:none;outline:none}
 .rvDiv::before{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--line)}
 .rvDiv .gr{position:relative;width:38px;height:6px;border-radius:4px;background:var(--panel2);border:1px solid var(--line)}
 .rvDiv:hover::before,.rvDiv.ativo::before,.rvDiv:focus-visible::before{border-top-color:var(--rvLar)}
@@ -9593,17 +9593,19 @@ function rvEsqInverter(){
 const RV_TOP_MIN=180;
 let RV_TOP_H=(()=>{ try{ const h=parseInt(localStorage.getItem('rv_top_h')||'',10); return h>=RV_TOP_MIN?h:null; }catch(_){ return null; } })();
 let RV_TOP_FECHA=(()=>{ try{ return localStorage.getItem('rv_top_fecha')==='1'; }catch(_){ return false; } })();
-function rvDivLimite(h){
-  const side=$('rvSide'), dv=$('rvDiv'), nav=$('rvNav');
-  const sec=[$('secPranchas'),$('secModelosBim')].find(s=>s&&s.offsetParent);
-  if(!side||!dv||!nav||!sec) return h;
-  const sobra=side.getBoundingClientRect().bottom-parseFloat(getComputedStyle(side).paddingBottom)-sec.getBoundingClientRect().top-dv.offsetHeight-(parseFloat(getComputedStyle(nav).minHeight)||0);
-  return Math.max(RV_TOP_MIN,Math.min(Math.round(sobra),h));
+// Teto da barra = o último card da lista de cima. Se não couber na tela, Arquivos
+// do CDE desce e a coluna rola; a barra só nunca passa do fim da lista.
+function rvDivSec(){ return [$('secPranchas'),$('secModelosBim')].find(s=>s&&s.offsetParent); }
+function rvDivLimite(h,h0){
+  const sec=rvDivSec(); if(!sec) return h;
+  const lista=sec.querySelector('#camList,#modList');
+  const conteudo=lista?sec.offsetHeight-lista.clientHeight+lista.scrollHeight:sec.offsetHeight;
+  return Math.round(Math.max(RV_TOP_MIN,Math.min(h,Math.max(conteudo,h0||0))));
 }
 function rvDivAplicar(){
   const side=$('rvSide'), dv=$('rvDiv'); if(!side||!dv) return;
   side.classList.toggle('rvTopFecha',RV_TOP_FECHA);
-  if(RV_TOP_H==null) side.style.removeProperty('--rvTopH'); else side.style.setProperty('--rvTopH',rvDivLimite(RV_TOP_H)+'px');
+  if(RV_TOP_H==null) side.style.removeProperty('--rvTopH'); else side.style.setProperty('--rvTopH',RV_TOP_H+'px');
   const cv=dv.querySelector('.cv'); cv.textContent=RV_TOP_FECHA?'▾':'▴'; cv.title=(RV_TOP_FECHA?'Mostrar':'Recolher')+' a lista de cima';
 }
 function rvDivGuardar(){
@@ -9617,19 +9619,23 @@ function rvDivMontar(nav){
   dv.innerHTML='<span class="gr"></span><button type="button" class="cv"></button>';
   nav.parentNode.insertBefore(dv,nav);
   side.classList.add('rvDivOn');
-  const alturaAtual=()=>{ const s=[$('secPranchas'),$('secModelosBim')].find(x=>x&&x.offsetParent); return s?s.offsetHeight:RV_TOP_MIN; };
+  const alturaAtual=()=>{ const s=rvDivSec(); return s?s.offsetHeight:RV_TOP_MIN; };
+  dv.addEventListener('mousedown',e=>{ if(!e.target.closest('.cv')) e.preventDefault(); });   // arrastar não seleciona o texto dos cards
   dv.addEventListener('pointerdown',e=>{
     if(e.target.closest('.cv')||RV_TOP_FECHA) return;
     e.preventDefault(); dv.focus(); dv.setPointerCapture(e.pointerId); dv.classList.add('ativo');
-    const y0=e.clientY, h0=alturaAtual();
-    const mv=ev=>{ RV_TOP_H=rvDivLimite(h0+ev.clientY-y0); side.style.setProperty('--rvTopH',RV_TOP_H+'px'); };
-    const up=()=>{ dv.classList.remove('ativo'); dv.removeEventListener('pointermove',mv); dv.removeEventListener('pointerup',up); dv.removeEventListener('pointercancel',up); rvDivGuardar(); };
+    const y0=e.clientY, h0=alturaAtual(), s0=side.scrollTop; let y=y0;
+    const pos=()=>{ RV_TOP_H=rvDivLimite(h0+y-y0+side.scrollTop-s0,h0); side.style.setProperty('--rvTopH',RV_TOP_H+'px'); };
+    const mv=ev=>{ y=ev.clientY; pos(); };
+    // Mouse parado na borda da coluna: ela rola sozinha e a barra continua descendo.
+    const rola=setInterval(()=>{ const r=side.getBoundingClientRect(), d=y>r.bottom-28?14:(y<r.top+28?-14:0); if(d){ side.scrollTop+=d; pos(); } },30);
+    const up=()=>{ clearInterval(rola); dv.classList.remove('ativo'); dv.removeEventListener('pointermove',mv); dv.removeEventListener('pointerup',up); dv.removeEventListener('pointercancel',up); rvDivGuardar(); };
     dv.addEventListener('pointermove',mv); dv.addEventListener('pointerup',up); dv.addEventListener('pointercancel',up);
   });
   dv.addEventListener('dblclick',e=>{ if(e.target.closest('.cv')) return; RV_TOP_H=null; RV_TOP_FECHA=false; rvDivGuardar(); rvDivAplicar(); });
   dv.addEventListener('keydown',e=>{
     if((e.key!=='ArrowUp'&&e.key!=='ArrowDown')||RV_TOP_FECHA) return;
-    e.preventDefault(); RV_TOP_H=rvDivLimite(alturaAtual()+(e.key==='ArrowUp'?-20:20)); rvDivGuardar(); rvDivAplicar();
+    e.preventDefault(); const h=alturaAtual(); RV_TOP_H=rvDivLimite(h+(e.key==='ArrowUp'?-20:20),h); rvDivGuardar(); rvDivAplicar();
   });
   dv.querySelector('.cv').addEventListener('click',()=>{ RV_TOP_FECHA=!RV_TOP_FECHA; rvDivGuardar(); rvDivAplicar(); });
   window.addEventListener('resize',rvDivAplicar);
