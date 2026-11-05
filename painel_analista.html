@@ -3106,11 +3106,15 @@ async function _logEvento(pid,evento,obs){
   try{ await sb.from('parcela_eventos_auria').insert({parcela_id:pid,evento:evento,por_email:USER.email,por_nome:PERFIL.nome||USER.email,por_role:'analista',observacao:obs||null}); }catch(e){}
 }
 async function autorizarRecusar(pid,acao){
-  const obs=prompt(acao==='autorizar'?'Observação (opcional):':'Motivo da recusa (opcional):','')||'';
+  const resp=prompt(acao==='autorizar'?'Observação (opcional — o projetista vê):':'Motivo da recusa (o projetista vê no portal e recebe por e-mail):','');
+  if(resp===null) return;   // Cancelar não autoriza nem recusa
+  const obs=resp.trim();
+  if(acao==='recusar' && !obs){ alert('Informe o motivo da recusa.'); return; }
+  const agora=new Date().toISOString();
   const obj=acao==='autorizar'
-    ? {status:'autorizada',data_autorizacao:new Date().toISOString(),observacao:obs}
-    : {status:'recusada',observacao:obs};
-  try{ await sb.from('parcelas_auria').update(obj).eq('id',pid); await _logEvento(pid,acao==='autorizar'?'autorizou':'recusou',obs); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
+    ? {status:'autorizada',data_autorizacao:agora,observacao:obs,atualizado_em:agora}
+    : {status:'recusada',observacao:obs,atualizado_em:agora};
+  try{ const r=await sb.from('parcelas_auria').update(obj).eq('id',pid); if(r.error) throw r.error; await _logEvento(pid,acao==='autorizar'?'autorizou':'recusou',obs); await loadContratos(CTR_EMP_ID); refreshDet(); }catch(e){ alert('Erro: '+e.message); }
 }
 function abrirFaturar(pid){
   FATURA_PARC=pid;
