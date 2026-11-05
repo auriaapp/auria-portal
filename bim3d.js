@@ -148,9 +148,7 @@ export async function carregar(V, modelos, msg){
   const meu = ++V._job;
   aviso(modelos.length>1 ? `Baixando ${modelos.length} modelos…` : 'Baixando modelo…');
   const baixados = await Promise.all(modelos.map(async m=>{
-    const resp = await fetch(await m.url());
-    if(!resp.ok) throw new Error(`não consegui baixar "${m.nome||''}" (HTTP ${resp.status})`);
-    return { m, bytes:new Uint8Array(await resp.arrayBuffer()) };
+    return { m, bytes:await _baixar(m) };
   }));
   if(V._job!==meu || !V.vivo) return;
   for(const {m, bytes} of baixados){
@@ -176,6 +174,13 @@ export async function carregar(V, modelos, msg){
   V._pronto = true;
 }
 function _doisQuadros(){ return new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); }
+// auriaBaixar (auria_busy.js) tenta de novo; sem ele, uma tentativa só.
+async function _baixar(m){
+  if(window.auriaBaixar) return window.auriaBaixar(()=>m.url(), m.nome);
+  const resp = await fetch(await m.url());
+  if(!resp.ok) throw new Error(`não consegui baixar "${m.nome||''}" (HTTP ${resp.status})`);
+  return new Uint8Array(await resp.arrayBuffer());
+}
 let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
 
 // ── Carga incremental (adicionar/remover UM modelo sem recarregar os outros) ─
@@ -187,9 +192,7 @@ export async function adicionarModelo(V, m, msg){
   const aviso = msg || (()=>{});
   const meu = ++V._job;
   aviso('Baixando '+(m.nome||'modelo')+'…');
-  const resp = await fetch(await m.url());
-  if(!resp.ok) throw new Error('HTTP '+resp.status+' baixando "'+(m.nome||'')+'"');
-  const bytes = new Uint8Array(await resp.arrayBuffer());
+  const bytes = await _baixar(m);
   if(V._job!==meu || !V.vivo) return null;
   aviso('Carregando '+(m.nome||'modelo')+'…');
   const model = await V.fragments.load(bytes, {

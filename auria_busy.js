@@ -189,7 +189,38 @@
   };
   window.addEventListener('pagehide', function(){ window.__auriaSaindo = true; });
   window.addEventListener('pageshow', function(){ window.__auriaSaindo = false; });
-  window.AuriaErros = { registrar: function(msg, origem){ enviar('manual', msg, origem || '', new Error().stack); } };
+  // Autocorreção resolvida: vai para o resumo do CEO, não para a lista de falhas.
+  var corrigidos = {};
+  function autocorrigiu(acao){
+    try {
+      if (corrigidos[acao] || token() === ANON) return;
+      corrigidos[acao] = 1;
+      fetchOrig.call(window, URL_SB + '/rest/v1/rpc/ops_auto_registrar', { method: 'POST', keepalive: true,
+        headers: { 'apikey': ANON, 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_acao: acao, p_pagina: (location.pathname.split('/').pop() || 'index.html') }) }).catch(function(){});
+    } catch(_) {}
+  }
+  window.AuriaErros = { registrar: function(msg, origem){ enviar('manual', msg, origem || '', new Error().stack); }, autocorrigiu: autocorrigiu };
+
+  // Download de modelo com até 3 tentativas. gerarUrl é chamada a cada vez: link assinado
+  // expirado também se resolve. Usa fetchOrig para a tentativa que deu certo não virar falha.
+  window.auriaBaixar = async function(gerarUrl, nome){
+    var erro;
+    for (var t = 1; t <= 3; t++) {
+      try {
+        var resp = await fetchOrig.call(window, await gerarUrl());
+        if (!resp.ok) throw new Error('não consegui baixar "' + (nome || '') + '" (HTTP ' + resp.status + ')');
+        var bytes = new Uint8Array(await resp.arrayBuffer());
+        if (t > 1) autocorrigiu('Download de modelo refeito');
+        return bytes;
+      } catch (e) {
+        erro = e;
+        if (t < 3) await new Promise(function(ok){ setTimeout(ok, 1500 * t); });
+      }
+    }
+    enviar('rede', 'Falha de conexão: ' + (erro && erro.message || erro) + ' em ' + (nome || 'modelo'), 'GET');
+    throw erro;
+  };
 })();
 
 // Modais que fecham ao clicar no fundo (onclick="if(event.target===this)…"):
