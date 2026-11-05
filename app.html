@@ -698,7 +698,7 @@ body.vz-dir-emp .rvDAtal .srTx{display:none}
 #auCorPop .g button.sel{border-color:#fff}
 html[data-tema=claro] #auCorPop .g button.sel{border-color:#15233B}
 /* barra de cor do modelo: botão com área de clique maior que o traço */
-#modList .rvPr{grid-template-columns:22px 14px 1fr auto;gap:5px}
+#modList .rvPr,#camList .rvPr{grid-template-columns:22px 14px 1fr auto;gap:5px}
 .rvCorB{width:14px;height:34px;border:none;background:none;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:5px;outline:none}
 .rvCorB:hover .bar,.rvCorB:focus-visible .bar{width:8px;box-shadow:0 0 0 1.5px var(--rvLar)}
 /* divisor entre "em análise" e Arquivos do CDE (mockups/app_modelos_cor_divisor.html) */
@@ -1931,7 +1931,8 @@ function _anColetar(){
     prancha_id:L.prancha.id, arquivo_nome:L.prancha.arquivo_nome||L.nome,
     arquivo_hash:L.prancha.arquivo_hash||L.prancha._hash, ordem:i,
     origem: L.prancha.cde_documento_id ? 'cde' : 'local',
-    cde_documento_id: L.prancha.cde_documento_id || null
+    cde_documento_id: L.prancha.cde_documento_id || null,
+    cor: i===0 ? (L.cor||null) : undefined
   }));
   const modelos=((F3D && F3D.modelos)||[]).map(x=>({
     documento_id:x.documentoId||null, arquivo_id:x.arquivoId||null, revisao_id:x.revisaoId||null,
@@ -2073,6 +2074,10 @@ async function restaurarAnalise(an, localFilesByHash){
   }
   if(!baseFeita && !(an.modelos||[]).length){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
   if(baseFeita) renderCamadas();
+  if(baseFeita && LAYERS[0]){
+    const b=LAYERS[0].prancha, mb=metas.find(m=>m.cor && (m.cde_documento_id ? m.cde_documento_id===b.cde_documento_id : m.arquivo_hash===(b.arquivo_hash||b._hash)));
+    if(mb){ LAYERS[0].cor=mb.cor; renderCamadas(); F.valido=false; render(); }
+  }
   let avisos3d=[];
   try{ avisos3d=await _anRestaurar3D(an); }
   catch(e){ console.warn('restaurarAnalise 3D:', e); avisos3d=['os modelos 3D não abriram: '+((e&&e.message)||e)]; }
@@ -2375,6 +2380,29 @@ function renderCamadas(){
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
 function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); renderPins(); renderListaApts(); }
 function camOpac(i,v,inp){ LAYERS[i].opacity=+v; if(inp&&inp.nextElementSibling) inp.nextElementSibling.textContent=Math.round(+v*100)+'%'; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+// Prancha colorida: o tingimento troca todo pixel desenhado pela cor, então uma
+// hachura sólida virava bloco igual às linhas. Durante o render, preenchimento
+// grande (> AU_HACH_MIN pontos no lado menor) entra translúcido, mais forte quanto
+// mais escuro no PDF, e preenchimento branco apaga o que está embaixo, como no papel.
+// Traços, textos e preenchimentos pequenos (setas, símbolos) seguem cheios.
+const AU_HACH_MIN=4;
+function auHachuraLeve(ctx, escala){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  const pr=CanvasRenderingContext2D.prototype, P=(x,y)=>{ if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; };
+  const lum=c=>{ if(typeof c!=='string') return 0.5; const m=/^#([0-9a-f]{6})$/i.exec(c); if(!m) return 0.5; const n=parseInt(m[1],16); return (.299*(n>>16)+.587*(n>>8&255)+.114*(n&255))/255; };
+  ctx.beginPath=function(){ x0=y0=Infinity; x1=y1=-Infinity; return pr.beginPath.call(this); };
+  ctx.moveTo=function(x,y){ P(x,y); return pr.moveTo.call(this,x,y); };
+  ctx.lineTo=function(x,y){ P(x,y); return pr.lineTo.call(this,x,y); };
+  ctx.bezierCurveTo=function(a,b,c,d,x,y){ P(a,b); P(c,d); P(x,y); return pr.bezierCurveTo.call(this,a,b,c,d,x,y); };
+  ctx.rect=function(x,y,w,h){ P(x,y); P(x+w,y+h); return pr.rect.call(this,x,y,w,h); };
+  ctx.fill=function(...a){
+    const y=lum(this.fillStyle), t=this.getTransform(), k=Math.hypot(t.a,t.b)||1, grande=Math.min(x1-x0,y1-y0)*k/escala>AU_HACH_MIN;
+    if(y>.97){ const op=this.globalCompositeOperation; this.globalCompositeOperation='destination-out'; pr.fill.apply(this,a); this.globalCompositeOperation=op; return; }
+    if(!grande) return pr.fill.apply(this,a);
+    const g=this.globalAlpha; this.globalAlpha=g*(.14+.22*(1-y)); pr.fill.apply(this,a); this.globalAlpha=g;
+  };
+  return ()=>{ ['beginPath','moveTo','lineTo','bezierCurveTo','rect','fill'].forEach(n=>{ delete ctx[n]; }); };
+}
 function camCor(i,cor){ LAYERS[i].cor=cor; if(i>0) salvarEstadoCamada(LAYERS[i]); renderCamadas(); F.valido=false; render(); }
 function camRemover(i){ if(i<=0) return; LAYERS.splice(i,1); if(ALIGN.camIdx===i) alignReset(); renderCamadas(); F.valido=false; render(); renderPins(); renderListaApts(); }
 
@@ -2664,9 +2692,11 @@ async function render(){
       lctx.save();
       lctx.translate(sx,sy);
       if(L.rot){ const cx=vp.width/2, cy=vp.height/2; lctx.translate(cx,cy); lctx.rotate(L.rot*Math.PI/180); lctx.translate(-cx,-cy); }
+      const fimHach=L.cor?auHachuraLeve(lctx,s):null;
       try{
         await L.page.render({ canvasContext:lctx, viewport:vp, background:bg }).promise;
       }catch(le){ console.warn('camada:',le.message||le); }
+      if(fimHach) fimHach();
       lctx.restore();
       if(L.cor){                                          // VISUALIZAÇÃO por cor: tinge as linhas
         lctx.setTransform(1,0,0,1,0,0);
@@ -4052,7 +4082,9 @@ async function capturarRegiaoPdf(rect){
     lctx.setTransform(1,0,0,1,0,0); lctx.clearRect(0,0,W,H);
     lctx.save(); lctx.translate(sx,sy);
     if(L.rot){ const cx=vp.width/2, cy=vp.height/2; lctx.translate(cx,cy); lctx.rotate(L.rot*Math.PI/180); lctx.translate(-cx,-cy); }
+    const fimHach=L.cor?auHachuraLeve(lctx,sc):null;
     try{ await L.page.render({ canvasContext:lctx, viewport:vp, background:bg }).promise; }catch(le){ console.warn('camada (região):', le.message||le); }
+    if(fimHach) fimHach();
     lctx.restore();
     if(L.cor){ lctx.setTransform(1,0,0,1,0,0); lctx.globalCompositeOperation='source-in'; lctx.fillStyle=L.cor; lctx.fillRect(0,0,W,H); lctx.globalCompositeOperation='source-over'; }
     octx.globalCompositeOperation='multiply'; octx.globalAlpha=Math.max(0,Math.min(1,L.opacity));
@@ -9570,6 +9602,15 @@ function auCorAbrir(op){
 }
 // Cor do modelo inteiro: fica aqui por arquivo, sobrevive a recarregar e sair do 3D,
 // e vai para analises_auria.modelos ao salvar. O arquivo do CDE não muda.
+function rvCamCorAbrir(i,ev){
+  ev.stopPropagation();
+  const L=LAYERS[i]; if(!L) return;
+  const abertoAqui=AU_COR.op&&AU_COR.op.camada===L; auCorFechar(); if(abertoAqui) return;
+  const sig=L.prancha.disciplina||deduzDisc(L.nome)||'';
+  auCorAbrir({ camada:L, titulo:'Cor da prancha <b>'+esc(sig)+'</b>', cor:L.cor||null, emUso:LAYERS.filter(x=>x!==L).map(x=>x.cor), ancora:ev.currentTarget,
+    aoMover:c=>{ const b=document.querySelector('#camList .rvCorB[data-cam="'+i+'"] .bar'); if(b) b.style.background=c; },
+    aoEscolher:c=>camCor(i,c) });
+}
 function rvModCorBarra(i,c){ const b=document.querySelector('#modList .mcard[data-i="'+i+'"] .rvCorB .bar'); if(b) b.style.background=c; }
 function rvModCorAbrir(i,ev){
   ev.stopPropagation();
@@ -10244,9 +10285,9 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('rvCamWin')) r
 // "Análise NN (não salva)". Trocar de aba, de empreendimento ou sair da página
 // pergunta se quer salvar quando há mudança.
 function rvAnSigCur(){ const c=_anColetar();
-  return c.pranchas.map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+c.modelos.map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
+  return c.pranchas.map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+c.modelos.map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
 function rvAnSigDe(an){
-  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>p.cde_documento_id||p.arquivo_hash||p.prancha_id).join(',')+'|'+(an.modelos||[]).map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
+  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+(an.modelos||[]).map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
 function rvAnSujo(){
   if(!EMP || APP_RO) return false;
   const at=ANALISES.find(a=>a.id===ANALISE_ATUAL);
@@ -10368,7 +10409,6 @@ function rvAnRender(){
 function rvCamadas(){
   const el=$('camList'); if(!el) return;
   if(!LAYERS.length){ el.innerHTML='<div class="hint">Abra a prancha base.</div>'; try{ renderAnalises(); updateFoco(); }catch(_){} return; }
-  const sw=c=>`<span class="rvSw" style="background:${c||'linear-gradient(135deg,#fff 45%,#111 55%)'}"></span>`;
   let h=`<div class="rvPrHd"><span class="lbl">Disciplinas e Pranchas</span><span class="rvLock">
     <button class="${LOCK_POS?'':'on'}" onclick="toggleLock(false)" title="Pranchas livres: dá para mover/escalar">🔓 livre</button><button class="${LOCK_POS?'on':''}" onclick="toggleLock(true)" title="Pranchas travadas: posição protegida">🔒 travada</button></span></div><div class="rvPrTb">`;
   LAYERS.forEach((L,i)=>{
@@ -10379,12 +10419,11 @@ function rvCamadas(){
     const did=L.prancha.cde_documento_id, et=(did&&RV_ETAPA[did])||_etapaDoDoc({codigo:cod});
     const etAnt=et&&rvEhAnt('2d',sig,et);
     const posOff=(i===0||LOCK_POS);
-    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||'#8CA0C4'}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
-      <button class="rvOlho ${L.visible?'':'off'}" onclick="event.stopPropagation();camVis(${i},${!L.visible});renderCamadas()" title="${L.visible?'Ocultar':'Mostrar'} esta prancha">${L.visible?'👁':'◌'}</button><span class="bar"></span>
+    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||RV_COR_ORIG}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
+      <button class="rvOlho ${L.visible?'':'off'}" onclick="event.stopPropagation();camVis(${i},${!L.visible});renderCamadas()" title="${L.visible?'Ocultar':'Mostrar'} esta prancha">${L.visible?'👁':'◌'}</button><button type="button" class="rvCorB" data-cam="${i}" onclick="rvCamCorAbrir(${i},event)" title="Cor da prancha" aria-label="Escolher a cor da prancha ${esc(sig)}"><span class="bar"></span></button>
       <div class="mid"><div class="t1"><span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${etAnt?'ant':''}" title="${etAnt?'Etapa anterior — '+esc(rvEtapaAtual('2d',sig))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${i===0?'<span class="rvPrBase">BASE</span>':''}${foco?'<span class="rvPrFoco">FOCO</span>':''}</div><span class="cod ${rec?'rec':''}" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span></div>
       <div class="acts" onclick="event.stopPropagation()"><input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value);this.title='Opacidade '+Math.round(this.value*100)+'%'" title="Opacidade ${Math.round(L.opacity*100)}%">
         <button class="rvIb" ${posOff?'disabled':''} onclick="abrirPosicao(${i})" title="Posição e escala${i===0?' — a base é a referência':LOCK_POS?' — destrave a posição':''}">⚙</button>
-        <button class="rvIb" onclick="abrirCorPopup(${i},event)" title="Cor de visualização">${sw(L.cor)}</button>
         ${i>0?`<button class="rvIb del" onclick="camRemover(${i})" title="Remover prancha">✕</button>`:''}</div>
     </div>`;
   });
