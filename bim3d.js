@@ -313,7 +313,9 @@ export async function descarregarUm(V, idBusca){
   const x = V.modelos[i];
   V.modelos.splice(i, 1);
   try{ V.scene.remove(x.model.object); }catch(_){}
-  try{ x.model.dispose(); }catch(_){}
+  // Espera soltar de verdade: update() com o modelo ainda saindo dá "Model not found"
+  // e a carga do modelo seguinte fica presa.
+  try{ await x.model.dispose(); }catch(_){}
   // Se a peça anterior de raio-X estava neste modelo, some junto.
   if(V._xrayUlt && V._xrayUlt.modelo === x) V._xrayUlt = null;
   // Se estava escondendo peça deste modelo, esquece.
