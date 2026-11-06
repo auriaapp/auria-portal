@@ -2363,12 +2363,12 @@ async function registrarPosContrato(empId, proj, discNome){
   try{
     if(!Object.keys(DISC_MAP).length) await carregarConvencoes();
     const cod=discCod(discNome); if(!cod||!proj||!proj.fornecedor_id) return;
-    const atual=await sb.from('disciplina_fornecedor_auria').select('id,fornecedor_id,projetista_id').eq('empreendimento_id',empId).eq('disciplina',cod).maybeSingle();
-    const a=atual.data||null;
-    if(a && a.fornecedor_id!==proj.fornecedor_id){
-      if(!confirm('A disciplina '+cod+' já é atendida por outro fornecedor neste empreendimento. Trocar para '+(proj.fornecedor_nome||'o fornecedor do contrato')+'?')) return;
+    const atuais=(await sb.from('disciplina_fornecedor_auria').select('id,fornecedor_id').eq('empreendimento_id',empId).eq('disciplina',cod)).data||[];
+    const a=atuais.find(x=>x.fornecedor_id!==proj.fornecedor_id)||null;
+    if(a){
+      if(!confirm('A disciplina '+cod+' já é atendida por outro fornecedor neste empreendimento. Acrescentar '+(proj.fornecedor_nome||'o fornecedor do contrato')+' também?')) return;
     }
-    const r=await sb.from('disciplina_fornecedor_auria').upsert({ empreendimento_id:empId, disciplina:cod, fornecedor_id:proj.fornecedor_id, projetista_id:proj.id, criado_por:USER.id },{ onConflict:'empreendimento_id,disciplina' });
+    const r=await sb.from('disciplina_fornecedor_auria').upsert({ empreendimento_id:empId, disciplina:cod, fornecedor_id:proj.fornecedor_id, projetista_id:proj.id, criado_por:USER.id },{ onConflict:'empreendimento_id,disciplina,fornecedor_id', ignoreDuplicates:true });
     if(r.error) throw r.error;
     let msg='Contrato salvo. '+(proj.fornecedor_nome||'O fornecedor')+' passa a atender '+cod+' neste empreendimento, com '+(proj.nome||proj.email)+' como responsável.';
     if(proj.email){ try{ const cv=await sb.functions.invoke('invite-projetista',{ body:{ email:proj.email, nome:proj.nome||'', empresa_nome:proj.fornecedor_nome||'' } });
