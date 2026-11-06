@@ -10645,6 +10645,35 @@ function rvFechar2d(){
   rvLayoutPintar(); rvNavRender();
 }
 // Botão direito no card: remover/fechar o que está aberto.
+// Troca a base mantendo as camadas por cima.
+async function rvBaseTrocar(id){
+  if(!(await rvConfEtapa('2d',id))) return;
+  try{
+    const resto=LAYERS.slice(1);
+    await abrirDoCDE(id,null,false);
+    if(resto.length){ LAYERS.push(...resto); renderCamadas(); F.valido=false; render(); }
+  }catch(e){ rvAlerta('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
+  rvLayoutPintar(); rvNavRender();
+}
+// Camada vira base. A base fica com posição 0 e escala 1, e as outras são medidas
+// em relação a ela: recalculo tudo para o desenho não sair do lugar na tela.
+function rvTornarBase(i){
+  const B=LAYERS[0], N=LAYERS[i]; if(!N||i<=0) return;
+  if(N.rot){ rvAviso('Zere a rotação desta prancha antes de torná-la base.'); return; }
+  const a=pageWH(B.page), b=pageWH(N.page), k=N.scale||1, o={ x:N.offset.x, y:N.offset.y };
+  V.panX-=o.x*a.w*V.zoom; V.panY-=o.y*a.h*V.zoom; V.zoom=V.zoom*k*a.w/b.w;
+  LAYERS.forEach(M=>{ if(M===N) return;
+    M.offset={ x:(M.offset.x-o.x)/k, y:(M.offset.y-o.y)*a.h*b.w/(b.h*a.w*k) }; M.scale=M.scale/k; });
+  N.offset={ x:0, y:0 }; N.scale=1; N.opacity=1; if(B.opacity>=1) B.opacity=0.7;
+  LAYERS.splice(i,1); LAYERS.unshift(N); setBaseShims(); FOCO_LI=0;
+  LAYERS.forEach((L,k2)=>setTimeout(()=>salvarEstadoCamada(L),k2*700));   // salvarEstadoCamada guarda só a última chamada de cada rajada
+  renderCamadas(); F.valido=false; render(); try{ renderPins(); renderListaApts(); }catch(_){}
+  rvNavRender();
+}
+function rvCamCtx(ev,i){
+  ev.preventDefault(); ev.stopPropagation();
+  if(i>0) rvMenu(ev,[{ic:'⇱', t:'Tornar base', f:()=>rvTornarBase(i)},{ic:'✕', t:'Remover camada', f:()=>camRemover(i)}]);
+}
 function rvCtx(ev, t, id){
   ev.preventDefault();
   if(t==='bim'){
@@ -10654,9 +10683,12 @@ function rvCtx(ev, t, id){
   }
   if(RV_PEER_DOC===id) return rvMenu(ev,[{ic:'✕', t:'Fechar a janela da direita', f:()=>rvJanFechar(1)}]);
   const i=rvCamIdx(id);
-  if(i<0) return rvClicar(ev,t,id);
+  if(i<0){
+    if(!rvTem2d()||RV_PEER_IT.some(x=>x.t==='2'&&x.id===id)) return rvClicar(ev,t,id);
+    return rvMenu(ev,[{ic:'⧉', t:'Sobrepor como camada', f:()=>rvAbrir2d(id,'camada')},{ic:'⇄', t:'Substituir a base', f:()=>rvBaseTrocar(id)}]);
+  }
   const ops=[{ic:'⚙', t:'Ajustes da camada…', f:()=>rvCamWin(i, ev.target.closest('.rvIt'))}];
-  if(i>0) ops.push({ic:'✕', t:'Remover camada', f:()=>rvCamRemover(i)});
+  if(i>0) ops.push({ic:'⇱', t:'Tornar base', f:()=>rvTornarBase(i)},{ic:'✕', t:'Remover camada', f:()=>rvCamRemover(i)});
   else if(LAYERS.length===1) ops.push({ic:'✕', t:'Fechar a prancha', f:()=>rvFechar2d()});
   else ops.push({ic:'·', t:'Base: remova as camadas antes', f:()=>{}});
   rvMenu(ev, ops);
@@ -10882,7 +10914,7 @@ function rvCamadas(){
     const did=L.prancha.cde_documento_id, et=(did&&RV_ETAPA[did])||_etapaDoDoc({codigo:cod});
     const etAnt=et&&rvEhAnt('2d',sig,et);
     const posOff=(i===0||LOCK_POS);
-    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||RV_COR_ORIG}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
+    h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||RV_COR_ORIG}" onclick="rvCamFoco(${i},event)" oncontextmenu="rvCamCtx(event,${i})" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
       <button class="rvOlho ${L.visible?'':'off'}" onclick="event.stopPropagation();camVis(${i},${!L.visible});renderCamadas()" title="${L.visible?'Ocultar':'Mostrar'} esta prancha">${L.visible?'👁':'◌'}</button><button type="button" class="rvCorB" data-cam="${i}" onclick="rvCamCorAbrir(${i},event)" title="Cor da prancha" aria-label="Escolher a cor da prancha ${esc(sig)}"><span class="bar"></span></button>
       <div class="mid"><div class="t1">${rvLadoTag('2',rvJanDe('2'))}<span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${etAnt?'ant':''}" title="${etAnt?'Etapa anterior — '+esc(rvEtapaAtual('2d',sig))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${i===0?'<span class="rvPrBase">BASE</span>':''}${foco?'<span class="rvPrFoco">FOCO</span>':''}</div><span class="cod ${rec?'rec':''}" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span></div>
       <div class="acts" onclick="event.stopPropagation()"><input type="range" min="0.1" max="1" step="0.01" value="${L.opacity}" oninput="camOpac(${i},this.value);this.title='Opacidade '+Math.round(this.value*100)+'%'" title="Opacidade ${Math.round(L.opacity*100)}%">
