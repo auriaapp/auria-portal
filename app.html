@@ -680,7 +680,7 @@ body.vz-dir-emp .rvDAtal .srTx{display:none}
 #secModelosBim{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
 #camList,#modList{max-height:32vh;overflow-y:auto}
 /* tela dividida por arrastar (mockups/app_tela_dividida.html) */
-#btnDividir.on{background:var(--rvLarT);color:var(--txt);box-shadow:inset 0 -2px 0 var(--rvLar)}
+#btnDividir.on,#btnIma.on{background:var(--rvLarT);color:var(--txt);box-shadow:inset 0 -2px 0 var(--rvLar)}
 #rvJanVazia{display:none;flex:1;min-width:0;position:relative;background:var(--bg)}
 #rvJanVazia .box{position:absolute;inset:14px;border:2px dashed var(--line);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;text-align:center;color:var(--mut);font-size:12.5px;padding:14px}
 #rvJanVazia .box b{color:var(--txt);font-size:13.5px;font-weight:600}
@@ -1030,7 +1030,7 @@ body.vz-comp .rvAnT{padding:3px 9px}
         <button class="tb" id="rvBtnBarra" onclick="rvRevisaoBarra()" title="Revisão do modelo: regras, conflitos, pé-direito e filtros salvos">☑ Revisão</button>
         <button class="tb app-wr" id="btnIARegiao" onclick="toggleIaRegiao()" title="Analisar uma REGIÃO da prancha com a IA — arraste um retângulo">🤖⬚</button>
         <span class="sep"></span>
-        <span class="rvSeg" id="rvLayout"><button id="btnDividir" onclick="rvDividir()" title="Dividir a tela em duas janelas. Arraste um arquivo da lista para cada uma."><span class="rvIc v"></span>Dividir tela</button></span>
+        <span class="rvSeg" id="rvLayout"><button id="btnDividir" onclick="rvDividir()" title="Dividir a tela em duas janelas. Arraste um arquivo da lista para cada uma."><span class="rvIc v"></span>Dividir tela</button><button id="btnIma" onclick="rvImaToggle()" style="display:none" aria-pressed="false" title="Unir a navegação das duas janelas 3D"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v8a7 7 0 0 0 14 0V4h-4.5v8a2.5 2.5 0 0 1-5 0V4z"/><path d="M5 8h4.5M14.5 8H19"/></svg>Ímã</button></span>
         <span style="display:none"><button class="tb" id="btnSplit2d" onclick="split2dToggle()" title="Abrir outra prancha ao lado (2D/2D) — um apontamento pode ter pins nas duas">＋2D/2D</button>
         <button class="tb" id="btnBim" onclick="f3dSplitToggle()" title="Dividir a tela: 2D e o modelo 3D (fragments) lado a lado">＋2D/3D</button>
         <button class="tb" id="btnSairBim" onclick="f3dModo(false)" style="display:none" title="Voltar para a análise de pranchas 2D">✕ Sair do 3D</button></span>
@@ -9463,7 +9463,12 @@ function rvLayoutAtual(){
   return '2d';
 }
 function rvDuplaAgora(){ return document.body.classList.contains('splitVazia') || rvLayoutAtual().length===2 && !/d$/.test(rvLayoutAtual()); }
-function rvLayoutPintar(){ const b=$('btnDividir'); if(b) b.classList.toggle('on',rvDuplaAgora()); rvBarras(); rvTopoPintar(); }
+function rvLayoutPintar(){
+  const b=$('btnDividir'); if(b) b.classList.toggle('on',rvDuplaAgora());
+  const im=$('btnIma'), d33=rvLayoutAtual()==='33'; if(im) im.style.display=d33?'':'none';
+  if(!d33&&RV_IMA.on) rvImaToggle(false);
+  rvBarras(); rvTopoPintar();
+}
 // Troca a estrutura da tela; quem chama cuida dos arquivos (rvAplicar).
 async function rvLayout(l){
   const B=document.body.classList, at=rvLayoutAtual();
@@ -9636,6 +9641,45 @@ async function rvJanFechar(i){
   if(B.contains('splitVazia')&&i===1){ B.remove('splitVazia'); RV_JAN=0; _splitResize(); rvLayoutPintar(); return; }
   RV_JAN=0; await rvAplicar(i?a:b,null);
 }
+// Ímã (3D × 3D): as câmeras das duas janelas andam juntas. Cada janela recentra a cena
+// pelo 1º modelo aberto nela, então a mesma posição no mundo pode ser lugares diferentes:
+// a diferença de baseCoordinates entre as janelas leva a vista para o mesmo ponto.
+const RV_IMA={ on:false, a:null, b:null, trava:false, fa:null, fb:null, ea:null, eb:null };
+window.__peerV=()=>(typeof F3D!=='undefined'?F3D:null);
+function rvImaDelta(de,para){
+  const A=(de.fragments&&de.fragments.baseCoordinates)||[0,0,0], B=(para.fragments&&para.fragments.baseCoordinates)||[0,0,0];
+  return [0,1,2].map(i=>(+B[i]||0)-(+A[i]||0));
+}
+function rvImaCopia(de,para){
+  if(RV_IMA.trava||(de.andar&&de.andar.ativo)||(para.andar&&para.andar.ativo)) return;
+  const d=rvImaDelta(de,para), p=de.camera.position, t=de.controls.target;
+  RV_IMA.trava=true;
+  try{ para.camera.position.set(p.x+d[0],p.y+d[1],p.z+d[2]); para.controls.target.set(t.x+d[0],t.y+d[1],t.z+d[2]); para.controls.update(); }catch(_){}
+  RV_IMA.trava=false;
+}
+function rvImaSoltar(){
+  const m=RV_IMA;
+  if(m.a&&m.fa){ m.a.controls.removeEventListener('change',m.fa); m.a.controls.removeEventListener('end',m.ea); }
+  if(m.b&&m.fb){ m.b.controls.removeEventListener('change',m.fb); m.b.controls.removeEventListener('end',m.eb); }
+  m.a=m.b=m.fa=m.fb=m.ea=m.eb=null;
+}
+function rvImaPrender(){
+  const m=RV_IMA, a=(typeof F3D!=='undefined')?F3D:null, b=peerCall('__peerV');
+  if(!m.on||(a===m.a&&b===m.b)) return;
+  rvImaSoltar(); if(!a||!b) return;
+  m.a=a; m.b=b;
+  m.fa=()=>rvImaCopia(a,b); m.fb=()=>rvImaCopia(b,a);
+  m.ea=()=>{ try{ b.fragments.update(true).catch(()=>{}); }catch(_){} }; m.eb=()=>{ try{ a.fragments.update(true).catch(()=>{}); }catch(_){} };
+  a.controls.addEventListener('change',m.fa); b.controls.addEventListener('change',m.fb);
+  a.controls.addEventListener('end',m.ea); b.controls.addEventListener('end',m.eb);
+  rvImaCopia(a,b); m.ea();
+}
+function rvImaToggle(v){
+  const m=RV_IMA, on=v===undefined?!m.on:!!v, b=$('btnIma');
+  m.on=on; if(b){ b.classList.toggle('on',on); b.setAttribute('aria-pressed',on); }
+  if(on) rvImaPrender(); else rvImaSoltar();
+}
+setInterval(rvImaPrender,700);   // janela da direita ainda carregando, ou Recarregar trocou o visualizador
 // Janela ativa: é nela que entra o card clicado.
 let RV_JAN=0;
 function rvJanelas(l){
