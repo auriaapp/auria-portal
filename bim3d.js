@@ -313,8 +313,7 @@ export async function descarregarUm(V, idBusca){
   const x = V.modelos[i];
   V.modelos.splice(i, 1);
   try{ V.scene.remove(x.model.object); }catch(_){}
-  // Espera soltar de verdade: update() com o modelo ainda saindo dá "Model not found"
-  // e a carga do modelo seguinte fica presa.
+  // Espera soltar de verdade: update() com o modelo ainda saindo dá "Model not found".
   try{ await x.model.dispose(); }catch(_){}
   // Se a peça anterior de raio-X estava neste modelo, some junto.
   if(V._xrayUlt && V._xrayUlt.modelo === x) V._xrayUlt = null;
@@ -322,7 +321,8 @@ export async function descarregarUm(V, idBusca){
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
   V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //conjunto de lajes mudou → recalcula pavimentos/caixas do clash
-  try{ await V.fragments.update(true); }catch(_){}
+  // Sem nenhum modelo, fragments.update(true) nunca termina e prende a fila de carga.
+  if(V.modelos.length){ try{ await V.fragments.update(true); }catch(_){} }
 }
 
 export function descartar(V){
