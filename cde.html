@@ -1246,6 +1246,7 @@ let MULTI_MODE=false, MULTI_SEL=new Set();   // seleção múltipla → abrir ju
 // restrito. A RLS é a barreira real; isto só esconde o que falharia.
 let SEM_ESCRITA = false;
 let SO_PUBLICADO = false;
+let MINHAS_DISC = new Set();   // projetista: disciplinas que ele entrega (S2 das demais é só consulta)
 let FERRAMENTAS_OBRA = false;
 let RAMO_OBRA = false;
 let NIVEL_OBRA = null;     // 'eng_chefe' | 'coord_campo' | 'equipe_campo' | null
@@ -1329,6 +1330,9 @@ async function boot(){
   }
   // Obra aponta no App Obra (2026-10-08): no CDE o ＋ Apontar fica para projetista/setor.
   CAN_APONTAR = !!(acc && acc.abrir_apont) && USER_ROLE!=='obra';
+  if(USER_ROLE==='projetista' && EMP_ID){
+    try{ const q=await sb.rpc('cde_minhas_disciplinas_upload',{ p_emp:EMP_ID }); MINHAS_DISC=new Set((q.data||[]).map(x=>String(x.disciplina||'').toUpperCase())); }catch(_){}
+  }
   const VER_NAO_PUB = NIVEL_OBRA==='eng_chefe' || !!(acc && acc.ver_nao_publicado);
   // "Vê que existe, mas não abre" (Camada 1) é conceito de CONSUMIDOR: setor e
   // ramo obra. O projetista é PRODUTOR — precisa abrir o próprio upload em S0 —
@@ -2254,7 +2258,10 @@ function docBloqueado(d){ if(!SO_PUBLICADO) return false; const e=d.atual?d.atua
 // recusaria de qualquer jeito, isto tira o botão da frente). E o que está em
 // análise, quando visível (eng. chefe), vai marcado.
 const STATUS_LIBERADO = ['A1','B1','AS_BUILT'];
-function statusBaixavel(st){ return !RAMO_OBRA || STATUS_LIBERADO.includes(st); }
+// S2 (para informação) de outra disciplina é consulta: o fornecedor abre, mas não baixa.
+// O servidor não separa ver de baixar (ver .cdeWin-marca), então a regra mora na tela.
+function soConsulta(st,disc){ return USER_ROLE==='projetista' && st==='S2' && !MINHAS_DISC.has(String(disc||'').toUpperCase()); }
+function statusBaixavel(st,disc){ return (!RAMO_OBRA || STATUS_LIBERADO.includes(st)) && !soConsulta(st,disc); }
 function docEmAnalise(d){ return RAMO_OBRA && !!d.atual && d.atual.estado!=='PUBLICADO'; }
 
 // ── Popovers de Filtro e Ordenação ─────────────────────────────────────────
@@ -3103,6 +3110,7 @@ function baixarFormatoDoc(docId, ext){
   const d=DOCS.find(x=>x.id===docId); if(!d) return;
   const a=((d.atual&&d.atual.arqs)||[]).find(x=>(x.extensao||'').toLowerCase()===ext);
   if(!a) return;
+  if(!statusBaixavel(d.atual.status, d.disciplina)){ alert('Arquivo só para consulta: abra a prancha para visualizar.'); return; }
   baixar(a.storage_path, a.nome, a.storage_provider);
 }
 
@@ -3172,14 +3180,14 @@ function docMenuOpen(ev,id){
   const rows=[];
   // Ramo obra só BAIXA o liberado (Camada 3): numa revisão em análise o eng.
   // chefe abre, mas o "Baixar" nem aparece. Abrir (👁) continua.
-  const baixavel = statusBaixavel(d.atual ? d.atual.status : null);
+  const baixavel = statusBaixavel(d.atual ? d.atual.status : null, d.disciplina);
   // Clicar no card já abre a prancha (PDF): o menu só BAIXA. DXF continua com "Abrir"
   // (o card abre o PDF) — e também baixa, quando permitido.
   FMT_ORDER.filter(e=>byExt[e]).forEach(e=>{
     if(e==='dxf') rows.push(`<button onclick="docMenuAct('${id}','dxf','view')"><span class="mi">${DM_IC.ver}</span>Abrir DXF</button>`);
     if(baixavel) rows.push(`<button onclick="docMenuAct('${id}','${e}','down')"><span class="mi">${DM_IC.baixar}</span>Baixar ${e.toUpperCase()}</button>`);
   });
-  if(!rows.length) rows.push(`<div class="dm-empty">${Object.keys(byExt).length?'Download só depois da liberação para a obra':'Sem arquivos nesta revisão'}</div>`);
+  if(!rows.length) rows.push(`<div class="dm-empty">${Object.keys(byExt).length?(soConsulta(d.atual&&d.atual.status,d.disciplina)?'Arquivo só para consulta':'Download só depois da liberação para a obra'):'Sem arquivos nesta revisão'}</div>`);
   // QR: obra (qualquer nível) e coordenação. Setor é consulta — não afixa QR.
   if(d.qr_token && (RAMO_OBRA || !SEM_ESCRITA) && baixavel){
     rows.push('<div class="dm-sep"></div>');
@@ -7379,7 +7387,7 @@ function zipArquivosDe(docs){
   const out=[];
   (docs||[]).forEach(d=>{
     if(!d||!d.atual||docBloqueado(d)) return;
-    if(!statusBaixavel(d.atual.status)) return;
+    if(!statusBaixavel(d.atual.status, d.disciplina)) return;
     (d.atual.arqs||[]).forEach(a=>{ if(a&&a.storage_path) out.push({ doc:d, a, ext:(a.extensao||'').toLowerCase() }); });
   });
   return out;
@@ -8073,12 +8081,12 @@ async function renderDetalhe(){
     const files=(porRev[r.id]||[]).sort((a,b)=>(b.eh_principal?1:0)-(a.eh_principal?1:0));
     // Ramo obra: o botão de baixar só existe na revisão liberada. Na em análise
     // (que só o eng. chefe vê) fica o motivo no lugar do botão.
-    const dl = statusBaixavel(r.status);
+    const dl = statusBaixavel(r.status, d.disciplina);
     const btnDl = a => a.removido_em
       ? `<span style="font-size:11px;color:var(--mut);font-weight:700" title="Removido em ${esc(fmtData(a.removido_em))}">removido</span>`
       : dl
       ? `<button class="btn sec sm" onclick="baixar('${esc(a.storage_path)}','${esc(a.nome)}','${esc(a.storage_provider||'supabase')}')">Baixar</button>`
-      : `<span style="font-size:11px;color:#7C3E06;font-weight:700" title="Só a revisão liberada para obra pode ser baixada">não liberado</span>`;
+      : (soConsulta(r.status,d.disciplina) ? `<span style="font-size:11px;color:#7C3E06;font-weight:700" title="Arquivo para informação: abra para visualizar">só consulta</span>` : `<span style="font-size:11px;color:#7C3E06;font-weight:700" title="Só a revisão liberada para obra pode ser baixada">não liberado</span>`);
     const filesHtml=files.length?files.map(a=>`<div class="afile"><span class="ext ${(a.extensao||'').toLowerCase()==='pdf'?'pdf':''}">${esc((a.extensao||'?').toUpperCase())}</span><span class="nm">${esc(a.nome)}</span><span class="sz">${fmtBytes(a.tamanho_bytes)}</span>${btnDl(a)}</div>`).join(''):'<div style="font-size:12px;color:var(--mut)">Sem arquivos.</div>';
     // Revisão sem nenhum arquivo não tem o que reabrir: o reenvio é por revisão nova.
     const semArq=files.length>0&&files.every(a=>a.removido_em);
