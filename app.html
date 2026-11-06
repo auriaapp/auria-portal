@@ -2415,7 +2415,7 @@ function renderCamadas(){
           <span style="font-size:12px;opacity:.85">✎</span>
           <span style="font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(disc)}${i===0?' · base':''}</span>
         </div>
-        <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value)" title="Opacidade" style="width:52px;accent-color:var(--accent)">
+        <input type="range" min="0.1" max="1" step="0.01" value="${L.opacity}" oninput="camOpac(${i},this.value)" title="Opacidade" style="width:52px;accent-color:var(--accent)">
         <input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)" title="Ver esta prancha" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer">
       </div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding-left:3px">
@@ -2433,7 +2433,27 @@ function renderCamadas(){
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
 function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); renderPins(); renderListaApts(); }
-function camOpac(i,v,inp){ LAYERS[i].opacity=+v; if(inp&&inp.nextElementSibling) inp.nextElementSibling.textContent=Math.round(+v*100)+'%'; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); }
+// Arrastar a opacidade redesenhava o PDF de todas as camadas a cada pixel e a barra
+// travava. Agora o arraste recompõe as cópias do último quadro (F.prev), e o desenho
+// em qualidade total só roda quando a mão para.
+let _opRaf=0, _opFim=0;
+function camOpacVivo(){
+  _opRaf=0; const cv=$('pdfCanvas'), p=F.prev; if(!p||!p.length||!cv||!cv.width) return;
+  const [pw,ph]=F.prevTam; let o=F.prevOut;
+  if(!o||o.width!==pw||o.height!==ph){ o=F.prevOut=document.createElement('canvas'); o.width=pw; o.height=ph; }
+  const x=o.getContext('2d');
+  x.globalCompositeOperation='source-over'; x.globalAlpha=1; x.fillStyle='#FFFFFF'; x.fillRect(0,0,pw,ph);
+  x.globalCompositeOperation='multiply';
+  p.forEach(({L,pc})=>{ x.globalAlpha=Math.max(0,Math.min(1,L.opacity)); x.drawImage(pc,0,0); });
+  x.globalAlpha=1; x.globalCompositeOperation='source-over';
+  cv.getContext('2d').drawImage(o,0,0,cv.width,cv.height);
+}
+function camOpac(i,v,inp){
+  LAYERS[i].opacity=+v; if(inp&&inp.nextElementSibling) inp.nextElementSibling.textContent=Math.round(+v*100)+'%'; if(i>0) salvarEstadoCamada(LAYERS[i]);
+  if(!(F.prev&&F.prev.length)){ F.valido=false; render(); return; }
+  if(!_opRaf) _opRaf=requestAnimationFrame(camOpacVivo);
+  clearTimeout(_opFim); _opFim=setTimeout(()=>{ _renderJob++; F.valido=false; render(); },350);
+}
 // Prancha colorida: o tingimento troca todo pixel desenhado pela cor, então uma
 // hachura sólida virava bloco igual às linhas. Durante o render, preenchimento
 // grande (> AU_HACH_MIN pontos no lado menor) entra translúcido, mais forte quanto
@@ -2725,6 +2745,9 @@ async function render(){
     const lay=document.createElement('canvas');
     lay.width=off.width; lay.height=off.height;
     const lctx=lay.getContext('2d');
+    // Cópia reduzida de cada camada: mexer na opacidade só recompõe estas cópias,
+    // sem passar o PDF pelo pdf.js de novo (ver camOpac).
+    const prevs=[], pk=Math.min(1,2400/off.width), pw=Math.round(off.width*pk), ph=Math.round(off.height*pk);
 
     // CAMADAS unificadas (0 = base). Todas passam pelo MESMO caminho: a base tem
     // offset 0 / escala 1, então a fórmula abaixo reduz ao render normal da base.
@@ -2759,6 +2782,7 @@ async function render(){
         lctx.fillStyle=L.cor; lctx.fillRect(0,0,lay.width,lay.height);
         lctx.globalCompositeOperation='source-over';
       }
+      { const pc=document.createElement('canvas'); pc.width=pw; pc.height=ph; pc.getContext('2d').drawImage(lay,0,0,pw,ph); prevs.push({L,pc}); }
       // COMPOSIÇÃO 'multiply' (igual ao desktop): o branco da prancha some
       // (branco × destino = destino → fundo fica branco, só as linhas aparecem) e
       // o globalAlpha desbota as linhas em direção ao branco — a prancha NUNCA
@@ -2778,6 +2802,7 @@ async function render(){
     canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
     ctx.drawImage(off,0,0);
     F.zoom=zoom; F.panX=panX; F.panY=panY; F.cssW=cssW; F.cssH=cssH; F.valido=true;
+    F.prev=prevs; F.prevTam=[pw,ph];
     updateCss();
   }catch(e){ if(!String(e).includes('cancelled')) console.error('render:',e); }
   _rendering=false;
@@ -9539,7 +9564,7 @@ function rvPeerCards(){
     return `<div class="rvPr ${oculto?'oculta':''}" style="--cor:${x.cor||RV_COR_ORIG};cursor:default" title="${esc(x.cod)}">
       <button class="rvOlho ${oculto?'off':''}" onclick="rvPeerOlho(${k})" title="${oculto?'Mostrar':'Ocultar'}">${oculto?'◌':'👁'}</button><button type="button" class="rvCorB" data-pk="${k}" onclick="rvPeerCorAbrir(${k},event)" title="Cor" aria-label="Escolher a cor de ${esc(x.sig)}"><span class="bar"></span></button>
       <div class="mid"><div class="t1">${rvLadoTag(x.t,1)}<span class="rvPrTag">${esc(x.sig)}</span>${x.et?`<span class="rvPrEt">${esc(x.et)}</span>`:''}${x.rev?`<span class="rvPrBase">${esc(x.rev)}</span>`:''}${x.ifc?`<span class="rvPrBase">${esc(x.ifc)}</span>`:''}${!q&&x.i===0?'<span class="rvPrBase">BASE</span>':''}</div><span class="cod">${esc(x.cod)}</span></div>
-      <div class="acts">${q?'':`<input type="range" min="0.1" max="1" step="0.05" value="${x.op}" oninput="peerCall('__peerOp2',${x.i},this.value)" title="Opacidade" aria-label="Opacidade">`}${q||x.i>0?`<button class="rvIb del" onclick="rvPeerTira(${k})" title="Tirar desta janela">✕</button>`:''}</div></div>`;
+      <div class="acts">${q?'':`<input type="range" min="0.1" max="1" step="0.01" value="${x.op}" oninput="peerCall('__peerOp2',${x.i},this.value)" title="Opacidade" aria-label="Opacidade">`}${q||x.i>0?`<button class="rvIb del" onclick="rvPeerTira(${k})" title="Tirar desta janela">✕</button>`:''}</div></div>`;
   }).join('')+'</div>':'';
 }
 function rvPeerOlho(k){ const x=RV_PEER_IT[k]; if(!x) return; if(x.t==='3') peerCall('__peerVis3',x.id); else peerCall('__peerVis2',x.i,!x.vis); }
@@ -10546,7 +10571,7 @@ function rvCamWin(i, anc){
   w.innerHTML=`<div class="hd"><span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">${base?'base':'camada '+i}</span><b title="${esc(cod)}">${esc(cod)}</b><button class="xb" onclick="rvCamWinFechar()">✕</button></div>
     <label class="rvCwL"><input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)"> Visível</label>
     <div class="rvLbl">Opacidade <span id="rvCwOp" style="float:right;font-family:Consolas,monospace">${Math.round(L.opacity*100)}%</span></div>
-    <input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value);$('rvCwOp').textContent=Math.round(this.value*100)+'%'" style="width:100%;accent-color:var(--rvLar)">
+    <input type="range" min="0.1" max="1" step="0.01" value="${L.opacity}" oninput="camOpac(${i},this.value);$('rvCwOp').textContent=Math.round(this.value*100)+'%'" style="width:100%;accent-color:var(--rvLar)">
     <div class="rvLbl">Cor</div><div class="rvCwSw">${sw}</div>
     <div class="rvLbl">Posição e escala</div>${pos}
     ${base ? (LAYERS.length===1?`<button class="rvCwB rvCwX" onclick="rvFechar2d()">Fechar a prancha</button>`:'') : `<button class="rvCwB rvCwX" onclick="rvCamRemover(${i})">✕ Remover camada</button>`}`;
@@ -10735,7 +10760,7 @@ function rvCamadas(){
     h+=`<div class="rvPr ${foco?'f':''} ${L.visible?'':'oculta'} ${etAnt?'ant':''}" style="--cor:${L.cor||RV_COR_ORIG}" onclick="rvCamFoco(${i},event)" title="Clique para pôr esta prancha em foco${nome?' · '+esc(nome):''}">
       <button class="rvOlho ${L.visible?'':'off'}" onclick="event.stopPropagation();camVis(${i},${!L.visible});renderCamadas()" title="${L.visible?'Ocultar':'Mostrar'} esta prancha">${L.visible?'👁':'◌'}</button><button type="button" class="rvCorB" data-cam="${i}" onclick="rvCamCorAbrir(${i},event)" title="Cor da prancha" aria-label="Escolher a cor da prancha ${esc(sig)}"><span class="bar"></span></button>
       <div class="mid"><div class="t1">${rvLadoTag('2',rvJanDe('2'))}<span class="rvPrTag">${esc(sig)}</span>${et?`<span class="rvPrEt ${etAnt?'ant':''}" title="${etAnt?'Etapa anterior — '+esc(rvEtapaAtual('2d',sig))+' é a atual':'Etapa '+esc(et)+(ETAPA_NOME[et]?' · '+ETAPA_NOME[et]:'')}">${esc(et)}</span>`:''}${i===0?'<span class="rvPrBase">BASE</span>':''}${foco?'<span class="rvPrFoco">FOCO</span>':''}</div><span class="cod ${rec?'rec':''}" title="${esc(cod)}${rec?' · reconhecida':''}">${esc(cod)}</span></div>
-      <div class="acts" onclick="event.stopPropagation()"><input type="range" min="0.1" max="1" step="0.05" value="${L.opacity}" oninput="camOpac(${i},this.value);this.title='Opacidade '+Math.round(this.value*100)+'%'" title="Opacidade ${Math.round(L.opacity*100)}%">
+      <div class="acts" onclick="event.stopPropagation()"><input type="range" min="0.1" max="1" step="0.01" value="${L.opacity}" oninput="camOpac(${i},this.value);this.title='Opacidade '+Math.round(this.value*100)+'%'" title="Opacidade ${Math.round(L.opacity*100)}%">
         <button class="rvIb" ${posOff?'disabled':''} onclick="abrirPosicao(${i})" title="Posição e escala${i===0?' — a base é a referência':LOCK_POS?' — destrave a posição':''}">⚙</button>
         ${i>0?`<button class="rvIb del" onclick="camRemover(${i})" title="Remover prancha">✕</button>`:''}</div>
     </div>`;
