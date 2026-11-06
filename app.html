@@ -842,6 +842,8 @@ html[data-tema=claro] .rvCwX{color:#C0392B}
 .rvAnT:hover{border-color:var(--rvLar)}
 .rvAnT.act{background:var(--rvLarT);border-color:var(--rvLar);box-shadow:inset 0 -2px 0 var(--rvLar)}
 .rvAnT.rascunho{font-style:italic;cursor:default}
+.rvGira{width:10px;height:10px;border-radius:50%;border:2px solid var(--rvLarT);border-top-color:var(--rvLar);flex:none;animation:rvGira .8s linear infinite}
+@keyframes rvGira{to{transform:rotate(360deg)}}
 .rvAnIn{flex:none;background:var(--bg2);border:1px solid var(--rvLar);color:var(--txt);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:600;outline:none;box-shadow:0 0 0 2px var(--rvLarT)}
 .rvAnT.mais{padding:5px 10px;color:var(--mut)}
 .rvAnT .dot{width:7px;height:7px;border-radius:50%;background:var(--rvLar);flex:none}
@@ -2097,6 +2099,9 @@ async function restaurarAnalise(an, localFilesByHash){
   const metas=(an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0));
   const faltando=[];
   let baseFeita=false;
+  // Todas as pranchas do CDE começam a baixar juntas; o laço abaixo só consome.
+  _CDE_PRE.clear();
+  metas.filter(_metaEhCde).forEach(m=>{ const p=_cdePreparar(m.cde_documento_id); p.catch(()=>{}); _CDE_PRE.set(m.cde_documento_id,p); });
   for(const m of metas){
     const overlay=baseFeita;
     if(_metaEhCde(m)){
@@ -2126,6 +2131,7 @@ async function restaurarAnalise(an, localFilesByHash){
       }
     }catch(e){ faltando.push(m.arquivo_nome||'(sem nome)'); console.warn('restaurarAnalise local:',(e&&e.message)||e); }
   }
+  _CDE_PRE.clear();
   if(!baseFeita && !(an.modelos||[]).length){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
   if(baseFeita) renderCamadas();
   if(baseFeita && LAYERS[0]){
@@ -2266,10 +2272,27 @@ async function registrarPranchaDb(nome, hash, doc, page, opts){
 //  registra a prancha no App AMARRADA ao documento do CDE — assim novas
 //  revisões reaproveitam a mesma "prancha" (escala e pins herdados).
 window.CDE_REV_ID = null;   // usado depois pra amarrar os apontamentos à revisão vista
-async function abrirDoCDE(cdeDocId, cdeRevId, overlay){
-  if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
-  if(overlay && !PRANCHA){ alert('Abra a prancha base primeiro.'); return; }
-  const dropHint = $('dropHint'); if(dropHint) dropHint.innerHTML='<div>Abrindo prancha do CDE…</div>';
+// Bytes dos PDFs abertos há pouco: o caminho no storage é fixo por revisão, então
+// voltar a uma análise não baixa de novo. Guarda os 8 últimos.
+const _CDE_PDF=new Map(), _CDE_PRE=new Map();
+function _cdeBytes(arq){
+  const k=(arq.storage_provider||'')+'|'+arq.storage_path;
+  let p=_CDE_PDF.get(k);
+  if(p){ _CDE_PDF.delete(k); _CDE_PDF.set(k,p); return p; }
+  p=(async()=>{
+    const url = await cdeSignedUrlApp(arq.storage_path, arq.storage_provider);
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error('Falha ao baixar o PDF do CDE ('+resp.status+').');
+    const buf = await resp.arrayBuffer();
+    return { buf, hash: await sha256Hex(buf) };
+  })();
+  p.catch(()=>_CDE_PDF.delete(k));
+  _CDE_PDF.set(k,p);
+  while(_CDE_PDF.size>8) _CDE_PDF.delete(_CDE_PDF.keys().next().value);
+  return p;
+}
+// Documento, revisão e arquivo; o download começa aqui e não é esperado.
+async function _cdePreparar(cdeDocId, cdeRevId){
   // 1) documento (código, disciplina)
   const { data:doc, error:docErr } = await sb.from('cde_documento_auria')
     .select('id,codigo,titulo,disciplina,empreendimento_id').eq('id',cdeDocId).maybeSingle();
@@ -2293,20 +2316,24 @@ async function abrirDoCDE(cdeDocId, cdeRevId, overlay){
     rev=r.data;
   }
   if(!rev) throw new Error('Este documento ainda não tem revisão.');
-  window.CDE_REV_ID = rev.id;
   // 3) PDF principal da revisão (ou primeiro PDF disponível)
   const { data: arqs } = await sb.from('cde_arquivo_auria')
     .select('nome,extensao,storage_path,storage_provider,eh_principal').eq('revisao_id',rev.id);
   const pdfs=(arqs||[]).filter(a=>(a.extensao||'').toLowerCase()==='pdf');
   const arq = pdfs.find(a=>a.eh_principal) || pdfs[0];
   if(!arq) throw new Error('Esta revisão não tem PDF (só DXF/DWG/IFC). O Auria App abre PDFs.');
-  // 4) baixa o PDF
-  const url = await cdeSignedUrlApp(arq.storage_path, arq.storage_provider);
-  const resp = await fetch(url);
-  if(!resp.ok) throw new Error('Falha ao baixar o PDF do CDE ('+resp.status+').');
-  const buf = await resp.arrayBuffer();
-  const hash = await sha256Hex(buf);
-  const pdoc = await pdfjsLib.getDocument({data:buf}).promise;
+  return { doc, rev, arq, pdf:_cdeBytes(arq) };
+}
+async function abrirDoCDE(cdeDocId, cdeRevId, overlay){
+  if(!EMP){ alert('Selecione um empreendimento primeiro.'); return; }
+  if(overlay && !PRANCHA){ alert('Abra a prancha base primeiro.'); return; }
+  const dropHint = $('dropHint'); if(dropHint) dropHint.innerHTML='<div>Abrindo prancha do CDE…</div>';
+  const pre=!cdeRevId && _CDE_PRE.get(cdeDocId);
+  const { doc, rev, arq, pdf }=await (pre || _cdePreparar(cdeDocId, cdeRevId));
+  window.CDE_REV_ID = rev.id;
+  // 4) PDF: o pdf.js fica com o buffer que recebe, então vai uma cópia
+  const { buf, hash }=await pdf;
+  const pdoc = await pdfjsLib.getDocument({data:buf.slice(0)}).promise;
   const page = await pdoc.getPage(1);
   // 5) registra amarrado ao cde_documento_id
   const pr = await registrarPranchaDb(arq.nome, hash, pdoc, page, {
@@ -10173,6 +10200,7 @@ function rvClicarMod(ev, arqId){
     {ic:'▭', t:'Só o modelo (tela cheia)', f:()=>rvAbrirMod(arqId,'cheio')}]);
 }
 async function rvAbrir2d(docId, modo){
+  if(RV_AN_ABRINDO){ rvAviso('Aguarde: a análise ainda está abrindo.'); return; }
   try{
     const B=document.body.classList;
     if(modo==='dir'){
@@ -10188,6 +10216,7 @@ async function rvAbrir2d(docId, modo){
 }
 let RV_F3D_PROM=null;   // abertura do 3D em curso: cliques seguintes esperam por ela
 async function rvAbrirMod(arqId, modo){
+  if(RV_AN_ABRINDO){ rvAviso('Aguarde: a análise ainda está abrindo.'); return; }
   const onde=rvModOnde(arqId);
   if(onde==='peer'||(!onde&&rvNaDireita3d())) return rvPeerMod(arqId);
   try{
@@ -10622,12 +10651,14 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('rvCamWin')) r
 // Cada análise salva = uma aba. Sem análise aberta, o que estiver na tela vira
 // "Análise NN (não salva)". Trocar de aba, de empreendimento ou sair da página
 // pergunta se quer salvar quando há mudança.
+let RV_AN_ABRINDO=null;   // id da análise em abertura: trava troca e salvar até terminar
+const rvAnSigMods=l=>(l||[]).map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).sort().join(',');   // ordem de carga não é mudança
 function rvAnSigCur(){ const c=_anColetar();
-  return c.pranchas.map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+c.modelos.map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
+  return c.pranchas.map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+rvAnSigMods(c.modelos); }
 function rvAnSigDe(an){
-  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+(an.modelos||[]).map(m=>(m.documento_id||m.arquivo_id)+(m.cor||'')).join(','); }
+  return (an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0)).map(p=>(p.cde_documento_id||p.arquivo_hash||p.prancha_id)+(p.cor||'')).join(',')+'|'+rvAnSigMods(an.modelos); }
 function rvAnSujo(){
-  if(!EMP || APP_RO) return false;
+  if(!EMP || APP_RO || RV_AN_ABRINDO) return false;
   const at=ANALISES.find(a=>a.id===ANALISE_ATUAL);
   if(at) return rvAnSigCur()!==rvAnSigDe(at);
   return _anTemConteudo();
@@ -10638,6 +10669,7 @@ function rvAnProxNome(){
 }
 async function rvAnSalvar(comoNova){
   if(APP_RO){ roAviso(); return false; }
+  if(RV_AN_ABRINDO) return false;
   if(!_anTemConteudo()){ rvAviso('Abra ao menos uma prancha ou um modelo antes de salvar.'); return false; }
   const c=_anColetar(), at=!comoNova && ANALISES.find(a=>a.id===ANALISE_ATUAL);
   try{
@@ -10671,20 +10703,27 @@ function rvAnPerguntar(acao){
 async function rvAnLimpar(){
   const B=document.body.classList;
   try{ if(B.contains('split2d')) await split2dToggle(); }catch(_){}
+  try{ if(B.contains('split33')) rvPeer3dFechar(); }catch(_){}
   if(B.contains('split')){ B.remove('split','split-3dleft'); _splitBtns(false); }
   try{ if(F3D_MODO) await f3dModo(false); }catch(_){}
   if(LAYERS.length) rvFechar2d();
 }
 async function rvAnAbrir(id){
+  if(RV_AN_ABRINDO){ rvAviso('Aguarde: a análise ainda está abrindo.'); return; }
   if(id===ANALISE_ATUAL) return;
   const an=ANALISES.find(a=>a.id===id); if(!an) return;
   if(!await rvAnPerguntar('abrir “'+an.nome+'”')) return;
-  await rvAnLimpar();
-  if((an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
-  try{ await restaurarAnalise(an,{}); }catch(e){ rvAlerta('Erro ao abrir a análise: '+((e&&e.message)||e)); }
-  rvNavRender();
+  RV_AN_ABRINDO=id; rvAnRender();   // a aba clicada ativa na hora; Salvar fica travado até terminar
+  try{
+    await rvAnLimpar();
+    ANALISE_ATUAL=null;   // se falhar no meio, a tela vira rascunho e não a análise anterior
+    if((an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
+    await restaurarAnalise(an,{});
+  }catch(e){ rvAlerta('Erro ao abrir a análise: '+((e&&e.message)||e)); }
+  finally{ RV_AN_ABRINDO=null; rvAnRender(); rvNavRender(); }
 }
 async function rvAnNova(){
+  if(RV_AN_ABRINDO) return;
   if(!await rvAnPerguntar('começar uma nova')) return;
   await rvAnLimpar(); ANALISE_ATUAL=null; RV_AN_NOME=null; renderAnalises(); rvNavRender();
   rvAviso('Análise nova: abra pranchas e modelos pela lista; 💾 salva como '+rvAnNomeNovo()+' (duplo clique na aba muda o nome).');
@@ -10732,13 +10771,14 @@ function rvAnRender(){
   if(!EMP){ el.innerHTML='<span class="rvMini">Selecione um empreendimento.</span>'; return; }
   const sujo=rvAnSujo(), lista=ANALISES.slice().sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em)));
   let h='<span class="rvAnLbl">Análises</span>';
-  h+=lista.map(a=>`<button class="rvAnT ${a.id===ANALISE_ATUAL?'act':''}" data-id="${a.id}" title="${esc(a.nome+' · '+_anResumo(a)+(APP_RO?'':' · duplo clique renomeia · botão direito: opções'))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')"><span class="l">${esc(a.nome)}</span>${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
-  if(!ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
+  h+=lista.map(a=>`<button class="rvAnT ${a.id===(RV_AN_ABRINDO||ANALISE_ATUAL)?'act':''}" data-id="${a.id}" title="${esc(a.nome+' · '+_anResumo(a)+(APP_RO?'':' · duplo clique renomeia · botão direito: opções'))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${a.id===RV_AN_ABRINDO?'<i class="rvGira"></i>':''}<span class="l">${esc(a.nome)}</span>${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
+  if(!RV_AN_ABRINDO && !ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
   if(!APP_RO) h+=`<button class="rvAnT mais" title="Nova análise (fecha o que está aberto)" onclick="rvAnNova()">＋</button>`;
   h+='<span style="flex:1"></span>';
   // ações da análise aberta à vista (antes só no botão direito da aba)
-  if(!APP_RO && ANALISE_ATUAL) h+=`<button class="rvAnSv" id="rvAnOpc" onclick="rvAnCtx(event,'${ANALISE_ATUAL}')" title="Renomear · Salvar como nova · Excluir">⋯ Opções</button>`;
-  if(!APP_RO) h+=`<button class="rvAnSv ${sujo?'on':''}" ${sujo?'':'disabled'} onclick="rvAnSalvar(false)" title="${ANALISE_ATUAL?'Grava o que está aberto nesta análise':'Salva como '+esc(rvAnNomeNovo())}">💾 Salvar</button>`;
+  if(!APP_RO && ANALISE_ATUAL && !RV_AN_ABRINDO) h+=`<button class="rvAnSv" id="rvAnOpc" onclick="rvAnCtx(event,'${ANALISE_ATUAL}')" title="Renomear · Salvar como nova · Excluir">⋯ Opções</button>`;
+  if(RV_AN_ABRINDO) h+=`<button class="rvAnSv" disabled>Abrindo…</button>`;
+  else if(!APP_RO) h+=`<button class="rvAnSv ${sujo?'on':''}" ${sujo?'':'disabled'} onclick="rvAnSalvar(false)" title="${ANALISE_ATUAL?'Grava o que está aberto nesta análise':'Salva como '+esc(rvAnNomeNovo())}">💾 Salvar</button>`;
   el.innerHTML=h;
 }
 // ── Disciplinas e Pranchas: lista compacta (mockup app_secao_pranchas, opção B) ──
@@ -10791,7 +10831,9 @@ window.addEventListener('load',()=>{
   const te=window.trocarEmp;
   if(typeof te==='function') window.trocarEmp=async function(){
     const sel=$('selEmp'), novo=sel.value, velho=EMP&&EMP.id;
+    if(RV_AN_ABRINDO){ sel.value=velho||''; rvAviso('Aguarde: a análise ainda está abrindo.'); return; }
     if(velho && novo!==velho && rvAnSujo()){ sel.value=velho; if(!await rvAnPerguntar('trocar de empreendimento')) return; sel.value=novo; }
+    if(velho && novo!==velho) await rvAnLimpar();
     return te.apply(this, arguments);
   };
   ['voltarPortal','irCDE','sair'].forEach(fn=>{ const o=window[fn]; if(typeof o!=='function') return;
