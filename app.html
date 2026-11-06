@@ -844,6 +844,20 @@ html[data-tema=claro] .rvCwX{color:#C0392B}
 .rvAnT:hover{border-color:var(--rvLar)}
 .rvAnT.act{background:var(--rvLarT);border-color:var(--rvLar);box-shadow:inset 0 -2px 0 var(--rvLar)}
 .rvAnT.rascunho{font-style:italic;cursor:default}
+.rvFx{flex:none;font-size:9px;font-weight:800;letter-spacing:.3px;border-radius:5px;padding:0 4px;border:1px solid var(--line);color:var(--mut)}
+.rvFx.pj{color:#9DB6F0;border-color:#5B7FD6}.rvFx.pu{color:#34D399;border-color:rgba(52,211,153,.5)}
+html[data-tema=claro] .rvFx.pj{color:#1E3A8A}html[data-tema=claro] .rvFx.pu{color:#047857}
+.rvShN{font-family:Consolas,monospace;font-size:11.5px;color:#9EC1FF;margin:4px 0 10px;overflow-wrap:anywhere}
+html[data-tema=claro] .rvShN{color:#1E3A8A}
+.rvShO{display:grid;grid-template-columns:16px 1fr;gap:9px;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;background:var(--panel);color:var(--txt);cursor:pointer;font:inherit}
+.rvShO:hover{border-color:var(--rvLar)}
+.rvShO.on{border-color:var(--rvLar);background:var(--rvLarT)}
+.rvShO i{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--mut);margin-top:2px}
+.rvShO.on i{border:4px solid var(--rvLar)}
+.rvShO b{display:block;font-size:12.5px}.rvShO small{display:block;font-size:11.5px;color:var(--mut);line-height:1.35}
+.rvShAv{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.4;color:#E9B44C;background:rgba(233,180,76,.09);border:1px solid rgba(233,180,76,.35);border-radius:9px;padding:7px 9px;margin-top:4px}
+.rvShAv b{font-size:11.5px}
+html[data-tema=claro] .rvShAv{color:#92610A}
 .rvGira{width:10px;height:10px;border-radius:50%;border:2px solid var(--rvLarT);border-top-color:var(--rvLar);flex:none;animation:rvGira .8s linear infinite}
 @keyframes rvGira{to{transform:rotate(360deg)}}
 .rvAnIn{flex:none;background:var(--bg2);border:1px solid var(--rvLar);color:var(--txt);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:600;outline:none;box-shadow:0 0 0 2px var(--rvLarT)}
@@ -2004,7 +2018,7 @@ function _anColetar(){
 }
 function _anErroMsg(e){
   const m=(e&&e.message)||String(e);
-  return /row-level security|violates|permission/i.test(m) ? 'sem permissão — só o coordenador deste empreendimento grava análises.' : m;
+  return /row-level security|violates|permission/i.test(m) ? 'sem permissão — só quem criou altera a análise, e o visualizador não grava.' : m;
 }
 async function salvarAnalise(comoNova){
   if(APP_RO){ roAviso(); return; }
@@ -10662,24 +10676,38 @@ function rvAnSigDe(an){
 function rvAnSujo(){
   if(!EMP || APP_RO || RV_AN_ABRINDO) return false;
   const at=ANALISES.find(a=>a.id===ANALISE_ATUAL);
-  if(at) return rvAnSigCur()!==rvAnSigDe(at);
+  if(at) return rvAnMinha(at) && rvAnSigCur()!==rvAnSigDe(at);   // de outra pessoa: só consulta
   return _anTemConteudo();
 }
+function rvAnMinha(a){ return !!a && a.criado_por===USER.id; }
+function rvAnItens(){ return LAYERS.length+((F3D&&F3D.modelos&&F3D.modelos.length)||0)+(RV_PEER_DOC?1:0); }
+function rvAnNomeArq(){
+  const L=LAYERS[0]; if(L) return String(L.prancha.codigo||L.nome||'').split(' · ')[0];
+  const m=F3D&&F3D.modelos&&F3D.modelos[0]; return (m&&m.nome)||'';
+}
+// Um arquivo aberto: a aba é o código dele. Dois ou mais: "Análise NN".
+function rvAnNomeAuto(atual){
+  if(rvAnItens()===1) return rvAnNomeArq()||rvAnProxNome();
+  return (atual && /^an[aá]lise\s+\d+/i.test(atual)) ? atual : rvAnProxNome();
+}
+function rvAnNomeTela(a){ return (a.id===ANALISE_ATUAL && !RV_AN_ABRINDO && a.nome_auto && rvAnMinha(a) && rvAnItens()) ? rvAnNomeAuto(a.nome) : a.nome; }
 function rvAnProxNome(){
-  let mx=0; ANALISES.forEach(a=>{ const m=/^an[aá]lise\s+(\d+)/i.exec((a.nome||'').trim()); if(m) mx=Math.max(mx,+m[1]); });
+  let mx=0; ANALISES.filter(rvAnMinha).forEach(a=>{ const m=/^an[aá]lise\s+(\d+)/i.exec((a.nome||'').trim()); if(m) mx=Math.max(mx,+m[1]); });
   return 'Análise '+String(mx+1).padStart(2,'0');
 }
 async function rvAnSalvar(comoNova){
   if(APP_RO){ roAviso(); return false; }
   if(RV_AN_ABRINDO) return false;
   if(!_anTemConteudo()){ rvAviso('Abra ao menos uma prancha ou um modelo antes de salvar.'); return false; }
-  const c=_anColetar(), at=!comoNova && ANALISES.find(a=>a.id===ANALISE_ATUAL);
+  const c=_anColetar(), aberta=ANALISES.find(a=>a.id===ANALISE_ATUAL), alheia=aberta&&!rvAnMinha(aberta), at=!comoNova && !alheia && aberta;
   try{
     if(at){
-      const { data, error }=await sb.from('analises_auria').update({ pranchas:c.pranchas, modelos:c.modelos, vista:c.vista }).eq('id',at.id).select('id');
+      const upd={ pranchas:c.pranchas, modelos:c.modelos, vista:c.vista }; if(at.nome_auto) upd.nome=rvAnNomeAuto(at.nome);
+      const { data, error }=await sb.from('analises_auria').update(upd).eq('id',at.id).select('id');
       if(error) throw error; if(!data||!data.length) throw new Error('row-level security');
     } else {
-      const { data, error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome:rvAnNomeNovo(), pranchas:c.pranchas, modelos:c.modelos, vista:c.vista, criado_por:USER.id }).select('id').single();
+      const nome=alheia ? aberta.nome+' (cópia)' : rvAnNomeNovo(), nome_auto=!alheia && !(RV_AN_NOME&&RV_AN_NOME.trim());
+      const { data, error }=await sb.from('analises_auria').insert({ empreendimento_id:EMP.id, nome, nome_auto, pranchas:c.pranchas, modelos:c.modelos, vista:c.vista, criado_por:USER.id }).select('id').single();
       if(error) throw error; ANALISE_ATUAL=data.id; RV_AN_NOME=null;
     }
     await carregarAnalises();
@@ -10690,7 +10718,7 @@ async function rvAnSalvar(comoNova){
 // Pergunta Salvar / Não salvar / Cancelar. Resolve true = pode seguir.
 function rvAnPerguntar(acao){
   if(!rvAnSujo()) return Promise.resolve(true);
-  const at=ANALISES.find(a=>a.id===ANALISE_ATUAL), nome=at?at.nome:rvAnNomeNovo();
+  const at=ANALISES.find(a=>a.id===ANALISE_ATUAL), nome=at?rvAnNomeTela(at):rvAnNomeNovo();
   return new Promise(res=>{
     const ov=document.createElement('div'); ov.className='rvAsk';
     ov.innerHTML=`<div class="bx"><b>Salvar “${esc(nome)}” antes de ${esc(acao)}?</b>
@@ -10733,11 +10761,12 @@ async function rvAnNova(){
 // Renomear direto na aba (duplo clique ou botão direito). '__novo' = a aba da
 // análise ainda não salva: o nome fica guardado e é usado ao salvar.
 let RV_AN_NOME=null, RV_AN_EDIT=null;
-function rvAnNomeNovo(){ return (RV_AN_NOME&&RV_AN_NOME.trim()) || rvAnProxNome(); }
+function rvAnNomeNovo(){ return (RV_AN_NOME&&RV_AN_NOME.trim()) || rvAnNomeAuto(); }
 function rvAnEditar(id){
   if(APP_RO) return;
   const bt=document.querySelector('#rvAnTabs .rvAnT[data-id="'+id+'"]'); if(!bt) return;
-  const an=ANALISES.find(a=>a.id===id), atual= id==='__novo' ? rvAnNomeNovo() : (an&&an.nome); if(atual==null) return;
+  const an=ANALISES.find(a=>a.id===id), atual= id==='__novo' ? rvAnNomeNovo() : (an&&rvAnNomeTela(an)); if(atual==null) return;
+  if(id!=='__novo' && !rvAnMinha(an)) return;
   RV_AN_EDIT=id;
   const inp=document.createElement('input'); inp.className='rvAnIn'; inp.value=atual; inp.title='Enter salva o nome · Esc cancela';
   inp.style.width=Math.max(90, bt.offsetWidth)+'px';
@@ -10752,34 +10781,88 @@ function rvAnEditar(id){
 async function rvAnRenomear(id, n){
   const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO) return;
   if(n==null) return rvAnEditar(id);
-  try{ const { data, error }=await sb.from('analises_auria').update({ nome:n.trim() }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security'); await carregarAnalises(); }
+  try{ const { data, error }=await sb.from('analises_auria').update({ nome:n.trim(), nome_auto:false }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security'); await carregarAnalises(); }
   catch(e){ rvAlerta('Erro ao renomear: '+_anErroMsg(e)); }
 }
 async function rvAnExcluir(id){
-  const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO) return;
+  const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO||!rvAnMinha(an)) return;
   if(!await rvDialogo('Excluir a análise “'+an.nome+'”?', 'Só a análise sai da lista. As pranchas, os modelos e os apontamentos NÃO são apagados.', [['c','Cancelar'],['s','🗑 Excluir','perigo']])) return;
   try{ const { error }=await sb.from('analises_auria').delete().eq('id',id); if(error) throw error; if(ANALISE_ATUAL===id) ANALISE_ATUAL=null; await carregarAnalises(); }
   catch(e){ rvAlerta('Erro ao excluir: '+_anErroMsg(e)); }
 }
 function rvAnCtx(ev,id){
   ev.preventDefault(); if(APP_RO) return;
+  const an=ANALISES.find(a=>a.id===id);
+  if(an && !rvAnMinha(an)) return rvMenu(ev, id===ANALISE_ATUAL ? [{ic:'💾', t:'Salvar cópia para mim', f:()=>rvAnSalvar(true)}] : [{ic:'👁', t:'Abrir para consulta', f:()=>rvAnAbrir(id)}]);
   const ops=[{ic:'✎', t:'Renomear', f:()=>rvAnEditar(id)}];
   if(id===ANALISE_ATUAL) ops.push({ic:'⧉', t:'Salvar como nova', f:()=>rvAnSalvar(true)});
+  ops.push({ic:'➤', t:'Compartilhar…<span style="margin-left:auto;color:var(--mut);font-size:11px">'+esc(rvAnFxNome(an))+'</span>', f:()=>rvAnCompartilhar(id)});
   ops.push({ic:'🗑', t:'Excluir análise', f:()=>rvAnExcluir(id)});
   rvMenu(ev, ops);
+}
+// Faixas: as mesmas dos apontamentos, mais "Só eu", com que toda análise nasce.
+const RV_AN_FX=[['privada','Só eu','Fica na sua lista. Ninguém mais vê.'],['Coordenação','Coordenação','Analistas e gerência deste empreendimento.'],
+  ['Projeto','Projeto','Coordenação + projetistas.'],['Público','Público','Inclui obra e setor.']];
+function rvAnFxNome(a){ return (RV_AN_FX.find(f=>f[0]===(a&&a.visibilidade))||RV_AN_FX[0])[1]; }
+function rvAnFx(a){ const v=a.visibilidade; if(!v||v==='privada') return '';
+  return `<span class="rvFx ${v==='Projeto'?'pj':v==='Público'?'pu':''}" title="Compartilhada: ${esc(v)}">${v==='Projeto'?'PROJ':v==='Público'?'PÚB':'COORD'}</span>`; }
+function rvAnTitulo(a){ return rvAnNomeTela(a)+' · '+_anResumo(a)+(rvAnMinha(a) ? (APP_RO?'':' · duplo clique renomeia · botão direito: opções') : ' · só consulta'+(a.atualizado_por_nome?' · de '+a.atualizado_por_nome:'')); }
+// A análise guarda só referências: cada pessoa abre o que o CDE deixa ela ver. Aqui
+// a mesma conta do CDE (vigente publicada, senão a mais recente) diz o que não abriria.
+async function rvAnAlcance(an){
+  const itens=[...(an.pranchas||[]).filter(_metaEhCde).map(m=>({doc:m.cde_documento_id,nome:m.arquivo_nome})),
+               ...(an.modelos||[]).filter(m=>m.documento_id).map(m=>({doc:m.documento_id,nome:m.codigo}))];
+  const locais=(an.pranchas||[]).filter(m=>!_metaEhCde(m)).map(m=>m.arquivo_nome||'PDF local'), ids=[...new Set(itens.map(i=>i.doc))];
+  if(!ids.length) return { itens:[], locais };
+  const [revs,vig]=await Promise.all([
+    sb.from('cde_revisao_auria').select('id,documento_id,status,recebido_em').in('documento_id',ids).neq('status','DEVOLVIDO').order('recebido_em',{ascending:false}),
+    sb.from('cde_vigente_auria').select('documento_id,revisao_id').in('documento_id',ids)]);
+  const R=revs.data||[], V=vig.data||[];
+  itens.forEach(i=>{ const v=V.find(x=>x.documento_id===i.doc), r=(v&&R.find(x=>x.id===v.revisao_id))||R.find(x=>x.documento_id===i.doc); i.status=r?r.status:null; });
+  return { itens, locais };
+}
+function rvAnForaDe(al, v){
+  const ok= v==='Público' ? ['A1','B1','AS_BUILT'] : v==='Projeto' ? ['S1','S2','A1','B1','AS_BUILT'] : null;
+  const fora= ok ? al.itens.filter(i=>!ok.includes(i.status)).map(i=>i.nome) : [];
+  return v==='privada' ? [] : [...fora, ...al.locais];
+}
+async function rvAnCompartilhar(id){
+  const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO||!rvAnMinha(an)) return;
+  let v=an.visibilidade||'privada', al={ itens:[], locais:[] };
+  try{ al=await rvAnAlcance(an); }catch(e){ console.warn('alcance da análise:', e); }
+  const ov=document.createElement('div'); ov.className='rvAsk';
+  const pintar=()=>{ const fora=rvAnForaDe(al,v), n=(al.itens.length+al.locais.length);
+    ov.innerHTML=`<div class="bx"><b>Compartilhar análise</b><div class="rvShN">${esc(rvAnNomeTela(an))}</div>`
+      +RV_AN_FX.map(f=>`<button class="rvShO ${f[0]===v?'on':''}" data-v="${esc(f[0])}"><i></i><span><b>${esc(f[1])}</b><small>${esc(f[2])}</small></span></button>`).join('')
+      +(fora.length?`<div class="rvShAv">${_icH('alerta',15)}<span>${fora.length} de ${n} arquivo(s) pode(m) não abrir para quem receber: <b>${esc(fora.slice(0,3).join(', '))}${fora.length>3?' …':''}</b></span></div>`:'')
+      +`<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on">${v==='privada'?'Salvar':'Compartilhar'}</button></div></div>`;
+    ov.querySelectorAll('.rvShO').forEach(b=>b.onclick=()=>{ v=b.dataset.v; pintar(); });
+    ov.querySelector('[data-r="c"]').onclick=fechar;
+    ov.querySelector('[data-r="s"]').onclick=async()=>{ fechar();
+      if(v===(an.visibilidade||'privada')) return;
+      try{ const { data, error }=await sb.from('analises_auria').update({ visibilidade:v }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security');
+        await carregarAnalises(); rvAviso(v==='privada' ? 'Análise só sua de novo.' : 'Análise compartilhada: '+v+'.'); }
+      catch(e){ rvAlerta('Erro ao compartilhar: '+_anErroMsg(e)); } };
+  };
+  const kd=e=>{ if(e.key==='Escape') fechar(); };
+  const fechar=()=>{ ov.remove(); document.removeEventListener('keydown',kd,true); };
+  document.addEventListener('keydown',kd,true);
+  pintar(); document.body.appendChild(ov);
 }
 function rvAnRender(){
   const el=$('rvAnTabs'); if(!el || RV_AN_EDIT) return;
   if(!EMP){ el.innerHTML='<span class="rvMini">Selecione um empreendimento.</span>'; return; }
+  const anA=ANALISES.find(a=>a.id===ANALISE_ATUAL), alheia=anA&&!rvAnMinha(anA);
   const sujo=rvAnSujo(), lista=ANALISES.slice().sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em)));
   let h='<span class="rvAnLbl">Análises</span>';
-  h+=lista.map(a=>`<button class="rvAnT ${a.id===(RV_AN_ABRINDO||ANALISE_ATUAL)?'act':''}" data-id="${a.id}" title="${esc(a.nome+' · '+_anResumo(a)+(APP_RO?'':' · duplo clique renomeia · botão direito: opções'))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${a.id===RV_AN_ABRINDO?'<i class="rvGira"></i>':''}<span class="l">${esc(a.nome)}</span>${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
+  h+=lista.map(a=>`<button class="rvAnT ${a.id===(RV_AN_ABRINDO||ANALISE_ATUAL)?'act':''}" data-id="${a.id}" title="${esc(rvAnTitulo(a))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${a.id===RV_AN_ABRINDO?'<i class="rvGira"></i>':''}${rvAnMinha(a)?'':_icH('olho',13)}<span class="l">${esc(rvAnNomeTela(a))}</span>${rvAnFx(a)}${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
   if(!RV_AN_ABRINDO && !ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
   if(!APP_RO) h+=`<button class="rvAnT mais" title="Nova análise (fecha o que está aberto)" onclick="rvAnNova()">＋</button>`;
   h+='<span style="flex:1"></span>';
   // ações da análise aberta à vista (antes só no botão direito da aba)
-  if(!APP_RO && ANALISE_ATUAL && !RV_AN_ABRINDO) h+=`<button class="rvAnSv" id="rvAnOpc" onclick="rvAnCtx(event,'${ANALISE_ATUAL}')" title="Renomear · Salvar como nova · Excluir">⋯ Opções</button>`;
+  if(!APP_RO && ANALISE_ATUAL && !RV_AN_ABRINDO && !alheia) h+=`<button class="rvAnSv" id="rvAnOpc" onclick="rvAnCtx(event,'${ANALISE_ATUAL}')" title="Renomear · Salvar como nova · Compartilhar · Excluir">⋯ Opções</button>`;
   if(RV_AN_ABRINDO) h+=`<button class="rvAnSv" disabled>Abrindo…</button>`;
+  else if(alheia && !APP_RO) h+=`<button class="rvAnSv" onclick="rvAnSalvar(true)" title="Análise de outra pessoa: as mudanças ficam numa cópia sua">💾 Salvar cópia para mim</button>`;
   else if(!APP_RO) h+=`<button class="rvAnSv ${sujo?'on':''}" ${sujo?'':'disabled'} onclick="rvAnSalvar(false)" title="${ANALISE_ATUAL?'Grava o que está aberto nesta análise':'Salva como '+esc(rvAnNomeNovo())}">💾 Salvar</button>`;
   el.innerHTML=h;
 }
@@ -10844,7 +10927,7 @@ window.addEventListener('load',()=>{
 });
 let RV_AN_SAINDO=false;
 window.addEventListener('beforeunload',e=>{ if(!RV_AN_SAINDO && rvAnSujo()){ e.preventDefault(); e.returnValue=''; } });
-setInterval(()=>{ const k=(EMP?EMP.id:'')+'#'+ANALISE_ATUAL+'#'+(rvAnSujo()?1:0)+'#'+(_anTemConteudo()?1:0)+'#'+ANALISES.length; if(k!==rvAnRender._k){ rvAnRender._k=k; rvAnRender(); } }, 700);
+setInterval(()=>{ const k=(EMP?EMP.id:'')+'#'+ANALISE_ATUAL+'#'+(rvAnSujo()?1:0)+'#'+(_anTemConteudo()?1:0)+'#'+ANALISES.length+'#'+rvAnItens(); if(k!==rvAnRender._k){ rvAnRender._k=k; rvAnRender(); } }, 700);
 
 
 // ── janela própria de confirmação/aviso ──────────────────────────────────────
