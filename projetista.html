@@ -1458,7 +1458,7 @@ var MSG_LIST=[];
 function buildMsgList(){
   MSG_LIST=[];
   (MINE||[]).forEach(function(a){ var ms=a.mensagens||[]; if(ms.length){ var last=ms[ms.length-1]||{};
-    MSG_LIST.push({type:'apt',id:a.id,titulo:a.id+' — '+(a.titulo||'Sem título'),emp:(a.empreendimento||'Sem empreendimento'),when:(last.data||''),unread:(last.de==='analista')}); } });
+    MSG_LIST.push({type:'apt',id:_aKey(a),titulo:a.id+' — '+(a.titulo||'Sem título'),emp:(a.empreendimento||'Sem empreendimento'),when:(last.data||''),unread:(last.de==='analista')}); } });
   (THREADS||[]).forEach(function(t){ MSG_LIST.push({type:'thread',titulo:t.assunto||'(sem assunto)',emp:(EMP_MAP[t.empreendimento_id]||'Sem empreendimento'),when:t.atualizado_em||'',unread:(UNREAD[t.id]||0)>0,thread:t}); });
   MSG_LIST.sort(function(a,b){ return (b.when||'').localeCompare(a.when||''); });
 }
@@ -1566,7 +1566,7 @@ function atualizarKPIs(){
   const sec=document.getElementById('late-section');
   if(atrasados.length){
     sec.innerHTML=`<div class="late-bar"><h4>⏰ Apontamentos atrasados (${atrasados.length})</h4>`+
-      atrasados.map(a=>`<div class="late-item" onclick="abrirModal('${a.id}')" style="cursor:pointer">
+      atrasados.map(a=>`<div class="late-item" onclick="abrirModal('${_aKey(a)}')" style="cursor:pointer">
         <span class="late-id">${a.id}</span>
         <span class="late-title">${escH(a.titulo)||'Sem título'}</span>
         <span class="late-days">+${diasAtraso(a)} dias</span>
@@ -1721,7 +1721,7 @@ function renderTabela(){
       const statusBadge=atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open';
       const crit=stripEmoji(a.prioridade);
       const critBadge=crit.startsWith('Severa')?'badge-sev':crit.startsWith('Imp')?'badge-imp':'badge-obs';
-      return `<tr class="${atr?'late':a.status==='Resolvido'?'resolved':''}" onclick="abrirModal('${a.id}')">
+      return `<tr class="${atr?'late':a.status==='Resolvido'?'resolved':''}" onclick="abrirModal('${_aKey(a)}')">
         <td><strong>${a.id}</strong></td>
         <td>${escH(a.titulo)||'—'}</td>
         <td>${escH(a.empreendimento)||'—'}</td>
@@ -1734,7 +1734,12 @@ function renderTabela(){
 }
 
 // ── Modal ─────────────────────────────────────────────────────
-function findApt(id){ function m(x){return x.id===id;} return (TODOS||[]).find(m)||(ALL||[]).find(m)||(MINE||[]).find(m); }
+// O código (ARQ-1) se repete entre empreendimentos: a chave é empreendimento|código.
+function _aKey(a){ return (a.empreendimento_id||'')+'|'+a.id; }
+function _aptQ(a){ return 'id=eq.'+encodeURIComponent(a.id)+'&empreendimento_id=eq.'+a.empreendimento_id; }
+function findApt(k){ k=String(k); var i=k.indexOf('|'), emp=i>=0?k.slice(0,i):((CUR_THREAD&&CUR_THREAD.empreendimento_id)||''), id=i>=0?k.slice(i+1):k;
+  function m(x){return x.id===id&&(!emp||x.empreendimento_id===emp);} return (TODOS||[]).find(m)||(ALL||[]).find(m)||(MINE||[]).find(m); }
+async function _msgAdd(a,msg){ var r=await sb.rpc('apt_msg_add',{p_emp:a.empreendimento_id,p_id:a.id,p_msg:msg}); return {ok:!r.error,data:r.data}; }
 function abrirAptAnexo(id){ if(findApt(id)){ abrirModal(id); } else { alert('Apontamento não encontrado ou sem acesso a este apontamento.'); } }
 function abrirModal(id){
   const a=findApt(id);if(!a) return;
@@ -1792,17 +1797,17 @@ function abrirModal(id){
                 <div style="font-size:10px;color:#7A9AB8;margin-bottom:2px;text-align:${m.de==='projetista'?'right':'left'}">
                   ${escH(m.nome||m.email||'Projetista')}
                   ${m.de==='projetista'&&m.email===USER.email&&podEditarMsg(m)?`
-                    <span onclick="editarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:6px;color:#7A9AB8" title="Editar">✏️</span>
-                    <span onclick="deletarMsg(${mIdx},'${a.id}')" style="cursor:pointer;margin-left:4px;color:#E74C3C" title="Deletar">🗑</span>
+                    <span onclick="editarMsg(${mIdx},'${_aKey(a)}')" style="cursor:pointer;margin-left:6px;color:#7A9AB8" title="Editar">✏️</span>
+                    <span onclick="deletarMsg(${mIdx},'${_aKey(a)}')" style="cursor:pointer;margin-left:4px;color:#E74C3C" title="Deletar">🗑</span>
                   `:''}
                 </div>
                 <div style="padding:8px 12px;border-radius:12px;font-size:13px;
                   background:${m.de==='projetista'?'#1A2F4A':'#F0F4F8'};
                   color:${m.de==='projetista'?'#fff':'#2C3E50'}">
                   ${m.tipo==='sugestao_prazo'?`<span style="background:#FEF9EC;color:#854F0B;padding:4px 8px;border-radius:6px;font-size:12px">${escH(m.texto)}</span>${m.de==='analista'?`<div style="display:flex;gap:6px;margin-top:8px">
-                      <button onclick="aceitarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#27AE60;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✅ Aceitar</button>
-                      <button onclick="contraproporPrazo('${a.id}',${mIdx})" style="padding:5px 10px;background:#E8960A;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">🔁 Propor outro</button>
-                      <button onclick="recusarPrazoAnalista('${a.id}',${mIdx})" style="padding:5px 10px;background:#E74C3C;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">❌ Recusar</button>
+                      <button onclick="aceitarPrazoAnalista('${_aKey(a)}',${mIdx})" style="padding:5px 10px;background:#27AE60;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✅ Aceitar</button>
+                      <button onclick="contraproporPrazo('${_aKey(a)}',${mIdx})" style="padding:5px 10px;background:#E8960A;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">🔁 Propor outro</button>
+                      <button onclick="recusarPrazoAnalista('${_aKey(a)}',${mIdx})" style="padding:5px 10px;background:#E74C3C;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">❌ Recusar</button>
                     </div>`:''}`:m.tipo==='croqui'&&m.imagem?`<div>${escH(m.texto)}</div>${safeImg(m.imagem)?`<img src="${safeImg(m.imagem)}" style="max-width:200px;border-radius:6px;margin-top:4px">`:''}`:m.tipo==='sistema'?`<i style="opacity:.75">${escH(m.texto)}</i>`:escH(m.texto)}
                   <div style="font-size:10px;opacity:.6;margin-top:4px;text-align:right">${m.data||''}${m.editado?' (editado)':''}</div>
                 </div>
@@ -1813,33 +1818,33 @@ function abrirModal(id){
       </div>
       ${a.status!=='Resolvido'?`
       <div style="display:flex;gap:6px;margin-bottom:6px">
-        <button onclick="abrirSugestaoPrazo('${a.id}')"
+        <button onclick="abrirSugestaoPrazo('${_aKey(a)}')"
           style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #E2E8F0;
           border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">📅 Sugerir prazo</button>
         <label style="padding:8px 12px;background:#F0F4F8;color:#1A2F4A;border:1.5px solid #E2E8F0;
           border-radius:9px;font-size:12px;font-weight:600;cursor:pointer">
           🖼 Croqui
-          <input type="file" accept="image/*" style="display:none" onchange="enviarCroqui(this,'${a.id}')">
+          <input type="file" accept="image/*" style="display:none" onchange="enviarCroqui(this,'${_aKey(a)}')">
         </label>
       </div>
-      <div id="prazo-picker-${a.id}" style="display:none;background:#F8F9FB;border:1.5px solid #E2E8F0;
+      <div id="prazo-picker-${_aKey(a)}" style="display:none;background:#F8F9FB;border:1.5px solid #E2E8F0;
         border-radius:9px;padding:10px;margin-bottom:8px">
         <div style="font-size:12px;font-weight:600;color:#1A2F4A;margin-bottom:6px">Sugerir novo prazo:</div>
         <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="prazo-date-${a.id}"
+          <input type="date" id="prazo-date-${_aKey(a)}"
             style="padding:8px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:13px;flex:1">
-          <button onclick="enviarSugestaoPrazo('${a.id}')"
+          <button onclick="enviarSugestaoPrazo('${_aKey(a)}')"
             style="padding:8px 14px;background:#1A2F4A;color:#fff;border:none;
             border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">Enviar</button>
-          <button onclick="document.getElementById('prazo-picker-${a.id}').style.display='none'"
+          <button onclick="document.getElementById('prazo-picker-${_aKey(a)}').style.display='none'"
             style="padding:8px;background:transparent;border:none;cursor:pointer;color:#7A9AB8">✕</button>
         </div>
       </div>
       <div style="display:flex;gap:8px">
         <input id="chat-inp" placeholder="Digite sua mensagem..." 
           style="flex:1;padding:10px 14px;border:1.5px solid #E2E8F0;border-radius:9px;font-size:13px;outline:none"
-          onkeydown="if(event.key==='Enter')enviarMensagem('${a.id}')">
-        <button onclick="enviarMensagem('${a.id}')"
+          onkeydown="if(event.key==='Enter')enviarMensagem('${_aKey(a)}')">
+        <button onclick="enviarMensagem('${_aKey(a)}')"
           style="padding:10px 18px;background:#3B82F6;color:#fff;border:none;border-radius:9px;
           font-size:13px;font-weight:700;cursor:pointer">Enviar</button>
       </div>`:''}
@@ -1861,7 +1866,7 @@ async function marcarResolvido(id){
     const a=findApt(id);
     const logs=[...(a.log_json||[]),{data:hoje+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
       texto:`Apontamento marcado como Resolvido pelo projetista (${USER.email}).`,tipo:'sistema'}];
-    const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
+    const r=await fetch(`${SUPA_URL}/rest/v1/apontamentos?${_aptQ(a)}`,{
       method:'PATCH',
       headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
         'Content-Type':'application/json','Prefer':'return=minimal'},
@@ -1894,12 +1899,12 @@ async function editarMsg(idx, issueId){
   const msgs = [...(a.mensagens||[])];
   msgs[idx] = {...msg, texto: novoTexto.trim(), editado: true};
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?${_aptQ(a)}`,{
       method:'PATCH',
       headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
         'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs, log_json: logJson})});
-    if(r.ok){ a.mensagens=msgs; a.log_json=logJson; fecharModal(); abrirModal(issueId); }
+      body:JSON.stringify({mensagens: msgs})});
+    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(issueId); }
     else { alert('Erro ao editar.'); }
   } catch(e){ alert('Erro de conexão.'); }
 }
@@ -1909,7 +1914,7 @@ async function deletarMsg(idx, issueId){
   const a = findApt(issueId); if(!a) return;
   const msgs = (a.mensagens||[]).filter((_,i)=>i!==idx);
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${issueId}`,{
+    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?${_aptQ(a)}`,{
       method:'PATCH',
       headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
         'Content-Type':'application/json','Prefer':'return=minimal'},
@@ -1944,13 +1949,9 @@ async function enviarSugestaoPrazo(id){
     data: agora
   }];
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
+    const r = await _msgAdd(a, msgs[msgs.length-1]);
     if(r.ok){
-      a.mensagens = msgs;
+      a.mensagens = r.data;
       document.getElementById(`prazo-picker-${id}`).style.display='none';
       // Reload modal
       fecharModal(); abrirModal(id);
@@ -1963,26 +1964,13 @@ async function enviarSugestaoPrazo(id){
 function _agoraBR(){
   return new Date().toLocaleDateString('pt-BR')+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 }
-async function _patchApt(id, payload){
-  return fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{method:'PATCH',
-    headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json','Prefer':'return=minimal'},
-    body:JSON.stringify(payload)});
-}
 async function aceitarPrazoAnalista(id, mIdx){
   const a=findApt(id); if(!a) return;
   const m=(a.mensagens||[])[mIdx]; if(!m||m.tipo!=='sugestao_prazo'||m.de!=='analista') return;
-  const p=m.prazo_sugerido; const parts=a.participantes||{};
-  // Atualiza prazo do participante (projetista logado, se identificado; senão o primeiro)
-  const meu=(USER.email||'').toLowerCase();
-  let alvo=null;
-  for(const d in parts){ const e=(parts[d].emails||'').toLowerCase(); if(e.split(/[,;\s]+/).includes(meu)){ alvo=d; break; } }
-  if(!alvo) alvo=Object.keys(parts)[0]||null;
-  if(alvo){ parts[alvo].prazo=p; }
-  const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:`✅ Prazo de ${p} aceito.`,data:_agoraBR()}];
   try{
-    const r=await _patchApt(id,{mensagens:msgs, prazo_min:p, participantes:parts});
-    if(r.ok){ a.mensagens=msgs; a.participantes=parts; a.prazo_min=p; fecharModal(); abrirModal(id); }
-    else alert('Erro ao aceitar prazo.');
+    const r=await sb.rpc('apt_prazo_aceitar',{p_emp:a.empreendimento_id,p_id:a.id,p_idx:mIdx});
+    if(r.error){ alert(r.error.message||'Erro ao aceitar prazo.'); return; }
+    a.mensagens=r.data.mensagens; a.participantes=r.data.participantes; a.prazo_min=r.data.prazo_min; fecharModal(); abrirModal(id);
   }catch(e){ alert('Erro de conexão.'); }
 }
 async function recusarPrazoAnalista(id, mIdx){
@@ -1992,8 +1980,8 @@ async function recusarPrazoAnalista(id, mIdx){
   const txt=`❌ Prazo de ${m.prazo_sugerido} recusado`+(motivo?` — ${motivo}`:'.');
   const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sistema',nome:USER.nome,email:USER.email,texto:txt,data:_agoraBR()}];
   try{
-    const r=await _patchApt(id,{mensagens:msgs});
-    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+    const r=await _msgAdd(a,msgs[msgs.length-1]);
+    if(r.ok){ a.mensagens=r.data; fecharModal(); abrirModal(id); }
     else alert('Erro ao recusar.');
   }catch(e){ alert('Erro de conexão.'); }
 }
@@ -2007,8 +1995,8 @@ async function contraproporPrazo(id, mIdx){
   const txt=`🔁 Contraproposta de prazo: ${v.trim()}`+(obs?` — ${obs}`:'');
   const msgs=[...(a.mensagens||[]),{de:'projetista',tipo:'sugestao_prazo',nome:USER.nome,email:USER.email,texto:txt,prazo_sugerido:v.trim(),data:_agoraBR()}];
   try{
-    const r=await _patchApt(id,{mensagens:msgs});
-    if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+    const r=await _msgAdd(a,msgs[msgs.length-1]);
+    if(r.ok){ a.mensagens=r.data; fecharModal(); abrirModal(id); }
     else alert('Erro ao enviar contraproposta.');
   }catch(e){ alert('Erro de conexão.'); }
 }
@@ -2039,12 +2027,8 @@ async function enviarCroqui(input, id){
       data: agora
     }];
     try {
-      const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-        method:'PATCH',
-        headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-          'Content-Type':'application/json','Prefer':'return=minimal'},
-        body:JSON.stringify({mensagens: msgs})});
-      if(r.ok){ a.mensagens=msgs; fecharModal(); abrirModal(id); }
+      const r = await _msgAdd(a, msgs[msgs.length-1]);
+      if(r.ok){ a.mensagens=r.data; fecharModal(); abrirModal(id); }
       else { alert('Erro ao enviar croqui.'); }
     } catch(e){ alert('Erro de conexão.'); }
   };
@@ -2077,15 +2061,9 @@ async function enviarMensagem(id){
   const logJson = [...(a.log_json||[]), logEntry];
   inp.value='';
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/apontamentos?id=eq.${id}`,{
-      method:'PATCH',
-      headers:{'apikey':SUPA_KEY,'Authorization':`Bearer ${TOKEN}`,
-        'Content-Type':'application/json','Prefer':'return=minimal'},
-      body:JSON.stringify({mensagens: msgs})});
-    const respText = await r.text();
-    console.log('PATCH status:', r.status, respText);
+    const r = await _msgAdd(a, msgs[msgs.length-1]);
     if(r.ok){
-      a.mensagens = msgs;
+      a.mensagens = r.data;
       // Atualiza chat sem fechar modal
       const chatDiv = document.getElementById('chat-msgs');
       if(chatDiv){
