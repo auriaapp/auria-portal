@@ -809,7 +809,7 @@ const SUPA_URL = 'https://sabzccokueowpromwxdg.supabase.co';
 const SUPA_KEY = 'sb_publishable_Cpa8142-Z91liTnnqJfopw_dux2jbVY';
 const sb = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 let TOKEN = null, USER = null, TODOS = [], FILTRADOS = [];
-let ALL = [], MINE = [], CUR_EMP = '', EMP_NOMES = [];
+let ALL = [], MINE = [], RANK = [], CUR_EMP = '', EMP_NOMES = [];
 let MODO = 'login';
 
 // ── Auth ──────────────────────────────────────────────────────
@@ -952,6 +952,7 @@ async function carregarApontamentos(){
       );
     });
     await loadMsgData();
+    try{ const rk=await sb.rpc('pj_ranking_base'); RANK=(!rk.error&&rk.data)||[]; }catch(e){ RANK=[]; }
     try{
       // Contrato de empreendimento INATIVO não entra (casca antiga/homônima). Se a RLS
       // não deixar ler o empreendimento, o embed vem null e o contrato fica (não some por engano).
@@ -1048,7 +1049,8 @@ function _projsMap(apts){
   return map;
 }
 function rankingPos(apts){
-  const map=_projsMap(apts); const me=(USER.email||'').toLowerCase();
+  // apts = pj_ranking_base(): o servidor troca os e-mails; o meu vem como 'eu'.
+  const map=_projsMap(apts); const me='eu';
   const arr=Object.keys(map).map(e=>({e,score:computeScore(map[e]).total}));
   if(!arr.length||!map[me]) return null;
   arr.sort((a,b)=>b.score-a.score);
@@ -1067,7 +1069,7 @@ function renderHome(){
   return;
   // (código antigo abaixo mantido só como referência; não executa)
   // Card geral
-  const g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(ALL);
+  const g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(RANK);
   document.getElementById('home-geral').innerHTML=`<div class="geral-card">
     <div><div class="geral-lbl">Sua nota geral</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1082,7 +1084,7 @@ function renderHome(){
     const ab=apts.filter(a=>a.status==='Em aberto').length;
     const at=apts.filter(a=>isAtrasado(a)).length;
     const sc=computeScore(apts).total, td=trendOf(apts);
-    const rk=rankingPos(ALL.filter(a=>a.empreendimento===nome));
+    const rk=rankingPos(RANK.filter(a=>a.empreendimento===nome));
     const nf=notifOf(apts);
     return `<div class="ec" onclick="openEmpIdx(${i})">
       ${nf?`<div class="ec-badge" title="Interações novas">${nf}</div>`:''}
@@ -2821,7 +2823,7 @@ function pjRenderHeader(){
   var discs=[]; pjEmps().forEach(function(e){ (e.discs||[]).forEach(function(d){ if(discs.indexOf(d)<0) discs.push(d); }); });
   var t=document.getElementById('topbar-title'); if(t) t.textContent = discs.length ? discs.map(function(d){ return discFullName(d)||d; }).join(' · ') : 'Painel do Projetista';
   // Nota geral no cabeçalho
-  var g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(ALL);
+  var g=computeScore(MINE).total, tg=trendOf(MINE), rg=rankingPos(RANK);
   var nn=document.getElementById('pj-nota-num'), nt=document.getElementById('pj-nota-trend'), ns=document.getElementById('pj-nota-sub');
   if(nn){ nn.textContent=g; nn.style.color=scoreCor(g); }
   if(nt){ nt.textContent=trendIcon(tg); nt.style.color=trendCor(tg); }
@@ -2954,6 +2956,7 @@ function pjRenderCards(){
              +(nf?'<span class="pj-chip acc">'+nf+' interações novas</span>':'');
     var acts = e.id
       ? '<a class="pj-btn teal" href="cde.html?emp='+encodeURIComponent(e.id)+'" onclick="event.stopPropagation()">Abrir CDE</a>'
+        +'<a class="pj-btn teal" href="app.html?emp='+encodeURIComponent(e.id)+'" onclick="event.stopPropagation()">Abrir App</a>'
         +'<button class="pj-btn" onclick="event.stopPropagation();pjEnviarArquivos('+idx+')">＋ Enviar arquivos</button>'
         +'<button class="pj-btn" onclick="event.stopPropagation();pjSelectEmpIdx('+idx+',true);setAba(\'apt\')">Apontamentos</button>'
         +'<span style="flex:1"></span>'

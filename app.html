@@ -923,6 +923,15 @@ body.vz-comp #rvAnBar{padding:3px 10px}
 body.vz-comp .rvAnT{padding:3px 9px}
 /* o que o painel Revisão substitui */
 #regBox,#clashBox,#pdBox{display:none!important}
+/* Modo projetista: lista fechada. Ver PJ_FERR no boot. */
+body.app-pj .pj-off,body.app-pj #cmdBar,body.app-pj #iaPanel,body.app-pj #rvPanel,body.app-pj #sideRightBody,body.app-pj #fApExpBtn,body.app-pj #apCob,body.app-pj #rvDTabs button[data-d="res"],body.app-pj .sr-icons .sr-ic:not(.rvDIc):not(:first-child){display:none!important}
+body.app-pj .ro-banner{color:#F28C28}
+#pjChips{display:none;gap:4px;margin:0 0 8px;flex-wrap:wrap}
+body.app-pj #pjChips{display:flex}
+#pjChips button{font-size:11px;padding:3px 8px;border-radius:14px;border:1px solid var(--line);background:none;color:var(--mut);cursor:pointer;font-family:inherit}
+#pjChips button.on{border-color:#F28C28;color:#F28C28;background:rgba(242,140,40,.14)}
+.ap-card.pj-marc{border-top-color:rgba(242,140,40,.6)!important;border-right-color:rgba(242,140,40,.6)!important;background-image:linear-gradient(90deg,rgba(242,140,40,.16),transparent 62%)}
+.pj-selo{font-size:9.5px;font-weight:800;color:#1a1205;background:#F28C28;border-radius:4px;padding:0 5px;margin-left:5px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -1734,17 +1743,25 @@ async function boot(){
   // Link do App vindo do App Obra (BCF/Excel) aberto por quem é da obra:
   // leva para o App Obra com o mesmo contexto, em vez de cair no login.
   if(perfil && perfil.role==='obra'){ location.replace('app_obra.html'+location.search); return; }
-  if(!perfil || perfil.role!=='analista'){ location.replace('./'); return; }
+  if(perfil && perfil.role==='projetista') APP_PJ=true;
+  else if(!perfil || perfil.role!=='analista'){ location.replace('./'); return; }
   USER={ id:session.user.id, nome:perfil.nome||session.user.email, email:session.user.email };
   $('uName').textContent=USER.nome; $('uEmail').textContent=USER.email;
-  if(!EMBED) window.__ajudaCfg={ sb, papel:'analista', pagina:'Auria App', lado:'right', encosta:'#sideRight', /* item 102: como no CDE — à direita, encostado na coluna que recolhe */ contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda && window.__ajudaCfg) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
+  if(APP_PJ) pjModoLigar();
+  if(!EMBED) window.__ajudaCfg={ sb, papel:(APP_PJ?'projetista':'analista'), pagina:'Auria App', lado:'right', encosta:'#sideRight', /* item 102: como no CDE — à direita, encostado na coluna que recolhe */ contexto:()=>({ empreendimento: EMP ? ((EMP.codigo?EMP.codigo+' · ':'')+EMP.nome) : '' }) }; if(window.AuriaAjuda && window.__ajudaCfg) AuriaAjuda.init(window.__ajudaCfg);   // item 52 (o script carrega no fim do body; se ainda não carregou, ele lê __ajudaCfg)
 
   // Empreendimentos atribuídos (mesmo embed do painel do analista)
   try{
+    if(APP_PJ){
+      const { data }=await sb.from('empreendimentos_auria').select('*').order('nome');
+      EMPS=(data||[]).filter(e=>e&&!e.deleted_at);
+      EMP_PAPEL={}; EMPS.forEach(e=>{ EMP_PAPEL[e.id]='visualizador'; });
+    } else {
     const { data }=await sb.from('analista_empreendimento_auria')
       .select('ativo, papel, empreendimentos_auria(*)').eq('analista_id',USER.id).eq('ativo',true);
     EMP_PAPEL={}; (data||[]).forEach(r=>{ if(r.empreendimentos_auria) EMP_PAPEL[r.empreendimentos_auria.id]=r.papel||'coordenador'; });
     EMPS=(data||[]).map(r=>r.empreendimentos_auria).filter(e=>e&&!e.deleted_at);
+    }
   }catch(e){ EMPS=[]; }
   $('selEmp').innerHTML = EMPS.length
     ? '<option value="">— selecione —</option>'+EMPS.map(e=>`<option value="${e.id}">${esc(e.nome)}</option>`).join('')
@@ -1822,6 +1839,51 @@ function focarApontamento(aptId){
 
 // Papel do analista POR empreendimento (item 13): 'visualizador' = só consulta.
 var EMP_PAPEL={}, APP_RO=false;
+// ── Modo projetista ─────────────────────────────────────────────────────────
+// Lista FECHADA: nas barras de ferramentas só fica o que está em PJ_FERR; botão
+// novo nasce escondido para o projetista. Quem barra dado de verdade é o banco.
+var APP_PJ=false, PJ_MARCAS={}, PJ_FILT='todos';
+const PJ_FERR=new Set(['zoomStep','fitPage','mudarPagina','toggleVerPins','toggleCota','rvDividir','rvImaToggle','split2dToggle','f3dSplitToggle','f3dModo','abrirSeletorCDE',
+  'bimFloorsToggle','f3dEnquadrar','f3dTool','f3dMedirModo','f3dCotasToggle','f3dMedirLimpar','f3dHachuraToggle','f3dXrayToggle','f3dXraySetProf','f3dCfgToggle','f3dResetCfg','f3dSetFundo',
+  'f3dCorteInverter','f3dCorteRemover','f3dBarraRecolher','toggleSideRight','rvJanFecharDe','rvJanFechar']);
+const PJ_BLOQ=['toggleIA','toggleIaRegiao','iaAnalisar','iaEnviar','rvRevisaoBarra','rvToggle','abrirKanban','abrirAgenda','abrirCronograma','abrirBI','abrirBiblioteca','abrirMensagens','runCmd','expMenu'];
+function pjFiltrarBarras(){
+  document.querySelectorAll('.toolbar button,#bimHead button,.sr-icons button').forEach(b=>{
+    if(b.classList.contains('rvDIc') || b.closest('#rvLayout')) return;
+    const m=(b.getAttribute('onclick')||'').match(/^\s*([A-Za-z_$][\w$]*)/);
+    b.classList.toggle('pj-off', !(m && PJ_FERR.has(m[1])));
+  });
+}
+function pjModoLigar(){
+  document.body.classList.add('app-pj');
+  const bloq=()=>PJ_BLOQ.forEach(n=>{ window[n]=()=>{}; });
+  bloq(); if(document.readyState!=='complete') window.addEventListener('load',()=>{ bloq(); try{ rvDAba('apt'); }catch(_){} });
+  const inv=sb.functions.invoke.bind(sb.functions);
+  sb.functions.invoke=(nome,op)=> nome===IA_FN ? Promise.resolve({ data:null, error:new Error('IA indisponível neste acesso.') }) : inv(nome,op);
+  const rb=$('roBanner'); if(rb){ rb.textContent='Projetista · consulta'; rb.title='Consulta pranchas, modelos e apontamentos a que você tem acesso.'; }
+  const lista=$('aptLista'); if(lista && !$('pjChips')){ const c=document.createElement('div'); c.id='pjChips'; lista.parentNode.insertBefore(c,lista); }
+  pjFiltrarBarras();
+  let t=null; new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(pjFiltrarBarras,60); }).observe($('app'),{ childList:true, subtree:true });
+  try{ rvDAba('apt'); }catch(_){}
+}
+async function pjCarregarMarcas(){
+  PJ_MARCAS={};
+  try{ const { data }=await sb.rpc('pj_marcas',{ p_emp:EMP.id }); (data||[]).forEach(r=>{ PJ_MARCAS[r.id]=r.marca||''; }); }catch(e){ console.warn('pj_marcas:',e.message||e); }
+  PJ_FILT = APTS.some(pjMarcado) ? 'marc' : 'todos';
+}
+function pjMarcado(a){ const m=PJ_MARCAS[a.id]||''; return m==='voce'||m.indexOf('disc:')===0; }
+function pjFiltrar(rows){
+  return PJ_FILT==='marc' ? rows.filter(pjMarcado) : PJ_FILT==='minha' ? rows.filter(a=>PJ_MARCAS[a.id]==='minha') : rows;
+}
+function pjSetFiltro(k){ PJ_FILT=k; renderListaApts(); }
+function pjChips(){
+  const el=$('pjChips'); if(!el) return;
+  const c=(k,t,q)=>`<button class="${PJ_FILT===k?'on':''}" onclick="pjSetFiltro('${k}')">${t} ${q}</button>`;
+  el.innerHTML=c('marc','Marcados',APTS.filter(pjMarcado).length)+c('minha','Disciplina',APTS.filter(a=>PJ_MARCAS[a.id]==='minha').length)+c('todos','Todos',APTS.length);
+}
+function pjCls(a){ return APP_PJ&&pjMarcado(a)?' pj-marc':''; }
+function pjSelo(a){ if(!APP_PJ) return ''; const m=PJ_MARCAS[a.id]||'';
+  return m==='voce' ? '<span class="pj-selo">VOCÊ</span>' : m.indexOf('disc:')===0 ? `<span class="pj-selo">${esc(m.slice(5))} MARCADA</span>` : ''; }
 function roAviso(){ alert('Você é visualizador neste empreendimento: pode consultar, mas não criar nem alterar apontamentos.'); }
 function trocarEmp(){
   EMP = EMPS.find(e=>e.id===$('selEmp').value)||null;
@@ -2419,6 +2481,7 @@ async function carregarEstadoCamada(L){
 }
 let _saveCamTimer=null;
 function salvarEstadoCamada(L){
+  if(APP_RO) return;   // consulta: mexer no olho/opacidade vale só nesta tela
   clearTimeout(_saveCamTimer);
   _saveCamTimer=setTimeout(async()=>{
     try{
@@ -3166,6 +3229,7 @@ async function carregarApts(){
       .select('*').eq('empreendimento_id', EMP.id).limit(1000);
     if(error) throw error;
     APTS=data||[];
+    if(APP_PJ) await pjCarregarMarcas();
   }catch(e){ console.error('carregarApts:', e.message||e); }
   popularFiltroDisc(); renderListaApts(); renderPins(); renderDrawings(); renderSideRight();
 }
@@ -3302,7 +3366,7 @@ function renderPins(){
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClick(${ai},${pi});event.stopPropagation()">
-        ${pinSvg(p.x,p.y,a,false)}</g>`;
+        ${pinSvg(p.x,p.y,a,APP_PJ&&pjMarcado(a))}</g>`;
     });
   });
   // Apontamento em EDIÇÃO (novo ou existente): pins desenhados AO VIVO do APT_EDIT
@@ -8485,7 +8549,7 @@ async function _apLocalSugerir(){
 // A régua roda no banco (cobranca_rodar, dias úteis 8h). Aqui só mostra quantas
 // já foram, pausa este apontamento (salvo junto) e dispara uma cobrança na hora.
 async function apCobRender(){
-  const el=$('apCob'); if(!el) return; const a=APT_EDIT;
+  const el=$('apCob'); if(!el||APP_PJ) return; const a=APT_EDIT;
   if(!a || a._novo || (a.visibilidade||'')==='Coordenação' || ['Resolvido','Reprovado'].includes(a.status)){ el.style.display='none'; return; }
   el.style.display='flex';
   const pausa=!!a.cobranca_pausada;
@@ -9263,7 +9327,8 @@ function renderListaApts(){
   // Normaliza (apara espaços + caixa) — status de apontamentos externos (obra/
   // projetista) às vezes vinham com espaço/caixa diferente, e a comparação exata
   // filtrava TUDO por engano.
-  const rows=aptsFiltrados();
+  let rows=aptsFiltrados();
+  if(APP_PJ){ pjChips(); rows=pjFiltrar(rows); }
   // Ordem DENTRO de cada grupo: externos (obra/projetista) no topo p/ triagem;
   // depois por código.
   const ordena=(arr)=>arr.slice().sort((a,b)=>{
@@ -9300,13 +9365,13 @@ function renderListaApts(){
     const dtag=`<span class="dtag ${dim==='bim'?'bim':'d2'}">${dim==='bim'?'BIM':'2D'}</span>`;
     const pai=irmas.find(x=>_aptDim(x)==='2d'), nBim=irmas.filter(x=>_aptDim(x)==='bim').length;
     const elo = !irmas.length ? '' : `<span class="ap-elo">${_icH('vinculo',12)} ${dim==='bim' ? 'de '+esc((pai||irmas[0]).id) : (nBim? nBim+' frente'+(nBim>1?'s':'')+' BIM' : irmas.length+' vínculo'+(irmas.length>1?'s':''))}</span>`;
-    const tituloHtml=`${dtag}<span class="ap-cod">${esc(a.id)}</span> — ${esc(a.titulo||'Sem título')}`;
+    const tituloHtml=`${dtag}<span class="ap-cod">${esc(a.id)}</span>${pjSelo(a)} — ${esc(a.titulo||'Sem título')}`;
     // (O 🗺 saiu — o clique no card já leva à prancha/modelo do pin e abre o editor.)
     if(APT_VIEW==='estendido'){
       const thumbs=(a.imagens_json||[]).slice(0,4).map(u=>`<img src="${esc(u)}" onclick="event.stopPropagation();abrirImg(this.src)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:zoom-in">`).join('');
       const prazo=a.prazo_min?(_icH('calendario',12)+' '+_dispData(a.prazo_min)):'';
       const local=a.local_txt?(' · '+_icH('pin',12)+' '+esc(a.local_txt)):'';
-      return `<div class="ap-card critL${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+      return `<div class="ap-card critL${a._filho?' ap-filho':''}${pjCls(a)}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
         <div class="t">${tituloHtml}</div>${elo?`<div style="margin-top:2px">${elo}</div>`:''}
         <div class="m" style="color:${mc};margin-top:3px;display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0">${tags} ${esc(discFullName(a.disciplina)||'')}</span>${critTag}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
@@ -9314,7 +9379,7 @@ function renderListaApts(){
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
       </div>`;
     }
-    return `<div class="ap-card critL${a._filho?' ap-filho':''}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
+    return `<div class="ap-card critL${a._filho?' ap-filho':''}${pjCls(a)}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
       <div class="t">${tituloHtml}</div>
       <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${elo}${critTag}</div>
     </div>`;
@@ -9484,6 +9549,7 @@ function irCDE(){
   location.href='cde.html'+(e?'?emp='+encodeURIComponent(e):'');
 }
 function voltarPortal(){
+  if(APP_PJ){ location.href='projetista.html'; return; }
   // Só fecha a janela se quem abriu o App foi o próprio painel; aberto pelo CDE,
   // fechar devolvia ao CDE em vez do painel.
   var op=null; try{ op=window.opener && !window.opener.closed ? window.opener.location.pathname : null; }catch(_){}
