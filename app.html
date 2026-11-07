@@ -931,6 +931,17 @@ body.app-pj #pjChips{display:flex}
 #pjChips button{font-size:11px;padding:3px 8px;border-radius:14px;border:1px solid var(--line);background:none;color:var(--mut);cursor:pointer;font-family:inherit}
 #pjChips button.on{border-color:#F28C28;color:#F28C28;background:rgba(242,140,40,.14)}
 .ap-card.pj-marc{border-top-color:rgba(242,140,40,.6)!important;border-right-color:rgba(242,140,40,.6)!important;background-image:linear-gradient(90deg,rgba(242,140,40,.16),transparent 62%)}
+body.app-pj #pjConv{display:block!important}
+body.app-ro #modalApt #pjConv textarea,body.app-ro #modalApt #pjConv input{pointer-events:auto;opacity:1}
+#pjConv .cvLista{max-height:220px;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px}
+#pjConv .cvM{max-width:88%;align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.4;word-break:break-word}
+#pjConv .cvM.eu{align-self:flex-end;background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.45)}
+#pjConv .cvM small{display:block;color:var(--mut);font-size:10px;margin-bottom:2px}
+#pjConv .cvM img{display:block;max-width:100%;border-radius:6px;margin-top:4px;cursor:zoom-in}
+#pjConv textarea{width:100%;min-height:54px;resize:vertical;margin-top:7px;border:1.5px solid var(--line);border-radius:9px;padding:7px 9px;font:inherit;font-size:12.5px;background:var(--panel);color:var(--txt);outline:none}
+#pjConv .cvAc{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
+#pjConv .cvAc input[type=date]{border:1.5px solid var(--line);border-radius:8px;padding:5px 7px;font-size:12px;background:var(--panel);color:var(--txt)}
+#pjConv .cvErr{color:#F87171;font-size:11.5px;margin-top:5px}
 .pj-selo{font-size:9.5px;font-weight:800;color:#1a1205;background:#F28C28;border-radius:4px;padding:0 5px;margin-left:5px;white-space:nowrap}
 </style>
 </head>
@@ -1627,6 +1638,7 @@ body.app-pj #pjChips{display:flex}
       <input type="file" id="apAnexoFile" multiple accept=".pdf,.dwg,.jpg,.jpeg,application/pdf,image/jpeg" style="display:none" onchange="anexarArquivos(this)">
       <button class="btn-sec" id="apAnexoBtn" type="button" onclick="$('apAnexoFile').click()" style="font-size:11px;padding:5px 10px;margin-top:6px">📎 Anexar PDF, DWG ou JPG (até 5 MB cada)</button>
     </div>
+    <div class="fg" id="pjConv" style="display:none"></div>
     <div class="fg">
       <label>Histórico do apontamento</label>
       <div id="apLog" style="max-height:130px;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:11.5px;line-height:1.55"></div>
@@ -1881,6 +1893,87 @@ function pjChips(){
   el.innerHTML=c('marc','Marcados',APTS.filter(pjMarcado).length)+c('minha','Disciplina',APTS.filter(a=>PJ_MARCAS[a.id]==='minha').length)+c('todos','Todos',APTS.length);
 }
 function pjCls(a){ return APP_PJ&&pjMarcado(a)?' pj-marc':''; }
+// ── Conversa do apontamento (só no modo projetista) ─────────────────────────
+// A coordenação lê e responde na central de Mensagens. Mensagem só acrescenta
+// (apt_msg_add); prazo aceito passa por apt_prazo_aceitar.
+function pjPodeResponder(a){ return !!PJ_MARCAS[a.id] || a.criado_por_id===USER.id; }
+function pjAgora(){ const d=new Date(); return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }
+function pjSugPendente(ms){
+  let i=-1; ms.forEach((m,k)=>{ if(m.tipo==='sugestao_prazo') i=k; });
+  if(i<0 || ms[i].de!=='analista') return -1;
+  return ms.slice(i+1).some(m=>m.de==='projetista'&&m.tipo==='sistema') ? -1 : i;
+}
+function pjConvRender(){
+  const el=$('pjConv'), a=APT_EDIT; if(!el) return;
+  if(!a || a._novo){ el.innerHTML=''; return; }
+  const ms=a.mensagens||[], eu=String(USER.email||'').toLowerCase(), pode=pjPodeResponder(a), sug=pjSugPendente(ms);
+  const bolha=(m,i)=>{
+    const meu=String(m.email||'').toLowerCase()===eu;
+    const img=/^data:image\//.test(m.imagem||'') ? `<img src="${esc(m.imagem)}" onclick="abrirImg(this.src)" alt="Print">` : '';
+    const acoes=(pode&&i===sug) ? `<div class="cvAc"><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="pjPrazoAceitar(${i})">Aceitar</button><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="pjPrazoAbrir()">Contrapor</button><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="pjPrazoRecusar(${i})">Recusar</button></div>` : '';
+    return `<div class="cvM ${meu?'eu':''}"><small>${esc(meu?'Você':(m.nome||'Coordenação'))} · ${esc(m.data||'')}</small>${esc(m.texto||'')}${img}${acoes}</div>`;
+  };
+  el.innerHTML='<label>Conversa com a coordenação</label><div class="cvLista" id="pjCvLista">'
+    +(ms.length?ms.map(bolha).join(''):'<span class="hint" style="margin:0">Nenhuma mensagem ainda.</span>')+'</div>'
+    +(pode ? `<textarea id="pjCvTxt" placeholder="Escreva sua resposta…"></textarea>
+      <div class="cvAc"><button class="btn" style="width:auto;padding:6px 14px;font-size:12px" id="pjCvEnv" onclick="pjConvEnviar()">Enviar</button>
+      <label class="btn-sec" style="font-size:11.5px;padding:5px 10px;cursor:pointer;margin:0;text-transform:none;letter-spacing:0">Print<input type="file" accept="image/*" style="display:none" onchange="pjConvPrint(this)"></label>
+      <button class="btn-sec" style="font-size:11.5px;padding:5px 10px" onclick="pjPrazoAbrir()">Sugerir prazo</button></div>
+      <div class="cvAc" id="pjCvPrazo" style="display:none"><input type="date" id="pjCvData"><button class="btn-sec" style="font-size:11.5px;padding:5px 10px" onclick="pjPrazoEnviar()">Enviar prazo</button></div>
+      <div class="cvErr" id="pjCvErr"></div>`
+    : '<div class="hint" style="margin-top:6px">Você consulta este apontamento, mas ele não é da sua disciplina.</div>');
+  const l=$('pjCvLista'); if(l) l.scrollTop=l.scrollHeight;
+}
+async function pjConvAbrir(){
+  const el=$('pjConv'), a=APT_EDIT; if(!el||!a) return;
+  const wb=el.closest('.win-body'); if(wb && wb.firstElementChild!==el) wb.insertBefore(el,wb.firstElementChild);
+  pjConvRender();
+  if(a._novo) return;
+  try{ const { data }=await sb.from('apontamentos').select('mensagens').eq('empreendimento_id',EMP.id).eq('id',a.id).maybeSingle();
+    if(data && APT_EDIT===a){ a.mensagens=data.mensagens||[]; pjConvRender(); } }catch(_){}
+}
+function pjConvErro(t){ const e=$('pjCvErr'); if(e) e.textContent=t||''; }
+async function pjMsg(msg){
+  const a=APT_EDIT; if(!a) return false; pjConvErro('');
+  const { data, error }=await sb.rpc('apt_msg_add',{ p_emp:EMP.id, p_id:a.id, p_msg:Object.assign({ de:'projetista', nome:USER.nome, email:USER.email, data:pjAgora() },msg) });
+  if(error){ pjConvErro(error.message||'Não foi possível enviar.'); return false; }
+  a.mensagens=data||[]; const o=APTS.find(x=>x.id===a.id); if(o) o.mensagens=a.mensagens;
+  pjConvRender(); return true;
+}
+async function pjConvEnviar(){
+  const t=$('pjCvTxt'), b=$('pjCvEnv'); const v=(t&&t.value||'').trim(); if(!v) return;
+  if(b) b.disabled=true;
+  const ok=await pjMsg({ texto:v });
+  if(!ok && b) b.disabled=false;
+}
+function pjConvPrint(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  const img=new Image(), u=URL.createObjectURL(f);
+  img.onload=()=>{ const k=Math.min(1,800/Math.max(img.width,img.height)), c=document.createElement('canvas');
+    c.width=Math.round(img.width*k); c.height=Math.round(img.height*k); c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(u); pjMsg({ tipo:'croqui', texto:'Print enviado', imagem:c.toDataURL('image/jpeg',0.6) }); };
+  img.onerror=()=>pjConvErro('Não foi possível ler a imagem.');
+  img.src=u;
+}
+function pjPrazoAbrir(){ const p=$('pjCvPrazo'); if(p){ p.style.display='flex'; const d=$('pjCvData'); if(d) d.focus(); } }
+function pjPrazoEnviar(){
+  const d=$('pjCvData'); if(!d||!d.value){ pjConvErro('Escolha a data.'); return; }
+  const [y,m,dd]=d.value.split('-'), p=dd+'/'+m+'/'+y;
+  pjMsg({ tipo:'sugestao_prazo', prazo_sugerido:p, texto:'Sugestão de novo prazo: '+p });
+}
+async function pjPrazoAceitar(i){
+  const a=APT_EDIT; if(!a) return; pjConvErro('');
+  const { data, error }=await sb.rpc('apt_prazo_aceitar',{ p_emp:EMP.id, p_id:a.id, p_idx:i });
+  if(error){ pjConvErro(error.message||'Não foi possível aceitar o prazo.'); return; }
+  a.mensagens=data.mensagens; a.prazo_min=data.prazo_min; a.participantes=data.participantes;
+  const o=APTS.find(x=>x.id===a.id); if(o) Object.assign(o,data);
+  pjConvRender(); renderListaApts();
+}
+function pjPrazoRecusar(i){
+  const a=APT_EDIT, m=a&&(a.mensagens||[])[i]; if(!m) return;
+  const t=$('pjCvTxt'), mot=(t&&t.value||'').trim();
+  pjMsg({ tipo:'sistema', texto:'Prazo de '+m.prazo_sugerido+' recusado'+(mot?' — '+mot:'.') });
+}
 function pjSelo(a){ if(!APP_PJ) return ''; const m=PJ_MARCAS[a.id]||'';
   return m==='voce' ? '<span class="pj-selo">VOCÊ</span>' : m.indexOf('disc:')===0 ? `<span class="pj-selo">${esc(m.slice(5))} MARCADA</span>` : ''; }
 function roAviso(){ alert('Você é visualizador neste empreendimento: pode consultar, mas não criar nem alterar apontamentos.'); }
@@ -8656,6 +8749,7 @@ function abrirEditor(){
   const _av=$('apExtAviso'); if(_av) _av.style.display=_lock?'block':'none';
   const _q=$('apExtQuem'); if(_q && _ext) _q.textContent=(a.criado_por_nome? a.criado_por_nome+' ':'')+'('+_ext.rot+')';
   renderParts(); renderImgs(); renderPinsList(); renderLog(); renderDrawTools();
+  if(APP_PJ) pjConvAbrir();
   renderFrentes();
   // Excluir: escondido em novo E em apontamento de origem externa (o analista
   // recusa via status, não apaga o registro do autor).
