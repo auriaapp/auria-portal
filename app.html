@@ -1871,7 +1871,7 @@ function pjModoLigar(){
   document.body.classList.add('app-pj');
   const bloq=()=>PJ_BLOQ.forEach(n=>{ window[n]=()=>{}; });
   bloq(); if(document.readyState!=='complete') window.addEventListener('load',()=>{ bloq(); try{ rvDAba('apt'); }catch(_){} });
-  const rb=$('roBanner'); if(rb){ rb.textContent='Projetista · consulta'; rb.title='Consulta pranchas, modelos e apontamentos a que você tem acesso.'; }
+  const rb=$('roBanner'); if(rb){ rb.textContent='Projetista'; rb.title='Consulta pranchas, modelos e análises compartilhadas e responde os apontamentos da sua disciplina.'; }
   const lista=$('aptLista'); if(lista && !$('pjChips')){ const c=document.createElement('div'); c.id='pjChips'; lista.parentNode.insertBefore(c,lista); }
   pjFiltrarBarras();
   let t=null; new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(pjFiltrarBarras,60); }).observe($('app'),{ childList:true, subtree:true });
@@ -2302,7 +2302,7 @@ async function restaurarAnalise(an, localFilesByHash){
     }catch(e){ faltando.push(m.arquivo_nome||'(sem nome)'); console.warn('restaurarAnalise local:',(e&&e.message)||e); }
   }
   _CDE_PRE.clear();
-  if(!baseFeita && !(an.modelos||[]).length){ alert('Não foi possível montar nenhuma prancha desta análise.'); return; }
+  if(!baseFeita && !(an.modelos||[]).length){ const t='Não foi possível montar nenhuma prancha desta análise'+(APP_PJ?' (os arquivos estão fora do seu acesso no CDE).':'.'); if(APP_PJ) rvAlerta(t); else alert(t); return; }
   if(baseFeita) renderCamadas();
   if(baseFeita && LAYERS[0]){
     const b=LAYERS[0].prancha, mb=metas.find(m=>m.cor && (m.cde_documento_id ? m.cde_documento_id===b.cde_documento_id : m.arquivo_hash===(b.arquivo_hash||b._hash)));
@@ -2314,9 +2314,9 @@ async function restaurarAnalise(an, localFilesByHash){
   ANALISE_ATUAL=an.id;
   renderAnalises();
   const msgs=[];
-  if(faltando.length) msgs.push('Faltaram: '+faltando.join(', ')+'.');
+  if(faltando.length) msgs.push((APP_PJ?'Fora do seu acesso no CDE: ':'Faltaram: ')+faltando.join(', ')+'.');
   if(avisos3d.length) msgs.push('Modelos 3D: '+avisos3d.join('; ')+'.');
-  if(msgs.length) alert('Análise aberta. '+msgs.join(' '));
+  if(msgs.length){ if(APP_PJ) rvAlerta('Análise aberta. '+msgs.join(' ')); else alert('Análise aberta. '+msgs.join(' ')); }
 }
 async function excluirAnaliseSel(){
   const id=$('selAnalise').value; if(!id){ alert('Escolha uma análise salva.'); return; }
@@ -10939,7 +10939,7 @@ async function rvAnAbrir(id){
   try{
     await rvAnLimpar();
     ANALISE_ATUAL=null;   // se falhar no meio, a tela vira rascunho e não a análise anterior
-    if((an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
+    if(!APP_PJ && (an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
     await restaurarAnalise(an,{});
   }catch(e){ rvAlerta('Erro ao abrir a análise: '+((e&&e.message)||e)); }
   finally{ RV_AN_ABRINDO=null; rvAnRender(); rvNavRender(); }
@@ -11050,7 +11050,7 @@ function rvAnRender(){
   const sujo=rvAnSujo(), lista=ANALISES.slice().sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em)));
   let h='<span class="rvAnLbl">Análises</span>';
   h+=lista.map(a=>`<button class="rvAnT ${a.id===(RV_AN_ABRINDO||ANALISE_ATUAL)?'act':''}" data-id="${a.id}" title="${esc(rvAnTitulo(a))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${a.id===RV_AN_ABRINDO?'<i class="rvGira"></i>':''}${rvAnMinha(a)?'':_icH('olho',13)}<span class="l">${esc(rvAnNomeTela(a))}</span>${rvAnFx(a)}${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}</button>`).join('');
-  if(!RV_AN_ABRINDO && !ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
+  if(!APP_PJ && !RV_AN_ABRINDO && !ANALISE_ATUAL && _anTemConteudo()) h+=`<button class="rvAnT act rascunho" data-id="__novo" title="Ainda não salva${APP_RO?'':' · duplo clique muda o nome · botão direito: opções'}" ondblclick="rvAnEditar('__novo')" oncontextmenu="event.preventDefault();if(!APP_RO)rvMenu(event,[{ic:'✎',t:'Renomear',f:()=>rvAnEditar('__novo')},{ic:'💾',t:'Salvar',f:()=>rvAnSalvar(false)}])"><span class="l">${esc(rvAnNomeNovo())} (não salva)</span>${APP_RO?'':'<i class="dot"></i>'}</button>`;
   if(!APP_RO) h+=`<button class="rvAnT mais" title="Nova análise (fecha o que está aberto)" onclick="rvAnNova()">＋</button>`;
   h+='<span style="flex:1"></span>';
   // ações da análise aberta à vista (antes só no botão direito da aba)
