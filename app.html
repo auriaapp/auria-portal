@@ -932,6 +932,10 @@ body.app-pj #pjChips{display:flex}
 #pjChips button.on{border-color:#F28C28;color:#F28C28;background:rgba(242,140,40,.14)}
 .ap-card.pj-marc{border-top-color:rgba(242,140,40,.6)!important;border-right-color:rgba(242,140,40,.6)!important;background-image:linear-gradient(90deg,rgba(242,140,40,.16),transparent 62%)}
 body.app-pj #pjConv{display:block!important}
+body.app-pj.pj-cria #btnApontar,body.app-pj.pj-cria #btn2Apontar{display:inline-flex!important}
+body.app-ro.pj-autor #modalApt #apTitulo,body.app-ro.pj-autor #modalApt #apDesc,body.app-ro.pj-autor #modalApt #apTipo,body.app-ro.pj-autor #modalApt #apPrio,body.app-ro.pj-autor #modalApt #apDisc,body.app-ro.pj-autor #modalApt #apLocal,body.app-ro.pj-autor #modalApt #apLocal *{pointer-events:auto;opacity:1}
+body.app-ro.pj-autor #apSalvar{display:inline-flex!important}
+body.app-pj.pj-autor #apParts,body.app-pj.pj-autor #apStatus,body.app-pj.pj-autor #apVisib{pointer-events:none;opacity:.6}
 body.app-ro #modalApt #pjConv textarea,body.app-ro #modalApt #pjConv input{pointer-events:auto;opacity:1}
 #pjConv .cvLista{max-height:220px;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px}
 #pjConv .cvM{max-width:88%;align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.4;word-break:break-word}
@@ -1858,7 +1862,7 @@ var EMP_PAPEL={}, APP_RO=false;
 var APP_PJ=false, PJ_MARCAS={}, PJ_FILT='todos';
 const PJ_FERR=new Set(['zoomStep','fitPage','mudarPagina','toggleVerPins','toggleCota','rvDividir','rvImaToggle','split2dToggle','f3dSplitToggle','f3dModo','abrirSeletorCDE',
   'bimFloorsToggle','f3dEnquadrar','f3dTool','f3dMedirModo','f3dCotasToggle','f3dMedirLimpar','f3dHachuraToggle','f3dXrayToggle','f3dXraySetProf','f3dCfgToggle','f3dResetCfg','f3dSetFundo',
-  'f3dCorteInverter','f3dCorteRemover','f3dBarraRecolher','toggleSideRight','rvJanFecharDe','rvJanFechar']);
+  'f3dCorteInverter','f3dCorteRemover','f3dBarraRecolher','toggleSideRight','ativarApontar','rvJanFecharDe','rvJanFechar']);
 const PJ_BLOQ=['toggleIA','toggleIaRegiao','iaAnalisar','iaEnviar','rvRevisaoBarra','rvToggle','abrirKanban','abrirAgenda','abrirCronograma','abrirBI','abrirBiblioteca','abrirMensagens','runCmd','expMenu','fAiMontar'];
 function pjFiltrarBarras(){
   document.querySelectorAll('.toolbar button,#bimHead button,.sr-icons button').forEach(b=>{
@@ -1877,8 +1881,70 @@ function pjModoLigar(){
   let t=null; new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(pjFiltrarBarras,60); }).observe($('app'),{ childList:true, subtree:true });
   try{ rvDAba('apt'); }catch(_){}
 }
+var PJ_FLAGS={};
+function pjPodeCriar(dim){ return APP_PJ && !!(dim==='bim' ? PJ_FLAGS.bim_abrir_apont : PJ_FLAGS.abrir_apont); }
+function pjAutor(a){ return APP_PJ && !!a && (a._novo || (a.criado_por_id===USER.id && PJ_FLAGS.editar_apont_proprio!==false)); }
+function _pjSig(disc){ return String(disc||'GER').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3)||'GER'; }
+// Apontamento aberto pelo projetista: código PRJ- (decisão 2026-11-08), faixa
+// Projeto, sem participantes (quem distribui é a coordenação).
+function pjNovoAjustar(a, dim){
+  const pref=(dim==='bim'?'PRJ-BIM-':'PRJ-')+_pjSig(a.disciplina);
+  let n=0; APTS.forEach(x=>{ const t=String(x.id||''); if(t.indexOf(pref+'-')===0){ const k=parseInt(t.slice(pref.length+1),10); if(k>n) n=k; } });
+  a.id=pref+'-'+(n+1); a.id_num=n+1; a.grupo_id=a.id;
+  a.participantes={}; a.visibilidade='Projeto';
+  a.log_json=[{ data:hojeBr(), texto:'Apontamento aberto por '+USER.nome+' (projetista) no App.', tipo:'sistema' }];
+}
+async function pjSalvarApt(){
+  const a=APT_EDIT; if(!a) return;
+  if(!pjAutor(a)){ roAviso(); return; }
+  const tit=$('apTitulo').value.trim(), tipo=$('apTipo').value;
+  if(!tit){ rvAlerta('Dê um título ao apontamento.'); return; }
+  if(!tipo){ rvAlerta('Escolha o tipo de apontamento.'); return; }
+  a.titulo=tit; a.descricao=$('apDesc').value.trim(); a.tipo=tipo;
+  a.prioridade=$('apPrio').value||'Importante / Programada';
+  a.disciplina=$('apDisc').value||a.disciplina; a.local_txt=_apLocalLer().join('; ');
+  const btn=$('apSalvar'); btn.disabled=true; btn.textContent='Salvando…';
+  try{
+    const bim=(a.dimensao==='bim');
+    if(a._novo){
+      if(!pjPodeCriar(bim?'bim':'2d')) throw new Error('Seu acesso não permite abrir apontamento aqui.');
+      const pref=(bim?'PRJ-BIM-':'PRJ-')+_pjSig(a.disciplina);
+      const r=await sb.rpc('apt_proximo_id',{ p_emp:EMP.id, p_pref:pref }); if(r.error||!r.data) throw (r.error||new Error('sem código'));
+      a.id=r.data; const m=String(a.id).match(/-(\d+)$/); a.id_num=m?+m[1]:0; if(!a.grupo_id || a.grupo_id.indexOf('PRJ-')===0) a.grupo_id=a.id;
+      const imgs=await subirImgsPendentes(a.id);
+      const row={
+        id:a.id, id_num:a.id_num, empreendimento_id:EMP.id, empreendimento:EMP.nome,
+        user_id:USER.id, analista:USER.nome,
+        titulo:a.titulo, descricao:a.descricao, disciplina:a.disciplina, tipo:a.tipo,
+        status:'Em aberto', prioridade:a.prioridade, visibilidade:'Projeto',
+        dimensao:bim?'bim':'2d', grupo_id:a.grupo_id, local_txt:a.local_txt||'',
+        pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null, imagens_json:imgs,
+        prancha_id:bim?null:(a.prancha_id||null),
+        prancha_nome:bim?(a._modeloNome||''):((PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||''),
+        cde_revisao_id:a.cde_revisao_id||null, data_criacao:a.data_criacao||hojeBr(),
+        participantes:{}, criado_por_id:USER.id, criado_por_nome:USER.nome, criado_por_papel:'projetista',
+        log_json:[{ data:hojeBr(), texto:'Apontamento '+a.id+' aberto por '+USER.nome+' (projetista) no App.', tipo:'sistema' }]
+      };
+      const { error }=await sb.from('apontamentos').insert(row);
+      if(error) throw error;
+    } else {
+      const imgs=await subirImgsPendentes(a.id);
+      const { data, error }=await sb.from('apontamentos')
+        .update({ titulo:a.titulo, descricao:a.descricao, tipo:a.tipo, disciplina:a.disciplina, prioridade:a.prioridade,
+                  local_txt:a.local_txt||'', imagens_json:imgs, pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null })
+        .eq('empreendimento_id',EMP.id).eq('id',a.id).select('id');
+      if(error) throw error;
+      if(!data||!data.length) throw new Error('o banco não aceitou a alteração.');
+    }
+    fecharApt();
+    await carregarApts(); peerCall('__peerRecarregar');
+  }catch(e){ rvAlerta('Não foi possível salvar: '+((e&&e.message)||e)); }
+  finally{ btn.disabled=false; btn.textContent='Salvar'; }
+}
 async function pjCarregarMarcas(){
   PJ_MARCAS={};
+  try{ const f=await sb.rpc('cde_minhas_flags',{ p_emp:EMP.id }); PJ_FLAGS=(f.data&&f.data[0])||{}; }catch(_){ PJ_FLAGS={}; }
+  document.body.classList.toggle('pj-cria', pjPodeCriar('2d')||pjPodeCriar('bim'));
   try{ const { data }=await sb.rpc('pj_marcas',{ p_emp:EMP.id }); (data||[]).forEach(r=>{ PJ_MARCAS[r.id]=r.marca||''; }); }catch(e){ console.warn('pj_marcas:',e.message||e); }
   PJ_FILT = APTS.some(pjMarcado) ? 'marc' : 'todos';
 }
@@ -3493,7 +3559,7 @@ function toggleVerPins(){
 // modo Só BIM (F3D_MODO), delega para f3dApontarToggle; senão, comportamento
 // 2D original (próximo clique na prancha cria apontamento).
 function ativarApontar(lado){
-  if(APP_RO){ roAviso(); return; }
+  if(APP_RO && !pjPodeCriar(F3D_MODO && lado!=='2d' ? 'bim' : '2d')){ roAviso(); return; }
   if(F3D_MODO && lado!=='2d'){ f3dApontarToggle(); return; }
   APONTAR=!APONTAR;
   $(lado==='2d'?'btn2Apontar':'btnApontar').classList.toggle('on', APONTAR);
@@ -5445,7 +5511,7 @@ function f3dProximoId(disc){
 // duas frentes aparecerem juntas no editor, cada uma com prazo e responsável
 // próprios.
 function f3dNovoApontamento(pt, m, grupo){
-  if(APP_RO){ roAviso(); return; }
+  if(APP_RO && !pjPodeCriar('bim')){ roAviso(); return; }
   const mdisc = m.disciplina || m.nome || 'Modelo';
   const g = f3dProximoId(mdisc);
   const fornEmails=fornEmails_(mdisc,'bim');
@@ -5464,6 +5530,7 @@ function f3dNovoApontamento(pt, m, grupo){
     _modeloNome: m.nome || '',
     _novo:true
   };
+  if(APP_PJ) pjNovoAjustar(APT_EDIT,'bim');
   APT_IMGS=[];
   // Print da vista, igual ao fluxo 2D: o apontamento nasce mostrando o que a
   // pessoa estava vendo, sem depender de ela lembrar de anexar.
@@ -8283,7 +8350,7 @@ function proximoIdBim(disc){
   return { id:pref+'-'+num, num };
 }
 function novoApontamentoBim(pt){
-  if(APP_RO){ roAviso(); return; }
+  if(APP_RO && !pjPodeCriar('bim')){ roAviso(); return; }
   const mdisc=BIM_PROJ.discipline||BIM_PROJ.name||'Modelo';
   const g=proximoIdBim(mdisc);
   const fornEmails=fornEmails_(mdisc,'bim');
@@ -8299,6 +8366,7 @@ function novoApontamentoBim(pt){
     cde_revisao_id: (PRANCHA && PRANCHA._cde_revisao_id) || null,
     _novo:true
   };
+  if(APP_PJ) pjNovoAjustar(APT_EDIT,'bim');
   APT_IMGS=[];
   const pic=_bimPrint(); if(pic) APT_IMGS.push({data:pic});   // print automático da vista 3D
   abrirEditor();
@@ -8506,7 +8574,7 @@ function locaisDoEmp(){
 }
 
 function novoApontamento(nx,ny){
-  if(APP_RO){ roAviso(); return; }
+  if(APP_RO && !pjPodeCriar('2d')){ roAviso(); return; }
   // O apontamento pertence à prancha em FOCO (a que o usuário está analisando),
   // NÃO à base. Ao federar (ex.: Estrutura base + Instalações por cima), apontar
   // na de Instalações precisa gravar prancha_id/revisão de Instalações — senão o
@@ -8532,6 +8600,7 @@ function novoApontamento(nx,ny){
   const dPeer=peerCall('__peerDisc');
   if(dPeer && dPeer!==disc && !APT_EDIT.participantes[dPeer])
     APT_EDIT.participantes[dPeer]={nivel:'Pendência',emails:fornEmails_(dPeer,'2d'),prazo:'',conclusao:''};
+  if(APP_PJ) pjNovoAjustar(APT_EDIT,'2d');
   APT_IMGS=[];
   const pic=capturarPrintLocal(nx,ny); if(pic) APT_IMGS.push({data:pic});   // print automático do local
   abrirEditor();
@@ -8717,7 +8786,7 @@ function abrirEditor(){
   _apLocalManual=new Set(); _apPinsN=(a.pontos_json||[]).length;   // antes de qualquer renderPinsList
   { const bim=_aptDim(a)==='bim';
     window._aptTtlHtml=`<span class="dtag ${bim?'bim':'d2'}">${bim?'BIM':'2D'}</span><span class="ap-cod">${esc(a.id||'')}</span>`
-      +`<span style="font-size:12px;font-weight:500;color:var(--mut)">${a._novo?' · novo apontamento':''}${APP_RO?' · consulta':''}</span>`;
+      +`<span style="font-size:12px;font-weight:500;color:var(--mut)">${a._novo?' · novo apontamento':''}${(APP_RO&&!pjAutor(a))?' · consulta':''}</span>`;
     $('aptModalT').innerHTML=window._aptTtlHtml; }
   $('apId').value=a.id;
   { const d=$('apIdDica'); if(d) d.style.display='none'; }
@@ -8744,7 +8813,8 @@ function abrirEditor(){
   // editável no App. O analista RESPONDE (mensagens/prints), negocia prazo e
   // muda o status (Resolvido / Reprovado c/ justificativa) — o texto fica preso.
   const _ext = aptOrigem(a);
-  const _lock = !!_ext && !a._novo;
+  const _lock = !!_ext && !a._novo && !pjAutor(a);
+  document.body.classList.toggle('pj-autor', pjAutor(a));
   ['apTitulo','apDesc','apTipo','apPrio','apDisc'].forEach(id=>{ const el=$(id); if(el) el.disabled=_lock; });
   const _av=$('apExtAviso'); if(_av) _av.style.display=_lock?'block':'none';
   const _q=$('apExtQuem'); if(_q && _ext) _q.textContent=(a.criado_por_nome? a.criado_por_nome+' ':'')+'('+_ext.rot+')';
@@ -8758,7 +8828,7 @@ function abrirEditor(){
   { const t=document.querySelector('.win[data-win="apt"] .ttl'); if(t && window._aptTtlHtml) t.innerHTML=window._aptTtlHtml; }   // tag 2D/BIM + código (maquete)
   renderPins(); renderDrawings();
 }
-function fecharApt(){ fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
+function fecharApt(){ document.body.classList.remove('pj-autor'); fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
 
 // Lista de pins do apontamento (com remoção); base para o multi-pin
 // ── Frentes do apontamento (2D | BIM) ──────────────────────────────────────
@@ -9206,6 +9276,7 @@ function calcPrazos(parts){
 }
 
 async function salvarApt(){
+  if(APP_PJ) return pjSalvarApt();
   if(APP_RO){ roAviso(); return; }
   if(!APT_EDIT) return;
   const a=APT_EDIT;
