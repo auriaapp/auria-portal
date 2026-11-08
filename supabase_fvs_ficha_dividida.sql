@@ -32,3 +32,10 @@ end $$;
 
 revoke all on function public.fvs_salvar_vinculo(uuid, jsonb, uuid) from public, anon;
 grant execute on function public.fvs_salvar_vinculo(uuid, jsonb, uuid) to authenticated;
+
+-- 2026-11-08 · Nova ficha como no Construpoint: agendar para uma data e parceiro (quem executou).
+-- Aditivo. A ficha agendada nasce 'aberta' (o gatilho fvs_inspecao_nasce manda na situação);
+-- a data só organiza a lista "Para hoje". Parceiro é texto livre: o grupo incorpora e constrói,
+-- não há avaliação de empreiteiro.
+alter table public.fvs_inspecao_auria add column if not exists agendada_para date;
+alter table public.fvs_inspecao_auria add column if not exists parceiro text check (parceiro is null or length(parceiro) <= 80);
