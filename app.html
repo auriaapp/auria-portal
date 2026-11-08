@@ -2059,7 +2059,11 @@ async function cvPrazoAprovar(i){
   const parts=JSON.parse(JSON.stringify(a.participantes||{})), em=String(m.email||'').toLowerCase();
   let alvo=Object.keys(parts).find(k=>String((parts[k]||{}).emails||'').toLowerCase().split(/[,;\s]+/).includes(em));
   if(!alvo && parts[a.disciplina]) alvo=a.disciplina;
-  if(alvo) parts[alvo].prazo=p;
+  // Sem participante (ex.: aberto pelo projetista): quem sugeriu entra como
+  // participante da disciplina. Senão o Salvar da aba Detalhes recalcularia o
+  // prazo a partir de participantes vazios e apagaria o prazo aprovado.
+  if(!alvo){ alvo=a.disciplina||'Geral'; parts[alvo]={ nivel:'Pendência', emails:m.email||'', prazo:'', conclusao:'' }; }
+  parts[alvo].prazo=p;
   const [dd,mm,yy]=p.split('/'), dt=new Date(+yy,+mm-1,+dd), hoje=new Date(); hoje.setHours(0,0,0,0);
   const atrasado = !isNaN(dt) && dt<hoje && a.status!=='Resolvido';
   const { error }=await sb.from('apontamentos').update({ prazo_min:p, participantes:parts, atrasado })
