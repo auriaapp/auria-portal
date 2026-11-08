@@ -349,11 +349,12 @@ body.fvs-abas #fvsAbas{display:flex}
     try { await B3.limparFiltro(F3D); } catch (_){}
     // só o pavimento da ficha fica visível (o resto do prédio esconde a peça que a pessoa quer marcar)
     const soPav = D.soPav && D.pav && Object.keys(D.pav).length;
-    if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const md = F3D.modelos[mi].model; if (!md) continue;
-      try { await md.setVisible(undefined, false); } catch (_){} if (D.pav[mi]) try { await md.setVisible(D.pav[mi], true); } catch (_){}
-      const no = new Set(D.pav[mi] || []); neutro[mi] = (neutro[mi] || []).filter(id => no.has(id)); }
+    if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const no = new Set(D.pav[mi] || []); neutro[mi] = (neutro[mi] || []).filter(id => no.has(id)); }
     try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){}
     if (Object.keys(pm).length) try { await B3.colorirGrupo(F3D, pm, 0xE8960A); } catch (_){}
+    // a visibilidade vem DEPOIS das cores: colorirGrupo (bim3d.js) volta a mostrar o modelo inteiro
+    if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const md = F3D.modelos[mi].model; if (!md) continue;
+      try { await md.setVisible(undefined, false); } catch (_){} if (D.pav[mi]) try { await md.setVisible(D.pav[mi], true); } catch (_){} }
     const alvo = soPav ? D.pav : Object.keys(pm).length ? pm : (D.cat || []).reduce((a, g) => { Object.entries(g.porMod).forEach(([mi, ids]) => a[mi] = (a[mi] || []).concat(ids)); return a; }, {});
     if (enquadrar && Object.keys(alvo).length) try { await B3.enquadrarIds(F3D, alvo); } catch (_){}
     await fvs3dRefrescar();
