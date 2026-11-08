@@ -13,7 +13,7 @@
 // ============================================================================
 (function(){
   if (typeof fvsFicha !== 'function') return;
-  const D = { abas:[], at:null, sel:false, todos:{}, cat:null, catChave:'' };
+  const D = { abas:[], at:null, sel:false, todos:{}, cat:null, catChave:'', pav:null, soPav:true };
   const GRUPOS = [['Pilares',/^IFCCOLUMN/],['Vigas',/^IFCBEAM/],['Lajes',/^IFCSLAB$/],['Paredes',/^IFCWALL/],['Escadas',/^IFCSTAIR/],
                   ['Fundações',/^IFCFOOTING|^IFCPILE/],['Portas e janelas',/^IFCDOOR|^IFCWINDOW/],['Revestimentos',/^IFCCOVERING/]];
   const ROTULO = { ver:'Verificação', pec:'Peças', it:'IT', conc:'Concreto', his:'Histórico' };
@@ -333,6 +333,7 @@ body.fvs-abas #fvsAbas{display:flex}
           const meus = ids.filter(id => mp.dono[mi].get(id) === t.pavId); if (!meus.length) continue;
           cat[gi].porMod[mi] = (cat[gi].porMod[mi] || []).concat(meus); cat[gi].n += meus.length; } }
       D.cat = cat.filter(g => g.n); D.catChave = chave;
+      D.pav = {}; mp.dono.forEach((mapa, mi) => { const ids = []; if (mapa) mapa.forEach((pv, id) => { if (pv === t.pavId) ids.push(id); }); if (ids.length) D.pav[mi] = ids; });
     }
     if (D.at !== k) return;
     D.sel = !!t.editavel; await pintar(t, true); selBarra(t);
@@ -346,9 +347,14 @@ body.fvs-abas #fvsAbas{display:flex}
       if (!D.todos[m.arquivoId]){ try { D.todos[m.arquivoId] = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){ D.todos[m.arquivoId] = []; } }
       neutro[mi] = D.todos[m.arquivoId].filter(id => !sel.has(mi + ':' + id)); }
     try { await B3.limparFiltro(F3D); } catch (_){}
+    // só o pavimento da ficha fica visível (o resto do prédio esconde a peça que a pessoa quer marcar)
+    const soPav = D.soPav && D.pav && Object.keys(D.pav).length;
+    if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const md = F3D.modelos[mi].model; if (!md) continue;
+      try { await md.setVisible(undefined, false); } catch (_){} if (D.pav[mi]) try { await md.setVisible(D.pav[mi], true); } catch (_){}
+      const no = new Set(D.pav[mi] || []); neutro[mi] = (neutro[mi] || []).filter(id => no.has(id)); }
     try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){}
     if (Object.keys(pm).length) try { await B3.colorirGrupo(F3D, pm, 0xE8960A); } catch (_){}
-    const alvo = Object.keys(pm).length ? pm : (D.cat || []).reduce((a, g) => { Object.entries(g.porMod).forEach(([mi, ids]) => a[mi] = (a[mi] || []).concat(ids)); return a; }, {});
+    const alvo = soPav ? D.pav : Object.keys(pm).length ? pm : (D.cat || []).reduce((a, g) => { Object.entries(g.porMod).forEach(([mi, ids]) => a[mi] = (a[mi] || []).concat(ids)); return a; }, {});
     if (enquadrar && Object.keys(alvo).length) try { await B3.enquadrarIds(F3D, alvo); } catch (_){}
     await fvs3dRefrescar();
   }
@@ -360,6 +366,7 @@ body.fvs-abas #fvsAbas{display:flex}
       + (t.editavel ? D.cat.map((g, i) => { let q = 0; Object.entries(g.porMod).forEach(([mi, ids]) => ids.forEach(id => { if (tem(+mi, id)) q++; }));
           return '<button class="' + (q === g.n ? 'on' : '') + '" onclick="FvsDock.classe(' + i + ')">' + esc(g.rot) + '<i>' + q + '/' + g.n + '</i></button>'; }).join('')
         + '<button onclick="FvsDock.todas(true)">Pavimento inteiro</button><button onclick="FvsDock.todas(false)">Limpar</button>' : '')
+      + '<button class="' + (D.soPav ? '' : 'on') + '" onclick="FvsDock.predio()" title="Mostrar ou esconder o resto do prédio">' + (D.soPav ? 'Ver prédio' : 'Só o pavimento') + '</button>'
       + '<span class="res" id="fdRes">' + nPecas(t) + ' peça(s)</span>';
     s.classList.add('on'); volume(t);
   }
@@ -515,7 +522,8 @@ body.fvs-abas #fvsAbas{display:flex}
     return _emp.apply(this, arguments);
   };
 
-  window.FvsDock = { ir, fechar, aba, recolher, classe, todas, verIt, ligar, mapa,
+  async function predio(){ const t = atual(); if (!t) return; D.soPav = !D.soPav; await pintar(t, true); selBarra(t); }
+  window.FvsDock = { ir, fechar, aba, recolher, classe, todas, verIt, ligar, mapa, predio,
     nova(){ selParar(); guardar(); mostrar(false); barra(); fvsPainel(); },
     modelo(){ const t = atual(); document.body.classList.add('fvs-ver-modelo'); try { mobTab('prancha'); } catch (_){} if (t) modelo(t); barra(); },
     _estado:D };
