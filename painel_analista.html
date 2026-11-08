@@ -1049,8 +1049,12 @@ async function carregarEmps(){
 
 async function carregarApts(){
   try{
+    // Só os NÃO resolvidos: fila, contadores e trilho já ignoram os resolvidos, e eles se
+    // acumulam para sempre (custo de abrir o painel crescia com o histórico). Os "Últimos
+    // eventos" do empreendimento buscam os seus à parte, em loadFoco.
     const { data } = await sb.from('apontamentos')
-      .select('id,id_num,titulo,disciplina,empreendimento,empreendimento_id,status,prazo_min,prioridade,participantes,criado_por_nome,criado_por_papel,data_criacao').limit(3000);
+      .select('id,id_num,titulo,disciplina,empreendimento,empreendimento_id,status,prazo_min,prioridade,participantes,criado_por_nome,criado_por_papel,data_criacao')
+      .or('status.is.null,status.neq.Resolvido').limit(3000);
     APTS = data||[];
   }catch(e){ APTS=[]; }
 }
@@ -1075,12 +1079,18 @@ async function carregarNF(){
 async function carregarMsgs(){
   MSG_NOVAS = 0;
   try{
-    const ra = await sb.from('apontamentos').select('mensagens').limit(1000);
-    (ra.data||[]).forEach(a=>{
-      const m = Array.isArray(a.mensagens)?a.mensagens:[];
-      const u = m[m.length-1];
-      if(u && u.de==='projetista') MSG_NOVAS++;
-    });
+    // Contagem no servidor (com as permissões de quem está logado): antes baixava o
+    // histórico de mensagens de até 1000 apontamentos só para contar aqui.
+    const rc = await sb.rpc('painel_msgs_novas_apt');
+    if(!rc.error) MSG_NOVAS = Number(rc.data)||0;
+    else {
+      const ra = await sb.from('apontamentos').select('mensagens').limit(1000);
+      (ra.data||[]).forEach(a=>{
+        const m = Array.isArray(a.mensagens)?a.mensagens:[];
+        const u = m[m.length-1];
+        if(u && u.de==='projetista') MSG_NOVAS++;
+      });
+    }
     const rt = await sb.from('mensagens_auria')
       .select('id').eq('de','projetista').eq('lida_analista', false).limit(500);
     MSG_NOVAS += (rt.data||[]).length;
@@ -1601,7 +1611,7 @@ async function loadFoco(id){
   const box=$('peFoco'); box.innerHTML='<div class="load" style="padding:30px">Carregando o empreendimento…</div>';
   // Toda resposta vira array (erro/RLS → lista vazia, nunca quebra a tela).
   const q=(p)=>Promise.resolve(p).then(r=>({data:Array.isArray(r&&r.data)?r.data:[]})).catch(()=>({data:[]}));
-  const [rConv,rDocs,rDF,rAcc,rObra,rAna,rEv,rAtv]=await Promise.all([
+  const [rConv,rDocs,rDF,rAcc,rObra,rAna,rEv,rAtv,rAptEv]=await Promise.all([
     q(sb.rpc('cde_convencao',{p_emp:id})),
     q(sb.from('cde_documento_auria').select('id,codigo,disciplina,fornecedor_id,cde_revisao_auria(id,revisao,status,recebido_em)').eq('empreendimento_id',id).eq('arquivado',false)),
     q(sb.from('disciplina_fornecedor_auria').select('id,disciplina,fornecedor_id').eq('empreendimento_id',id)),
@@ -1611,6 +1621,8 @@ async function loadFoco(id){
     q(sb.from('cde_evento_auria').select('acao,de_status,para_status,usuario_nome,quando,cde_revisao_auria!inner(revisao,cde_documento_auria!inner(codigo,empreendimento_id))')
         .eq('cde_revisao_auria.cde_documento_auria.empreendimento_id',id).order('quando',{ascending:false}).limit(12)),
     q(sb.from('cde_emp_disciplina_auria').select('id,disciplina').eq('empreendimento_id',id)),   // item 51: disciplinas ativas
+    // Últimos eventos: apontamentos DESTE empreendimento, inclusive resolvidos (APTS só tem os abertos)
+    q(sb.from('apontamentos').select('id,id_num,titulo,disciplina,criado_por_nome,criado_por_papel,data_criacao').eq('empreendimento_id',id).not('data_criacao','is',null).limit(3000)),
   ]);
   if(FX_EMP!==id) return;   // trocou de empreendimento no meio
   await carregarFornecedoresLeve();
@@ -1688,7 +1700,7 @@ async function loadFoco(id){
   // ── Últimos eventos: CDE + apontamentos deste empreendimento ──
   const ACAO={recebeu:'Arquivo recebido',analisou:'Em análise',liberou:'Liberado para obra',devolveu:'Devolvido ao projetista',substituiu:'Revisão substituída',baixou:'Download'};
   const evs=(rEv.data||[]).map(ev=>({ q:ev.quando, t:(ACAO[ev.acao]||ev.acao)+' — <span class="cod" style="color:var(--navy)">'+esc(ev.cde_revisao_auria&&ev.cde_revisao_auria.cde_documento_auria?ev.cde_revisao_auria.cde_documento_auria.codigo:'')+'</span> '+esc(ev.cde_revisao_auria?ev.cde_revisao_auria.revisao||'':'')+(ev.usuario_nome?' <span class="mut">· '+esc(ev.usuario_nome)+'</span>':'') }));
-  APTS.filter(a=>aptEmp(a)&&aptEmp(a).id===id&&a.data_criacao).forEach(a=>{
+  (rAptEv.data||[]).filter(a=>a.data_criacao).forEach(a=>{
     const quem=a.criado_por_nome?(' <span class="mut">· '+esc(a.criado_por_nome)+(['obra','projetista','setor'].includes(a.criado_por_papel||'')?' · '+a.criado_por_papel:'')+'</span>'):'';
     evs.push({ q:a.data_criacao, t:'Apontamento aberto — <span class="cod" style="color:var(--navy)">'+esc(aptCod(a))+'</span> '+esc(a.titulo||'')+quem });
   });
