@@ -947,6 +947,25 @@ body.app-ro #modalApt #pjConv textarea,body.app-ro #modalApt #pjConv input{point
 #pjConv .cvAc{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
 #pjConv .cvAc input[type=date]{border:1.5px solid var(--line);border-radius:8px;padding:5px 7px;font-size:12px;background:var(--panel);color:var(--txt)}
 #pjConv .cvErr{color:#F87171;font-size:11.5px;margin-top:5px}
+/* Conversa do apontamento na janela da coordenação (mockup app_conversa_coordenacao, opção A) */
+#apTabs{display:none;gap:2px;border-bottom:1px solid var(--line);margin:-2px 0 10px}
+#modalApt.cv-tem #apTabs{display:flex}
+#apTabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--mut);font:inherit;font-size:12px;padding:6px 10px;cursor:pointer}
+#apTabs button.on{color:var(--txt);border-bottom-color:#F28C28}
+#apTabs i{font-style:normal;font-size:10px;font-weight:800;background:#F28C28;color:#1a1205;border-radius:8px;padding:0 5px;margin-left:5px}
+#modalApt.cv-on .win-body > :not(#apTabs):not(#cvConv):not(.mfoot){display:none!important}
+#modalApt:not(.cv-on) #cvConv{display:none}
+body.app-pj #apTabs,body.app-pj #cvConv{display:none!important}
+#cvConv .cvLista{max-height:300px;overflow:auto;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px}
+#cvConv .cvM{max-width:88%;align-self:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 9px;font-size:12px;line-height:1.4;word-break:break-word}
+#cvConv .cvM.eu{align-self:flex-end;background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.45)}
+#cvConv .cvM small{display:block;color:var(--mut);font-size:10px;margin-bottom:2px}
+#cvConv .cvM img{display:block;max-width:100%;border-radius:6px;margin-top:4px;cursor:zoom-in}
+#cvConv .cvSys{align-self:center;color:var(--mut);font-size:11px;text-align:center}
+#cvConv textarea{width:100%;min-height:54px;resize:vertical;margin-top:7px;border:1.5px solid var(--line);border-radius:9px;padding:7px 9px;font:inherit;font-size:12.5px;background:var(--panel);color:var(--txt);outline:none}
+#cvConv .cvAc{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center}
+#cvConv .cvAc input[type=date]{border:1.5px solid var(--line);border-radius:8px;padding:5px 7px;font-size:12px;background:var(--panel);color:var(--txt)}
+#cvConv .cvErr{color:#F87171;font-size:11.5px;margin-top:5px}
 .pj-selo{font-size:9.5px;font-weight:800;color:#1a1205;background:#F28C28;border-radius:4px;padding:0 5px;margin-left:5px;white-space:nowrap}
 </style>
 </head>
@@ -1587,6 +1606,8 @@ body.app-ro #modalApt #pjConv textarea,body.app-ro #modalApt #pjConv input{point
     <button class="wbtn" title="Fechar" onclick="fecharApt()">✕</button>
   </div>
   <div class="win-body">
+    <div id="apTabs"><button data-k="det" onclick="cvAba('det')">Detalhes</button><button data-k="conv" onclick="cvAba('conv')">Conversa<i id="cvN"></i></button></div>
+    <div class="fg" id="cvConv"></div>
     <!-- Frentes do mesmo problema (2D e BIM). Cada uma é um apontamento com
          prazo, responsável e resolução próprios: o modelador pode fechar a
          dele e o projetista 2D ainda não. -->
@@ -1960,6 +1981,101 @@ function pjChips(){
   el.innerHTML=c('marc','Marcados',APTS.filter(pjMarcado).length)+c('minha','Disciplina',APTS.filter(a=>PJ_MARCAS[a.id]==='minha').length)+c('todos','Todos',APTS.length);
 }
 function pjCls(a){ return APP_PJ&&pjMarcado(a)?' pj-marc':''; }
+// ── Conversa do apontamento na janela da COORDENAÇÃO (aba Conversa) ──────────
+// Mesma conversa do App do Projetista. Aprovar prazo grava como a central de
+// Mensagens fazia (prazo_min + prazo do participante + atrasado). Visualizador lê.
+function cvAba(k){
+  const m=$('modalApt'); if(!m) return;
+  m.classList.toggle('cv-on', k==='conv');
+  document.querySelectorAll('#apTabs button').forEach(b=>b.classList.toggle('on', b.dataset.k===k));
+  if(k==='conv'){ const l=$('cvLista'); if(l) l.scrollTop=l.scrollHeight; }
+}
+function cvSugPendente(ms){
+  let i=-1; ms.forEach((m,k)=>{ if(m.tipo==='sugestao_prazo') i=k; });
+  if(i<0 || ms[i].de!=='projetista') return -1;
+  return ms.slice(i+1).some(m=>m.de==='analista') ? -1 : i;
+}
+function cvConvRender(){
+  const el=$('cvConv'), a=APT_EDIT; if(!el||!a) return;
+  const ms=a.mensagens||[], pode=!APP_RO, sug=cvSugPendente(ms);
+  const n=$('cvN'); if(n) n.textContent=ms.length?String(ms.length):'';
+  const bolha=(m,i)=>{
+    if(m.tipo==='sistema' && !m.texto) return '';
+    const eu=m.de==='analista';
+    const img=/^data:image\//.test(m.imagem||'') ? `<img src="${esc(m.imagem)}" onclick="abrirImg(this.src)" alt="Print">` : '';
+    const quem=eu ? (m.nome||'Coordenação') : ((m.nome||'Projetista')+' · Projetista');
+    const acoes=(pode&&i===sug) ? `<div class="cvAc"><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="cvPrazoAprovar(${i})">Aprovar</button><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="cvPrazoAbrir()">Contrapor</button><button class="btn-sec" style="font-size:11px;padding:3px 9px" onclick="cvPrazoRecusar(${i})">Recusar</button></div>` : '';
+    return `<div class="cvM ${eu?'eu':''}"><small>${esc(quem)} · ${esc(m.data||'')}</small>${esc(m.texto||'')}${img}${acoes}</div>`;
+  };
+  el.innerHTML='<div class="cvLista" id="cvLista">'+(ms.length?ms.map(bolha).join(''):'<span class="hint" style="margin:0">Nenhuma mensagem ainda.</span>')+'</div>'
+    +(pode ? `<textarea id="cvTxt" placeholder="Escreva sua resposta…"></textarea>
+      <div class="cvAc"><button class="btn" style="width:auto;padding:6px 14px;font-size:12px" id="cvEnv" onclick="cvEnviar()">Enviar</button>
+      <label class="btn-sec" style="font-size:11.5px;padding:5px 10px;cursor:pointer;margin:0;text-transform:none;letter-spacing:0">Print<input type="file" accept="image/*" style="display:none" onchange="cvPrint(this)"></label>
+      <button class="btn-sec" style="font-size:11.5px;padding:5px 10px" onclick="cvPrazoAbrir()">Sugerir prazo</button></div>
+      <div class="cvAc" id="cvPrazo" style="display:none"><input type="date" id="cvData"><button class="btn-sec" style="font-size:11.5px;padding:5px 10px" onclick="cvPrazoEnviar()">Enviar prazo</button></div>
+      <div class="cvErr" id="cvErr"></div>` : '');
+  const l=$('cvLista'); if(l) l.scrollTop=l.scrollHeight;
+}
+async function cvConvAbrir(){
+  const m=$('modalApt'), a=APT_EDIT; if(!m) return;
+  if(!a || a._novo){ m.classList.remove('cv-tem','cv-on'); return; }
+  m.classList.add('cv-tem');
+  const ultimo=(x)=>{ const ms=x.mensagens||[]; return ms.length?ms[ms.length-1]:null; };
+  cvConvRender(); cvAba((ultimo(a)||{}).de==='projetista' ? 'conv' : 'det');
+  try{ const { data }=await sb.from('apontamentos').select('mensagens').eq('empreendimento_id',EMP.id).eq('id',a.id).maybeSingle();
+    if(data && APT_EDIT===a){ a.mensagens=data.mensagens||[]; cvConvRender(); if((ultimo(a)||{}).de==='projetista') cvAba('conv'); } }catch(_){}
+}
+function cvErro(t){ const e=$('cvErr'); if(e) e.textContent=t||''; }
+async function cvMsg(msg){
+  const a=APT_EDIT; if(!a) return false; cvErro('');
+  const { data, error }=await sb.rpc('apt_msg_add',{ p_emp:EMP.id, p_id:a.id, p_msg:Object.assign({ de:'analista', nome:USER.nome, email:USER.email, data:pjAgora() },msg) });
+  if(error){ cvErro(error.message||'Não foi possível enviar.'); return false; }
+  a.mensagens=data||[]; const o=APTS.find(x=>x.id===a.id); if(o) o.mensagens=a.mensagens;
+  cvConvRender(); return true;
+}
+async function cvEnviar(){
+  const t=$('cvTxt'), b=$('cvEnv'); const v=(t&&t.value||'').trim(); if(!v) return;
+  if(b) b.disabled=true;
+  const ok=await cvMsg({ texto:v }); if(!ok && b) b.disabled=false;
+}
+function cvPrint(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  const img=new Image(), u=URL.createObjectURL(f);
+  img.onload=()=>{ const k=Math.min(1,800/Math.max(img.width,img.height)), c=document.createElement('canvas');
+    c.width=Math.round(img.width*k); c.height=Math.round(img.height*k); c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(u); cvMsg({ tipo:'croqui', texto:'Print enviado', imagem:c.toDataURL('image/jpeg',0.6) }); };
+  img.onerror=()=>cvErro('Não foi possível ler a imagem.');
+  img.src=u;
+}
+function cvPrazoAbrir(){ const p=$('cvPrazo'); if(p){ p.style.display='flex'; const d=$('cvData'); if(d) d.focus(); } }
+function cvPrazoEnviar(){
+  const d=$('cvData'); if(!d||!d.value){ cvErro('Escolha a data.'); return; }
+  const [y,m,dd]=d.value.split('-'), p=dd+'/'+m+'/'+y;
+  cvMsg({ tipo:'sugestao_prazo', prazo_sugerido:p, texto:'Sugestão de novo prazo: '+p });
+}
+async function cvPrazoAprovar(i){
+  const a=APT_EDIT, m=a&&(a.mensagens||[])[i]; if(!m) return; cvErro('');
+  const p=m.prazo_sugerido; if(!p) return;
+  const parts=JSON.parse(JSON.stringify(a.participantes||{})), em=String(m.email||'').toLowerCase();
+  let alvo=Object.keys(parts).find(k=>String((parts[k]||{}).emails||'').toLowerCase().split(/[,;\s]+/).includes(em));
+  if(!alvo && parts[a.disciplina]) alvo=a.disciplina;
+  if(alvo) parts[alvo].prazo=p;
+  const [dd,mm,yy]=p.split('/'), dt=new Date(+yy,+mm-1,+dd), hoje=new Date(); hoje.setHours(0,0,0,0);
+  const atrasado = !isNaN(dt) && dt<hoje && a.status!=='Resolvido';
+  const { error }=await sb.from('apontamentos').update({ prazo_min:p, participantes:parts, atrasado })
+    .eq('empreendimento_id',EMP.id).eq('id',a.id);
+  if(error){ cvErro(error.message||'Não foi possível aprovar.'); return; }
+  a.prazo_min=p; a.participantes=parts; a.atrasado=atrasado;
+  const o=APTS.find(x=>x.id===a.id); if(o){ o.prazo_min=p; o.participantes=parts; o.atrasado=atrasado; }
+  try{ renderParts(); }catch(_){}
+  await cvMsg({ tipo:'sistema', texto:'Prazo aprovado: '+p });
+  renderListaApts();
+}
+function cvPrazoRecusar(i){
+  const a=APT_EDIT, m=a&&(a.mensagens||[])[i]; if(!m) return;
+  const t=$('cvTxt'), mot=(t&&t.value||'').trim();
+  cvMsg({ tipo:'sistema', texto:'Prazo de '+m.prazo_sugerido+' recusado'+(mot?' — '+mot:'.') });
+}
 // ── Conversa do apontamento (só no modo projetista) ─────────────────────────
 // A coordenação lê e responde na central de Mensagens. Mensagem só acrescenta
 // (apt_msg_add); prazo aceito passa por apt_prazo_aceitar.
@@ -8820,7 +8936,7 @@ function abrirEditor(){
   const _av=$('apExtAviso'); if(_av) _av.style.display=_lock?'block':'none';
   const _q=$('apExtQuem'); if(_q && _ext) _q.textContent=(a.criado_por_nome? a.criado_por_nome+' ':'')+'('+_ext.rot+')';
   renderParts(); renderImgs(); renderPinsList(); renderLog(); renderDrawTools();
-  if(APP_PJ) pjConvAbrir();
+  if(APP_PJ) pjConvAbrir(); else cvConvAbrir();
   renderFrentes();
   // Excluir: escondido em novo E em apontamento de origem externa (o analista
   // recusa via status, não apaga o registro do autor).
@@ -8829,7 +8945,7 @@ function abrirEditor(){
   { const t=document.querySelector('.win[data-win="apt"] .ttl'); if(t && window._aptTtlHtml) t.innerHTML=window._aptTtlHtml; }   // tag 2D/BIM + código (maquete)
   renderPins(); renderDrawings();
 }
-function fecharApt(){ document.body.classList.remove('pj-autor'); fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
+function fecharApt(){ document.body.classList.remove('pj-autor'); { const m=$('modalApt'); if(m) m.classList.remove('cv-tem','cv-on'); } fecharWin('apt'); APT_EDIT=null; APT_IMGS=[]; DRAW_TOOL=null; _draw=null; _poly=null; _polyCur=null; setPinEdit(false); renderPins(); renderDrawings(); }
 
 // Lista de pins do apontamento (com remoção); base para o multi-pin
 // ── Frentes do apontamento (2D | BIM) ──────────────────────────────────────
