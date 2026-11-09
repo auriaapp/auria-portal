@@ -1213,6 +1213,18 @@ async function _faixasPavimento(V){
   return faixas;
 }
 function _faixaDe(faixas, pavN){ const f=(faixas||[]).find(f=> _batePavim(f.nome, pavN)); return f?{y0:f.y0,y1:f.y1}:null; }
+// Uma faixa por NÍVEL real. _faixasPavimento devolve uma por NOME, e vários
+//  nomes caem no mesmo nível (ARQ "5º PAVIMENTO", EST "5º PAV. TIPO", subníveis
+//  de piso acabado "_(P.A_0,09)", degraus "P.A. ..."): _faixaNoY pegava o 1º e o
+//  pé-direito saía rotulado com subnível. Aqui fica o nome-base mais votado.
+function _faixasUnicas(faixas){
+  const porIdx=new Map();
+  const nota=(n)=> (/_\(|^P\.?A\.? /i.test(n)?2:0) + (/PAV\. TIPO|^PAV\. /i.test(n)?1:0);
+  for(const f of (faixas||[])){ const o=porIdx.get(f.idx);
+    if(!o || nota(f.nome)<nota(o.nome)) porIdx.set(f.idx, f); }
+  return [...porIdx.values()].sort((a,b)=>a.y-b.y);
+}
+export async function pavimentosPeDireito(V){ return _faixasUnicas(await _faixasPavimento(V)).map(f=>({ nome:f.nome, y:f.y })); }
 function _faixaNoY(faixas, y){ for(const f of (faixas||[])){ if(y>=f.y0 && y<f.y1) return f; } return null; }
 function _nomePav(nome){ return String(nome||'').replace(/_\(.*/,'').replace(/_/g,' ').trim().toUpperCase(); }
 // DIAGNÓSTICO: lista as FAMÍLIAS/tipos de uma classe (nome antes do ":") com
@@ -2164,7 +2176,7 @@ export async function verificarPeDireito(V, opts){
   if(altMin>altMax){ const t=altMin; altMin=altMax; altMax=t; }   // tolera inverter
   const modelIdx=(opts&&opts.modelIdx)||null;   // índices de V.modelos a varrer; null = todos
   const pav=(opts&&opts.pav)||null;             // nome do pavimento; null = todos
-  const faixas=await _faixasPavimento(V);
+  const faixas=_faixasUnicas(await _faixasPavimento(V));
   if(!faixas.length) return { erroFaixas:true, achados:[], total:0 };
   const achados=[];
   for(let mi=0; mi<V.modelos.length; mi++){
