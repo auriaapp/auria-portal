@@ -5342,7 +5342,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-08a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-08b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -7848,6 +7848,7 @@ async function f3dClashZoom(i){
   const p=CLASH_PARES[i]; if(!p||!F3D||!B3) return;
   const A={}; A[p.aMi]=[p.aId]; const B={}; B[p.bMi]=[p.bId];
   await B3.mostrarClash(F3D, A, B);
+  try{ B3.enquadrarPonto(F3D, await B3.pontoClash(F3D, p.aMi, p.aId, p.bMi, p.bId), 1.5); }catch(_){}   // câmera no cruzamento, não na peça inteira
   f3dBotaoVoltar(true);
   document.querySelectorAll('#clashLista .clash-row').forEach((el,j)=> el.classList.toggle('ativo', j===i));
 }
@@ -7880,8 +7881,8 @@ function f3dClashExportar(){
   if(!CLASH_PARES.length) return;
   const A=(typeof CLASH_SEL!=='undefined')?CLASH_SEL.A.map(i=>CLASH_PRES[i].lbl).join('+'):'';
   const B=(typeof CLASH_SEL!=='undefined')?CLASH_SEL.B.map(i=>CLASH_PRES[i].lbl).join('+'):'';
-  const rows=[['#','Grupo A ('+A+')','Grupo B ('+B+')']];
-  CLASH_PARES.forEach((p,i)=> rows.push([i+1, p.aNome, p.bNome]));
+  const rows=[['#','Grupo A ('+A+')','Grupo B ('+B+')','Pavimento']];
+  CLASH_PARES.forEach((p,i)=> rows.push([i+1, p.aNome, p.bNome, p.pav||'']));
   const csv=rows.map(r=> r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
   const blob=new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob); const a=document.createElement('a');
@@ -7934,7 +7935,7 @@ async function f3dClashVerificar(){
     await B3.mostrarClash(F3D, r.porModA, r.porModB);
     f3dBotaoVoltar(true);
     CLASH_PARES = r.pares||[];
-    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashApontar(event,'+i+')" title="Virar apontamento (pino 3D)" style="float:right;cursor:pointer;padding:0 3px">➕</span><span onclick="f3dClashContexto(event,'+i+')" title="Ver o entorno translúcido (contexto)" style="float:right;cursor:pointer;padding:0 3px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span></div>').join('');
+    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashApontar(event,'+i+')" title="Virar apontamento (pino 3D)" style="float:right;cursor:pointer;padding:0 3px">➕</span><span onclick="f3dClashContexto(event,'+i+')" title="Ver o entorno translúcido (contexto)" style="float:right;cursor:pointer;padding:0 3px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span>'+(p.pav?'<div style="color:#64748b;font-size:10px;padding-left:16px">'+esc(p.pav)+'</div>':'')+'</div>').join('');
     const cap = r.nPares>CLASH_PARES.length ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os primeiros '+CLASH_PARES.length+' de '+r.nPares+'.</div>') : '';
     const btnExp = '<button onclick="f3dClashExportar()" class="btn" style="width:100%;font-size:11px;margin-top:7px;background:#334155;border-color:#475569">📥 Exportar lista (CSV)</button>';
     $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.'

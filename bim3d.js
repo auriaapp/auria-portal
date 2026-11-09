@@ -408,6 +408,12 @@ export async function enquadrarIds(V, porMod){
   }
   if(!cx.isEmpty()) _fitBox(V, cx);
 }
+// Enquadra um PONTO com folga r (m) — p/ o clash: a peça inteira (viga longa)
+//  deixava o conflito num risquinho; aqui a câmera vai ao cruzamento.
+export function enquadrarPonto(V, p, r){
+  const T=V.THREE; if(!p) return; r=r||1.5;
+  _fitBox(V, new T.Box3(new T.Vector3(p.x-r,p.y-r,p.z-r), new T.Vector3(p.x+r,p.y+r,p.z+r)));
+}
 export async function enquadrarSelecao(V){ if(V._ultimaSelecao) await enquadrarIds(V, V._ultimaSelecao); }
 // FUNDO e GRADE são configurações INDEPENDENTES agora. Antes ligar a grade
 // exigia trocar o fundo — os dois eram um par. Ficou artificial: quem quer
@@ -2037,7 +2043,8 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       if(inter(it.b, jb.b)){ nPares++;
         const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
         const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
-        if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id });
+        if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id,
+          y:(Math.max(it.b.min.y,jb.b.min.y)+Math.min(it.b.max.y,jb.b.max.y))/2 });
       }
     }
     if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
@@ -2054,6 +2061,10 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       nomeMap[mi+':'+lid]=String(nm).split(':')[0]; });
   }
   pares.forEach(p=>{ p.aNome=nomeMap[p.aMi+':'+p.aId]||('#'+p.aId); p.bNome=nomeMap[p.bMi+':'+p.bId]||('#'+p.bId); });
+  // Pavimento de cada conflito (pela altura do cruzamento): sem ele a lista era
+  //  300 linhas iguais "Tipos de tubos × TQS - Viga retangular".
+  let fx=[]; try{ fx=_faixasUnicas(await _faixasPavimento(V)); }catch(_){}
+  pares.forEach(p=>{ const f=_faixaNoY(fx, p.y); p.pav=f?f.nome:''; });
   return { nPares, nA:vA.size, nB:vB.size, porModA, porModB, pares };
 }
 // Botão de CONTEXTO (🗺️): reexibe o MODELO TODO mantendo o par aceso, SEM mexer
