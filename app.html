@@ -969,10 +969,13 @@ body.app-pj #apTabs,body.app-pj #cvConv{display:none!important}
 .cv-nova{display:inline-flex;align-items:center;font-size:10px;font-weight:800;color:#fff;background:#3B82F6;border-radius:9px;padding:0 7px;margin-left:6px;white-space:nowrap;vertical-align:1px}
 /* Notas para Coordenação (mockup app_projetista, seção 3) */
 #btnNota{display:none;background:#FDE68A!important;color:#3F3206!important;border-color:#F5D565!important;font-weight:700}
-body.app-pj.pj-cria #btnNota{display:inline-flex!important}
+body.app-pj.pj-cria #btnNota,body:not(.app-pj):not(.app-ro) #btnNota{display:inline-flex!important}
 .ptNota{width:164px;background:#FDE68A;color:#3F3206;border-top:6px solid #F5D565;border-radius:2px 2px 11px 2px;box-shadow:2px 4px 9px rgba(0,0,0,.3);padding:5px 8px 7px;font:12px/1.35 "Segoe UI",system-ui,sans-serif;transform:rotate(-1.4deg);cursor:pointer}
 .ptNota b{display:flex;justify-content:space-between;gap:6px;font:800 10.5px Consolas,"Cascadia Mono",monospace;margin-bottom:2px}
 .ptNota b i{font:600 10px "Segoe UI",system-ui,sans-serif;opacity:.7}
+.ptNota.mini{width:auto;display:inline-block;padding:2px 7px 3px;border-top-width:4px;border-radius:2px 2px 7px 2px}
+.ptNota.mini b{margin:0}
+.ptNota .ptAbre{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 .ptNota span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
 .nota-tag{font-size:9.5px;font-weight:800;color:#3F3206;background:#FDE68A;border:1px solid #F5D565;border-radius:4px;padding:0 5px;margin-left:5px}
 #apNotaBar{display:none;margin-bottom:10px;padding:8px 10px;border-radius:8px;background:#FDE68A;color:#3F3206;font-size:12px;line-height:1.4;align-items:center;gap:8px;flex-wrap:wrap}
@@ -1103,7 +1106,7 @@ body.app-pj.pj-cria #btnNota{display:inline-flex!important}
         <span class="sep"></span>
         <button class="tb on" id="btnVerPins" onclick="toggleVerPins()" title="Mostrar/ocultar os pins">👁 Pins</button>
         <button class="tb app-wr" id="btnApontar" onclick="ativarApontar()" title="Criar um novo apontamento clicando na prancha">➕ Apontar</button>
-        <button class="tb" id="btnNota" onclick="ativarNota()" title="Colar uma nota (post-it) para a coordenação nesta prancha">Nota para Coordenação</button>
+        <button class="tb" id="btnNota" onclick="ativarNota()" title="Colar uma nota (post-it) para a coordenação nesta prancha">Nota (post-it)</button>
         <button class="tb" id="btnCota" onclick="toggleCota()" title="Calibrar escala e medir distâncias (cotas)">📏 Cotas</button>
         <button class="tb" id="btnIA" onclick="toggleIA()" title="Assistente de IA (lê a prancha)">✦ IA</button>
         <button class="tb" id="rvBtnBarra" onclick="rvRevisaoBarra()" title="Revisão do modelo: regras, conflitos, pé-direito e filtros salvos">☑ Revisão</button>
@@ -1909,6 +1912,7 @@ function pjModoLigar(){
   document.body.classList.add('app-pj');
   const bloq=()=>PJ_BLOQ.forEach(n=>{ window[n]=()=>{}; });
   bloq(); if(document.readyState!=='complete') window.addEventListener('load',()=>{ bloq(); try{ rvDAba('apt'); }catch(_){} });
+  { const bn=$('btnNota'); if(bn) bn.textContent='Nota para Coordenação'; }
   const rb=$('roBanner'); if(rb){ rb.textContent='Projetista'; rb.title='Consulta pranchas, modelos e análises compartilhadas e responde os apontamentos da sua disciplina.'; }
   const lista=$('aptLista'); if(lista && !$('pjChips')){ const c=document.createElement('div'); c.id='pjChips'; lista.parentNode.insertBefore(c,lista); }
   pjFiltrarBarras();
@@ -2000,12 +2004,23 @@ function pjCls(a){ return APP_PJ&&pjMarcado(a)?' pj-marc':''; }
 const NOTA_TIPO='Nota para Coordenação';
 var PJ_NOTA=false;
 function aptEhNota(a){ return !!a && (a.tipo===NOTA_TIPO || (a.pontos_json||[]).some(p=>p&&p.nota)); }
-function notaSvg(px,py,a){
-  return `<circle cx="${px}" cy="${py}" r="4.5" fill="#F5D565" stroke="#8A6D10" stroke-width="1.5"/>`
-    +`<foreignObject x="${px+8}" y="${py-58}" width="176" height="86"><div xmlns="http://www.w3.org/1999/xhtml" class="ptNota"><b>${esc(a.id||'')}<i>Nota</i></b><span>${esc(a.titulo||'(sem texto)')}</span></div></foreignObject>`;
+// Recolhido/aberto é escolha de cada pessoa (fica no navegador).
+const NOTA_FECHADAS=new Set((()=>{ try{ return JSON.parse(localStorage.getItem('auria_notas_fechadas')||'[]'); }catch(_){ return []; } })());
+function notaSvg(px,py,a,editando){
+  const dot=`<circle cx="${px}" cy="${py}" r="4.5" fill="#F5D565" stroke="#8A6D10" stroke-width="1.5"/>`;
+  if(!editando && NOTA_FECHADAS.has(a.id))
+    return dot+`<foreignObject x="${px+7}" y="${py-24}" width="110" height="30"><div xmlns="http://www.w3.org/1999/xhtml" class="ptNota mini" title="Clique para abrir o post-it"><b>${esc(a.id||'')}</b></div></foreignObject>`;
+  return dot+`<foreignObject x="${px+8}" y="${py-58}" width="176" height="86"><div xmlns="http://www.w3.org/1999/xhtml" class="ptNota" title="Clique para recolher"><b><span class="ptAbre" data-abre="1" title="Abrir a nota">${esc(a.id||'')} ↗</span><i>Nota</i></b><span>${esc(a.titulo||'(sem texto)')}</span></div></foreignObject>`;
+}
+function notaClique(ev,ai,pi){
+  const a=APTS[ai]; if(!a) return;
+  if(ev && ev.target && ev.target.closest && ev.target.closest('[data-abre]')){ pinClick(ai,pi); return; }
+  if(NOTA_FECHADAS.has(a.id)) NOTA_FECHADAS.delete(a.id); else NOTA_FECHADAS.add(a.id);
+  try{ localStorage.setItem('auria_notas_fechadas', JSON.stringify([...NOTA_FECHADAS])); }catch(_){}
+  renderPins();
 }
 function ativarNota(){
-  if(!pjPodeCriar('2d')){ roAviso(); return; }
+  if(APP_PJ ? !pjPodeCriar('2d') : APP_RO){ roAviso(); return; }
   if(!PRANCHA){ rvAlerta('Abra uma prancha para colar a nota.'); return; }
   PJ_NOTA=true; if(!APONTAR) ativarApontar('2d');
   $('modoHint').textContent='clique na prancha para colar a nota';
@@ -2015,14 +2030,22 @@ function pjNotaAjustar(a){
   (a.pontos_json||[]).forEach(p=>{ p.nota=1; });
   a.log_json=[{ data:hojeBr(), texto:'Nota para Coordenação aberta por '+USER.nome+' (projetista) no App.', tipo:'sistema' }];
 }
+// Post-it da coordenação: código normal da disciplina, nasce na faixa Coordenação
+// (o analista pode trocar a faixa na janela).
+function notaCoordAjustar(a){
+  a.tipo=NOTA_TIPO; a.visibilidade='Coordenação'; a.prioridade='Observação / Atenção';
+  (a.pontos_json||[]).forEach(p=>{ p.nota=1; });
+  a.log_json=[{ data:hojeBr(), texto:'Nota (post-it) '+a.id+' criada por '+USER.nome+'.', tipo:'sistema' }];
+}
 function notaEditor(a){
   const bar=$('apNotaBar'), t=$('apTipo'); if(!bar) return;
   const nota=aptEhNota(a);
   if(nota && t){ t.innerHTML='<option>'+NOTA_TIPO+'</option>'; t.value=NOTA_TIPO; t.disabled=true; }
   const coord=nota && !APP_PJ && !APP_RO && !a._novo;
+  if(nota && !APP_PJ && !APP_RO){ const v=$('apVisib'); if(v) v.disabled=false; }
   bar.style.display = nota ? 'flex' : 'none';
   bar.innerHTML = !nota ? '' : '<span style="flex:1;min-width:180px"><b>Nota para Coordenação</b>'
-      +(a.criado_por_nome?' de '+esc(a.criado_por_nome):'')+'. Só '+(APP_PJ?'você e a coordenação veem':'o autor e a coordenação veem')+'.</span>'
+      +(a.criado_por_nome?' de '+esc(a.criado_por_nome):'')+'. '+((a.visibilidade||'Coordenação')==='Coordenação' ? 'Só '+(APP_PJ?'você e a coordenação veem':'a coordenação e o autor veem') : 'Faixa '+esc(a.visibilidade)+'.')+'</span>'
       +(coord?'<button class="btn-sec" style="font-size:11.5px;padding:4px 10px" onclick="notaVirarApontamento()">Virar apontamento</button>':'');
 }
 function notaVirarApontamento(){
@@ -3707,7 +3730,7 @@ function renderPins(){
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
-      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClick(${ai},${pi});event.stopPropagation()">
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="${aptEhNota(a)?`notaClique(event,${ai},${pi})`:`pinClick(${ai},${pi})`};event.stopPropagation()">
         ${aptEhNota(a)?notaSvg(p.x,p.y,a):pinSvg(p.x,p.y,a,APP_PJ&&pjMarcado(a))}</g>`;
     });
   });
@@ -3718,7 +3741,7 @@ function renderPins(){
       if(pt.pid && !_pinVisivel(APT_EDIT,pt)) return;   // pin na prancha do outro lado
       if((pt.pg||1)!==V.pageNum) return;
       const p=pageToScreen(pt.nx,pt.ny);
-      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${aptEhNota(APT_EDIT)?notaSvg(p.x,p.y,APT_EDIT):pinSvg(p.x,p.y,APT_EDIT,true)}</g>`;
+      out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${aptEhNota(APT_EDIT)?notaSvg(p.x,p.y,APT_EDIT,true):pinSvg(p.x,p.y,APT_EDIT,true)}</g>`;
     });
   }
   // Apontamento em edição no OUTRO lado do split: os pins dele que caem NESTA prancha
@@ -8788,7 +8811,7 @@ function novoApontamento(nx,ny){
   if(dPeer && dPeer!==disc && !APT_EDIT.participantes[dPeer])
     APT_EDIT.participantes[dPeer]={nivel:'Pendência',emails:fornEmails_(dPeer,'2d'),prazo:'',conclusao:''};
   if(APP_PJ) pjNovoAjustar(APT_EDIT,'2d');
-  if(APP_PJ && PJ_NOTA){ pjNotaAjustar(APT_EDIT); PJ_NOTA=false; }
+  if(PJ_NOTA){ if(APP_PJ) pjNotaAjustar(APT_EDIT); else notaCoordAjustar(APT_EDIT); PJ_NOTA=false; }
   APT_IMGS=[];
   const pic=capturarPrintLocal(nx,ny); if(pic) APT_IMGS.push({data:pic});   // print automático do local
   abrirEditor();
@@ -9483,14 +9506,14 @@ async function salvarApt(){
   if(!a.titulo){ alert('Informe o título.'); return; }
   // Aviso: salvar sem NENHUM prazo definido (como no desktop)
   const temPrazo=Object.values(a.participantes).some(p=>(p.prazo||'').trim());
-  if(!temPrazo && a.status!=='Resolvido'
+  if(!temPrazo && a.status!=='Resolvido' && !aptEhNota(a)
      && !confirm('Este apontamento não tem prazo definido para nenhum participante. Salvar mesmo assim?')) return;
   // Aviso "Coordenação" (mesmo padrão do desktop). Coordenação = interno,
   // não vai para o portal do projetista/fornecedor — quem salva precisa
   // saber. Só na CRIAÇÃO, para não repetir a cada edição de um apontamento
   // que já vinha assim, e também só se a pessoa mudou EXPLICITAMENTE algo:
   // se abriu e salvou sem alterar a visibilidade, o aviso vira ruído.
-  if(a.visibilidade==='Coordenação' && a._novo){
+  if(a.visibilidade==='Coordenação' && a._novo && !aptEhNota(a)){
     if(!confirm('Apontamento salvo como Coordenação (interno).\n\nSó a coordenação vê. Não vai para o Painel do Projetista nem para a obra. Para os projetistas verem, use Projeto; para a obra, Público.\n\nContinuar?')) return;
   }
   // Log automático das mudanças relevantes
