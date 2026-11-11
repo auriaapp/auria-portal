@@ -418,17 +418,19 @@ async function contadores(){
   const ids = EMPS.map(e => e.id).concat(['00000000-0000-0000-0000-000000000000']);
   const semana = new Date(Date.now() - 7 * 864e5).toISOString(), mes = new Date(Date.now() - 30 * 864e5).toISOString();
   const revVig = ITS.filter(i => i.ativo).map(i => (vigDe(i) || {}).id).filter(Boolean);
-  const [sol, cop, copObs, fic, ficAud, semTxt, leit] = await Promise.all([
+  const aqIds = FVS.filter(m => m.aprova_qualidade).map(m => m.id).concat(['00000000-0000-0000-0000-000000000000']);
+  const [sol, cop, copObs, fic, ficAud, semTxt, leit, ficQual] = await Promise.all([
     sb.from('grupo_it_solicitacao_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).in('situacao', ['aberta','em_analise']),
     sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).is('obsoleta_em', null),
     sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null).is('recolhida_em', null).then(r => r.error ? sb.from('grupo_it_copia_auria').select('id', { count:'exact', head:true }).eq('grupo_id', GRUPO).not('obsoleta_em', 'is', null) : r),
     sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').in('situacao', ['aberta','em_verificacao','aguardando','reprovada']),
     sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('tipo', 'fvs').eq('situacao', 'aprovada').gte('aprovado_em', semana),
     revVig.length ? sb.from('grupo_it_revisao_auria').select('id,it_id,arquivo_path').in('id', revVig).or('texto_busca.is.null,texto_busca.eq.') : Promise.resolve({ data:[] }),
-    revVig.length ? sb.from('grupo_it_visualizacao_auria').select('id', { count:'exact', head:true }).in('revisao_id', ITS.flatMap(i => (i.revs || []).map(r => r.id))).gte('em', mes) : Promise.resolve({ count:0 })]);
+    revVig.length ? sb.from('grupo_it_visualizacao_auria').select('id', { count:'exact', head:true }).in('revisao_id', ITS.flatMap(i => (i.revs || []).map(r => r.id))).gte('em', mes) : Promise.resolve({ count:0 }),
+    sb.from('fvs_inspecao_auria').select('id', { count:'exact', head:true }).in('empreendimento_id', ids).eq('situacao', 'aguardando').not('aprov1_por', 'is', null).in('modelo_id', aqIds)]);
   const hoje30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   CONT = {
-    sol: sol.count || 0, cop: cop.count || 0, copObs: copObs.count || 0, fic: fic.count || 0, ficAud: ficAud.count || 0,
+    sol: sol.count || 0, cop: cop.count || 0, copObs: copObs.count || 0, fic: fic.count || 0, ficAud: ficAud.count || 0, ficQual: ficQual.count || 0,
     semTxt: semTxt.data || [], leit: leit.count || 0,
     venc: ITS.filter(i => i.ativo && i.validade && i.validade <= hoje30),
     ras: FVS.filter(m => m.ativo && m.rascunho).length, alerta: FVS.filter(m => m.ativo && fvsAlerta(m)).length,
@@ -440,9 +442,9 @@ async function contadores(){
     ...(await AuriaAud.contadores())
   };
   const n = (id, v, q) => { const el = $(id); el.textContent = v ? v : ''; el.style.display = v ? '' : 'none'; el.classList.toggle('q', !!q); };
-  const fila = CONT.audAtr + CONT.ncPlano + CONT.ncEf + CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
+  const fila = CONT.ficQual + CONT.audAtr +CONT.ncPlano + CONT.ncEf + CONT.minVer + CONT.minApr + CONT.minDev + CONT.ras + CONT.alerta + CONT.sol + CONT.semTxt.length + CONT.copObs + CONT.ficAud + CONT.venc.length;
   n('nFazer', fila, true); n('nBib', ITS.filter(i => i.ativo).length); n('nFvs', CONT.ras + FVS.filter(m => m.ativo && !m.rascunho && m.revisar_it_rev).length, true);
-  n('nAud', CONT.audAtr + CONT.audProx, CONT.audAtr > 0); n('nNc', CONT.ncAbertas, CONT.ncPlano + CONT.ncEf > 0); n('nFic', CONT.fic); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
+  n('nAud', CONT.audAtr + CONT.audProx, CONT.audAtr > 0); n('nNc', CONT.ncAbertas, CONT.ncPlano + CONT.ncEf > 0); n('nFic', CONT.ficQual || CONT.fic, CONT.ficQual > 0); n('nCop', CONT.cop); n('nSol', CONT.sol, true);
   if (TELA === 'fazer') telaFazer();
 }
 
@@ -467,6 +469,7 @@ function telaFazer(){
   $('corpo').innerHTML = '<section class="tela"><div class="thd"><div><h2>Para fazer</h2><p class="sub">O que depende da Qualidade hoje, do mais urgente para o menos. Cada linha abre a tela já filtrada.</p></div></div>'
     + '<div class="t1g"><div>'
     + '<div class="card fila"><div class="hd"><b>Fila de trabalho</b></div>'
+    + (C.ficQual ? linha(C.ficQual, 'FVS aguardando a aprovação da Qualidade', 'A obra já aprovou; o modelo exige a Qualidade. Aprove ou devolva para ajuste.', '<button class="btn ac" onclick="FI.sit=\'qual\';ir(\'fichas\')">Aprovar</button>', true) : '')
     + (C.audAtr ? linha(C.audAtr, 'Auditorias internas atrasadas', 'Programadas com data vencida e ainda não realizadas. Realize ou reprograme.', '<button class="btn sec" onclick="ir(\'auditorias\')">Ver programa</button>', true) : '')
     + linha(C.ncPlano || 0, 'Planos de ação de NC para aprovar', 'A obra registrou contenção, causa raiz e ações. Confira se a causa é a raiz de verdade antes de aprovar.', '<button class="btn ac" onclick="NCF=\'plano\';ir(\'ncs\')">Analisar</button>', true)
     + linha(C.ncEf || 0, 'Eficácia de NC para verificar', 'Ações concluídas e prazo de observação vencido: confira em campo se o problema voltou.', '<button class="btn sec" onclick="NCF=\'eficacia\';ir(\'ncs\')">Verificar</button>', true)
@@ -690,7 +693,8 @@ function cfEditor(){
     + '<div class="g3" style="margin-top:8px"><select id="cfEtapa"' + dis + '>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === m.etapa ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select>'
     + '<select id="cfNivel"' + dis + '>' + Object.keys(NIVEL_ROT).map(k => '<option value="' + k + '"' + (k === m.nivel_local ? ' selected' : '') + '>Por ' + NIVEL_ROT[k].toLowerCase() + '</option>').join('') + '</select>'
     + '<select id="cfIt"' + dis + ' onchange="pdfMostrar(this.value)"><option value="">Sem IT</option>' + ITS.filter(i => i.ativo || i.id === m.it_id).sort((a, b) => a.codigo.localeCompare(b.codigo, 'pt-BR', { numeric:true })).map(i => '<option value="' + i.id + '"' + (i.id === m.it_id ? ' selected' : '') + '>' + esc(i.codigo) + '</option>').join('') + '</select></div>'
-    + '<label class="chk" style="margin-top:8px"><input type="checkbox" id="cfDuas"' + (m.duas_aprovacoes ? ' checked' : '') + dis + '> Exige 2 aprovações (coord. de campo e eng. chefe)</label>'
+    + '<div class="row" style="margin-top:8px;align-items:center;gap:8px"><span class="hint" style="white-space:nowrap">Aprovação da ficha</span><select id="cfAprov"' + dis + ' style="width:auto">'
+    + [['obra1','Obra (1 aprovação)'], ['obra2','Obra (2 aprovações: coord. de campo e eng. chefe)'], ['qual','Obra + Qualidade (a obra aprova, depois a Qualidade)']].map(([k, t]) => '<option value="' + k + '"' + (k === (m.aprova_qualidade ? 'qual' : m.duas_aprovacoes ? 'obra2' : 'obra1') ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></div>'
     + (m.validar_nota ? '<div class="alerta"><b>Validar:</b> ' + esc(m.validar_nota) + '</div>' : '')
     + (m.revisar_it_rev ? '<div class="alerta rev">A IT de origem passou para a <b>rev. ' + esc(m.revisar_it_rev) + '</b>' + (m.revisar_desde ? ' em ' + dt(m.revisar_desde) : '') + '. Confira os itens com a IT nova.</div>' : '')
     + '</div><div class="its"><div id="cfItens"></div>'
@@ -731,7 +735,7 @@ async function cfSalvar(conferido){
   cfLerItens();
   const msg = (t, ok) => { $('cfMsg').className = 'msg ' + (ok ? 'ok' : 'err'); $('cfMsg').textContent = t; };
   const itens = _CF_IT.filter(t => t.item).map(t => ({ item:t.item, criterio:t.criterio || '', metodo:t.metodo || '', tolerancia:t.tolerancia || '', exige_foto:!!t.exige_foto }));
-  const row = { servico:($('cfServ').value || '').trim(), etapa:$('cfEtapa').value, nivel_local:$('cfNivel').value, it_id:$('cfIt').value || null, duas_aprovacoes:$('cfDuas').checked, itens };
+  const row = { servico:($('cfServ').value || '').trim(), etapa:$('cfEtapa').value, nivel_local:$('cfNivel').value, it_id:$('cfIt').value || null, duas_aprovacoes:$('cfAprov').value === 'obra2', aprova_qualidade:$('cfAprov').value === 'qual', itens };
   if (row.servico.length < 3) return msg('Escreva o serviço.');
   if (!itens.length) return msg('O modelo precisa de pelo menos um item.');
   // "Conferido" publica e tira os alertas; "Salvar" só grava (o alerta continua até conferir).
@@ -880,7 +884,7 @@ let FICHAS = [], PAVS = [];
 async function telaFichas(){
   $('corpo').innerHTML = '<section class="tela"><div class="load">Carregando fichas…</div></section>';
   const ids = EMPS.map(e => e.id).concat(['00000000-0000-0000-0000-000000000000']);
-  const { data, error } = await sb.from('fvs_inspecao_auria').select('id,empreendimento_id,codigo,servico,modelo_id,modelo_codigo,modelo_revisao,rodada,pavimento_id,local_txt,itens,situacao,aprovado_nome,aprovado_em,reprovado_nome,reprovado_em,reprovado_motivo,aberta_nome,aberta_em,atualizado_em')
+  const { data, error } = await sb.from('fvs_inspecao_auria').select('id,empreendimento_id,codigo,servico,modelo_id,modelo_codigo,modelo_revisao,rodada,pavimento_id,local_txt,itens,situacao,aprovado_nome,aprovado_em,reprovado_nome,reprovado_em,reprovado_motivo,aberta_nome,aberta_em,atualizado_em,aprov1_por,aprov1_nome,aprov1_em,devolvido_nome,devolvido_em,devolvido_motivo')
     .in('empreendimento_id', ids).eq('tipo', 'fvs').order('atualizado_em', { ascending:false }).limit(2000);
   const todas = data || [];
   if (!FI.emp){ const c = {}; todas.forEach(f => c[f.empreendimento_id] = (c[f.empreendimento_id] || 0) + 1); FI.emp = (Object.keys(c).sort((a, b) => c[b] - c[a])[0]) || (EMPS[0] || {}).id || ''; }
@@ -890,7 +894,7 @@ async function telaFichas(){
   const daObra = todas.filter(f => f.empreendimento_id === FI.emp && (!FI.etapa || etapaDe(f) === FI.etapa));
   FICHAS = daObra;
   const nSit = k => daObra.filter(f => f.situacao === k).length;
-  const lista = daObra.filter(f => !FI.sit || f.situacao === FI.sit);
+  const lista = daObra.filter(f => !FI.sit || (FI.sit === 'qual' ? fichaEsperaQual(f) : f.situacao === FI.sit));
   const cols = [...new Set(lista.map(f => f.modelo_codigo))].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric:true }));
   const servDe = c => { const f = lista.find(x => x.modelo_codigo === c); return f ? f.servico : ''; };
   const pavsUsados = PAVS.filter(pv => lista.some(f => f.pavimento_id === pv.id) || PAVS.length <= 30);
@@ -905,6 +909,7 @@ async function telaFichas(){
     + '<div class="row" style="margin-bottom:14px"><select style="width:auto;min-width:240px" onchange="FI.emp=this.value;FI.sel=null;telaFichas()">' + EMPS.map(e => '<option value="' + e.id + '"' + (e.id === FI.emp ? ' selected' : '') + '>' + esc(e.nome) + '</option>').join('') + '</select>'
     + '<select style="width:auto" onchange="FI.etapa=this.value;telaFichas()"><option value="">Todas as etapas</option>' + Object.keys(ETAPA_ROT).map(k => '<option value="' + k + '"' + (k === FI.etapa ? ' selected' : '') + '>' + ETAPA_ROT[k] + '</option>').join('') + '</select></div>'
     + '<div class="kp">' + ['aberta','em_verificacao','aguardando','reprovada','aprovada'].map(k => '<button class="' + (FI.sit === k ? 'on' : '') + '" style="border-top-color:' + SIT[k][1] + '" onclick="FI.sit=FI.sit===\'' + k + '\'?\'\':\'' + k + '\';telaFichas()"><b style="color:' + (k === 'aberta' || k === 'em_verificacao' ? 'var(--txt)' : SIT[k][1]) + '">' + nSit(k) + '</b><span>' + SIT[k][0].toLowerCase() + '</span></button>').join('') + '</div>'
+    + (FI.sit === 'qual' ? '<div class="alerta" style="margin:0 0 14px">Mostrando só as fichas que a obra já aprovou e esperam a aprovação da Qualidade. <a href="#" onclick="FI.sit=\'\';telaFichas();return false">Ver todas</a></div>' : '')
     + '<div class="t4g"><div class="card">'
     + (cols.length && pavsUsados.length ? '<div class="mx"><table><tr><th></th>' + cols.map(c => '<th class="v" title="' + esc(servDe(c)) + '">' + esc(c) + ' · ' + esc((servDe(c) || '').slice(0, 16)) + '</th>').join('') + '</tr>'
         + pavsUsados.map(pv => '<tr><td class="pv">' + esc(pv.codigo || pv.nome) + '</td>' + cols.map(c => cel(pv, c)).join('') + '</tr>').join('') + '</table>'
@@ -937,14 +942,16 @@ async function fichaSel(id, abrir){
   const h = $('ficHist'); if (!h || FI.sel !== id) return;
   h.innerHTML = fichaHistHtml(f, evs);
 }
-const FIC_EV = { enviada:'Enviada para aprovação', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada pela Qualidade', reinspecao:'Reinspeção' };
+const FIC_EV = { enviada:'Enviada para aprovação', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada pela Qualidade', reinspecao:'Reinspeção', comentario:'Comentário da Qualidade', devolvida:'Devolvida para ajuste pela Qualidade' };
+// Ficha que a obra já aprovou e espera a Qualidade (modelo "Obra + Qualidade").
+function fichaEsperaQual(f){ return f.situacao === 'aguardando' && !!f.aprov1_por && !!(FVS.find(m => m.id === f.modelo_id) || {}).aprova_qualidade; }
 const FIC_EVS = {};
 async function fichaEventos(id){
   if (!FIC_EVS[id]){ const { data } = await sb.from('fvs_evento_auria').select('*').eq('inspecao_id', id).order('em', { ascending:false }); FIC_EVS[id] = data || []; }
   return FIC_EVS[id];
 }
 function fichaHistHtml(f, evs){
-  return (evs || []).map(e => '<div class="' + (/aprovada/.test(e.tipo) ? 'a' : /reprovada|contestada/.test(e.tipo) ? 'r' : '') + '">' + esc(FIC_EV[e.tipo] || e.tipo) + ' · ' + dth(e.em) + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
+  return (evs || []).map(e => '<div class="' + (/aprovada/.test(e.tipo) ? 'a' : /reprovada|contestada|devolvida/.test(e.tipo) ? 'r' : '') + '">' + esc(FIC_EV[e.tipo] || e.tipo) + ' · ' + dth(e.em) + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
     + '<div>Aberta · ' + dth(f.aberta_em) + ' · ' + esc(f.aberta_nome || '') + '</div>';
 }
 // Ficha completa em janela: o cartão lateral é só o resumo.
@@ -961,6 +968,8 @@ async function fichaAbrir(id){
     + '<div class="hint">' + esc(f.modelo_codigo) + ' rev. ' + rev2(f.modelo_revisao) + ' · rodada ' + (f.rodada || 1) + ' · ' + feitos + ' de ' + itens.length + ' itens verificados</div>'
     + (f.situacao === 'aberta' && !feitos ? '<div class="alerta" style="margin-top:10px">Aberta pela obra — ainda sem inspeção. Os resultados aparecem aqui quando a obra preencher a ficha.</div>' : '')
     + (f.situacao === 'reprovada' && f.reprovado_motivo ? '<div class="alerta rev" style="margin-top:10px">' + esc(f.reprovado_motivo) + ' — ' + esc(f.reprovado_nome || '') + '</div>' : '')
+    + (fichaEsperaQual(f) ? '<div class="alerta" style="margin-top:10px"><b>Aguardando a Qualidade.</b> A obra aprovou em ' + dth(f.aprov1_em) + ' (' + esc(f.aprov1_nome || '') + '). Aprove ou devolva para ajuste.</div>' : '')
+    + (f.situacao === 'em_verificacao' && f.devolvido_em ? '<div class="alerta" style="margin-top:10px">Devolvida para ajuste em ' + dth(f.devolvido_em) + ' · ' + esc(f.devolvido_nome || '') + ' — ' + esc(f.devolvido_motivo || '') + '</div>' : '')
     + '<div style="margin-top:12px">' + itens.map((t, i) => '<div class="res" style="padding:10px 0"><span class="n">' + (i + 1) + '</span><span><b>' + esc(t.item) + '</b>'
         + cmp('CRITÉRIO', t.criterio) + cmp('MÉTODO', t.metodo) + cmp('TOLERÂNCIA', t.tolerancia)
         + (t.exige_foto ? '<div class="hint" style="margin-top:3px">Exige foto</div>' : '')
@@ -968,9 +977,47 @@ async function fichaAbrir(id){
         + ((t.fotos || []).length ? '<div class="row" style="margin-top:6px">' + t.fotos.map((p, k) => '<button class="btn sec sm" onclick="fichaFoto(\'' + esc(p.path) + '\')">Foto ' + (k + 1) + '</button>').join('') + '</div>' : '') + '</span>'
         + (t.resultado ? '<b style="color:' + RES[t.resultado][1] + '" title="' + RES[t.resultado][2] + '">' + RES[t.resultado][0] + '</b>' : '<span class="hint" title="Ainda não verificado">—</span>') + '</div>').join('') + '</div>'
     + '<div class="mono-t" style="margin-top:14px">HISTÓRICO</div><div class="hist" id="ficHistOv">' + fichaHistHtml(f, FIC_EVS[id]) + '</div>'
-    + '</div>');
+    + (PODE.qualidade ? '<div id="ficAcao" style="margin-top:14px"></div><div class="msg" id="ficMsg"></div>' : '')
+    + '</div>'
+    + (PODE.qualidade ? '<div class="ft" style="border-top:1px solid var(--line);padding:11px 18px;display:flex;gap:8px;flex-wrap:wrap;background:var(--panel2)">'
+        + '<button class="btn sec" onclick="fichaAcaoForm(\'' + id + '\',\'comentar\')">Comentar</button>'
+        + '<button class="btn sec" onclick="fichaNc(\'' + id + '\')">Abrir NC</button><span style="flex:1"></span>'
+        + (f.situacao === 'aguardando' ? '<button class="btn sec" onclick="fichaAcaoForm(\'' + id + '\',\'devolver\')">Devolver para ajuste</button>' : '')
+        + (fichaEsperaQual(f) ? '<button class="btn" onclick="fichaAcaoForm(\'' + id + '\',\'aprovar\')">Aprovar</button>' : '')
+        + '</div>' : ''));
   $('ovBox').style.width = 'min(820px,96vw)';
   const evs = await fichaEventos(id), h = $('ficHistOv'); if (h) h.innerHTML = fichaHistHtml(f, evs);
+}
+// Ações da Qualidade na ficha — todas por função do banco (fvs_comentar /
+// fvs_devolver / fvs_qualidade_aprovar); a Qualidade nunca altera resultados.
+const FIC_ACAO = {
+  comentar:{ tit:'Comentário para a obra', ph:'Ex.: conferir o cobrimento junto à escada antes de concretar', bt:'Enviar comentário', min:3, rpc:'fvs_comentar', arg:'p_texto', ok:'Comentário registrado no histórico da ficha.' },
+  devolver:{ tit:'Devolver para ajuste', ph:'O que a obra precisa ajustar (a ficha volta ao preenchimento, sem NC)', bt:'Devolver', min:5, rpc:'fvs_devolver', arg:'p_motivo', ok:'Ficha devolvida para a obra.' },
+  aprovar:{ tit:'Aprovar (Qualidade)', ph:'Observação (opcional)', bt:'Confirmar aprovação', min:0, rpc:'fvs_qualidade_aprovar', arg:'p_obs', ok:'Ficha aprovada.' }
+};
+function fichaAcaoForm(id, k){
+  const a = FIC_ACAO[k], el = $('ficAcao'); if (!el) return;
+  el.innerHTML = '<div class="mono-t">' + a.tit.toUpperCase() + '</div><textarea id="ficTx" rows="3" maxlength="1000" placeholder="' + esc(a.ph) + '" style="width:100%"></textarea>'
+    + '<div class="row" style="margin-top:8px;justify-content:flex-end;gap:8px"><button class="btn sec sm" onclick="$(\'ficAcao\').innerHTML=\'\'">Cancelar</button><button class="btn sm" id="ficOk" onclick="fichaAcao(\'' + id + '\',\'' + k + '\')">' + a.bt + '</button></div>';
+  $('ficTx').focus(); el.scrollIntoView({ block:'nearest' });
+}
+async function fichaAcao(id, k){
+  const a = FIC_ACAO[k], tx = ($('ficTx').value || '').trim(), m = $('ficMsg');
+  if (tx.length < a.min){ m.className = 'msg err'; m.textContent = a.min > 3 ? 'Informe o que ajustar (mínimo ' + a.min + ' caracteres).' : 'Escreva o comentário.'; return; }
+  $('ficOk').disabled = true;
+  const { error } = await sb.rpc(a.rpc, { p_id:id, [a.arg]:tx || null });
+  if (error){ $('ficOk').disabled = false; m.className = 'msg err'; m.textContent = error.message; return; }
+  delete FIC_EVS[id];
+  if (k === 'comentar'){ $('ficAcao').innerHTML = ''; m.className = 'msg ok'; m.textContent = a.ok; const f = FICHAS.find(x => x.id === id), h = $('ficHistOv'); if (f && h) h.innerHTML = fichaHistHtml(f, await fichaEventos(id)); return; }
+  ovFechar(); await telaFichas(); contadores();
+}
+function fichaNc(id){
+  const f = FICHAS.find(x => x.id === id); if (!f) return;
+  const pv = PAVS.find(p => p.id === f.pavimento_id);
+  const itens = (f.itens || []).filter(t => t.resultado === 'nc').map(t => '• ' + t.item + (t.obs ? ' — ' + t.obs : '')).join('\n');
+  ovFechar();
+  AuriaNC.nova({ emp:f.empreendimento_id, titulo:(f.servico || 'FVS') + ' — ', descricao:itens, servico:f.servico, pavimento_id:f.pavimento_id,
+                 local_txt:[pv && (pv.codigo || pv.nome), f.local_txt].filter(Boolean).join(' › '), origem:'fvs', origem_id:f.id, origem_ref:(f.codigo || 'FVS') + ' · rodada ' + (f.rodada || 1) });
 }
 async function fichaFoto(path){ try { window.open(await r2Url('download', path), '_blank'); } catch (e){ alert(e.message || e); } }
 async function fichaContestar(id){
