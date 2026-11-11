@@ -3508,6 +3508,16 @@ const ALIGN={ camIdx:-1, picking:null, pts:{}, modo:null };
 let FORN_DISC={};            // disciplina -> { empresa, emails } (fornecedor do empreendimento)
 let DISCS_EMP=[];            // disciplinas COM fornecedor/contrato neste empreendimento
 function discsEd(){ return DISCS_EMP.length?DISCS_EMP:DISCS; }  // fallback p/ lista padrão
+// Disciplinas da CONVENÇÃO do empreendimento ({v:código, rot:nome}). O editor do
+// apontamento lista todas e grava o CÓDIGO (item 87: misturava "Arquitetura" e "EST").
+let CONV_DISCS=[];
+const _DISC_NOME2COD=Object.fromEntries(Object.entries(DISC_FULLNAME).map(([k,v])=>[String(v).toLowerCase(),k]));
+function discCodLocal(t){
+  const s=String(t||'').trim(); if(!s) return s;
+  const u=s.toUpperCase(), l=s.toLowerCase(), pref=(/^([A-Za-z]{2,5})\s+[—–-]\s/.exec(s)||[])[1];
+  const c=CONV_DISCS.find(d=>d.v===u) || (pref&&CONV_DISCS.find(d=>d.v===pref.toUpperCase())) || CONV_DISCS.find(d=>d.rot.toLowerCase()===l);
+  return c ? c.v : (_DISC_NOME2COD[l] || (pref?pref.toUpperCase():s));
+}
 
 // Datas: armazenamos dd/mm/aaaa (formato do desktop); o input type=date usa ISO.
 function brToIso(s){ const m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec((s||'').trim()); return m?(m[3]+'-'+m[2]+'-'+m[1]):''; }
@@ -3532,6 +3542,10 @@ async function carregarFornecedores(){
       try{ const r=await sb.rpc('disc_cod',{ p_emp:EMP.id, p_txt:c.disciplina }); return (!r.error&&r.data)||c.disciplina; }catch(_){ return c.disciplina; } }));
     cods.forEach(d=>set.add(d));
     DISCS_EMP=[...set].sort();
+    try{ const { data:cv }=await sb.rpc('cde_convencao',{ p_emp:EMP.id });
+      const out=[]; (cv||[]).forEach(c=>(c.campos||[]).filter(f=>f&&f.mapeia==='disciplina').forEach(f=>(f.dominio||[]).forEach(d=>{
+        const v=String((d&&typeof d==='object')?(d.v||''):d).toUpperCase(); if(v && !out.some(x=>x.v===v)) out.push({ v, rot:(d&&d.rotulo)||discFullName(v) }); })));
+      CONV_DISCS=out; }catch(_){ CONV_DISCS=[]; }
   }catch(e){ console.warn('discs emp:', e.message||e); }
   try{
     const { data:forns }=await sb.from('fornecedores_auria').select('*, projetistas_auria(*)');
@@ -9009,7 +9023,15 @@ function abrirEditor(){
     $('aptModalT').innerHTML=window._aptTtlHtml; }
   $('apId').value=a.id;
   { const d=$('apIdDica'); if(d) d.style.display='none'; }
-  { const dFull=discFullName(a.disciplina); const ds=discsEd().slice(); if(dFull && !ds.includes(dFull)) ds.unshift(dFull);
+  if(CONV_DISCS.length){
+    // Lista = convenção inteira, valor = CÓDIGO. Apontamento já salvo com o nome antigo
+    // ("Arquitetura") mantém o valor gravado enquanto a disciplina não for trocada.
+    const cod=discCodLocal(a.disciplina); const ds=CONV_DISCS.slice();
+    if(cod && !ds.some(d=>d.v===cod)) ds.unshift({ v:cod, rot:discFullName(cod) });
+    const temForn=d=> DISCS_EMP.includes(d.v) || !!FORN_DISC[d.v] || !!FORN_DISC[d.rot];
+    $('apDisc').innerHTML=ds.map(d=>{ const val=(d.v===cod && !a._novo && a.disciplina) ? a.disciplina : d.v;
+      return `<option value="${esc(val)}"${d.v===cod?' selected':''}>${esc(d.v+' — '+d.rot)}${temForn(d)?'':' (sem fornecedor)'}</option>`; }).join('');
+  } else { const dFull=discFullName(a.disciplina); const ds=discsEd().slice(); if(dFull && !ds.includes(dFull)) ds.unshift(dFull);
     $('apDisc').innerHTML=ds.map(d=>`<option${d===dFull?' selected':''}>${esc(d)}</option>`).join(''); }
   $('apTitulo').value=a.titulo||'';
   $('apDesc').value=a.descricao||'';
