@@ -912,9 +912,9 @@ async function telaFichas(){
       : '<div class="vazio">' + (daObra.length ? 'Nenhuma ficha neste filtro.' : 'Nenhuma ficha aberta ainda nesta obra. Elas aparecem aqui quando a obra abrir a primeira FVS no App Obra.') + '</div>')
     + (semPav.length ? '<div style="border-top:1px solid var(--line)"><table><tr><th>Ficha</th><th>Serviço</th><th>Local</th><th>Situação</th></tr>' + semPav.map(f => '<tr style="cursor:pointer" onclick="fichaSel(\'' + f.id + '\')"><td class="cod">' + esc(f.codigo) + '</td><td>' + esc(f.servico) + '</td><td>' + esc(f.local_txt || '—') + '</td><td><span class="chip" style="background:' + SIT[f.situacao][1] + ';color:#fff">' + SIT[f.situacao][0] + '</span></td></tr>').join('') + '</table></div>' : '')
     + '</div><div class="card" id="ficDet"><div class="vazio">Selecione uma ficha.</div></div></div></section>';
-  if (FI.sel && FICHAS.find(f => f.id === FI.sel)) fichaSel(FI.sel);
+  if (FI.sel && FICHAS.find(f => f.id === FI.sel)) fichaSel(FI.sel, false);
 }
-async function fichaSel(id){
+async function fichaSel(id, abrir){
   FI.sel = id;
   document.querySelectorAll('.cl.foc').forEach(c => c.classList.remove('foc'));
   const b = document.querySelector('.cl[data-id="' + id + '"]'); if (b) b.classList.add('foc');
@@ -928,14 +928,49 @@ async function fichaSel(id){
     + '<div style="margin-top:10px">' + (f.itens || []).map((t, i) => '<div class="res"><span class="n">' + (i + 1) + '</span><span>' + esc(t.item) + (t.obs ? '<div class="hint">' + esc(t.obs) + '</div>' : '')
         + ((t.fotos || []).length ? '<div class="row" style="margin-top:4px">' + t.fotos.map(p => '<button class="btn sec sm" onclick="fichaFoto(\'' + esc(p.path) + '\')">Foto</button>').join('') + '</div>' : '') + '</span>'
         + (t.resultado ? '<b style="color:' + RES[t.resultado][1] + '" title="' + RES[t.resultado][2] + '">' + RES[t.resultado][0] + '</b>' : '<span class="hint">—</span>') + '</div>').join('') + '</div>'
+    + '<button class="btn sm" style="margin-top:10px" onclick="fichaAbrir(\'' + id + '\')">Ver ficha completa</button>'
     + '<div class="hist" id="ficHist"><div>Aberta · ' + dth(f.aberta_em) + ' · ' + esc(f.aberta_nome || '') + '</div></div>'
     + (f.situacao === 'aprovada' && PODE.qualidade ? '<div class="mono-t">CONTESTAR</div><textarea id="ctMot" rows="2" placeholder="O que foi encontrado (volta a reprovada e a obra refaz a inspeção)"></textarea><div class="row" style="margin-top:8px"><span class="msg" id="ctMsg" style="flex:1;margin:0"></span><button class="btn" id="ctOk" onclick="fichaContestar(\'' + id + '\')">Contestar</button></div>' : '')
     + '</div>';
-  const EV = { enviada:'Enviada para aprovação', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada pela Qualidade', reinspecao:'Reinspeção' };
-  const { data:evs } = await sb.from('fvs_evento_auria').select('*').eq('inspecao_id', id).order('em', { ascending:false });
+  if (abrir !== false) fichaAbrir(id);
+  const evs = await fichaEventos(id);
   const h = $('ficHist'); if (!h || FI.sel !== id) return;
-  h.innerHTML = (evs || []).map(e => '<div class="' + (/aprovada/.test(e.tipo) ? 'a' : /reprovada|contestada/.test(e.tipo) ? 'r' : '') + '">' + esc(EV[e.tipo] || e.tipo) + ' · ' + dth(e.em) + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
+  h.innerHTML = fichaHistHtml(f, evs);
+}
+const FIC_EV = { enviada:'Enviada para aprovação', aprovada_1:'1ª aprovação', aprovada:'Aprovada', reprovada:'Reprovada', contestada:'Contestada pela Qualidade', reinspecao:'Reinspeção' };
+const FIC_EVS = {};
+async function fichaEventos(id){
+  if (!FIC_EVS[id]){ const { data } = await sb.from('fvs_evento_auria').select('*').eq('inspecao_id', id).order('em', { ascending:false }); FIC_EVS[id] = data || []; }
+  return FIC_EVS[id];
+}
+function fichaHistHtml(f, evs){
+  return (evs || []).map(e => '<div class="' + (/aprovada/.test(e.tipo) ? 'a' : /reprovada|contestada/.test(e.tipo) ? 'r' : '') + '">' + esc(FIC_EV[e.tipo] || e.tipo) + ' · ' + dth(e.em) + ' · ' + esc(e.por_nome || '') + (e.observacao ? ' — ' + esc(e.observacao) : '') + '</div>').join('')
     + '<div>Aberta · ' + dth(f.aberta_em) + ' · ' + esc(f.aberta_nome || '') + '</div>';
+}
+// Ficha completa em janela: o cartão lateral é só o resumo.
+async function fichaAbrir(id){
+  const f = FICHAS.find(x => x.id === id); if (!f) return;
+  const RES = { c:['C','var(--ok)','Conforme'], nc:['NC','#C0392B','Não conforme'], na:['NA','var(--mut)','Não se aplica'] };
+  const pv = PAVS.find(p => p.id === f.pavimento_id), itens = f.itens || [];
+  const feitos = itens.filter(t => t.resultado).length;
+  const cmp = (r, v) => v ? '<div style="font-size:12px;margin-top:3px"><span class="mono-t" style="display:inline;margin:0 6px 0 0">' + r + '</span>' + esc(v) + '</div>' : '';
+  ov('<div class="hd" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="cod" style="font-size:16px">' + esc(f.codigo) + '</span><span class="chip" style="background:' + SIT[f.situacao][1] + ';color:#fff">' + SIT[f.situacao][0] + '</span><span style="flex:1"></span><button class="btn sec sm" onclick="ovFechar()">Fechar</button></div>'
+    + '<div class="bd" style="padding-top:12px">'
+    + '<div style="font-weight:700;font-size:15px">' + esc(f.servico) + '</div>'
+    + '<div class="hint">' + esc([(EMPS.find(e => e.id === f.empreendimento_id) || {}).nome, pv && (pv.codigo + ' · ' + pv.nome), f.local_txt].filter(Boolean).join(' › ')) + '</div>'
+    + '<div class="hint">' + esc(f.modelo_codigo) + ' rev. ' + rev2(f.modelo_revisao) + ' · rodada ' + (f.rodada || 1) + ' · ' + feitos + ' de ' + itens.length + ' itens verificados</div>'
+    + (f.situacao === 'aberta' && !feitos ? '<div class="alerta" style="margin-top:10px">Aberta pela obra — ainda sem inspeção. Os resultados aparecem aqui quando a obra preencher a ficha.</div>' : '')
+    + (f.situacao === 'reprovada' && f.reprovado_motivo ? '<div class="alerta rev" style="margin-top:10px">' + esc(f.reprovado_motivo) + ' — ' + esc(f.reprovado_nome || '') + '</div>' : '')
+    + '<div style="margin-top:12px">' + itens.map((t, i) => '<div class="res" style="padding:10px 0"><span class="n">' + (i + 1) + '</span><span><b>' + esc(t.item) + '</b>'
+        + cmp('CRITÉRIO', t.criterio) + cmp('MÉTODO', t.metodo) + cmp('TOLERÂNCIA', t.tolerancia)
+        + (t.exige_foto ? '<div class="hint" style="margin-top:3px">Exige foto</div>' : '')
+        + (t.obs ? '<div style="margin-top:6px;padding:6px 8px;background:var(--panel2);border-radius:6px;font-size:12px">' + esc(t.obs) + '</div>' : '')
+        + ((t.fotos || []).length ? '<div class="row" style="margin-top:6px">' + t.fotos.map((p, k) => '<button class="btn sec sm" onclick="fichaFoto(\'' + esc(p.path) + '\')">Foto ' + (k + 1) + '</button>').join('') + '</div>' : '') + '</span>'
+        + (t.resultado ? '<b style="color:' + RES[t.resultado][1] + '" title="' + RES[t.resultado][2] + '">' + RES[t.resultado][0] + '</b>' : '<span class="hint" title="Ainda não verificado">—</span>') + '</div>').join('') + '</div>'
+    + '<div class="mono-t" style="margin-top:14px">HISTÓRICO</div><div class="hist" id="ficHistOv">' + fichaHistHtml(f, FIC_EVS[id]) + '</div>'
+    + '</div>');
+  $('ovBox').style.width = 'min(820px,96vw)';
+  const evs = await fichaEventos(id), h = $('ficHistOv'); if (h) h.innerHTML = fichaHistHtml(f, evs);
 }
 async function fichaFoto(path){ try { window.open(await r2Url('download', path), '_blank'); } catch (e){ alert(e.message || e); } }
 async function fichaContestar(id){
@@ -944,7 +979,7 @@ async function fichaContestar(id){
   $('ctOk').disabled = true;
   const { error } = await sb.rpc('fvs_contestar', { p_id:id, p_motivo:mot });
   if (error){ $('ctOk').disabled = false; m.className = 'msg err'; m.textContent = error.message; return; }
-  telaFichas(); contadores();
+  delete FIC_EVS[id]; telaFichas(); contadores();
 }
 
 // ── Cópias controladas ──────────────────────────────────────────────────────

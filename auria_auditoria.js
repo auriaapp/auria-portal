@@ -60,7 +60,7 @@
 
   // ── Checklists ───────────────────────────────────────────────────────────
   function checklists(){
-    $('audCorpo').innerHTML = '<div class="card">' + (CKS.length ? '<table><tr><th>Checklist</th><th>Referencial</th><th>Itens</th><th>Atualizado</th><th></th></tr>' + CKS.map(c => '<tr><td><b>' + esc(c.nome) + '</b></td><td>' + REF[c.referencial] + '</td><td class="cod">' + (c.itens || []).length + '</td><td>' + dt(c.atualizado_em) + '<div class="hint">' + esc(c.atualizado_nome || '') + '</div></td><td style="text-align:right"><button class="btn sec sm" onclick="AuriaAud._ck(\'' + c.id + '\')">Editar</button></td></tr>').join('') + '</table>'
+    $('audCorpo').innerHTML = '<div class="card">' + (CKS.length ? '<table><tr><th>Checklist</th><th>Referencial</th><th>Itens</th><th>Atualizado</th><th></th></tr>' + CKS.map(c => '<tr><td><b>' + esc(c.nome) + '</b></td><td>' + REF[c.referencial] + '</td><td class="cod">' + (c.itens || []).length + '</td><td>' + dt(c.atualizado_em) + '<div class="hint">' + esc(c.atualizado_nome || '') + '</div></td><td style="text-align:right;white-space:nowrap"><button class="btn sec sm" onclick="AuriaAud._ck(\'' + c.id + '\')">Editar</button> <button class="btn sec sm" style="color:#A32D2D" onclick="AuriaAud._ckExcluir(\'' + c.id + '\')">Excluir</button></td></tr>').join('') + '</table>'
       : '<div class="vazio">Nenhum checklist. Os modelos ISO 9001 e PBQP-H SiAC são um ponto de partida resumido, em texto próprio — ajuste aos processos da construtora.</div>') + '</div>';
   }
   async function semear(ref){
@@ -88,6 +88,14 @@
     const { error } = await sb.rpc('aud_checklist_salvar', { p_id:id, p_grupo:GRUPO, p_nome:$('ckNome').value, p_referencial:$('ckRef').value, p_itens:itens });
     if (error){ $('ckOk').disabled = false; $('ckMsg').className = 'msg err'; $('ckMsg').textContent = error.message; return; }
     ovFechar(); tela();
+  }
+  async function ckExcluir(id){
+    const c = CKS.find(x => x.id === id); if (!c) return;
+    const usos = AUDS.filter(a => a.checklist_id === id && a.situacao !== 'cancelada').length;
+    if (!confirm('Excluir o checklist “' + c.nome + '”?\n\n' + (usos ? usos + ' auditoria(s) usam este checklist — elas guardam cópia própria dos itens e não mudam.\n\n' : '') + 'Ele deixa de aparecer para novas auditorias.')) return;
+    const { error } = await sb.rpc('aud_checklist_excluir', { p_id:id });
+    if (error) return alert(error.message);
+    tela();
   }
 
   // ── Planejar ─────────────────────────────────────────────────────────────
@@ -193,7 +201,7 @@
 
   window.AuriaAud = {
     tela, _aba(k){ A.aba = k; tela(); }, _ano(d){ A.ano += d; programa(); }, _abrir:id => execucao(id), _voltar(){ A.sel = null; tela(); },
-    _planejar:planejar, _planSalvar:planSalvar, _cancelar:cancelar, _semear:semear, _ck:ckForm, _ckSalvar:ckSalvar, _ckLinha:() => A._linha(),
+    _planejar:planejar, _planSalvar:planSalvar, _cancelar:cancelar, _semear:semear, _ck:ckForm, _ckSalvar:ckSalvar, _ckExcluir:ckExcluir, _ckLinha:() => A._linha(),
     _res:res, _salvar:id => salvar(id), _concluir:concluir,
     async contadores(){
       try { const hj = new Date().toISOString().slice(0, 10); const { data } = await sb.from('aud_auditoria_auria').select('situacao,data_prevista').eq('grupo_id', GRUPO).in('situacao', ['planejada','em_andamento']);
