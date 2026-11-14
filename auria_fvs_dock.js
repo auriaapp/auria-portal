@@ -443,7 +443,12 @@ body.fvs-abas #fvsAbas{display:flex}
       D.abas = D.abas.filter(a => a.k !== t.k); D.at = null;
       await fvsCarregar(); try { renderSideRight(); } catch (_){}
       fvsFicha(id);
-    } catch (e){ msg('Não foi possível abrir: ' + (e.message || e)); b.disabled = false; }
+    } catch (e){
+      const tx = String(e.message || e);
+      msg(/row-level security|security policy/i.test(tx)
+        ? 'Seu nível nesta obra (' + (({ seguranca:'técnico de segurança', visualizador:'visualizador' })[segMeuNivel()] || segMeuNivel() || 'sem nível') + ') não abre FVS. Só eng. chefe, coord. de campo ou equipe de campo abrem fichas.'
+        : 'Não foi possível abrir: ' + tx);
+      b.disabled = false; }
   };
   // peças e concretagem entram no mesmo Salvar da ficha
   const _gravar = fvsGravar;
@@ -491,23 +496,31 @@ body.fvs-abas #fvsAbas{display:flex}
     for (let mi = 0; mi < F3D.modelos.length; mi++){ const m = F3D.modelos[mi], md = m.model; if (!md) continue;
       if (!D.todos[m.arquivoId]){ try { D.todos[m.arquivoId] = Object.values(await md.getItemsOfCategories([FVS3D_NEUTRO_RE]) || {}).flat(); } catch (_){ D.todos[m.arquivoId] = []; } }
       neutro[mi] = D.todos[m.arquivoId].filter(id => !sel.has(mi + ':' + id)); }
-    try { await B3.limparFiltro(F3D); } catch (_){}
     // só o pavimento da ficha fica visível (o resto do prédio esconde a peça que a pessoa quer marcar)
     const soPav = D.soPav && D.pav && Object.keys(D.pav).length;
     if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const no = new Set(D.pav[mi] || []); neutro[mi] = (neutro[mi] || []).filter(id => no.has(id)); }
-    try { await B3.colorirGrupo(F3D, neutro, 0xE2E8F0); } catch (_){}
-    if (Object.keys(pm).length){
+    // com peças marcadas, só aparecem as disciplinas (modelos) que têm peça marcada: pilar marcado não traz a arquitetura junto
+    const comSel = Object.keys(pm).length ? new Set(Object.keys(pm).map(Number)) : null;
+    const grupos = [{ porMod:neutro, cor:0xE2E8F0 }];
+    if (comSel){
       const tre = {}, fec = {}, inteira = {};
       Object.entries(pm).forEach(([mi, ids]) => { const arq = F3D.modelos[mi].arquivoId;
         ids.forEach(id => { const o = !trechoDe(t, arq, id) ? inteira : somaTrechos(t, arq, id) >= 0.999 ? fec : tre; (o[mi] = o[mi] || []).push(id); }); });
-      if (Object.keys(inteira).length) try { await B3.colorirGrupo(F3D, inteira, 0xE8960A); } catch (_){}
-      if (Object.keys(tre).length) try { await B3.colorirGrupo(F3D, tre, 0xF7C873); } catch (_){}
-      if (Object.keys(fec).length) try { await B3.colorirGrupo(F3D, fec, 0x6EE7A0); } catch (_){}
+      grupos.push({ porMod:inteira, cor:0xE8960A }, { porMod:tre, cor:0xF7C873 }, { porMod:fec, cor:0x6EE7A0 });
     }
-    // a visibilidade vem DEPOIS das cores: colorirGrupo (bim3d.js) volta a mostrar o modelo inteiro
-    if (soPav) for (let mi = 0; mi < F3D.modelos.length; mi++){ const md = F3D.modelos[mi].model; if (!md) continue;
-      try { await md.setVisible(undefined, false); } catch (_){} if (D.pav[mi]) try { await md.setVisible(D.pav[mi], true); } catch (_){} }
-    const alvo = soPav ? D.pav : Object.keys(pm).length ? pm : (D.cat || []).reduce((a, g) => { Object.entries(g.porMod).forEach(([mi, ids]) => a[mi] = (a[mi] || []).concat(ids)); return a; }, {});
+    // Pinta direto, numa passada: colorirGrupo (bim3d.js) mostra o prédio inteiro a cada chamada e
+    // redesenha — era o "pisca" do prédio a cada peça marcada. Aqui o redesenho acontece uma vez só, no fim.
+    const T = F3D.THREE;
+    for (let mi = 0; mi < F3D.modelos.length; mi++){ const md = F3D.modelos[mi].model; if (!md) continue;
+      try { await md.resetHighlight(); } catch (_){}
+      const ver = !comSel || comSel.has(mi);
+      try { await md.setVisible(undefined, false); } catch (_){}
+      if (ver){ if (soPav){ if (D.pav[mi]) try { await md.setVisible(D.pav[mi], true); } catch (_){} } else try { await md.setVisible(undefined, true); } catch (_){} }
+      for (const g of grupos){ const ids = g.porMod[mi]; if (ver && ids && ids.length) try { await md.highlight(ids, { color:new T.Color(g.cor), renderedFaces:1, opacity:1, transparent:false }); } catch (_){} }
+    }
+    F3D._isolado = false; F3D._isoladoPorMod = null; F3D._colorido = true; F3D._cores = grupos.filter(g => Object.keys(g.porMod).length);
+    try { await F3D.fragments.update(true); } catch (_){}
+    const alvo = Object.keys(pm).length ? pm : soPav ? D.pav : (D.cat || []).reduce((a, g) => { Object.entries(g.porMod).forEach(([mi, ids]) => a[mi] = (a[mi] || []).concat(ids)); return a; }, {});
     if (enquadrar && Object.keys(alvo).length) try { await B3.enquadrarIds(F3D, alvo); } catch (_){}
     await fvs3dRefrescar();
   }
@@ -523,14 +536,17 @@ body.fvs-abas #fvsAbas{display:flex}
       + '<span class="res" id="fdRes">' + nPecas(t) + ' peça(s)</span>';
     s.classList.add('on'); volume(t);
   }
+  // Esquadrias (portas e janelas) são contadas em unidades; o resto, em m³.
+  const ehUnidade = (mi, id) => (D.cat || []).some(c => c.rot === 'Portas e janelas' && (c.porMod[mi] || []).includes(id));
+  function qtdTxt(t){ return [t.vol ? concM3(t.vol) : '', t.un ? t.un + ' un.' : ''].filter(Boolean).join(' · ') || concM3(t.vol || 0); }
   async function volume(t){
-    const k = t.k; let v = 0;
+    const k = t.k; let v = 0, un = 0;
     for (const [mi, ids] of Object.entries(porMod(t))){ const md = F3D.modelos[mi].model, arq = F3D.modelos[mi].arquivoId, porFrac = {};
-      ids.forEach(id => { const tr = trechoDe(t, arq, id), f = tr ? +tr.frac || 0 : 1; (porFrac[f] = porFrac[f] || []).push(id); });
+      ids.forEach(id => { if (ehUnidade(+mi, id)){ un++; return; } const tr = trechoDe(t, arq, id), f = tr ? +tr.frac || 0 : 1; (porFrac[f] = porFrac[f] || []).push(id); });
       for (const [f, l] of Object.entries(porFrac)){ try { v += (+(await md.getItemsVolume(l)) || 0) * (+f); } catch (_){} } }
-    t.vol = Math.round(v * 100) / 100;
-    const r = $('fdRes'); if (r && D.at === k) r.textContent = nPecas(t) + ' peça(s) · ' + concM3(t.vol);
-    const kv = document.querySelector('#fvsDockHost .fdPane[data-p=pec] .fdVol'); if (kv && D.at === k) kv.textContent = concM3(t.vol);
+    t.vol = Math.round(v * 100) / 100; t.un = un;
+    const r = $('fdRes'); if (r && D.at === k) r.textContent = nPecas(t) + ' peça(s) · ' + qtdTxt(t);
+    const kv = document.querySelector('#fvsDockHost .fdPane[data-p=pec] .fdVol'); if (kv && D.at === k) kv.textContent = qtdTxt(t);
   }
   function porGrupo(t, cb){ const m = {}; (t.elementos || []).forEach(g => m[g.cde_arquivo_id] = g); return cb(m); }
   async function mudou(t){
@@ -565,6 +581,7 @@ body.fvs-abas #fvsAbas{display:flex}
     const m = hit.__modelo; let g = t.elementos.find(x => x.cde_arquivo_id === m.arquivoId);
     if (!g){ g = { cde_arquivo_id:m.arquivoId, modelo:m.nome || '', ids:[] }; t.elementos.push(g); }
     const i = g.ids.indexOf(hit.localId); if (i >= 0) g.ids.splice(i, 1); else g.ids.push(hit.localId);
+    try { f3dProps(hit, m).catch(() => {}); } catch (_){}   // a aba ◂ de propriedades acompanha a peça clicada
     mudou(t);
   };
   const SING = { 'Pilares':'Pilar', 'Vigas':'Viga', 'Lajes':'Laje', 'Paredes':'Parede', 'Escadas':'Escada', 'Fundações':'Fundação', 'Portas e janelas':'Esquadria', 'Revestimentos':'Revestimento' };
@@ -572,7 +589,7 @@ body.fvs-abas #fvsAbas{display:flex}
   async function pecasLista(t){
     const p = document.querySelector('#fvsDockHost .fdPane[data-p=pec]'); if (!p) return;
     if (!nPecas(t)){ p.innerHTML = '<div class="hint">Nenhuma peça marcada: a ficha vale para o pavimento inteiro.' + (t.editavel ? ' Marque no modelo ao lado, por classe ou clicando em cada peça.' : '') + '</div>'; return; }
-    const kpi = '<div class="fdKpi"><span><b>' + nPecas(t) + '</b>peça(s)</span>' + '<span><b class="fdVol">' + (t.vol != null ? concM3(t.vol) : '…') + '</b>volume desta ficha</span>' + '</div>';
+    const kpi = '<div class="fdKpi"><span><b>' + nPecas(t) + '</b>peça(s)</span>' + '<span><b class="fdVol">' + (t.vol != null ? qtdTxt(t) : '…') + '</b>quantidade desta ficha</span>' + '</div>';
     if (!F3D || !F3D.vivo || !F3D.modelos.length){ p.innerHTML = kpi + '<div class="hint">Abra o modelo para ver o nome de cada peça.</div>'; return; }
     const k = t.k, linhas = [];
     if (!p.innerHTML) p.innerHTML = kpi + '<div class="hint">Lendo os nomes das peças…</div>';
