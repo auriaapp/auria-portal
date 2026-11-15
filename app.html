@@ -5784,7 +5784,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15c').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15d').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -6696,9 +6696,17 @@ const FILT_FIELDS={
   pavimento:{label:'Pavimento',tipo:'txt',ops:['é','não é','abaixo de','acima de'],ph:'ex.: Térreo'},
   material:{label:'Material',tipo:'txt',ops:['contém','é','não contém'],ph:'ex.: Concreto'},
   tipo:{label:'Tipo',tipo:'txt',ops:['contém','é','começa com'],ph:'ex.: P25×50'},
-  dimensao:{label:'Dimensão',dim:true,ops:['maior que','menor que','entre'],subs:['Altura','Largura','Espessura','Comprimento','Área','Volume'],unit:{Altura:'m',Largura:'m',Espessura:'cm',Comprimento:'m','Área':'m²','Volume':'m³'}}
+  dimensao:{label:'Dimensão',dim:true,ops:['maior que','menor que','entre'],subs:['Altura','Largura','Espessura','Comprimento','Área','Volume'],unit:{Altura:'m',Largura:'m',Espessura:'cm',Comprimento:'m','Área':'m²','Volume':'m³'}},
+  // Propriedade pelo NOME (atributo ou Pset, sem acento/caixa): "Marca está vazia"
+  // acha a peça sem código. valor = nome da propriedade; valor2 = texto comparado.
+  prop:{label:'Propriedade',prop:true,ops:['está vazia','está preenchida','é','não é','contém'],ph:'nome, ex.: Marca'}
 };
-const FILT_ORDER=['classe','disciplina','pavimento','material','tipo','dimensao'];
+const FILT_ORDER=['classe','disciplina','pavimento','material','tipo','dimensao','prop'];
+const FILT_PROP_CMP=['é','não é','contém'];   // ops de Propriedade que pedem o texto
+// Texto de uma condição (lista de salvos, Revisão, planilha).
+function fCondTxt(c){ const F=FILT_FIELDS[c.campo]||{};
+  if(F.prop) return 'Propriedade “'+(c.valor||'')+'” '+c.op+(FILT_PROP_CMP.includes(c.op)&&String(c.valor2||'').trim()?' “'+c.valor2+'”':'');
+  return (F.label||c.campo)+(c.sub?' '+c.sub:'')+' '+c.op+' '+(c.valor||'')+(F.dim?(' '+(F.unit[c.sub]||'')):''); }
 const FILT_PALETA=[0x22D3EE,0xE8960A,0x8B5CF6,0x10B981,0xEF4444,0x3B82F6];
 let FILT={comb:'all',conds:[{campo:'classe',op:'é',valor:'Pilar (IfcColumn)'}],cor:0x22D3EE,tab:'mine'};
 
@@ -6738,8 +6746,11 @@ function fCondRow(c,i){
   fr.appendChild(fs);
   if(F.bsdd){ const b=document.createElement('span'); b.className='bsdd'; b.textContent='bSDD'; fr.appendChild(b); }
   if(F.dim){ const ss=document.createElement('select'); F.subs.forEach(s=>ss.appendChild(_fOpt(s,s,s===c.sub))); ss.onchange=()=>{ c.sub=ss.value; fRenderConds(); }; fr.appendChild(ss); }
+  if(F.prop){ const pn=document.createElement('input'); pn.className='ft'; pn.value=c.valor||''; pn.placeholder=F.ph; pn.title='Nome da propriedade como aparece no painel de propriedades (atributo ou Pset). Maiúsculas e acentos não importam.'; pn.oninput=()=>{ c.valor=pn.value; }; fr.appendChild(pn); }
   const os=document.createElement('select'); F.ops.forEach(op=>os.appendChild(_fOpt(op,op,op===c.op))); os.onchange=()=>{ c.op=os.value; fRenderConds(); }; fr.appendChild(os);
-  if(F.dim){
+  if(F.prop){
+    if(FILT_PROP_CMP.includes(c.op)){ const v2=document.createElement('input'); v2.className='ft'; v2.value=c.valor2||''; v2.placeholder='texto'; v2.oninput=()=>{ c.valor2=v2.value; }; fr.appendChild(v2); }
+  } else if(F.dim){
     const v1=document.createElement('input'); v1.className='fv'; v1.value=c.valor||''; v1.placeholder='0,00'; v1.oninput=()=>{ c.valor=v1.value; }; fr.appendChild(v1);
     if(c.op==='entre'){ const e=document.createElement('span'); e.className='u'; e.textContent='e'; fr.appendChild(e);
       const v2=document.createElement('input'); v2.className='fv'; v2.value=c.valor2||''; v2.placeholder='0,00'; v2.oninput=()=>{ c.valor2=v2.value; }; fr.appendChild(v2); }
@@ -6876,7 +6887,7 @@ function _fScript(src){ return new Promise((res,rej)=>{ if([...document.scripts]
 // Logo reduzida via canvas: o PNG original tem 1,2 MB e ia inteiro dentro de cada Excel/BCF (item 73)
 async function _fLogoB64(){ try{ const im=new Image(); await new Promise((res,rej)=>{ im.onload=res; im.onerror=rej; im.src='logo_symbol.png'; });
   const H=120, c=document.createElement('canvas'); c.width=Math.max(1,Math.round(H*im.naturalWidth/im.naturalHeight)); c.height=H; c.getContext('2d').drawImage(im,0,0,c.width,c.height); return c.toDataURL('image/png').split(',')[1]; }catch(_){ return null; } }
-function _fFiltroTxt(){ return FILT.conds.filter(c=>c&&c.campo&&String(c.valor||'').trim()).map(c=>{ const F=FILT_FIELDS[c.campo]; return (F?F.label:c.campo)+(c.sub?' '+c.sub:'')+' '+c.op+' '+c.valor+(F&&F.dim?(' '+(F.unit[c.sub]||'')):''); }).join(FILT.comb==='any'?'  OU  ':'  E  '); }
+function _fFiltroTxt(){ return FILT.conds.filter(c=>c&&c.campo&&String(c.valor||'').trim()).map(fCondTxt).join(FILT.comb==='any'?'  OU  ':'  E  '); }
 function _fR2(v){ return (v===''||v==null||isNaN(v))?'':Math.round(v*100)/100; }
 // ── Item 65: exportar apontamentos (Excel; BCF e PDF vêm nos itens seguintes) ──
 function expMenu(ev){
@@ -7206,6 +7217,7 @@ async function fAiBackend(frase){
     const F=FILT_FIELDS[c.campo], op=F.ops.includes(c.op)?c.op:F.ops[0];
     const out={campo:c.campo,op,valor:c.valor!=null?String(c.valor):''};
     if(F.dim){ out.sub=F.subs.includes(c.sub)?c.sub:F.subs[0]; if(c.valor2!=null) out.valor2=String(c.valor2); }
+    if(F.prop && c.valor2!=null) out.valor2=String(c.valor2);
     if(F.tipo==='sel'){ const v=F.vals.find(x=>_fNormLite(x)===_fNormLite(out.valor))||F.vals.find(x=>_fNormLite(x).includes(_fNormLite(out.valor))); if(v) out.valor=v; }
     if(F.tipo==='seldyn'){ const ds=_fDiscs(); const v=ds.find(x=>_fNormLite(x)===_fNormLite(out.valor))||ds.find(x=>_fNormLite(x).includes(_fNormLite(out.valor))||_fNormLite(out.valor).includes(_fNormLite(x))); if(v) out.valor=v; }
     return out;
@@ -7247,7 +7259,7 @@ function fRenderSaved(){
   if(!arr.length){ list.innerHTML='<div style="font-size:12px;color:var(--mut);padding:5px 2px">'+(FILT.tab==='team'?'Nenhum filtro da equipe ainda. (o compartilhamento real entra na próxima fase)':'Nenhum filtro salvo ainda.')+'</div>'; return; }
   arr.forEach((s,idx)=>{
     const row=document.createElement('div'); row.className='fsvrow';
-    const n=document.createElement('span'); n.className='n'; n.textContent=s.nome; n.title=(s.conds||[]).map(c=>FILT_FIELDS[c.campo].label+' '+c.op+' '+(c.valor||'')).join(' · '); row.appendChild(n);
+    const n=document.createElement('span'); n.className='n'; n.textContent=s.nome; n.title=(s.conds||[]).map(fCondTxt).join(' · '); row.appendChild(n);
     const del=document.createElement('button'); del.className='del'; del.textContent='×'; del.title='Apagar';
     del.onclick=(e)=>{ e.stopPropagation(); const st=_fSvLoad(); (st[FILT.tab]||[]).splice(idx,1); _fSvSave(st); fRenderSaved(); }; row.appendChild(del);
     row.onclick=()=>{ FILT.comb=s.comb||'all'; fSetComb(FILT.comb); FILT.conds=(s.conds||[]).map(c=>Object.assign({},c)); fRenderConds(); f3dDica('Filtro “'+s.nome+'” carregado.'); };
@@ -11170,7 +11182,7 @@ function rvRender(){
   let FS=[]; try{ const o=_fSvLoad(); ['mine','team'].forEach(t=>(o[t]||[]).forEach((f,k)=>FS.push({t,k,f}))); }catch(_){}
   FS.forEach(({t,k,f})=>{ const id='flt:'+t+':'+f.nome; if(RV.vf[id]===undefined) RV.vf[id]=false;
     V.push({k:id, n:'Filtro salvo: “'+f.nome+'”', s:(t==='team'?'equipe':'meus')+' · '+(f.conds||[]).length+' condição(ões)',
-      cfg:'<div class="rvMini" style="margin-top:8px">'+(f.conds||[]).map(c=>esc(((FILT_FIELDS[c.campo]||{}).label||c.campo)+' '+c.op+' '+(c.valor||''))).join('<br>')+'</div><div class="rvMini" style="margin-top:6px">Cada modelo com elementos que casam vira um achado. Editar: botão 🎛️ Filtro.</div>'}); });
+      cfg:'<div class="rvMini" style="margin-top:8px">'+(f.conds||[]).map(c=>esc(fCondTxt(c))).join('<br>')+'</div><div class="rvMini" style="margin-top:6px">Cada modelo com elementos que casam vira um achado. Editar: botão 🎛️ Filtro.</div>'}); });
   if(!FS.length) V.push({k:'_semflt', n:'Filtros salvos', s:'nenhum salvo neste empreendimento', cfg:'<div class="rvMini" style="margin-top:8px">Monte e salve um filtro no 🎛️ Filtro & Análise (Modelos BIM): ele aparece aqui como verificação.</div>'});
   RV._fs=FS;
   vfs.innerHTML=V.map(v=>`<div class="rvVf ${RV.aberto===v.k?'aberto':''}"><div class="rvVfh" onclick="RV.aberto=RV.aberto==='${v.k}'?null:'${v.k}';rvRender()"><span class="rvBox ${RV.vf[v.k]?'x':''}" onclick="event.stopPropagation();RV.vf['${v.k}']=!RV.vf['${v.k}'];rvRender()">${RV.vf[v.k]?'✓':''}</span><div class="nm"><b>${v.n}</b><span>${esc(v.s)}</span></div>${rvCnt(v.k)}<span class="rvCar">›</span></div><div class="rvCfg">${v.cfg}</div></div>`).join('');

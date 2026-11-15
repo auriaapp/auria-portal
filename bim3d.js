@@ -1688,9 +1688,48 @@ async function _matIndice(x){
 // Pré-aquece o índice dos modelos abertos (chamar depois de carregar).
 export async function prepararIndices(V){ for(const x of (V.modelos||[])){ try{ await _matIndice(x); }catch(_){} } }
 function _matCasa(nomes, termo){ const t=_norm(termo).replace(/\s+/g,''); return (nomes||[]).some(n=>_norm(n).replace(/\s+/g,'').includes(t)); }
+// ── PROPRIEDADE OBRIGATÓRIA ────────────────────────────────────────────────
+//  Valores de uma propriedade pelo NOME (sem acento/caixa/espaço/sublinhado):
+//  atributos diretos do elemento (Name, Tag, ObjectType, Description…) e toda
+//  propriedade de Pset/quantidade (objeto com Name + NominalValue/xxxValue), em
+//  qualquer nível — inclui o Pset do TIPO quando vier carregado. A leitura com
+//  IsTypedBy/IsDefinedBy tem CICLOS (DefinesOccurrence/ObjectTypeOf), daí o
+//  conjunto de visitados e o limite de profundidade.
+const _nProp=(s)=>_norm(s).replace(/[\s_\-.]+/g,'');
+function _valoresProp(d, alvo){
+  const out=[]; if(!d) return out;
+  const esc=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||Array.isArray(v)) continue; if(_nProp(k)===alvo){ const vv=esc(v); out.push(vv===undefined?null:vv); } }
+  const vis=new WeakSet();
+  const anda=(o,n)=>{ if(!o||typeof o!=='object'||vis.has(o)||n>5) return; vis.add(o);
+    if(Array.isArray(o)){ for(const e of o) anda(e,n+1); return; }
+    const pn=o.Name&&o.Name.value;
+    if(pn!=null && n>0 && _nProp(pn)===alvo){
+      let pv=esc(o.NominalValue); if(pv===undefined) pv=esc(o.Value);
+      if(pv===undefined) for(const [k,v] of Object.entries(o)){ if(/Value$/.test(k)){ const x=esc(v); if(x!==undefined){ pv=x; break; } } }
+      if(pv!==undefined || /PROPERTY|QUANTITY/.test(String(o._category&&o._category.value||''))) out.push(pv===undefined?null:pv);
+    }
+    for(const v of Object.values(o)) if(v&&typeof v==='object'&&!('value' in v)) anda(v,n+1);
+  };
+  anda(d,0);
+  return out;
+}
+const _vazio=(v)=> v==null || String(v).trim()==='';
+function _avaliaProp(c, d){
+  const alvo=_nProp(c.valor), vals=_valoresProp(d, alvo).filter(v=>!_vazio(v));
+  const op=c.op;
+  if(op==='está vazia') return !vals.length;
+  if(op==='está preenchida') return vals.length>0;
+  const b=_norm(String(c.valor2==null?'':c.valor2).trim()); if(!b) return vals.length>0;
+  if(op==='é') return vals.some(v=>_norm(String(v).trim())===b);
+  if(op==='não é') return !vals.some(v=>_norm(String(v).trim())===b);
+  if(op==='contém') return vals.some(v=>_norm(String(v)).includes(b));
+  return false;
+}
 function _avaliaCond(c, ctx){
   const op=c.op, val=c.valor;
   switch(c.campo){
+    case 'prop': return _avaliaProp(c, ctx.d);
     case 'classe':{ const rx=_classeRx(val); const hit=rx?rx.test(ctx.cat||''):false; return op==='não é'?!hit:hit; }
     case 'disciplina':{ const hit=ctx.disc.includes(_norm(val)); return op==='não é'?!hit:hit; }
     case 'pavimento':{
@@ -1769,7 +1808,7 @@ export async function filtrar(V, filtro){
   const ehBarata=(c)=> c.campo==='classe'||c.campo==='disciplina'||(c.campo==='pavimento'&&(pavCheap||c._idPav))||(c.campo==='material'&&matOk);
   const baratas=conds.filter(ehBarata), caras=conds.filter(c=>!ehBarata(c));
   const need={pset:false,tipo:false,mat:false};
-  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento'||c.campo==='tipo') need.pset=true; if(c.campo==='tipo') need.tipo=true; if(c.campo==='material') need.mat=true; });
+  caras.forEach(c=>{ if(c.campo==='dimensao'||c.campo==='pavimento'||c.campo==='tipo'||c.campo==='prop') need.pset=true; if(c.campo==='tipo'||c.campo==='prop') need.tipo=true; if(c.campo==='material') need.mat=true; });
   const querVolMalha = caras.some(c=>c.campo==='dimensao'&&c.sub==='Volume');
   const querCaixa    = caras.some(c=>c.campo==='dimensao'&&/^(Altura|Largura|Comprimento|Espessura)$/.test(c.sub||''));
   const relations={};
