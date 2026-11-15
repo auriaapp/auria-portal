@@ -2491,6 +2491,7 @@ async function _limparFantasma(V){
 //  · o que está fora do raio some (setVisible), o que está dentro fica 12%;
 //  · teto de peças pelas MAIS PRÓXIMAS (antes o 1º modelo gastava o teto).
 export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
+  await _tirarAntiga(V);
   const T=V.THREE;
   await _limparFantasma(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
@@ -2548,6 +2549,7 @@ export async function pontoClash(V, aMi, aId, bMi, bId){
 }
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
+  await _tirarAntiga(V);
   const T=V.THREE;
   if(V._fantasma) await _limparFantasma(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
@@ -2559,6 +2561,7 @@ export async function mostrarClash(V, porModA, porModB){
   await enquadrarIds(V, uni);   // zoom-extend nos conflitos
 }
 export async function limparDestaqueCategoria(V){
+  await _tirarAntiga(V);
   await _limparFantasma(V);
   V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null;
   for(const x of V.modelos){
@@ -2707,6 +2710,7 @@ export function marcarNivel(V, ponto, modelo){
   return medida;
 }
 export async function limparPeDireito(V){
+  await _tirarAntiga(V);
   _limparMapaPd(V); await _limparFantasma(V);
   (V.medida.medidas||[]).slice().forEach(md=>{ if(md._peDireito) removerMedida(V, md); });
   if(V.on.medidas) V.on.medidas(V);
@@ -2717,6 +2721,7 @@ export async function limparPeDireito(V){
 // Mostra os infratores em VERMELHO sobre o modelo completo (contexto ajuda no
 // pé-direito) + uma cota vertical em cada + zoom-extend no conjunto.
 export async function mostrarPeDireito(V, achados){
+  await _tirarAntiga(V);
   const T=V.THREE;
   await limparPeDireito(V);
   const porMod={}; (achados||[]).forEach(a=>{ (porMod[a.mi]=porMod[a.mi]||[]).push(a.id); });
@@ -2727,6 +2732,157 @@ export async function mostrarPeDireito(V, achados){
   try{ await V.fragments.update(true); }catch(_){}
   if(Object.keys(porMod).length) await enquadrarIds(V, porMod);
 }
+// ── COMPARAR REVISÕES (2026-11-15) ─────────────────────────────────────────
+//  A revisão ANTIGA de um modelo aberto é carregada pelo mesmo motor, mas FORA
+//  de V.modelos (nenhuma outra análise a enxerga) e fora da cena; só entra na
+//  cena, com as peças escolhidas, quando um achado pede o fantasma dela.
+//  Casa as peças pelo GlobalId; se menos de 30% casar (exportador que gera
+//  GlobalId novo a cada exportação), casa pela POSIÇÃO: mesma classe e caixa
+//  igual dentro da tolerância.
+export async function abrirRevisaoAntiga(V, m){
+  if(V._cmp && V._cmp.id===m.id) return V._cmp;
+  await fecharRevisaoAntiga(V);
+  const bytes=await _baixar(m);
+  const model=await V.fragments.load(bytes,{ modelId:opts_id(V)+':cmp:'+m.id, camera:V.camera });
+  V._cmp={ id:m.id, nome:m.nome||'', revisao:m.revisao||'', model, _boxes:null };
+  try{ await V.fragments.update(true); }catch(_){}
+  return V._cmp;
+}
+export async function fecharRevisaoAntiga(V){
+  const c=V._cmp; if(!c) return; V._cmp=null;
+  try{ V.scene.remove(c.model.object); }catch(_){}
+  try{ await c.model.dispose(); }catch(_){}
+  if(V.modelos.length){ try{ await V.fragments.update(true); }catch(_){} }
+}
+async function _tirarAntiga(V){
+  const c=V._cmp; if(!c||!c.model.object.parent) return;
+  try{ V.scene.remove(c.model.object); }catch(_){}
+  try{ await c.model.resetHighlight(); }catch(_){}
+}
+const _CMP_FORA=/^IFC(SPACE|OPENINGELEMENT|ANNOTATION|GRID|SITE|BUILDING|BUILDINGSTOREY|PROJECT|VIRTUALELEMENT)$/;
+async function _pecasRev(V, model, boxesCache){
+  const ids=await model.getItemsIdsWithGeometry(); const tem=new Set(ids), cat=new Map();
+  Object.entries(await model.getItemsOfCategories([/^IFC/])||{}).forEach(([k,v])=>{ const K=String(k).toUpperCase();
+    if(!_ehElemento(K)||_CMP_FORA.test(K)) return; (v||[]).forEach(i=>{ if(tem.has(i)) cat.set(i,K); }); });
+  const lista=ids.filter(i=>cat.has(i));
+  let guids=[]; try{ guids=await model.getGuidsByLocalIds(lista)||[]; }catch(_){}
+  const box=new Map();
+  if(boxesCache){ for(const id of lista){ const b=boxesCache.get(id); if(b) box.set(id,b); } }
+  else { let bs=[]; try{ bs=await model.getBoxes(lista)||[]; }catch(_){} lista.forEach((id,i)=>{ const b=bs[i]; if(b&&isFinite(b.min.x)&&isFinite(b.max.x)) box.set(id,b); }); }
+  return { lista, cat, guid:new Map(lista.map((id,i)=>[id,guids[i]||null])), box };
+}
+// Propriedades "achatadas" (atributos + Psets) p/ comparar: nome → valor em texto.
+function _propsPlanas(d){
+  const out=new Map(); if(!d) return out;
+  const esc=(o)=> (o && typeof o==='object' && 'value' in o && typeof o.value!=='object') ? o.value : undefined;
+  for(const [k,v] of Object.entries(d)){ if(k[0]==='_'||Array.isArray(v)||k==='GlobalId') continue; const x=esc(v); if(x!==undefined) out.set(k, String(x)); }
+  for(const ps of (d.IsDefinedBy||[])){ if(!ps||typeof ps!=='object') continue; const pn=(ps.Name&&ps.Name.value)||'';
+    for(const lst of [ps.HasProperties, ps.Quantities]) for(const p of (lst||[])){ if(!p||!p.Name) continue;
+      let v=esc(p.NominalValue); if(v===undefined) for(const [k,w] of Object.entries(p)){ if(/Value$/.test(k)){ const x=esc(w); if(x!==undefined){ v=x; break; } } }
+      if(v===undefined) continue; if(typeof v==='number') v=Math.round(v*1e4)/1e4;
+      out.set((pn?pn+'.':'')+p.Name.value, String(v)); } }
+  return out;
+}
+const _ROT_REV={ novo:'Novas', removido:'Removidas', deslocado:'Deslocadas', modificado:'Geometria mudada', props:'Propriedade mudada' };
+export async function compararRevisoes(V, mi, opts){
+  V._cancelar=false; const t0=performance.now();
+  const x=V.modelos[mi], c=V._cmp; if(!x||!c) return { erro:'Abra o modelo e a revisão antiga.' };
+  const tol=Math.max(0.001,(opts&&opts.tol!=null)?+opts.tol:0.01), comProps=!!(opts&&opts.props);
+  const dica=(t)=>{ if(V.on&&V.on.dica) V.on.dica(t); };
+  dica('Comparando revisões: lendo a revisão atual…');
+  const idsN=(await x.model.getItemsIdsWithGeometry())||[];
+  const N=await _pecasRev(V, x.model, await _boxesCacheadas(V, mi, x, idsN));
+  dica('Comparando revisões: lendo a '+(c.revisao||'revisão antiga')+'…');
+  if(!c._pecas) c._pecas=await _pecasRev(V, c.model, null);
+  const O=c._pecas;
+  // 1) GlobalId
+  const porGuid=new Map(); O.lista.forEach(id=>{ const g=O.guid.get(id); if(g) porGuid.set(g,id); });
+  let pares=[]; const usadoO=new Set(), usadoN=new Set();
+  N.lista.forEach(id=>{ const g=N.guid.get(id), o=g&&porGuid.get(g); if(o!=null){ pares.push([id,o]); usadoO.add(o); usadoN.add(id); } });
+  let porPosicao=false;
+  const base=Math.min(N.lista.length,O.lista.length);
+  if(base && pares.length < 0.3*base){
+    // 2) posição: mesma classe + caixa igual (tolerância), por grade de centros
+    porPosicao=true; pares=[]; usadoO.clear(); usadoN.clear();
+    const tp=Math.max(tol,0.02), cel=Math.max(0.05,tp*2), grade=new Map();
+    const ctr=(b)=>[(b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2];
+    const key=(a,b,d)=>a+'|'+b+'|'+d;
+    O.lista.forEach(id=>{ const b=O.box.get(id); if(!b) return; const [cx,cy,cz]=ctr(b);
+      const k=key(Math.floor(cx/cel),Math.floor(cy/cel),Math.floor(cz/cel)); let l=grade.get(k); if(!l){ l=[]; grade.set(k,l); } l.push(id); });
+    for(const id of N.lista){ const b=N.box.get(id); if(!b) continue; const [cx,cy,cz]=ctr(b), ct=N.cat.get(id);
+      const i0=Math.floor(cx/cel), j0=Math.floor(cy/cel), k0=Math.floor(cz/cel); let ach=null;
+      for(let i=i0-1;i<=i0+1&&ach==null;i++) for(let j=j0-1;j<=j0+1&&ach==null;j++) for(let k=k0-1;k<=k0+1&&ach==null;k++){
+        for(const o of (grade.get(key(i,j,k))||[])){ if(usadoO.has(o)||O.cat.get(o)!==ct) continue; const q=O.box.get(o);
+          if(Math.abs(q.min.x-b.min.x)<=tp&&Math.abs(q.min.y-b.min.y)<=tp&&Math.abs(q.min.z-b.min.z)<=tp&&Math.abs(q.max.x-b.max.x)<=tp&&Math.abs(q.max.y-b.max.y)<=tp&&Math.abs(q.max.z-b.max.z)<=tp){ ach=o; break; } } }
+      if(ach!=null){ pares.push([id,ach]); usadoO.add(ach); usadoN.add(id); } }
+  }
+  // 3) classifica
+  const faixas=_faixasUnicas(await _faixasPavimento(V));
+  const pavDe=(b)=>{ if(!b) return ''; const f=_faixaNoY(faixas,(b.min.y+b.max.y)/2); return f?(f.nome||''):''; };
+  const grupos=new Map();
+  const add=(tipo, cat, b, idN, idO, desl, prop)=>{ const pav=pavDe(b), k=tipo+'|'+cat+'|'+pav; let g=grupos.get(k);
+    if(!g){ g={ tipo, cat, rot:_rotObst(cat), pav, idsN:[], idsO:[], maxDesl:0, props:new Map(), box:null }; grupos.set(k,g); }
+    if(idN!=null) g.idsN.push(idN); if(idO!=null) g.idsO.push(idO); if(desl>g.maxDesl) g.maxDesl=desl;
+    if(prop){ const e=g.props.get(prop.nome); if(e) e.n++; else g.props.set(prop.nome,{n:1,antes:prop.antes,depois:prop.depois}); }
+    if(b){ if(!g.box) g.box={x0:b.min.x,y0:b.min.y,z0:b.min.z,x1:b.max.x,y1:b.max.y,z1:b.max.z};
+      else { g.box.x0=Math.min(g.box.x0,b.min.x); g.box.y0=Math.min(g.box.y0,b.min.y); g.box.z0=Math.min(g.box.z0,b.min.z); g.box.x1=Math.max(g.box.x1,b.max.x); g.box.y1=Math.max(g.box.y1,b.max.y); g.box.z1=Math.max(g.box.z1,b.max.z); } } };
+  let nNovo=0,nRem=0,nAlt=0,nProp=0,nIgual=0;
+  N.lista.forEach(id=>{ if(!usadoN.has(id)){ nNovo++; add('novo', N.cat.get(id), N.box.get(id), id, null, 0); } });
+  O.lista.forEach(id=>{ if(!usadoO.has(id)){ nRem++; add('removido', O.cat.get(id), O.box.get(id), null, id, 0); } });
+  const iguais=[];
+  for(const [n,o] of pares){ const a=N.box.get(n), b=O.box.get(o); if(!a||!b){ iguais.push([n,o]); continue; }
+    const d=Math.max(Math.abs(a.min.x-b.min.x),Math.abs(a.min.y-b.min.y),Math.abs(a.min.z-b.min.z),Math.abs(a.max.x-b.max.x),Math.abs(a.max.y-b.max.y),Math.abs(a.max.z-b.max.z));
+    if(d<=tol){ iguais.push([n,o]); continue; }
+    const tam=Math.max(Math.abs((a.max.x-a.min.x)-(b.max.x-b.min.x)),Math.abs((a.max.y-a.min.y)-(b.max.y-b.min.y)),Math.abs((a.max.z-a.min.z)-(b.max.z-b.min.z)));
+    const dx=(a.min.x+a.max.x-b.min.x-b.max.x)/2, dy=(a.min.y+a.max.y-b.min.y-b.max.y)/2, dz=(a.min.z+a.max.z-b.min.z-b.max.z)/2;
+    nAlt++; add(tam<=tol?'deslocado':'modificado', N.cat.get(n), a, n, o, Math.sqrt(dx*dx+dy*dy+dz*dz)); }
+  // 4) propriedades (opcional, só das peças com geometria igual)
+  if(comProps && iguais.length){
+    dica('Comparando revisões: propriedades…');
+    const dn=await _lerPsetsEmLotes(V, x.model, iguais.map(p=>p[0]), 'Propriedades (atual)');
+    const dO=await _lerPsetsEmLotes(V, c.model, iguais.map(p=>p[1]), 'Propriedades (antiga)');
+    const mapa=(dd)=>{ const m=new Map(); (dd||[]).forEach(d=>{ const l=d&&d._localId&&d._localId.value; if(l!=null) m.set(l,d); }); return m; };
+    const MN=mapa(dn), MO=mapa(dO);
+    for(const [n,o] of iguais){ const A=_propsPlanas(MN.get(n)), B=_propsPlanas(MO.get(o)); let dif=null;
+      for(const [k,v] of A){ if(k==='Tag'||k==='ObjectPlacement') continue; if(B.has(k)&&B.get(k)!==v){ dif={nome:k.replace(/^.*\./,''),antes:B.get(k),depois:v}; break; } }
+      if(!dif) for(const k of B.keys()){ if(k==='Tag') continue; if(!A.has(k)){ dif={nome:k.replace(/^.*\./,''),antes:B.get(k),depois:'(sem)'}; break; } }
+      if(!dif) for(const k of A.keys()){ if(k==='Tag') continue; if(!B.has(k)){ dif={nome:k.replace(/^.*\./,''),antes:'(sem)',depois:A.get(k)}; break; } }
+      if(dif){ nProp++; add('props', N.cat.get(n), N.box.get(n), n, o, 0, dif); } else nIgual++; }
+  } else nIgual=iguais.length;
+  const ORD={removido:0,modificado:1,deslocado:2,props:3,novo:4};
+  const lista=[...grupos.values()].sort((a,b)=> (ORD[a.tipo]-ORD[b.tipo]) || ((b.idsN.length+b.idsO.length)-(a.idsN.length+a.idsO.length)));
+  lista.forEach(g=>{ const n=Math.max(g.idsN.length,g.idsO.length); g.n=n;
+    // "Removidas: 54 × Peça genérica" — sem flexionar o nome da classe
+    g.titulo=_ROT_REV[g.tipo]+(g.tipo==='deslocado'||g.tipo==='modificado'?' (até '+fmtDist(g.maxDesl)+')':'')+': '+n+' × '+g.rot;
+    if(g.tipo==='props'){ const top=[...g.props.entries()].sort((a,b)=>b[1].n-a[1].n)[0]; if(top) g.detalhe='“'+top[0]+'” '+top[1].antes+' → '+top[1].depois+(g.props.size>1?' + '+(g.props.size-1)+' outra(s)':''); }
+    g.props=undefined; });
+  V._cmpRes={ mi, grupos:lista };
+  dica('');
+  return { grupos:lista, nNovo, nRem, nAlt, nProp, nIgual, nN:N.lista.length, nO:O.lista.length, casados:pares.length, porPosicao, ms:Math.round(performance.now()-t0) };
+}
+// Clique num grupo: só as peças dele — atual (verde novo / âmbar alterado) e,
+// da revisão antiga, o fantasma (vermelho removido / cinza posição antiga).
+export async function mostrarGrupoRev(V, mi, g){
+  const T=V.THREE; if(!g) return;
+  await _limparFantasma(V); await _tirarAntiga(V);
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,false); }catch(_){} }
+  const x=V.modelos[mi], c=V._cmp;
+  const cor={ novo:0x34D399, deslocado:0xE8960A, modificado:0xE8960A, props:0xE8960A }[g.tipo];
+  if(x && g.idsN.length){ try{ await x.model.setVisible(g.idsN,true); await x.model.highlight(g.idsN,{color:new T.Color(cor),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  if(c && g.idsO.length && g.tipo!=='props'){
+    const o=c.model.object;
+    if(x){ o.position.copy(x.model.object.position); o.quaternion.copy(x.model.object.quaternion); o.scale.copy(x.model.object.scale); o.updateMatrixWorld(true); }
+    V.scene.add(o);
+    try{ await c.model.setVisible(undefined,false); await c.model.setVisible(g.idsO,true); }catch(_){}
+    const rem=g.tipo==='removido';
+    try{ await c.model.highlight(g.idsO,{color:new T.Color(rem?0xE74C3C:0x8CA0C4),renderedFaces:1,opacity:rem?0.5:0.3,transparent:true}); }catch(_){}
+  }
+  V._isolado=true; V._isoladoPorMod={[mi]:g.idsN.slice()}; V._ultimaSelecao=V._isoladoPorMod; V._colorido=false; V._cores=null;
+  try{ await V.fragments.update(true); }catch(_){}
+  if(g.box){ const b=g.box, m=0.5; _fitBox(V, new T.Box3(new T.Vector3(b.x0-m,b.y0-m,b.z0-m), new T.Vector3(b.x1+m,b.y1+m,b.z1+m))); }
+  try{ await V.fragments.update(true); }catch(_){}
+}
+
 // ── PÉ-DIREITO EM GRADE (2026-11-15) ───────────────────────────────────────
 //  Em vez de medir cada peça pela caixa, cobre o pavimento com uma grade de
 //  pontos (passo 25/50/100 cm). Em cada ponto:
@@ -2803,7 +2959,7 @@ export async function verificarPeDireitoGrade(V, opts){
     const bx=await _boxesCacheadas(V, mi, x, ids);
     for(const id of ids){ const b=bx.get(id); if(b) todos.push({mi,id,cat:catOf.get(id),b}); }
   }
-  const ehEst=V.modelos.map(x=>/(EST|FUN|CON|MET)/i.test(String(x.disciplina||'')+' '+String(x.nome||'').replace(/[-_]/g,' ')));
+  const ehEst=V.modelos.map(x=>/\b(EST|FUN|CON|MET)\b/i.test(String(x.disciplina||'')+' '+String(x.nome||'').replace(/[-_]/g,' ')));
   const temEst=ehEst.some(Boolean);
   const AREA_MIN=0.75;   // mancha menor (chuveiro, conector solto) fica só no mapa
   const manchas=[], grade=[]; let pontos=0, pequenas=0;
@@ -2920,6 +3076,7 @@ export function mostrarMapaPd(V, fis, sel){
 // Clique numa mancha: só o entorno do pavimento (translúcido), obstáculos da
 // mancha opacos em vermelho, mapa daquele pavimento e câmera na mancha.
 export async function mostrarManchaPd(V, m){
+  await _tirarAntiga(V);
   const T=V.THREE; if(!m) return;
   await _limparFantasma(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }

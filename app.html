@@ -5920,7 +5920,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15e').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15f').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -8550,7 +8550,55 @@ async function f3dClashVerificar(){
 
 // ── PÉ-DIREITO MÍNIMO (UI) ─────────────────────────────────────────────────
 let PD_ACHADOS=[];
-let PDG_MANCHAS=[];   // manchas do pé-direito em grade (painel Revisão)
+let PDG_MANCHAS=[];
+let RV_CMP=null;      // última comparação de revisões {mi, grupos, de, para, nome}
+// Cartão "Comparar revisões": modelo aberto × revisão anterior do mesmo documento.
+function rvCmpCard(){
+  const mods=(F3D&&F3D.modelos)||[];
+  if(RV.cmpArq && !mods.some(m=>m.arquivoId===RV.cmpArq)) RV.cmpArq=null;
+  if(!RV.cmpArq && mods.length) RV.cmpArq=mods[0].arquivoId;
+  const m=mods.find(x=>x.arquivoId===RV.cmpArq);
+  const revs=m ? RV.cmpRevs[m.documentoId] : null;
+  if(m && m.documentoId && revs===undefined) rvCmpCarregarRevs(m);
+  const lista=Array.isArray(revs)?revs:[];
+  if(lista.length && !lista.some(r=>r.arq===RV.cmpAnt)) RV.cmpAnt=lista[0].arq;
+  const ant=lista.find(r=>r.arq===RV.cmpAnt);
+  const cfg=`<div class="rvLbl">Modelo (aberto)</div><select class="rvSel" style="width:100%" onchange="RV.cmpArq=this.value;RV.cmpAnt=null;rvRender()">${mods.map(x=>`<option value="${x.arquivoId}" ${x.arquivoId===RV.cmpArq?'selected':''}>${esc(x.nome||'')} · ${esc(x.revisao||'')}</option>`).join('')||'<option>Abra um modelo no 3D</option>'}</select>
+    <div class="rvLbl">Comparar com</div>${revs==='…'?'<div class="rvMini">Buscando revisões no CDE…</div>':lista.length?`<select class="rvSel" style="width:100%" onchange="RV.cmpAnt=this.value;rvRender()">${lista.map(r=>`<option value="${r.arq}" ${r.arq===RV.cmpAnt?'selected':''}>${esc(r.revisao)} · recebida ${esc(r.data)}</option>`).join('')}</select>`:'<div class="rvMini">Nenhuma revisão anterior deste documento convertida para o 3D.</div>'}
+    <div class="rvLbl">O que comparar</div><div class="rvPills" style="margin:0 0 4px"><button class="rvPill on" title="Sempre: peças novas, removidas e com geometria mudada">Geometria</button><button class="rvPill ${RV.cmpProps?'on':''}" onclick="RV.cmpProps=!RV.cmpProps;rvRender()" title="Lê os Psets das duas revisões (mais lento em modelo grande)">Propriedades</button></div>
+    <div class="rvLbl">Tolerância</div><div class="rvPar"><input class="rvNum" type="number" min="0" max="50" step="0.5" value="${RV.cmpTol}" onchange="RV.cmpTol=Math.max(0,+this.value||0);rvRender()"> <span class="rvMini">cm · peça que se mexe menos que isso não conta</span></div>
+    <div class="rvMini" style="margin-top:6px;line-height:1.5">Peças casadas pelo identificador do IFC (GlobalId); se ele mudou entre as revisões, pela posição. A revisão antiga só é aberta para leitura.</div>`;
+  return { k:'cmp', n:'Comparar revisões', s: m ? (m.nome||'')+' · '+(m.revisao||'')+(ant?' × '+ant.revisao:'') : 'abra um modelo no 3D', cfg };
+}
+async function rvCmpCarregarRevs(m){
+  RV.cmpRevs[m.documentoId]='…';
+  try{
+    const { data:revs }=await sb.from('cde_revisao_auria').select('id,revisao,recebido_em').eq('documento_id', m.documentoId);
+    const ids=(revs||[]).filter(r=>r.id!==m.revisaoId).map(r=>r.id);
+    const { data:arqs }=ids.length ? await sb.from('cde_arquivo_auria').select('id,revisao_id,frag_status,frag_path,removido_em').in('revisao_id', ids) : { data:[] };
+    const atual=(revs||[]).find(r=>r.id===m.revisaoId), tAtual=atual?new Date(atual.recebido_em||0):new Date();
+    const lst=[];
+    (arqs||[]).forEach(a=>{ if(a.frag_status!=='pronto'||!a.frag_path||a.removido_em) return; const r=(revs||[]).find(x=>x.id===a.revisao_id); if(!r) return;
+      lst.push({ arq:a.id, path:a.frag_path, revisao:r.revisao||'', t:new Date(r.recebido_em||0), data:r.recebido_em?new Date(r.recebido_em).toLocaleDateString('pt-BR'):'' }); });
+    // anteriores primeiro (da mais recente para a mais antiga); posteriores, se houver, no fim
+    lst.sort((a,b)=> ((a.t<=tAtual)===(b.t<=tAtual)) ? (b.t-a.t) : ((a.t<=tAtual)?-1:1));
+    RV.cmpRevs[m.documentoId]=lst;
+  }catch(e){ console.warn('revisões do documento:', e); RV.cmpRevs[m.documentoId]=[]; }
+  rvRender();
+}
+// ⊕ num grupo de mudanças: pino no centro do grupo, no modelo atual.
+async function f3dRevApontar(i){
+  const g=RV_CMP&&RV_CMP.grupos[i]; if(!g||!F3D||!B3) return;
+  const md=F3D.modelos[RV_CMP.mi]; if(!md) return;
+  await B3.mostrarGrupoRev(F3D, RV_CMP.mi, g); f3dBotaoVoltar(true);
+  const b=g.box||{x0:0,x1:0,y0:0,y1:0,z0:0,z1:0};
+  const pt={ k3d:1, x:(b.x0+b.x1)/2, y:(b.y0+b.y1)/2, z:(b.z0+b.z1)/2, cde_arquivo_id:md.arquivoId, cde_doc:md.documentoId, cde_rev:md.revisaoId, localId:g.idsN[0], mdisc:md.disciplina||md.nome||'' };
+  f3dNovoApontamento(pt, md);
+  APT_EDIT.titulo='Revisão '+RV_CMP.de+' → '+RV_CMP.para+': '+g.titulo+(g.pav?' ('+g.pav+')':'');
+  APT_EDIT.descricao='Comparação de '+RV_CMP.nome+' '+RV_CMP.de+' × '+RV_CMP.para+': '+g.titulo+(g.detalhe?' — '+g.detalhe:'')+(g.pav?', '+g.pav:'')+'.';
+  const t=$('apTitulo'); if(t) t.value=APT_EDIT.titulo;
+  const d=$('apDesc'); if(d) d.value=APT_EDIT.descricao;
+}   // manchas do pé-direito em grade (painel Revisão)
 // ⊕ numa mancha: pino no ponto mais baixo, título com altura + área + onde.
 async function f3dPdgApontar(i){
   const m=PDG_MANCHAS[i]; if(!m||!F3D||!B3) return;
@@ -11283,8 +11331,8 @@ window.addEventListener('load',()=>{
 
 // ── painel Revisão ───────────────────────────────────────────────────────────
 const RV={ vf:{dup:true,proxy:true,clash:true,pd:true}, aberto:'clash', pares:null, tol:1,
-  pdMin:2.00, pdMax:2.30, pdPav:'', pdOff:new Set(), pdModo:'peca', pdPasso:0.5, pdAmb:true, temAmb:null, pavs:null, ach:[], st:{}, motivo:{}, cod:{}, fst:'novo', ftp:'tudo', sel:null, ign:null, rodando:false };
-const RV_TIPOS=[['clash','Conflitos'],['pd','Pé-direito'],['dup','Duplicados'],['proxy','Genéricos'],['flt','Filtros']];
+  pdMin:2.00, pdMax:2.30, pdPav:'', pdOff:new Set(), pdModo:'peca', pdPasso:0.5, pdAmb:true, temAmb:null, cmpArq:null, cmpAnt:null, cmpProps:false, cmpTol:1, cmpRevs:{}, pavs:null, ach:[], st:{}, motivo:{}, cod:{}, fst:'novo', ftp:'tudo', sel:null, ign:null, rodando:false };
+const RV_TIPOS=[['clash','Conflitos'],['pd','Pé-direito'],['rev','Revisões'],['dup','Duplicados'],['proxy','Genéricos'],['flt','Filtros']];
 const rvTipoG=a=>String(a.tipo).startsWith('flt:')?'flt':(a.tipo==='pdg'?'pd':a.tipo);
 try{ const g=JSON.parse(sessionStorage.getItem('rv_status')||'{}'); Object.assign(RV.st,g.st||{}); Object.assign(RV.motivo,g.motivo||{}); Object.assign(RV.cod,g.cod||{}); }catch(_){}
 function rvGuardar(){ try{ sessionStorage.setItem('rv_status', JSON.stringify({st:RV.st,motivo:RV.motivo,cod:RV.cod})); }catch(_){} }
@@ -11314,7 +11362,7 @@ function rvPdDiscs(){ return (F3D&&F3D.modelos) ? [...new Set(F3D.modelos.map(m=
 function rvPdDisc(k){ const d=rvPdDiscs()[k]; if(d===undefined) return; RV.pdOff.has(d)?RV.pdOff.delete(d):RV.pdOff.add(d); rvRender(); }
 function rvAddPar(a,b){ const i=(RV.pares||[]).findIndex(q=>q[0]===a&&q[1]===b); if(i>=0) RV.pares.splice(i,1); else (RV.pares=RV.pares||[]).push([a,b]); rvRender(); }
 function rvOpts(v){ return CLASH_PRES.map(c=>`<option value="${esc(c.lbl)}" ${c.lbl===v?'selected':''}>${esc(c.lbl)} (${c.n})</option>`).join(''); }
-function rvCnt(t){ if(t==='_semflt') return ''; if(!RV.ach.length) return '<span class="rvCnt rvCn">—</span>'; const n=RV.ach.filter(a=>(a.tipo===t||(t==='pd'&&a.tipo==='pdg')) && RV.st[a.key]!=='ign').length; return `<span class="rvCnt ${n?'rvCr':'rvCo'}">${n}</span>`; }
+function rvCnt(t){ if(t==='_semflt') return ''; if(!RV.ach.length) return '<span class="rvCnt rvCn">—</span>'; const n=RV.ach.filter(a=>(a.tipo===t||(t==='pd'&&a.tipo==='pdg')||(t==='cmp'&&a.tipo==='rev')) && RV.st[a.key]!=='ign').length; return `<span class="rvCnt ${n?'rvCr':'rvCo'}">${n}</span>`; }
 function rvRender(){
   const vfs=$('rvVfs'); if(!vfs) return;
   const pares=RV.pares||[];
@@ -11336,7 +11384,7 @@ function rvRender(){
        <div class="rvLbl">Pavimento</div><select class="rvSel" style="width:100%" onchange="RV.pdPav=this.value;rvRender()"><option value="">Todos os pavimentos</option>${(RV.pavs||[]).map(p=>`<option ${p===RV.pdPav?'selected':''}>${esc(p)}</option>`).join('')}</select>
        ${RV.pdModo==='grade'?`<div class="rvLbl">Espaçamento</div><div class="rvPills" style="margin:0 0 4px">${[[0.25,'25 cm'],[0.5,'50 cm'],[1,'1 m']].map(([v,t])=>`<button class="rvPill ${RV.pdPasso===v?'on':''}" onclick="RV.pdPasso=${v};rvRender()">${t}</button>`).join('')}</div>`
          +(RV.temAmb?`<div class="rvLbl">Onde medir</div><div class="rvPills" style="margin:0 0 4px"><button class="rvPill ${RV.pdAmb?'on':''}" onclick="RV.pdAmb=true;rvRender()">Dentro dos ambientes</button><button class="rvPill ${RV.pdAmb?'':'on'}" onclick="RV.pdAmb=false;rvRender()">Pavimento todo</button></div>`:''):''}
-       <div class="rvMini" style="margin-top:6px">Medido do topo da laje estrutural (sem contrapiso). Clique na disciplina para ligar/desligar.${RV.pdModo==='grade'?' Na grade, mancha menor que 0,75 m² (ou de uma célula só) fica só no mapa'+(RV.temAmb?'; ambientes = IfcSpace do modelo.':' (o modelo não tem ambientes/IfcSpace: mede onde há laje).'):''}</div>`}];
+       <div class="rvMini" style="margin-top:6px">Medido do topo da laje estrutural (sem contrapiso). Clique na disciplina para ligar/desligar.${RV.pdModo==='grade'?' Na grade, mancha menor que 0,75 m² (ou de uma célula só) fica só no mapa'+(RV.temAmb?'; ambientes = IfcSpace do modelo.':' (o modelo não tem ambientes/IfcSpace: mede onde há laje).'):''}</div>`}, rvCmpCard()];
   // Filtros salvos (Filtro & Análise) entram como verificações: o que o filtro achar vira achado.
   let FS=[]; try{ const o=_fSvLoad(); ['mine','team'].forEach(t=>(o[t]||[]).forEach((f,k)=>FS.push({t,k,f}))); }catch(_){}
   FS.forEach(({t,k,f})=>{ const id='flt:'+t+':'+f.nome; if(RV.vf[id]===undefined) RV.vf[id]=false;
@@ -11390,6 +11438,27 @@ async function rvVerificar(){
       }
       CLASH_PARES=todos;
     }
+    if(RV.vf.cmp){
+      const mi=(F3D.modelos||[]).findIndex(m=>m.arquivoId===RV.cmpArq), m=F3D.modelos[mi], lr=(m&&Array.isArray(RV.cmpRevs[m.documentoId]))?RV.cmpRevs[m.documentoId]:[], ant=lr.find(r=>r.arq===RV.cmpAnt);
+      if(!m || !ant) avisos.push('Comparar revisões: escolha o modelo e a revisão anterior.');
+      else {
+        bt.textContent='Abrindo '+ant.revisao+'…';
+        await B3.abrirRevisaoAntiga(F3D,{ id:ant.arq, nome:m.nome, revisao:ant.revisao, url:()=>cdeSignedUrlApp(ant.path,'r2') });
+        bt.textContent='Comparando '+ant.revisao+' × '+m.revisao+'…';
+        const r=await B3.compararRevisoes(F3D, mi, { tol:RV.cmpTol/100, props:RV.cmpProps });
+        if(r.erro) avisos.push('Comparar revisões: '+r.erro);
+        else {
+          RV_CMP={ mi, grupos:r.grupos, de:ant.revisao, para:m.revisao, nome:m.nome };
+          avisos.push(m.nome+' '+ant.revisao+' → '+m.revisao+': '+r.nNovo+' nova(s), '+r.nRem+' removida(s), '+r.nAlt+' com geometria mudada'+(RV.cmpProps?', '+r.nProp+' com propriedade mudada':'')+', '+r.nIgual+' igual(is) · '+((r.ms||0)/1000).toFixed(1).replace('.',',')+' s.');
+          if(r.porPosicao) avisos.push(r.casados
+            ? 'Comparar revisões: os identificadores (GlobalId) mudaram entre as revisões; casei '+r.casados+' peça(s) pela posição (mesma classe e mesma caixa).'
+            : 'Comparar revisões: nenhuma peça casou, nem pelo identificador (GlobalId) nem pela posição — as revisões parecem exportadas de jeitos diferentes ('+ant.revisao+': '+r.nO+' peças; '+m.revisao+': '+r.nN+').');
+          const IC={novo:['＋','rvCo'],removido:['−','rvCr'],deslocado:['~','rvCa'],modificado:['~','rvCa'],props:['~','rvCa']};
+          r.grupos.forEach((g,i)=>A.push({ tipo:'rev', ic:IC[g.tipo][0], cls:IC[g.tipo][1], titulo:g.titulo, sub:[g.pav||'sem pavimento', g.detalhe, ant.revisao+' → '+m.revisao].filter(Boolean).join(' · '), pi:i,
+            key:'v:'+ant.arq+':'+m.arquivoId+':'+g.tipo+':'+g.cat+':'+g.pav }));
+        }
+      }
+    }
     if(RV.vf.pd){
       bt.textContent='Pé-direito…';
       let mn=RV.pdMin, mx=RV.pdMax; if(mn>mx){ const t=mn; mn=mx; mx=t; }
@@ -11439,7 +11508,7 @@ function rvRenderAch(){
     const ra = st==='novo'
       ? `<button title="Virar apontamento" onclick="event.stopPropagation();rvApontar(${i})">⊕</button>${a.tipo==='clash'?`<button title="Contexto translúcido" onclick="event.stopPropagation();rvContexto(${i})">◌</button>`:''}<button title="Ignorar" onclick="event.stopPropagation();RV.ign=${i};rvRenderAch()">✕</button>`
       : st==='ign' ? `<button title="Desfazer" onclick="event.stopPropagation();RV.st['${a.key}']='novo';delete RV.motivo['${a.key}'];rvGuardar();rvRender()">↺</button>` : '';
-    let h=`<div class="rvAr ${RV.sel===i?'sel':''}" onclick="rvSel(${i})"><span class="rvCnt ${a.folga?'rvCa':'rvCr'}" style="padding:1px 5px">${a.ic}</span><span class="t" title="${esc(a.titulo)}">${esc(a.titulo)}<br><span class="rvMini">${esc(a.sub)}</span></span><span class="rvRa">${ra}</span>${badge}</div>`;
+    let h=`<div class="rvAr ${RV.sel===i?'sel':''}" onclick="rvSel(${i})"><span class="rvCnt ${a.cls||(a.folga?'rvCa':'rvCr')}" style="padding:1px 5px">${a.ic}</span><span class="t" title="${esc(a.titulo)}">${esc(a.titulo)}<br><span class="rvMini">${esc(a.sub)}</span></span><span class="rvRa">${ra}</span>${badge}</div>`;
     if(RV.ign===i) h+=`<div class="rvIgn"><input id="rvIgnTx" placeholder="Motivo (ex.: furo previsto na fôrma)" onkeydown="if(event.key==='Enter')rvIgnorar(${i})"><button onclick="rvIgnorar(${i})">Ignorar</button></div>`;
     if(st==='ign'&&RV.motivo[a.key]) h+=`<div class="rvMot">“${esc(RV.motivo[a.key])}”</div>`;
     return h; }).join('') || '<div class="rvMini" style="padding:8px">Nada neste filtro.</div>';
@@ -11451,6 +11520,7 @@ async function rvSel(i){
     if(a.tipo==='clash') await f3dClashZoom(a.pi);
     else if(a.tipo==='pd'){ await B3.mostrarPeDireito(F3D,[PD_ACHADOS[a.pi]]); await f3dPdZoom(a.pi); f3dBotaoVoltar(true); }
     else if(a.tipo==='pdg'){ await B3.mostrarManchaPd(F3D, PDG_MANCHAS[a.pi]); f3dBotaoVoltar(true); }
+    else if(a.tipo==='rev'){ if(RV_CMP) await B3.mostrarGrupoRev(F3D, RV_CMP.mi, RV_CMP.grupos[a.pi]); f3dBotaoVoltar(true); }
     else { await f3dIrAoAchado(a.ri); f3dBotaoVoltar(true); }
   }catch(e){ console.warn('zoom achado:',e); }
 }
@@ -11466,6 +11536,7 @@ async function rvApontar(i){
     if(a.tipo==='clash') await f3dClashApontar(null,a.pi);
     else if(a.tipo==='pd') await f3dPdApontar(null,a.pi);
     else if(a.tipo==='pdg') await f3dPdgApontar(a.pi);
+    else if(a.tipo==='rev') await f3dRevApontar(a.pi);
     else await f3dAchadoViraApontamento(a.ri);
   }catch(e){ console.warn('apontar achado:',e); RV_PEND=null; }
 }
@@ -11538,6 +11609,7 @@ function rvParesDoAchado(a){
   if(a.tipo==='clash'){ const p=CLASH_PARES[a.pi]; return p?[[p.aMi,p.aId],[p.bMi,p.bId]]:[]; }
   if(a.tipo==='pd'){ const p=PD_ACHADOS[a.pi]; return p?[[p.mi,p.id]]:[]; }
   if(a.tipo==='pdg'){ const m=PDG_MANCHAS[a.pi]; return m?m.obst.map(o=>[o.mi,o.id]):[]; }
+  if(a.tipo==='rev'){ const g=RV_CMP&&RV_CMP.grupos[a.pi]; return g?g.idsN.map(id=>[RV_CMP.mi,id]):[]; }
   const r=F3D_ACHADOS[a.ri]; if(!r||!r.modelo) return []; const mi=F3D.modelos.indexOf(r.modelo); return mi<0?[]:(r.ids||[]).map(id=>[mi,id]);
 }
 function rvPavTxt(mapas, pares){
@@ -11548,6 +11620,7 @@ function rvPavDoAchado(mapas, a){
   if(a.tipo==='clash'){ const p=CLASH_PARES[a.pi]; return p ? rvPavTxt(mapas,[[p.aMi,p.aId],[p.bMi,p.bId]]) : ''; }
   if(a.tipo==='pd'){ const p=PD_ACHADOS[a.pi]; return p ? (rvPavTxt(mapas,[[p.mi,p.id]]) || p.pav || '') : ''; }
   if(a.tipo==='pdg'){ const m=PDG_MANCHAS[a.pi]; return m ? (m.pav||'') : ''; }
+  if(a.tipo==='rev'){ const g=RV_CMP&&RV_CMP.grupos[a.pi]; return g ? (g.pav||'') : ''; }
   const r=F3D_ACHADOS[a.ri]; if(!r||!r.modelo) return '';
   const mi=F3D.modelos.indexOf(r.modelo); return mi<0 ? '' : rvPavTxt(mapas,(r.ids||[]).map(id=>[mi,id]));
 }
@@ -11569,7 +11642,7 @@ async function rvExportar(){
   if(!RV.ach.length) return;
   const btn=$('rvBtnXls'), old=btn?btn.innerHTML:''; if(btn){ btn.disabled=true; btn.textContent='…'; }
   try{
-    const TIPO={dup:'Duplicado',proxy:'Entidade genérica',clash:'Conflito',pd:'Pé-direito',pdg:'Pé-direito (mancha)'}, ST={novo:'Novo',apt:'Apontado',ign:'Ignorado'};
+    const TIPO={dup:'Duplicado',proxy:'Entidade genérica',clash:'Conflito',pd:'Pé-direito',pdg:'Pé-direito (mancha)',rev:'Revisão'}, ST={novo:'Novo',apt:'Apontado',ign:'Ignorado'};
     let mapas=[]; try{ if(F3D&&F3D.modelos){ mapas=await rvPavMapas(); if(btn) btn.textContent='Pavimentos…'; await rvPavCompletar(mapas, RV.ach.flatMap(rvParesDoAchado)); } }catch(e){ console.warn('pavimento no relatório:', e); }
     await _fScript('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js');
     const ExcelJS=window.ExcelJS; if(!ExcelJS) throw new Error('ExcelJS não carregou');
@@ -11621,7 +11694,7 @@ async function rvExportar(){
   if(btn){ btn.disabled=false; btn.innerHTML=old; }
 }
 // modelo federado mudou → categorias/pavimentos podem ter mudado
-setInterval(()=>{ const sig=(F3D&&F3D.modelos)?F3D.modelos.map(m=>m.arquivoId).join(','):''; if(sig!==rvToggle._sig){ rvToggle._sig=sig; CLASH_PRES=[]; RV.pavs=null; RV.pares=null; RV.temAmb=null; if($('rvPanel')&&$('rvPanel').classList.contains('on')) rvPrepararCats().then(rvRender); rvNavRender(); } }, 1000);
+setInterval(()=>{ const sig=(F3D&&F3D.modelos)?F3D.modelos.map(m=>m.arquivoId).join(','):''; if(sig!==rvToggle._sig){ rvToggle._sig=sig; CLASH_PRES=[]; RV.pavs=null; RV.pares=null; RV.temAmb=null; if(RV.cmpArq && !(F3D&&F3D.modelos||[]).some(m=>m.arquivoId===RV.cmpArq)){ RV.cmpArq=null; RV.cmpAnt=null; if(F3D&&B3&&B3.fecharRevisaoAntiga) B3.fecharRevisaoAntiga(F3D); } if($('rvPanel')&&$('rvPanel').classList.contains('on')) rvPrepararCats().then(rvRender); rvNavRender(); } }, 1000);
 
 
 // ── janela da camada (opacidade · cor · posição/escala/alinhar · remover) ──────
