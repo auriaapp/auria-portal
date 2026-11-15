@@ -2505,7 +2505,7 @@ async function salvarAnalise(comoNova){
 async function _anRestaurar3D(an){
   const mods=an.modelos||[], vista=an.vista||{};
   RV_MOD_COR.clear();
-  if(!mods.length){ if(F3D_MODO) await f3dModo(false); return []; }
+  if(!mods.length){ if(F3D_MODO) await f3dModo(false, null, true); return []; }
   let lista=[]; try{ lista=await f3dModelosDoCde(); }catch(_){}
   const avisos=[], preSel=[];
   mods.forEach(m=>{
@@ -2558,15 +2558,21 @@ function abrirAnaliseSel(){
 // Restaura uma análise salva, remontando LAYERS na ordem original.
 // localFilesByHash: {hash:{file,doc,page}} dos PDFs locais que o usuário
 // acabou de selecionar (objeto vazio se a análise for 100% do CDE).
-async function restaurarAnalise(an, localFilesByHash){
+async function restaurarAnalise(an, localFilesByHash, trocar){
   localFilesByHash = localFilesByHash || {};
   const metas=(an.pranchas||[]).slice().sort((a,b)=>(a.ordem||0)-(b.ordem||0));
   const faltando=[];
   let baseFeita=false;
+  // Troca entre análises (item 109a): só pranchas do CDE → o que é comum fica aberto.
+  if(trocar && metas.every(_metaEhCde)){
+    faltando.push(...await _an2dTrocar(metas));
+    baseFeita=LAYERS.length>0;
+  }
+  const fila = (trocar && metas.every(_metaEhCde)) ? [] : metas;   // na troca, o 2D já está pronto
   // Todas as pranchas do CDE começam a baixar juntas; o laço abaixo só consome.
   _CDE_PRE.clear();
-  metas.filter(_metaEhCde).forEach(m=>{ const p=_cdePreparar(m.cde_documento_id); p.catch(()=>{}); _CDE_PRE.set(m.cde_documento_id,p); });
-  for(const m of metas){
+  fila.filter(_metaEhCde).forEach(m=>{ const p=_cdePreparar(m.cde_documento_id); p.catch(()=>{}); _CDE_PRE.set(m.cde_documento_id,p); });
+  for(const m of fila){
     const overlay=baseFeita;
     if(_metaEhCde(m)){
       try{ await abrirDoCDE(m.cde_documento_id, null, overlay); baseFeita=true; }
@@ -5473,7 +5479,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-08b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15a').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -5837,8 +5843,11 @@ const RV_MOD_COR=new Map(), RV_COR_ORIG='linear-gradient(180deg,#fff 45%,#111 55
 // `preSel` = ids de cde_arquivo_auria vindos do CDE ("Analisar no App"): já
 // entra com eles marcados e abertos, sem a pessoa ter que remarcar o que
 // acabou de escolher lá.
-async function f3dModo(lig, preSel){
+// manter=true (troca de análise, item 109b): ao sair do 3D, guarda os modelos e pausa o
+// visor em vez de descartá-lo; a próxima análise com 3D volta sem recriar nem baixar.
+async function f3dModo(lig, preSel, manter){
   F3D_MODO=!!lig;
+  if(F3D) F3D.pausado=!F3D_MODO;
   document.body.classList.toggle('soBim', F3D_MODO);
   // Sidebar direita (agenda/kanban/BI…) recolhe automaticamente no modo
   // Só BIM — 3D precisa da tela toda para respirar. Ao sair, restaura o
@@ -5871,7 +5880,10 @@ async function f3dModo(lig, preSel){
   $('bimPane').classList.toggle('on', F3D_MODO || BIM_ON);
   if(!F3D_MODO){
     document.body.classList.remove('split','split-3dleft');   // saiu do 3D → sem split
-    f3dDescartar();
+    if(manter && F3D && B3 && B3.guardarUm){
+      for(const x of [...(F3D.modelos||[])]){ try{ await B3.guardarUm(F3D, x.arquivoId||x.id||x.nome); }catch(_){} }
+      F3D.pausado=true;
+    } else f3dDescartar();
     // Fecha os painéis do 3D ao sair: reabrir o App em 2D com o painel de
     // propriedades de um elemento que já não está em cena confunde.
     ['bimProps','regBox','bimFloorsPop'].forEach(id=>{ const e=$(id); if(e) e.classList.remove('on'); });
@@ -5909,7 +5921,7 @@ async function f3dModo(lig, preSel){
     }
   }
   f3dRenderLista();
-  if(F3D_SEL.size) await f3dAbrirSelecionados();
+  if(F3D_SEL.size) await (F3D ? f3dSincronizarSelecao() : f3dAbrirSelecionados());   // visor vivo (pausado): só troca a diferença
 }
 // "＋2D/3D": divide a tela com o MESMO ambiente 3D (fragments) em meia tela + o
 // 2D ao lado. Quem foi aberto PRIMEIRO fica à esquerda (SPLIT_PRIM). Sair do split
@@ -6110,13 +6122,14 @@ async function _f3dSincronizar(){
   const desejados  = new Set(escolhidos.map(key));
   // Remove os que saíram (rápido — só solta da cena)
   for(const id of carregados){
-    if(!desejados.has(id)) await B3.descarregarUm(F3D, id);
+    if(!desejados.has(id)) await (B3.guardarUm||B3.descarregarUm)(F3D, id);   // guardado: voltar a ele não baixa de novo (item 109b)
   }
   // Baixa os novos (paralelo, cada um chega quando fica pronto)
   const novos = escolhidos.filter(m => !carregados.has(key(m)));
   if(novos.length){
     const msg=(t)=>{ const el=$('bimMsg'); if(el){ el.textContent=t; el.style.display='flex'; } };
-    msg(novos.length>1 ? `Carregando ${novos.length} modelos…` : `Carregando ${novos[0].nome}…`);
+    const aBaixar = novos.filter(m => !(F3D._guardados && F3D._guardados.has(m.arquivoId)));   // guardados voltam na hora
+    if(aBaixar.length) msg(aBaixar.length>1 ? `Carregando ${aBaixar.length} modelos…` : `Carregando ${aBaixar[0].nome}…`);
     const specs = novos.map(m => ({ ...m, id: m.arquivoId, url: () => cdeSignedUrlApp(m.path, 'r2') }));
     // Um modelo que falha não derruba os outros, e a tela diz qual ficou de fora.
     const res = await Promise.allSettled(specs.map(s => B3.adicionarModelo(F3D, s)));
@@ -11281,13 +11294,77 @@ function rvAnPerguntar(acao){
       if(r==='c') return res(false); if(r==='n') return res(true); res(await rvAnSalvar(false)); });
   });
 }
+// ── Troca de análise por diferença (item 109a) ──────────────────────────────
+// Pranchas do CDE que já estão abertas são reaproveitadas (sem baixar nem ler o PDF
+// de novo); só abre o que entra. Uma prancha que muda de papel (base ↔ sobreposição)
+// volta ao estado padrão desse papel, igual a abrir do zero. Devolve os nomes que
+// não abriram.
+function _an2dVirarBase(L){
+  Object.assign(L,{ offset:{x:0,y:0}, scale:1, rot:0, opacity:1, cor:null, visible:true });
+  LAYERS=[L]; setBaseShims(); FOCO_LI=0;
+  if(L.prancha && L.prancha._cde_revisao_id) window.CDE_REV_ID=L.prancha._cde_revisao_id;
+  F.valido=false;
+  $('pageLbl').textContent='1 / '+L.doc.numPages; mobPrancha();
+  fitPage();
+  $('dropHint').style.display='none';
+  $('btnAddCam').disabled=false;
+  renderCamadas(); renderPins(); renderListaApts();
+  try{ carregarTrena().then(()=>{ renderDrawings(); renderCotaPanel(); }); }catch(_){}
+}
+async function _an2dVirarCamada(L){
+  Object.assign(L,{ offset:{x:0,y:0}, scale:1, rot:0, opacity:0.7, cor:'#E74C3C', visible:true });
+  await carregarEstadoCamada(L);
+}
+// Pranchas que saíram da tela na troca ficam guardadas (PDF aberto + registro +
+// estado da camada): voltar à análise não consulta o banco nem lê o PDF de novo.
+// 8 no máximo, 10 min cada (revisão nova publicada nesse meio tempo entra depois).
+const _AN_LGUARDA=new Map(), _AN_LG_MAX=8, _AN_LG_TTL=10*60*1000;
+function _anLGuardar(Ls){
+  for(const L of Ls){ const id=L&&L.prancha&&L.prancha.cde_documento_id; if(!id||(L.pageNum||1)!==1) continue;
+    _AN_LGUARDA.delete(id); _AN_LGUARDA.set(id,{L,t:Date.now()}); }
+  while(_AN_LGUARDA.size>_AN_LG_MAX) _AN_LGUARDA.delete(_AN_LGUARDA.keys().next().value);
+}
+async function _an2dTrocar(metas){
+  const faltando=[], alvo=metas.map(m=>m.cde_documento_id);
+  const saindo=()=>LAYERS.filter(L=>!alvo.includes(L.prancha&&L.prancha.cde_documento_id));
+  if(!alvo.length){ _anLGuardar(LAYERS); if(LAYERS.length) rvFechar2d(); return faltando; }
+  const velhas=new Map(), agora=Date.now();
+  for(const [id,g] of _AN_LGUARDA){ if(agora-g.t>_AN_LG_TTL) _AN_LGUARDA.delete(id); else velhas.set(id,{L:g.L,i:-1}); }
+  LAYERS.forEach((L,i)=>{ const id=L.prancha&&L.prancha.cde_documento_id; if(id && (L.pageNum||1)===1) velhas.set(id,{L,i}); });
+  _anLGuardar(saindo());
+  _CDE_PRE.clear();
+  alvo.forEach(id=>{ if(!velhas.has(id)){ const p=_cdePreparar(id); p.catch(()=>{}); _CDE_PRE.set(id,p); } });
+  const nome=id=>{ const m=metas.find(x=>x.cde_documento_id===id); return (m&&m.arquivo_nome)||'(CDE)'; };
+  let base=false, mesmaBase=false;
+  try{
+    for(const id of alvo){
+      const v=velhas.get(id);
+      if(!base){
+        if(v && v.i===0){ v.L.cor=null; LAYERS=[v.L]; setBaseShims(); FOCO_LI=0; base=mesmaBase=true; v.L._papel='base'; continue; }
+        if(v){ _AN_LGUARDA.delete(id); _an2dVirarBase(v.L); v.L._papel='base'; base=true; continue; }
+        try{ await abrirDoCDE(id, null, false); base=true; }
+        catch(e){ faltando.push(nome(id)); console.warn('troca cde base:',(e&&e.message)||e); }
+        continue;
+      }
+      if(v){ _AN_LGUARDA.delete(id); if(v.i===0 || v.L._papel==='base') await _an2dVirarCamada(v.L); v.L._papel='camada'; LAYERS.push(v.L); continue; }
+      try{ await abrirDoCDE(id, null, true); }
+      catch(e){ faltando.push(nome(id)); console.warn('troca cde camada:',(e&&e.message)||e); }
+    }
+  } finally { _CDE_PRE.clear(); }
+  if(!base){ if(LAYERS.length) rvFechar2d(); return faltando; }
+  LAYERS.forEach((L,i)=>{ L._papel = i===0 ? 'base' : 'camada'; });
+  if(mesmaBase){ renderPins(); renderListaApts(); }
+  renderCamadas(); F.valido=false; render();
+  return faltando;
+}
 // Fecha tudo (2D, 2D·2D, 3D) para a próxima análise abrir limpa.
 async function rvAnLimpar(){
   const B=document.body.classList;
   try{ if(B.contains('split2d')) await split2dToggle(); }catch(_){}
   try{ if(B.contains('split33')) rvPeer3dFechar(); }catch(_){}
   if(B.contains('split')){ B.remove('split','split-3dleft'); _splitBtns(false); }
-  try{ if(F3D_MODO) await f3dModo(false); }catch(_){}
+  _AN_LGUARDA.clear();
+  try{ if(F3D_MODO) await f3dModo(false); else if(F3D) f3dDescartar(); }catch(_){}   // visor pausado também sai
   if(LAYERS.length) rvFechar2d();
 }
 async function rvAnAbrir(id){
@@ -11296,14 +11373,27 @@ async function rvAnAbrir(id){
   if(id===ANALISE_ATUAL) return;
   if(!await rvAnPerguntar('abrir “'+an.nome+'”')) return;
   RV_AN_ABRINDO=id; rvAnRender();   // a aba clicada ativa na hora; Salvar fica travado até terminar
+  const t0=performance.now();
   try{
-    await rvAnLimpar();
+    const soCde=!(an.pranchas||[]).some(m=>!_metaEhCde(m));
+    if(soCde) await rvAnPrepTroca(an); else await rvAnLimpar();   // só CDE: troca só a diferença (item 109)
     ANALISE_ATUAL=null;   // se falhar no meio, a tela vira rascunho e não a análise anterior
-    if(!APP_PJ && (an.pranchas||[]).some(m=>!_metaEhCde(m))){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
-    await restaurarAnalise(an,{});
+    if(!APP_PJ && !soCde){ $('selAnalise').value=id; abrirAnaliseSel(); return; }   // PDFs locais: fluxo antigo pede os arquivos
+    await restaurarAnalise(an,{},soCde);
+    window.RV_AN_TEMPO={ id, nome:an.nome, ms:Math.round(performance.now()-t0) };   // medição da troca (item 109)
   }catch(e){ rvAlerta('Erro ao abrir a análise: '+((e&&e.message)||e)); }
   finally{ RV_AN_ABRINDO=null; rvAnRender(); rvNavRender();
     const px=RV_AN_PROX; RV_AN_PROX=null; if(px) setTimeout(()=> px.t==='nova' ? rvAnNova() : rvAnAbrir(px.id), 0); }
+}
+// Antes de trocar por diferença: fecha só o que a análise nunca guarda (2D·2D e
+// 3D·3D, item 58). Com 3D na tela e pranchas na próxima, pausa o 3D (modelos
+// guardados) para o 2D abrir no lugar certo; a parte 3D volta logo depois.
+async function rvAnPrepTroca(an){
+  const B=document.body.classList;
+  try{ if(B.contains('split2d')) await split2dToggle(); }catch(_){}
+  try{ if(B.contains('split33')) rvPeer3dFechar(); }catch(_){}
+  RV_MOD_OFF.clear();
+  if(F3D_MODO && (an.pranchas||[]).length){ try{ await f3dModo(false, null, true); }catch(_){} }
 }
 async function rvAnNova(){
   if(RV_AN_ABRINDO){ RV_AN_PROX={t:'nova'}; rvAviso('Análise nova em seguida.'); rvAnRender(); return; }
