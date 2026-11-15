@@ -89,3 +89,6 @@ create trigger trg_zz_apt_vinc_aviso after update of status on public.apontament
 -- drop function if exists cde_priv.apt_vinc_aviso_trg();
 -- drop function if exists public.apt_vinc(uuid, text, text, boolean);
 -- drop table if exists public.apontamento_vinculo_auria;
+
+-- 2026-11-15: sem login não tem nenhuma permissão nesta tabela (migração revoke_anon_tabelas_113_108).
+revoke all on table public.apontamento_vinculo_auria from anon;

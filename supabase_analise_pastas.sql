@@ -82,3 +82,7 @@ create policy analise_na_pasta_dono on public.analise_na_pasta_auria for all to 
 -- drop table if exists public.analise_pasta_auria;
 -- drop function if exists cde_priv.analise_pasta_chk();
 -- drop function if exists cde_priv.analise_na_pasta_chk();
+
+-- 2026-11-15: sem login não tem nenhuma permissão nesta tabela (migração revoke_anon_tabelas_113_108).
+revoke all on table public.analise_pasta_auria from anon;
+revoke all on table public.analise_na_pasta_auria from anon;

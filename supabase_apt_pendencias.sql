@@ -162,3 +162,6 @@ end $$;
 -- drop function if exists cde_priv.apt_pend_trg();
 -- drop function if exists cde_priv.apt_pend_sync(uuid, text);
 -- drop table if exists public.apontamento_pendencia_auria;
+
+-- 2026-11-15: sem login não tem nenhuma permissão nesta tabela (migração revoke_anon_tabelas_113_108).
+revoke all on table public.apontamento_pendencia_auria from anon;
