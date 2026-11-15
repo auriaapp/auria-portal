@@ -1339,31 +1339,35 @@ function _naFaixa(b, fx){ return b && b.min.y >= fx.y0 && b.min.y < fx.y1; }
 // PAVIMENTO PELA ESTRUTURA ESPACIAL (IfcBuildingStorey) — autoritativo e funciona
 // mesmo quando o Pset das lajes vem VAZIO (caso PINI-EST). Mapa por modelo:
 // {mi, id, nome, nomeNorm, ids:[elementos descendentes]}. Cache em V._storeys.
+// IfcBuildingStorey de UM modelo (nome + ids folha), pela estrutura espacial crua.
+async function _storeysDoModelo(model){
+  let raw=null; try{ raw=await model.getSpatialStructure(); }catch(_){}
+  if(!raw) return [];
+  // Anda direto na estrutura CRUA (sem montar a árvore inteira de elementos, que
+  // é cara). Só acha os IfcBuildingStorey e junta os ids folha de cada um.
+  const storeys=[];
+  const coletaFolhas=(inst, acc)=>{ for(const cn of (inst.children||[])){ const c=String(cn.category||'').toUpperCase();
+    for(const ch of (cn.children||[])){ if(_ESPACIAL.has(c)) coletaFolhas(ch, acc); else if(ch.localId!=null) acc.push(ch.localId); } } };
+  const walk=(inst, tipoPai)=>{
+    if(String(tipoPai).toUpperCase()==='IFCBUILDINGSTOREY' && inst.localId!=null){ const acc=[]; coletaFolhas(inst, acc); storeys.push({ id:inst.localId, ids:acc }); }
+    for(const cn of (inst.children||[])){ for(const ch of (cn.children||[])) walk(ch, cn.category); }
+  };
+  for(const inst of (raw.children||[])) walk(inst, raw.category);
+  if(!storeys.length) return [];
+  // nomes SÓ dos storeys (não de todos os nós espaciais)
+  const nm={}; const sids=storeys.map(s=>s.id);
+  for(let p=0;p<sids.length;p+=400){ const lote=sids.slice(p,p+400); let da=[];
+    try{ da=await model.getItemsData(lote,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; nm[lid]=String((d.Name&&d.Name.value)||(d.LongName&&d.LongName.value)||'').trim(); });
+  }
+  return storeys.map(s=>{ const nome=nm[s.id]||('Pavimento '+s.id); return { id:s.id, nome, nomeNorm:_norm(nome), ids:s.ids }; });
+}
 async function _storeysMapa(V){
   if(V._storeys) return V._storeys;
   const out=[];
   for(let mi=0; mi<V.modelos.length; mi++){
     const x=V.modelos[mi]; if(!x||!x.model) continue;
-    let raw=null; try{ raw=await x.model.getSpatialStructure(); }catch(_){}
-    if(!raw) continue;
-    // Anda direto na estrutura CRUA (sem montar a árvore inteira de elementos, que
-    // é cara). Só acha os IfcBuildingStorey e junta os ids folha de cada um.
-    const storeys=[];
-    const coletaFolhas=(inst, acc)=>{ for(const cn of (inst.children||[])){ const c=String(cn.category||'').toUpperCase();
-      for(const ch of (cn.children||[])){ if(_ESPACIAL.has(c)) coletaFolhas(ch, acc); else if(ch.localId!=null) acc.push(ch.localId); } } };
-    const walk=(inst, tipoPai)=>{
-      if(String(tipoPai).toUpperCase()==='IFCBUILDINGSTOREY' && inst.localId!=null){ const acc=[]; coletaFolhas(inst, acc); storeys.push({ id:inst.localId, ids:acc }); }
-      for(const cn of (inst.children||[])){ for(const ch of (cn.children||[])) walk(ch, cn.category); }
-    };
-    for(const inst of (raw.children||[])) walk(inst, raw.category);
-    if(!storeys.length) continue;
-    // nomes SÓ dos storeys (não de todos os nós espaciais)
-    const nm={}; const sids=storeys.map(s=>s.id);
-    for(let p=0;p<sids.length;p+=400){ const lote=sids.slice(p,p+400); let da=[];
-      try{ da=await x.model.getItemsData(lote,{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
-      (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return; nm[lid]=String((d.Name&&d.Name.value)||(d.LongName&&d.LongName.value)||'').trim(); });
-    }
-    storeys.forEach(s=>{ const nome=nm[s.id]||('Pavimento '+s.id); out.push({ mi, id:s.id, nome, nomeNorm:_norm(nome), ids:s.ids }); });
+    (await _storeysDoModelo(x.model)).forEach(s=>out.push({ mi, ...s }));
   }
   V._storeys=out;
   return out;
@@ -2817,10 +2821,14 @@ export async function compararRevisoes(V, mi, opts){
       if(ach!=null){ pares.push([id,ach]); usadoO.add(ach); usadoN.add(id); } }
   }
   // 3) classifica
+  // pavimento: IfcBuildingStorey do PRÓPRIO modelo (atual ou antigo — modelo de
+  //  instalações não tem laje p/ faixa); sem storey, pela faixa das lajes abertas.
   const faixas=_faixasUnicas(await _faixasPavimento(V));
-  const pavDe=(b)=>{ if(!b) return ''; const f=_faixaNoY(faixas,(b.min.y+b.max.y)/2); return f?(f.nome||''):''; };
+  const stDe=async(model)=>{ const m=new Map(); (await _storeysDoModelo(model)).forEach(s=>{ const n=_nomePav(s.nome); s.ids.forEach(id=>m.set(id,n)); }); return m; };
+  const stN=await stDe(x.model); if(!c._st) c._st=await stDe(c.model); const stO=c._st;
+  const pavDe=(b, id, ant)=>{ const n=(ant?stO:stN).get(id); if(n) return n; if(!b) return ''; const f=_faixaNoY(faixas,(b.min.y+b.max.y)/2); return f?(f.nome||''):''; };
   const grupos=new Map();
-  const add=(tipo, cat, b, idN, idO, desl, prop)=>{ const pav=pavDe(b), k=tipo+'|'+cat+'|'+pav; let g=grupos.get(k);
+  const add=(tipo, cat, b, idN, idO, desl, prop)=>{ const pav=idN!=null?pavDe(b,idN,false):pavDe(b,idO,true), k=tipo+'|'+cat+'|'+pav; let g=grupos.get(k);
     if(!g){ g={ tipo, cat, rot:_rotObst(cat), pav, idsN:[], idsO:[], maxDesl:0, props:new Map(), box:null }; grupos.set(k,g); }
     if(idN!=null) g.idsN.push(idN); if(idO!=null) g.idsO.push(idO); if(desl>g.maxDesl) g.maxDesl=desl;
     if(prop){ const e=g.props.get(prop.nome); if(e) e.n++; else g.props.set(prop.nome,{n:1,antes:prop.antes,depois:prop.depois}); }
@@ -2875,7 +2883,7 @@ export async function mostrarGrupoRev(V, mi, g){
     V.scene.add(o);
     try{ await c.model.setVisible(undefined,false); await c.model.setVisible(g.idsO,true); }catch(_){}
     const rem=g.tipo==='removido';
-    try{ await c.model.highlight(g.idsO,{color:new T.Color(rem?0xE74C3C:0x8CA0C4),renderedFaces:1,opacity:rem?0.5:0.3,transparent:true}); }catch(_){}
+    try{ await c.model.highlight(g.idsO,{color:new T.Color(rem?0xE74C3C:0xCBD5E1),renderedFaces:1,opacity:rem?0.5:0.45,transparent:true}); }catch(_){}
   }
   V._isolado=true; V._isoladoPorMod={[mi]:g.idsN.slice()}; V._ultimaSelecao=V._isoladoPorMod; V._colorido=false; V._cores=null;
   try{ await V.fragments.update(true); }catch(_){}
