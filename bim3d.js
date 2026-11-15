@@ -1,4 +1,4 @@
-// bim3d version: 2026-11-15b  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-11-15c  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -2203,7 +2203,49 @@ function _distPtTri(px,py,pz, t, i){
           else { const va=d3*d6-d5*d4;
             if(va<=0&&(d4-d3)>=0&&(d5-d6)>=0){ const w=(d4-d3)/((d4-d3)+(d5-d6)); qx=bx+w*(cx-bx);qy=by+w*(cy-by);qz=bz+w*(cz-bz); }
             else { const den=1/(va+vb+vc), v=vb*den, w=vc*den; qx=ax+abx*v+acx*w;qy=ay+aby*v+acy*w;qz=az+abz*v+acz*w; } } } } } }
+  _QX=qx; _QY=qy; _QZ=qz;
   return Math.hypot(px-qx,py-qy,pz-qz); }
+let _QX=0,_QY=0,_QZ=0;   // ponto mais próximo da última _distPtTri
+// Menor distância entre os segmentos p1-q1 e p2-q2 (Ericson, RTCD 5.1.9); grava os
+// dois pontos mais próximos em _S1/_S2.
+const _S1=[0,0,0], _S2=[0,0,0];
+function _distSegSeg(p1x,p1y,p1z,q1x,q1y,q1z, p2x,p2y,p2z,q2x,q2y,q2z){
+  const d1x=q1x-p1x,d1y=q1y-p1y,d1z=q1z-p1z, d2x=q2x-p2x,d2y=q2y-p2y,d2z=q2z-p2z, rx=p1x-p2x,ry=p1y-p2y,rz=p1z-p2z;
+  const a=d1x*d1x+d1y*d1y+d1z*d1z, e=d2x*d2x+d2y*d2y+d2z*d2z, f=d2x*rx+d2y*ry+d2z*rz;
+  let s=0,t=0; const cl=(v)=>v<0?0:(v>1?1:v);
+  if(a<=1e-12 && e<=1e-12){ s=t=0; }
+  else if(a<=1e-12){ s=0; t=cl(f/e); }
+  else { const c=d1x*rx+d1y*ry+d1z*rz;
+    if(e<=1e-12){ t=0; s=cl(-c/a); }
+    else { const b=d1x*d2x+d1y*d2y+d1z*d2z, den=a*e-b*b;
+      s = den>1e-12 ? cl((b*f-c*e)/den) : 0;
+      t=(b*s+f)/e;
+      if(t<0){ t=0; s=cl(-c/a); } else if(t>1){ t=1; s=cl((b-c)/a); } } }
+  _S1[0]=p1x+d1x*s; _S1[1]=p1y+d1y*s; _S1[2]=p1z+d1z*s; _S2[0]=p2x+d2x*t; _S2[1]=p2y+d2y*t; _S2[2]=p2z+d2z*t;
+  return Math.hypot(_S1[0]-_S2[0], _S1[1]-_S2[1], _S1[2]-_S2[2]); }
+// Menor distância entre duas malhas, procurando só até `lim` (devolve lim se não
+// houver nada mais perto). Triângulo×triângulo = 0 se cruzam; senão o menor entre
+// vértice×triângulo (6) e aresta×aresta (9). Grava o ponto médio do trecho mais curto.
+function _distMalhas(ta, tb, ba, bb, lim){
+  const reg={ x0:Math.max(ba.min.x,bb.min.x)-lim, y0:Math.max(ba.min.y,bb.min.y)-lim, z0:Math.max(ba.min.z,bb.min.z)-lim,
+              x1:Math.min(ba.max.x,bb.max.x)+lim, y1:Math.min(ba.max.y,bb.max.y)+lim, z1:Math.min(ba.max.z,bb.max.z)+lim };
+  const fa=_trisNaCaixa(ta, reg), fb=_trisNaCaixa(tb, reg);
+  let d=lim, pt=null; if(!fa.length || !fb.length) return { d, pt };
+  const bxB=fb.map(i=>[Math.min(tb[i],tb[i+3],tb[i+6]),Math.max(tb[i],tb[i+3],tb[i+6]),Math.min(tb[i+1],tb[i+4],tb[i+7]),Math.max(tb[i+1],tb[i+4],tb[i+7]),Math.min(tb[i+2],tb[i+5],tb[i+8]),Math.max(tb[i+2],tb[i+5],tb[i+8])]);
+  const melhor=(x1,y1,z1,x2,y2,z2,e)=>{ if(e<d){ d=e; pt={x:(x1+x2)/2,y:(y1+y2)/2,z:(z1+z2)/2}; } };
+  for(const ia of fa){
+    const ax0=Math.min(ta[ia],ta[ia+3],ta[ia+6]), ax1=Math.max(ta[ia],ta[ia+3],ta[ia+6]), ay0=Math.min(ta[ia+1],ta[ia+4],ta[ia+7]), ay1=Math.max(ta[ia+1],ta[ia+4],ta[ia+7]), az0=Math.min(ta[ia+2],ta[ia+5],ta[ia+8]), az1=Math.max(ta[ia+2],ta[ia+5],ta[ia+8]);
+    for(let j=0;j<fb.length;j++){ const q=bxB[j], ib=fb[j];
+      if(ax1+d<q[0]||ax0-d>q[1]||ay1+d<q[2]||ay0-d>q[3]||az1+d<q[4]||az0-d>q[5]) continue;
+      if(_triTri(ta, ia, tb, ib)){ d=0; pt={x:(Math.max(ax0,q[0])+Math.min(ax1,q[1]))/2, y:(Math.max(ay0,q[2])+Math.min(ay1,q[3]))/2, z:(Math.max(az0,q[4])+Math.min(az1,q[5]))/2}; return { d, pt }; }
+      for(let v=0;v<3;v++){
+        const x=ta[ia+3*v],y=ta[ia+3*v+1],z=ta[ia+3*v+2]; const e1=_distPtTri(x,y,z,tb,ib); melhor(x,y,z,_QX,_QY,_QZ,e1);
+        const X=tb[ib+3*v],Y=tb[ib+3*v+1],Z=tb[ib+3*v+2]; const e2=_distPtTri(X,Y,Z,ta,ia); melhor(X,Y,Z,_QX,_QY,_QZ,e2); }
+      for(let u=0;u<3;u++){ const p=ia+3*u, pq=ia+3*((u+1)%3);
+        for(let w=0;w<3;w++){ const r=ib+3*w, rq=ib+3*((w+1)%3);
+          const e=_distSegSeg(ta[p],ta[p+1],ta[p+2],ta[pq],ta[pq+1],ta[pq+2], tb[r],tb[r+1],tb[r+2],tb[rq],tb[rq+1],tb[rq+2]);
+          melhor(_S1[0],_S1[1],_S1[2],_S2[0],_S2[1],_S2[2],e); } } } }
+  return { d, pt }; }
 // Pontos de amostra dos triângulos `idx` de `t`, só os que caem na caixa `b`,
 // com espaçamento adaptado à área (no máx. ~`cap` pontos).
 function _amostrasNaCaixa(t, idx, b, cap){
@@ -2263,41 +2305,57 @@ function _parFino(ta, tb, ba, bb, tol){
 // tolerância `tol` (m), com grade uniforme. Fase fina: cada candidato é confirmado
 // na geometria real (ver acima). Retorna os elementos envolvidos por modelo, p/ destacar.
 // nCand = candidatos pela caixa; nPares = confirmados (+ os sem geometria, nSemGeo).
-export async function clashCandidatos(V, regexesA, regexesB, tol){
-  V._cancelar=false; tol = (tol==null?0.01:tol);
+// FOLGA MÍNIMA (`folga`, m; 0/ausente = não verifica): pares que NÃO conflitam mas
+// ficam a menos de `folga` um do outro entram como achado de folga (p.folga=true,
+// p.dist = distância medida na geometria); contados em nFolga, fora de nPares.
+export async function clashCandidatos(V, regexesA, regexesB, tol, folga){
+  V._cancelar=false; tol = (tol==null?0.01:tol); folga = (folga>0 ? folga : 0);
   const A=await _caixasDe(V, regexesA), B=await _caixasDe(V, regexesB);
-  if(!A.length || !B.length) return { nPares:0, nCand:0, nA:0, nB:0, vazioA:!A.length, vazioB:!B.length, porModA:{}, porModB:{} };
+  if(!A.length || !B.length) return { nPares:0, nCand:0, nFolga:0, nA:0, nB:0, vazioA:!A.length, vazioB:!B.length, porModA:{}, porModB:{} };
   const cell=2.0, grid=new Map();
-  const cellsOf=(b)=>{ const out=[];
-    for(let cx=Math.floor(b.min.x/cell);cx<=Math.floor(b.max.x/cell);cx++)
-    for(let cy=Math.floor(b.min.y/cell);cy<=Math.floor(b.max.y/cell);cy++)
-    for(let cz=Math.floor(b.min.z/cell);cz<=Math.floor(b.max.z/cell);cz++) out.push(cx+'|'+cy+'|'+cz);
+  const cellsOf=(b,m)=>{ const out=[]; m=m||0;
+    for(let cx=Math.floor((b.min.x-m)/cell);cx<=Math.floor((b.max.x+m)/cell);cx++)
+    for(let cy=Math.floor((b.min.y-m)/cell);cy<=Math.floor((b.max.y+m)/cell);cy++)
+    for(let cz=Math.floor((b.min.z-m)/cell);cz<=Math.floor((b.max.z+m)/cell);cz++) out.push(cx+'|'+cy+'|'+cz);
     return out; };
   B.forEach((it,bi)=>{ for(const k of cellsOf(it.b)){ let a=grid.get(k); if(!a){a=[];grid.set(k,a);} a.push(bi); } });
   const inter=(a,b)=>{ return (Math.min(a.max.x,b.max.x)-Math.max(a.min.x,b.min.x))>tol
     && (Math.min(a.max.y,b.max.y)-Math.max(a.min.y,b.min.y))>tol
     && (Math.min(a.max.z,b.max.z)-Math.max(a.min.z,b.min.z))>tol; };
-  // Fase larga: candidatos pela caixa.
-  const cands=[];
+  // perto: as caixas ficam a menos de `folga` (candidato só à verificação de folga)
+  const perto=(a,b)=>(Math.min(a.max.x,b.max.x)-Math.max(a.min.x,b.min.x))>-folga
+    && (Math.min(a.max.y,b.max.y)-Math.max(a.min.y,b.min.y))>-folga
+    && (Math.min(a.max.z,b.max.z)-Math.max(a.min.z,b.min.z))>-folga;
+  // Fase larga: candidatos pela caixa (cands) e só por proximidade (candsF).
+  const cands=[], candsF=[];
   for(let ai=0; ai<A.length; ai++){
     if(V._cancelar) throw new Error('CANCELADO');
     const it=A[ai]; const cand=new Set();
-    for(const k of cellsOf(it.b)){ const arr=grid.get(k); if(arr) for(const bi of arr) cand.add(bi); }
+    for(const k of cellsOf(it.b, folga)){ const arr=grid.get(k); if(arr) for(const bi of arr) cand.add(bi); }
     for(const bi of cand){ const jb=B[bi];
       if(jb.mi===it.mi && jb.id===it.id) continue;              // não conflita consigo mesmo
       if(inter(it.b, jb.b)) cands.push([it, jb]);
+      else if(folga && perto(it.b, jb.b)) candsF.push([it, jb]);
     }
     if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
   }
   // Fase fina: geometria real de quem é candidato (uma leitura por peça, cacheada).
   const idsGeo={};
-  cands.forEach(([a,b])=>{ (idsGeo[a.mi]=idsGeo[a.mi]||new Set()).add(a.id); (idsGeo[b.mi]=idsGeo[b.mi]||new Set()).add(b.id); });
+  cands.concat(candsF).forEach(([a,b])=>{ (idsGeo[a.mi]=idsGeo[a.mi]||new Set()).add(a.id); (idsGeo[b.mi]=idsGeo[b.mi]||new Set()).add(b.id); });
   const tri={};
   for(const [mi,set] of Object.entries(idsGeo)){
     if(V.on&&V.on.dica) V.on.dica('Lendo geometria dos candidatos… ('+cands.length+' pares)');
     tri[mi]=await _trisCacheados(V, +mi, [...set]);
   }
-  const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0, nToque=0, nFalso=0, nSemGeo=0;
+  const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0, nToque=0, nFalso=0, nSemGeo=0, nFolga=0;
+  const marca=(it,jb)=>{ const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
+    const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); } };
+  const folgas=[];   // achados de folga (vão para a lista depois dos conflitos)
+  const testaFolga=(it,jb)=>{ const ta=tri[it.mi].get(it.id), tb=tri[jb.mi].get(jb.id); if(!ta||!tb) return;
+    const m=_distMalhas(ta, tb, it.b, jb.b, folga); if(m.d>=folga) return;
+    nFolga++; marca(it,jb);
+    if(m.pt) V._clashPt.set(it.mi+':'+it.id+'|'+jb.mi+':'+jb.id, m.pt);
+    if(folgas.length<CAP) folgas.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id, y:m.pt?m.pt.y:(it.b.min.y+it.b.max.y)/2, folga:true, dist:m.d, folgaMin:folga }); };
   const pares=[]; const CAP=400;   // lista individual (limitada p/ não travar a UI)
   if(!V._clashPt) V._clashPt=new Map();
   let t0=performance.now();
@@ -2305,12 +2363,11 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
     if(V._cancelar) throw new Error('CANCELADO');
     const [it, jb]=cands[ci];
     const r=_parFino(tri[it.mi].get(it.id), tri[jb.mi].get(jb.id), it.b, jb.b, tol);
-    if(r.tipo==='falso'){ nFalso++; }
-    else if(r.tipo==='toque'){ nToque++; }
+    if(r.tipo==='falso'){ nFalso++; if(folga) testaFolga(it,jb); }
+    else if(r.tipo==='toque'){ nToque++; if(folga) testaFolga(it,jb); }
     else {
       nPares++; if(r.tipo==='semGeo') nSemGeo++;
-      const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
-      const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
+      marca(it,jb);
       if(r.pt) V._clashPt.set(it.mi+':'+it.id+'|'+jb.mi+':'+jb.id, r.pt);
       if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id,
         y: r.pt ? r.pt.y : (Math.max(it.b.min.y,jb.b.min.y)+Math.min(it.b.max.y,jb.b.max.y))/2,
@@ -2320,6 +2377,15 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
       if(V.on&&V.on.dica) V.on.dica('Conferindo na geometria… '+ci+'/'+cands.length);
       await new Promise(r=>setTimeout(r,0)); }
   }
+  for(let ci=0; ci<candsF.length; ci++){
+    if(V._cancelar) throw new Error('CANCELADO');
+    testaFolga(candsF[ci][0], candsF[ci][1]);
+    if(performance.now()-t0>60){ t0=performance.now();
+      if(V.on&&V.on.dica) V.on.dica('Medindo folgas… '+ci+'/'+candsF.length);
+      await new Promise(r=>setTimeout(r,0)); }
+  }
+  folgas.sort((a,b)=>a.dist-b.dist);
+  pares.push(...folgas);   // até CAP conflitos + até CAP folgas (as mais apertadas primeiro)
   // Nomes dos envolvidos (limitado aos que estão na lista) p/ rotular cada conflito.
   const idsPorMod={};
   pares.forEach(p=>{ (idsPorMod[p.aMi]=idsPorMod[p.aMi]||new Set()).add(p.aId); (idsPorMod[p.bMi]=idsPorMod[p.bMi]||new Set()).add(p.bId); });
@@ -2336,7 +2402,7 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
   //  300 linhas iguais "Tipos de tubos × TQS - Viga retangular".
   let fx=[]; try{ fx=_faixasUnicas(await _faixasPavimento(V)); }catch(_){}
   pares.forEach(p=>{ const f=_faixaNoY(fx, p.y); p.pav=f?f.nome:''; });
-  return { nPares, nCand:cands.length, nToque, nFalso, nSemGeo, nA:vA.size, nB:vB.size, porModA, porModB, pares };
+  return { nPares, nCand:cands.length, nToque, nFalso, nSemGeo, nFolga, nA:vA.size, nB:vB.size, porModA, porModB, pares };
 }
 // Botão de CONTEXTO (🗺️): reexibe o MODELO TODO mantendo o par aceso, SEM mexer
 // na câmera — o prédio "materializa" ao redor do conflito na vista atual. Leve.

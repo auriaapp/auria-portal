@@ -586,7 +586,7 @@ html[data-tema=claro] .rvNav .cod{color:#1E3A8A}
 .rvBox{width:16px;height:16px;border-radius:4px;border:1.5px solid #8CA0C4;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;color:#1a1205;font-weight:900}
 .rvBox.x{background:var(--rvLar);border-color:var(--rvLar)}
 .rvCnt{font-family:Consolas,monospace;font-size:11px;font-weight:700;border-radius:6px;padding:1px 7px;flex:none}
-.rvCr{background:rgba(231,76,60,.18);color:#FF9C90}.rvCo{background:rgba(39,174,96,.18);color:#7BE0A5}.rvCn{background:#152036;color:#8CA0C4;border:1px solid #2C3B5C}
+.rvCr{background:rgba(231,76,60,.18);color:#FF9C90}.rvCa{background:rgba(232,150,10,.18);color:#F5B547}.rvCo{background:rgba(39,174,96,.18);color:#7BE0A5}.rvCn{background:#152036;color:#8CA0C4;border:1px solid #2C3B5C}
 .rvCfg{display:none;padding:2px 10px 10px;border-top:1px dashed #2C3B5C}
 .rvVf.aberto .rvCfg{display:block}
 .rvLbl{color:#8CA0C4;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin:9px 0 5px}
@@ -5287,7 +5287,7 @@ function clashResumoFino(r){
   if(r.nSemGeo) s+='; '+r.nSemGeo+' sem geometria carregada (mantidos, conferir)';
   return s+'.';
 }
-function clashProfTxt(p){ return p&&p.prof!=null ? (p.prof>=0.5?'entra ≥ 50 cm':'entra '+(p.prof*100).toFixed(1).replace('.',',')+' cm') : (p&&p.semGeo?'não conferido na geometria':''); }
+function clashProfTxt(p){ if(p&&p.folga) return 'folga '+(p.dist*100).toFixed(1).replace('.',',')+' cm (mín. '+Math.round(p.folgaMin*100)+' cm)'; return p&&p.prof!=null ? (p.prof>=0.5?'entra ≥ 50 cm':'entra '+(p.prof*100).toFixed(1).replace('.',',')+' cm') : (p&&p.semGeo?'não conferido na geometria':''); }
 // Pavimento do cadastro citado na pergunta → token "pavimento @pav:<id>" (resolvido no
 // execDiretiva para os andares de cada modelo aberto). "área de piso" = área das lajes/pisos.
 function pavTokenizar(s){
@@ -5674,7 +5674,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15b').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15c').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -11042,10 +11042,10 @@ function rvRender(){
   const V=[
     {k:'dup', n:'Elementos duplicados', s:'mesma categoria no mesmo lugar', cfg:'<div class="rvMini" style="margin-top:8px">Sem configuração: mesma categoria e mesma caixa (arredondada a 5 mm).</div>'},
     {k:'proxy', n:'Entidade genérica', s:'IfcBuildingElementProxy', cfg:'<div class="rvMini" style="margin-top:8px">Sem configuração: peças exportadas sem a classe própria.</div>'},
-    {k:'clash', n:'Conflitos (clash)', s:pares.length+' par(es) · tolerância '+RV.tol+' cm', cfg:
+    {k:'clash', n:'Conflitos (clash)', s:pares.length+' par(es) · tolerância '+RV.tol+' cm'+(pares.some(p=>p[2]>0)?' · folga em '+pares.filter(p=>p[2]>0).length:''), cfg:
       (!CLASH_PRES.length ? '<div class="rvMini" style="margin-top:8px">Abra um modelo no 3D para listar as categorias.</div>' :
-      '<div class="rvLbl">Pares a verificar</div>'
-      + pares.map((p,i)=>`<div class="rvPar"><span style="color:#EF4444">■</span><select class="rvSel" onchange="RV.pares[${i}][0]=this.value;rvRender()">${rvOpts(p[0])}</select><b class="rvMini">×</b><span style="color:#22D3EE">■</span><select class="rvSel" onchange="RV.pares[${i}][1]=this.value;rvRender()">${rvOpts(p[1])}</select><button class="xb" onclick="RV.pares.splice(${i},1);rvRender()" title="Remover par">✕</button></div>`).join('')
+      '<div class="rvLbl">Pares a verificar <span class="rvMini" style="float:right;text-transform:none">folga mín.</span></div>'
+      + pares.map((p,i)=>`<div class="rvPar"><span style="color:#EF4444">■</span><select class="rvSel" onchange="RV.pares[${i}][0]=this.value;rvRender()">${rvOpts(p[0])}</select><b class="rvMini">×</b><span style="color:#22D3EE">■</span><select class="rvSel" onchange="RV.pares[${i}][1]=this.value;rvRender()">${rvOpts(p[1])}</select><input class="rvNum" type="number" min="0" max="100" step="1" value="${p[2]||0}" title="Folga mínima entre as peças deste par, em cm (0 = não verifica). Peças mais próximas que isso, sem se tocar, viram achado de folga." onchange="RV.pares[${i}][2]=Math.max(0,+this.value||0);rvRender()" style="width:44px;flex:0 0 44px"><span class="rvMini">cm</span><button class="xb" onclick="RV.pares.splice(${i},1);rvRender()" title="Remover par">✕</button></div>`).join('')
       + '<div class="rvMini" style="margin:6px 0 5px">Pares prontos (clique para adicionar):</div><div class="rvPills" style="margin:0">'
       + RV_PRONTOS.filter(p=>rvTemCat(p[0])&&rvTemCat(p[1])).map(p=>`<button class="rvPill ${pares.some(q=>q[0]===p[0]&&q[1]===p[1])?'on':''}" onclick="rvAddPar('${p[0]}','${p[1]}')">${p[0]} × ${p[1]}</button>`).join('')
       + `<button class="rvPill" onclick="RV.pares.push([CLASH_PRES[0].lbl,(CLASH_PRES[1]||CLASH_PRES[0]).lbl]);rvRender()">＋ personalizado</button></div>`
@@ -11095,14 +11095,16 @@ async function rvVerificar(){
     }
     if(RV.vf.clash){
       const todos=[];
-      for(const [la,lb] of (RV.pares||[])){
+      for(const [la,lb,fg] of (RV.pares||[])){
         bt.textContent='Conflitos: '+la+' × '+lb+'…';
-        const r=await B3.clashCandidatos(F3D, rvRx(la), rvRx(lb), RV.tol/100);
+        const r=await B3.clashCandidatos(F3D, rvRx(la), rvRx(lb), RV.tol/100, (fg||0)/100);
         if(r.vazioA||r.vazioB){ avisos.push(la+' × '+lb+': um dos grupos não tem peças.'); continue; }
-        if(r.nPares>(r.pares||[]).length) avisos.push(la+' × '+lb+': mostrando '+r.pares.length+' de '+r.nPares+'.');
+        const nCf=(r.pares||[]).filter(p=>!p.folga).length, nFg=(r.pares||[]).length-nCf;
+        if(r.nPares>nCf) avisos.push(la+' × '+lb+': mostrando '+nCf+' de '+r.nPares+' conflitos.');
+        if(r.nFolga) avisos.push(la+' × '+lb+': '+r.nFolga+' par(es) com folga menor que '+fg+' cm'+(r.nFolga>nFg?' (mostrando os '+nFg+' mais apertados)':'')+'.');
         if(r.nCand>r.nPares) avisos.push(la+' × '+lb+': '+clashResumoFino(r));
-        (r.pares||[]).forEach(p=>{ todos.push(p); A.push({ tipo:'clash', ic:'⚔', titulo:p.aNome+' × '+p.bNome, sub:la+' × '+lb+(clashProfTxt(p)?' · '+clashProfTxt(p):''), pi:todos.length-1,
-          key:'c:'+rvArq(p.aMi)+':'+p.aId+'|'+rvArq(p.bMi)+':'+p.bId }); });
+        (r.pares||[]).forEach(p=>{ todos.push(p); A.push({ tipo:'clash', folga:!!p.folga, ic:p.folga?'↔':'⚔', titulo:p.aNome+' × '+p.bNome, sub:la+' × '+lb+(clashProfTxt(p)?' · '+clashProfTxt(p):''), pi:todos.length-1,
+          key:(p.folga?'g:':'c:')+rvArq(p.aMi)+':'+p.aId+'|'+rvArq(p.bMi)+':'+p.bId }); });
       }
       CLASH_PARES=todos;
     }
@@ -11144,7 +11146,7 @@ function rvRenderAch(){
     const ra = st==='novo'
       ? `<button title="Virar apontamento" onclick="event.stopPropagation();rvApontar(${i})">⊕</button>${a.tipo==='clash'?`<button title="Contexto translúcido" onclick="event.stopPropagation();rvContexto(${i})">◌</button>`:''}<button title="Ignorar" onclick="event.stopPropagation();RV.ign=${i};rvRenderAch()">✕</button>`
       : st==='ign' ? `<button title="Desfazer" onclick="event.stopPropagation();RV.st['${a.key}']='novo';delete RV.motivo['${a.key}'];rvGuardar();rvRender()">↺</button>` : '';
-    let h=`<div class="rvAr ${RV.sel===i?'sel':''}" onclick="rvSel(${i})"><span class="rvCnt rvCr" style="padding:1px 5px">${a.ic}</span><span class="t" title="${esc(a.titulo)}">${esc(a.titulo)}<br><span class="rvMini">${esc(a.sub)}</span></span><span class="rvRa">${ra}</span>${badge}</div>`;
+    let h=`<div class="rvAr ${RV.sel===i?'sel':''}" onclick="rvSel(${i})"><span class="rvCnt ${a.folga?'rvCa':'rvCr'}" style="padding:1px 5px">${a.ic}</span><span class="t" title="${esc(a.titulo)}">${esc(a.titulo)}<br><span class="rvMini">${esc(a.sub)}</span></span><span class="rvRa">${ra}</span>${badge}</div>`;
     if(RV.ign===i) h+=`<div class="rvIgn"><input id="rvIgnTx" placeholder="Motivo (ex.: furo previsto na fôrma)" onkeydown="if(event.key==='Enter')rvIgnorar(${i})"><button onclick="rvIgnorar(${i})">Ignorar</button></div>`;
     if(st==='ign'&&RV.motivo[a.key]) h+=`<div class="rvMot">“${esc(RV.motivo[a.key])}”</div>`;
     return h; }).join('') || '<div class="rvMini" style="padding:8px">Nada neste filtro.</div>';
@@ -11290,7 +11292,7 @@ async function rvExportar(){
     };
     const header=(ws, cols, row)=>{ const hr=ws.getRow(row); cols.forEach((c,i)=>{ if(c.key==='_') return; const cell=hr.getCell(i+1); cell.value=c.h; cell.font={bold:true,color:{argb:BRANCO},size:11};
       cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}}; cell.alignment={vertical:'middle',horizontal:'center',wrapText:true}; }); hr.height=22; };
-    const lin=RV.ach.map((a,i)=>({ n:i+1, tipo:TIPO[a.tipo]||'Filtro salvo', ach:a.titulo||'', pav:rvPavDoAchado(mapas,a), ctx:a.sub||'', st:ST[RV.st[a.key]]||'', apt:RV.cod[a.key]||'', mot:RV.motivo[a.key]||'' }));
+    const lin=RV.ach.map((a,i)=>({ n:i+1, tipo:a.folga?'Folga insuficiente':(TIPO[a.tipo]||'Filtro salvo'), ach:a.titulo||'', pav:rvPavDoAchado(mapas,a), ctx:a.sub||'', st:ST[RV.st[a.key]]||'', apt:RV.cod[a.key]||'', mot:RV.motivo[a.key]||'' }));
     // ── Resumo ──
     const rCols=[{key:'t',h:'Tipo',w:26},{key:'tot',h:'Total',w:12},{key:'novo',h:'Novos',w:12},{key:'apt',h:'Apontados',w:13},{key:'ign',h:'Ignorados',w:13},{key:'_',h:'',w:26}];   // última = espaço da logo do empreendimento
     const wsR=wb.addWorksheet('Resumo',{ views:[{state:'frozen',ySplit:5}] }); wsR.columns=rCols.map(c=>({key:c.key,width:c.w}));
