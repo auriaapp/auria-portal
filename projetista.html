@@ -1537,8 +1537,15 @@ document.addEventListener('paste',function(e){
 });
 document.addEventListener('click',function(e){ var b=e.target; if(b&&b.classList&&b.classList.contains('x')&&b.hasAttribute('data-pi')){ P_ANEX.splice(+b.getAttribute('data-pi'),1); renderStgP(); } });
 
+// 113 F3: disciplinas deste projetista no apontamento (pelo e-mail nos participantes).
+function _minhasDiscs(a){ const em=((USER&&USER.email)||'').toLowerCase(), ps=a.participantes||{};
+  return Object.keys(ps).filter(k=>((ps[k]&&ps[k].emails)||'').toLowerCase().split(/[,;\s]+/).map(s=>s.trim()).includes(em)); }
+// Todas as disciplinas dele com pendência já concluídas → a parte dele está resolvida.
+function _minhaParteOk(a){ const ps=a.participantes||{}, ds=_minhasDiscs(a).filter(k=>((ps[k]&&ps[k].nivel)||'Pendência')==='Pendência');
+  return ds.length>0 && ds.every(k=>String((ps[k]&&ps[k].conclusao)||'').trim()); }
 function isAtrasado(a){
   if(a.status==='Resolvido') return false;
+  if(_minhaParteOk(a)) return false;   // a parte dele já foi resolvida; o atraso é de outra disciplina
   if(!a.prazo_min) return false;
   const [d,m,y]=a.prazo_min.split('/');
   return new Date(y,m-1,d)<new Date();
@@ -1755,6 +1762,7 @@ function abrirModal(id){
       <div class="field-group"><label>Disciplina</label><p>${escH(discFullName(a.disciplina))||'—'}</p></div>
     </div>
     ${a.prancha_nome?`<div class="field-full"><label>Prancha</label><p>📄 ${escH(a.prancha_nome)}</p></div>`:''}
+    <div class="field-full" id="pj-locais" style="display:none"></div>
     <div class="field-row">
       <div class="field-group"><label>Status</label>
         <p><span class="badge ${atr?'badge-late':a.status==='Resolvido'?'badge-resolved':'badge-open'}">${atr?'Em atraso':a.status}</span></p>
@@ -1820,6 +1828,35 @@ function abrirModal(id){
     ${a.status==='Resolvido'?'<p style="text-align:center;color:#27AE60;font-weight:700;padding:16px 0">✅ Apontamento resolvido</p>':''}
   `;
   document.getElementById('modal').classList.add('open');
+  _pjLocais(a);
+}
+// 113 F3: "Seus locais" — onde a disciplina dele ainda falta e onde já foi resolvido.
+// Só aparece com mais de um local ou mais de uma disciplina (com um só, o status já diz).
+async function _pjLocais(a){
+  const el=document.getElementById('pj-locais'); if(!el) return;
+  try{
+    const { data, error }=await sb.from('apontamento_pendencia_auria').select('local_key,pav,disciplina,estado,resolvido_em')
+      .eq('empreendimento_id',a.empreendimento_id).eq('apontamento_id',a.id);
+    if(error || !data || !data.length) return;
+    const locs=new Set(data.map(r=>r.local_key)), discs=new Set(data.map(r=>r.disciplina));
+    if(locs.size<2 && discs.size<2) return;
+    const mine=new Set(_minhasDiscs(a)), rows=data.filter(r=>mine.has(r.disciplina));
+    const nome=r=>r.pav||(r.local_key==='geral'?'geral':'prancha');
+    const dt=r=>r.resolvido_em?new Date(r.resolvido_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
+    const chip=(t,ok,tit)=>`<span title="${escH(tit)}" style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:10px;font:600 11px Consolas,monospace;${ok?'background:#E8F7EE;color:#1E7A46':'background:#FFF1E6;color:#C2410C'}">${escH(t)}${ok?' ✓':''}</span>`;
+    let h='';
+    if(rows.length){
+      const pend=rows.filter(r=>r.estado==='pendente'), ok=rows.filter(r=>r.estado!=='pendente');
+      h+=pend.length?`<p style="margin:0 0 4px;font-size:12px;color:#334155">Falta em <b>${pend.length}</b> local(is):</p>`+pend.map(r=>chip(nome(r)+(mine.size>1?' · '+r.disciplina:''),false,'Pendente')).join('')
+                    :'<p style="margin:0 0 4px;font-size:12px;color:#1E7A46;font-weight:700">Sua parte está resolvida em todos os locais.</p>';
+      if(ok.length) h+=`<p style="margin:6px 0 4px;font-size:11px;color:#7A9AB8">Resolvidos pela coordenação:</p>`+ok.map(r=>chip(nome(r)+(mine.size>1?' · '+r.disciplina:''),true,'Resolvido em '+dt(r))).join('');
+    }
+    const outras=[...discs].filter(d=>!mine.has(d));
+    if(outras.length) h+=`<p style="margin:6px 0 0;font-size:11px;color:#7A9AB8">Outras disciplinas neste apontamento: ${outras.map(d=>escH(d)+(data.some(r=>r.disciplina===d&&r.estado==='pendente')?'':' ✓')).join(', ')}</p>`;
+    if(!h) return;
+    el.innerHTML='<label>Seus locais</label><div style="margin-top:4px">'+h+'</div>';
+    el.style.display='';
+  }catch(e){ console.warn('locais do apontamento:', e); }
 }
 
 function fecharModal(){document.getElementById('modal').classList.remove('open');}

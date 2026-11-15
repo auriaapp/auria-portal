@@ -4010,7 +4010,18 @@ async function aptPendMarcar(ids, resolvido){
     const { error }=await sb.rpc('apt_pend_marcar',{ p_emp:EMP.id, p_apt:a.id, p_ids:ids, p_resolvido:!!resolvido });
     if(error) throw error;
     await aptPendCarregar();
-    const { data:ap }=await sb.from('apontamentos').select('status').eq('empreendimento_id',EMP.id).eq('id',a.id).maybeSingle();
+    const { data:ap }=await sb.from('apontamentos').select('status,participantes,prazo_min,conclusao,atrasado,dias_atraso').eq('empreendimento_id',EMP.id).eq('id',a.id).maybeSingle();
+    // 113 F3: o banco recalcula a conclusão por disciplina; o editor aberto não pode
+    // salvar por cima com a data velha. Atualiza só o campo conclusão de cada participante.
+    if(ap && ap.participantes && typeof ap.participantes==='object'){
+      const x=APTS.find(y=>y.id===a.id);
+      Object.entries(ap.participantes).forEach(([d,p])=>{
+        if(a.participantes && a.participantes[d]) a.participantes[d].conclusao=(p&&p.conclusao)||'';
+        document.querySelectorAll('#apParts .part-blk').forEach(r=>{ const s=r.querySelector('[data-f="disc"]'), c=r.querySelector('[data-f="conclusao"]');
+          if(s && c && s.value===d) c.value=brToIso((p&&p.conclusao)||''); });
+      });
+      if(x){ x.participantes=ap.participantes; x.prazo_min=ap.prazo_min; x.conclusao=ap.conclusao; x.atrasado=ap.atrasado; x.dias_atraso=ap.dias_atraso; }
+    }
     if(ap && ap.status!==a.status){
       a.status=ap.status; const s=$('apStatus'); if(s) s.value=ap.status;
       const x=APTS.find(y=>y.id===a.id); if(x) x.status=ap.status;
@@ -9904,9 +9915,12 @@ async function salvarApt(){
   a.local_txt=_apLocalLer().join('; ');
   a.visibilidade=$('apVisib').value;
   a.participantes=lerParts();
-  // Data de conclusão informada → apontamento passa a Resolvido automaticamente.
-  const _temConcl=Object.values(a.participantes).some(p=>(p.conclusao||'').trim());
-  if(_temConcl && a.status!=='Resolvido'){ a.status='Resolvido'; const sel=$('apStatus'); if(sel) sel.value='Resolvido'; }
+  // 113 F3: a conclusão é POR DISCIPLINA (o banco preenche pelas pendências).
+  // Reaberto à mão → limpa as conclusões (o banco reabre as pendências).
+  // Todas as disciplinas com pendência concluídas → Resolvido.
+  const _pPend=Object.values(a.participantes).filter(p=>(p.nivel||'Pendência')==='Pendência');
+  if(antes.status==='Resolvido' && a.status!=='Resolvido') Object.values(a.participantes).forEach(p=>{ p.conclusao=''; });
+  else if(_pPend.length && _pPend.every(p=>(p.conclusao||'').trim()) && a.status!=='Resolvido'){ a.status='Resolvido'; const sel=$('apStatus'); if(sel) sel.value='Resolvido'; }
   if(!a.titulo){ alert('Informe o título.'); return; }
   // Aviso: salvar sem NENHUM prazo definido (como no desktop)
   const temPrazo=Object.values(a.participantes).some(p=>(p.prazo||'').trim());
