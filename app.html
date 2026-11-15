@@ -5115,15 +5115,26 @@ async function f3dExecClashIA(arg, textoOriginal){
     pares=pares.filter(p=>em(p.aMi,p.aId)||em(p.bMi,p.bId)); n=pares.length;
   }
   const onde=pv?(' no pavimento '+(pv.pav.codigo||'').toUpperCase()+' — '+(pv.pav.nome||'')):' no modelo inteiro';
-  if(!n) return { msg:'✓ Nenhum conflito entre '+la+' e '+lb+onde+'.'+aviso };
+  const fino=clashResumoFino(r)?' '+clashResumoFino(r):'';
+  if(!n) return { msg:'✓ Nenhum conflito entre '+la+' e '+lb+onde+'.'+aviso+fino };
   const porA={}, porB={}; pares.forEach(p=>{ (porA[p.aMi]=porA[p.aMi]||[]).push(p.aId); (porB[p.bMi]=porB[p.bMi]||[]).push(p.bId); });
   await B3.mostrarClash(F3D, porA, porB); f3dBotaoVoltar(true);
   CLASH_PARES=pares;
   const html='<div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:6px">'
     + pares.slice(0,60).map((p,i)=>'<div style="padding:4px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--line)" onclick="f3dClashZoom('+i+')">'+(i+1)+'. <span style="color:#ef4444">'+esc(p.aNome||'')+'</span> × <span style="color:#0891b2">'+esc(p.bNome||'')+'</span></div>').join('')
     + '</div>'+(pares.length>60?'<div style="font-size:10px;color:var(--mut)">Mostrando 60 de '+pares.length+'.</div>':'');
-  return { msg:'⚔ **'+n+' conflito(s)** entre '+la+' (vermelho) e '+lb+' (azul)'+onde+aviso+'. Clique num item para dar zoom; ↩ no topo volta.', html };
+  return { msg:'⚔ **'+n+' conflito(s)** entre '+la+' (vermelho) e '+lb+' (azul)'+onde+aviso+'.'+fino+' Clique num item para dar zoom; ↩ no topo volta.', html };
 }
+// Resumo da fase fina do clash (candidatos pela caixa × confirmados na geometria).
+function clashResumoFino(r){
+  if(!r || r.nCand==null) return '';
+  const fora=(r.nFalso||0)+(r.nToque||0);
+  let s=r.nCand+' candidato(s) pela caixa envolvente; '+r.nPares+' confirmado(s) na geometria';
+  if(fora) s+=' ('+(r.nFalso||0)+' sem contato'+(r.nToque?', '+r.nToque+' só encostam':'')+')';
+  if(r.nSemGeo) s+='; '+r.nSemGeo+' sem geometria carregada (mantidos, conferir)';
+  return s+'.';
+}
+function clashProfTxt(p){ return p&&p.prof!=null ? (p.prof>=0.5?'entra ≥ 50 cm':'entra '+(p.prof*100).toFixed(1).replace('.',',')+' cm') : (p&&p.semGeo?'não conferido na geometria':''); }
 // Pavimento do cadastro citado na pergunta → token "pavimento @pav:<id>" (resolvido no
 // execDiretiva para os andares de cada modelo aberto). "área de piso" = área das lajes/pisos.
 function pavTokenizar(s){
@@ -5510,7 +5521,7 @@ function bim3d(){
   // até Ctrl+F5 nem sempre pega uma versão nova. Bumpar o `?v=` a cada
   // deploy do bim3d.js força o download. O valor bate com o comentário
   // "bim3d version" no topo do arquivo — trocar os dois juntos.
-  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15a').catch(e=>{ _bim3dMod=null; throw e; });
+  if(!_bim3dMod) _bim3dMod = import('./bim3d.js?v=2026-11-15b').catch(e=>{ _bim3dMod=null; throw e; });
   return _bim3dMod;
 }
 let B3=null;   // módulo já resolvido, para as chamadas síncronas dos botões
@@ -8112,15 +8123,15 @@ async function f3dClashVerificar(){
   try{
     const r=await B3.clashCandidatos(F3D, rxs(CLASH_SEL.A), rxs(CLASH_SEL.B), tol);
     if(r.vazioA||r.vazioB){ $('clashRes').innerHTML='<span style="color:#f59e0b">Um dos campos não tem elementos no modelo.</span>'; return; }
-    if(!r.nPares){ $('clashRes').innerHTML='<span style="color:#10b981">✓ Nenhum conflito entre '+esc(rot(CLASH_SEL.A))+' e '+esc(rot(CLASH_SEL.B))+'.</span>'; return; }
+    if(!r.nPares){ $('clashRes').innerHTML='<span style="color:#10b981">✓ Nenhum conflito entre '+esc(rot(CLASH_SEL.A))+' e '+esc(rot(CLASH_SEL.B))+'.</span>'+(r.nCand?'<div style="color:#94a3b8;font-size:11px;margin-top:4px">'+esc(clashResumoFino(r))+'</div>':''); return; }
     await B3.mostrarClash(F3D, r.porModA, r.porModB);
     f3dBotaoVoltar(true);
     CLASH_PARES = r.pares||[];
-    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashApontar(event,'+i+')" title="Virar apontamento (pino 3D)" style="float:right;cursor:pointer;padding:0 3px">➕</span><span onclick="f3dClashContexto(event,'+i+')" title="Ver o entorno translúcido (contexto)" style="float:right;cursor:pointer;padding:0 3px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span>'+(p.pav?'<div style="color:#64748b;font-size:10px;padding-left:16px">'+esc(p.pav)+'</div>':'')+'</div>').join('');
+    const linhas = CLASH_PARES.map((p,i)=> '<div class="clash-row" onclick="f3dClashZoom('+i+')" title="Clique para dar zoom neste conflito"><span onclick="f3dClashApontar(event,'+i+')" title="Virar apontamento (pino 3D)" style="float:right;cursor:pointer;padding:0 3px">➕</span><span onclick="f3dClashContexto(event,'+i+')" title="Ver o entorno translúcido (contexto)" style="float:right;cursor:pointer;padding:0 3px">🗺️</span><span style="color:#94a3b8">'+(i+1)+'.</span> <span style="color:#f87171">'+esc(p.aNome)+'</span> <span style="color:#64748b">×</span> <span style="color:#22d3ee">'+esc(p.bNome)+'</span>'+((p.pav||clashProfTxt(p))?'<div style="color:#64748b;font-size:10px;padding-left:16px">'+esc([p.pav,clashProfTxt(p)].filter(Boolean).join(' · '))+'</div>':'')+'</div>').join('');
     const cap = r.nPares>CLASH_PARES.length ? ('<div style="color:#64748b;font-size:10px;padding:3px 2px">Mostrando os primeiros '+CLASH_PARES.length+' de '+r.nPares+'.</div>') : '';
     const btnExp = '<button onclick="f3dClashExportar()" class="btn" style="width:100%;font-size:11px;margin-top:7px;background:#334155;border-color:#475569">📥 Exportar lista (CSV)</button>';
-    $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' candidato(s) de conflito</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.'
-      +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>Candidatos por caixa envolvente — clique num item para dar zoom; ↩ no topo volta.</i></div>'
+    $('clashRes').innerHTML='<div style="color:#e2e8f0"><b>'+r.nPares+' conflito(s)</b> — <span style="color:#f87171">'+esc(rot(CLASH_SEL.A))+' ('+r.nA+')</span> × <span style="color:#22d3ee">'+esc(rot(CLASH_SEL.B))+' ('+r.nB+')</span>.'
+      +'<div style="color:#94a3b8;font-size:11px;margin:4px 0 6px"><i>'+esc(clashResumoFino(r))+' Clique num item para dar zoom; ↩ no topo volta.</i></div>'
       +'<div id="clashLista" style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,.1);border-radius:8px">'+linhas+'</div>'+cap+btnExp+'</div>';
   }catch(e){ if(String(e&&e.message).includes('CANCELADO')){ $('clashRes').innerHTML='<span style="color:#94a3b8">Interrompido.</span>'; } else { console.warn('clash:',e); $('clashRes').innerHTML='<span style="color:#ef4444">Erro: '+(e.message||e)+'</span>'; } }
   finally{ f3dProcessando(false); f3dDica(''); }
@@ -10935,7 +10946,8 @@ async function rvVerificar(){
         const r=await B3.clashCandidatos(F3D, rvRx(la), rvRx(lb), RV.tol/100);
         if(r.vazioA||r.vazioB){ avisos.push(la+' × '+lb+': um dos grupos não tem peças.'); continue; }
         if(r.nPares>(r.pares||[]).length) avisos.push(la+' × '+lb+': mostrando '+r.pares.length+' de '+r.nPares+'.');
-        (r.pares||[]).forEach(p=>{ todos.push(p); A.push({ tipo:'clash', ic:'⚔', titulo:p.aNome+' × '+p.bNome, sub:la+' × '+lb, pi:todos.length-1,
+        if(r.nCand>r.nPares) avisos.push(la+' × '+lb+': '+clashResumoFino(r));
+        (r.pares||[]).forEach(p=>{ todos.push(p); A.push({ tipo:'clash', ic:'⚔', titulo:p.aNome+' × '+p.bNome, sub:la+' × '+lb+(clashProfTxt(p)?' · '+clashProfTxt(p):''), pi:todos.length-1,
           key:'c:'+rvArq(p.aMi)+':'+p.aId+'|'+rvArq(p.bMi)+':'+p.bId }); });
       }
       CLASH_PARES=todos;

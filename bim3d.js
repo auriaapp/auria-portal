@@ -1,4 +1,4 @@
-// bim3d version: 2026-11-01a  (comentário serve p/ humanos; app.html usa o ?v= do import)
+// bim3d version: 2026-11-15b  (comentário serve p/ humanos; app.html usa o ?v= do import)
 // ============================================================================
 //  Visualizador BIM do Auria — BASE ÚNICA (CDE e App)
 //  --------------------------------------------------------------------------
@@ -237,7 +237,7 @@ async function _montar(V, m, bytes, meu, aviso){
   // Cache do raio-X fica obsoleto (a lista de peças mudou); descarta,
   // será refeito na próxima ativação.
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //novo modelo → recalcula níveis/pavimentos/caixas do clash
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null; V._triCache=null; V._clashPt=null;   //novo modelo → recalcula níveis/pavimentos/caixas do clash
   try{ await V.fragments.update(true); }catch(_){}
   V._pronto = true;   // defensivo: qualquer caminho de carga libera pins/sombra
   // mantém a escolha de ocultar ambientes quando entra um modelo novo na federação
@@ -321,7 +321,7 @@ export async function descarregarUm(V, idBusca){
   // Se estava escondendo peça deste modelo, esquece.
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;   //conjunto de lajes mudou → recalcula pavimentos/caixas do clash
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null; V._triCache=null; V._clashPt=null;   //conjunto de lajes mudou → recalcula pavimentos/caixas do clash
   // Sem nenhum modelo, fragments.update(true) nunca termina e prende a fila de carga.
   if(V.modelos.length){ try{ await V.fragments.update(true); }catch(_){} }
 }
@@ -341,7 +341,7 @@ export async function guardarUm(V, idBusca){
   if(V._xrayUlt && V._xrayUlt.modelo === x) V._xrayUlt = null;
   if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null; V._triCache=null; V._clashPt=null;
   V._guardados = V._guardados || new Map();
   V._guardados.delete(idBusca); V._guardados.set(idBusca, x);   // Map guarda a ordem: o 1º é o mais antigo
   await _guardaTeto(V);
@@ -367,7 +367,7 @@ export async function recuperarUm(V, idBusca){
   redimensionar(V);
   if(eraVazio) enquadrar(V);
   V._xrayReady = false; V._xrayCache = null;
-  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null; V._triCache=null; V._clashPt=null;
   try{ await V.fragments.update(true); }catch(_){}
   V._pronto = true;
   if(V._espacosOn===false){ try{ await setEspacosVisiveis(V,false); }catch(_){} }
@@ -2070,13 +2070,203 @@ async function _boxesCacheadas(V, mi, x, ids){
   }
   return m;
 }
-// Candidatos de conflito entre A e B: pares cujas CAIXAS se interpenetram além
-// da tolerância `tol` (m). Broad-phase com grade uniforme (rápido). Retorna os
-// elementos envolvidos por modelo, p/ destacar. NÃO é clash geométrico confirmado.
+// ── FASE FINA DO CLASH (2026-11-15) ─────────────────────────────────────────
+// A fase larga (caixas) marcava como conflito tudo que caía dentro da CAIXA da
+// outra peça: no Q Tower, ELE×EST deu 830 eletrodutos × lajes e 34 × pilares,
+// TODOS falsos — as lajes "Piso" são faixas estreitas (9,8 m² de laje numa caixa
+// de 110 m²) e os pilares irregulares (L/U) têm caixa muito maior que a peça.
+// Aqui cada par candidato é confirmado na GEOMETRIA REAL (triângulos):
+//   1. triângulos de cada peça que caem na sobreposição das caixas;
+//   2. aresta×triângulo (as superfícies se cruzam?) ou peça contida na outra
+//      (teste de paridade de raio); nenhum dos dois → FALSO, sai da lista;
+//   3. profundidade = maior distância de um ponto de uma peça, dentro da outra,
+//      até a superfície dela; ≤ tolerância → só ENCOSTA, sai da lista.
+// ATENÇÃO: getItemsGeometry devolve no sistema do MODELO, sem o deslocamento da
+// federação (model.object.matrixWorld — no Q Tower o EST vem deslocado 14,5 m);
+// por isso as duas matrizes são aplicadas.
+const _ID4=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+function _mul4(a,b){ const r=new Array(16);
+  for(let c=0;c<4;c++) for(let l=0;l<4;l++) r[c*4+l]=a[l]*b[c*4]+a[4+l]*b[c*4+1]+a[8+l]*b[c*4+2]+a[12+l]*b[c*4+3];
+  return r; }
+// Triângulos em MUNDO por peça (Float64Array, 9 números por triângulo), cacheados
+// como as caixas. Peça sem geometria não entra no cache (fica "não verificada").
+async function _trisCacheados(V, mi, ids){
+  if(!V._triCache) V._triCache={};
+  let m=V._triCache[mi]; if(!m){ m=new Map(); V._triCache[mi]=m; }
+  const faltam=ids.filter(id=>!m.has(id)); if(!faltam.length) return m;
+  const x=V.modelos[mi]; const o=x.model.object;
+  try{ o.updateMatrixWorld(true); }catch(_){}
+  const W=(o&&o.matrixWorld&&o.matrixWorld.elements)||_ID4;
+  for(let p=0;p<faltam.length;p+=100){
+    const lote=faltam.slice(p,p+100); let geo=[];
+    try{ geo=await x.model.getItemsGeometry(lote); }catch(_){ continue; }
+    for(let i=0;i<lote.length;i++){
+      const partes=(geo&&geo[i])||[]; let n=0;
+      for(const g of partes) if(g&&g.indices&&g.positions) n+=g.indices.length;
+      if(!n) continue;
+      const t=new Float64Array(n*3); let k=0;
+      for(const g of partes){ const P=g&&g.positions, I=g&&g.indices; if(!P||!I) continue;
+        const e=(g.transform&&g.transform.elements)||(Array.isArray(g.transform)&&g.transform.length===16?g.transform:_ID4);
+        const M=_mul4(W,e);
+        for(let j=0;j<I.length;j++){ const q=3*I[j], X=P[q],Y=P[q+1],Z=P[q+2];
+          t[k++]=M[0]*X+M[4]*Y+M[8]*Z+M[12]; t[k++]=M[1]*X+M[5]*Y+M[9]*Z+M[13]; t[k++]=M[2]*X+M[6]*Y+M[10]*Z+M[14]; } }
+      m.set(lote[i], t);
+    }
+  }
+  return m;
+}
+// Índices dos triângulos de `t` cuja caixa toca a caixa `b` ({x0,y0,z0,x1,y1,z1}).
+function _trisNaCaixa(t, b){ const out=[];
+  const ix=_indiceXZ(t), bb=ix.bb, visto=new Set();
+  const i0=Math.max(0,Math.floor((b.x0-ix.x0)/ix.s)), i1=Math.min(ix.nx-1,Math.floor((b.x1-ix.x0)/ix.s));
+  const j0=Math.max(0,Math.floor((b.z0-ix.z0)/ix.s)), j1=Math.min(ix.nz-1,Math.floor((b.z1-ix.z0)/ix.s));
+  for(let a=i0;a<=i1;a++) for(let c=j0;c<=j1;c++){ const l=ix.cel.get(a*ix.nz+c); if(!l) continue;
+    for(const k of l){ if(visto.has(k)) continue; visto.add(k);
+      if(bb[6*k+1]<b.x0||bb[6*k]>b.x1||bb[6*k+3]<b.y0||bb[6*k+2]>b.y1||bb[6*k+5]<b.z0||bb[6*k+4]>b.z1) continue;
+      out.push(9*k); } }
+  return out; }
+// Raio (origem o, direção d) × triângulo em t[i..i+8] (Möller–Trumbore). Devolve o parâmetro do raio ou -1.
+function _raioTri(ox,oy,oz, dx,dy,dz, t, i){
+  const ax=t[i],ay=t[i+1],az=t[i+2];
+  const e1x=t[i+3]-ax,e1y=t[i+4]-ay,e1z=t[i+5]-az, e2x=t[i+6]-ax,e2y=t[i+7]-ay,e2z=t[i+8]-az;
+  const hx=dy*e2z-dz*e2y, hy=dz*e2x-dx*e2z, hz=dx*e2y-dy*e2x; const det=e1x*hx+e1y*hy+e1z*hz;
+  if(det>-1e-12 && det<1e-12) return -1; const f=1/det;
+  const sx=ox-ax,sy=oy-ay,sz=oz-az; const u=f*(sx*hx+sy*hy+sz*hz); if(u<0||u>1) return -1;
+  const qx=sy*e1z-sz*e1y, qy=sz*e1x-sx*e1z, qz=sx*e1y-sy*e1x; const v=f*(dx*qx+dy*qy+dz*qz); if(v<0||u+v>1) return -1;
+  return f*(e2x*qx+e2y*qy+e2z*qz); }
+// Índice em PLANTA (grade XZ) dos triângulos de uma malha, cacheado por malha:
+// lajes chegam a 25 mil triângulos e testar todos por ponto deixava 1.645 pares
+// lajes×tubos em minutos. Cada célula guarda os triângulos cuja caixa a cobre.
+const _idxXZ=new WeakMap();
+function _indiceXZ(t){
+  let ix=_idxXZ.get(t); if(ix) return ix;
+  const n=t.length/9; let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity;
+  for(let i=0;i<t.length;i+=3){ const x=t[i], z=t[i+2]; if(x<x0)x0=x; if(x>x1)x1=x; if(z<z0)z0=z; if(z>z1)z1=z; }
+  const W=Math.max(1e-3,x1-x0), D=Math.max(1e-3,z1-z0);
+  let s=Math.max(0.05, Math.sqrt(W*D/Math.max(1,n/2)));
+  while((W/s)*(D/s)>65536) s*=1.5;
+  const nx=Math.max(1,Math.ceil(W/s)), nz=Math.max(1,Math.ceil(D/s));
+  const cel=new Map(); const yMax=new Float64Array(n), bb=new Float64Array(n*6);
+  for(let k=0;k<n;k++){ const i=9*k;
+    const a0=Math.min(t[i],t[i+3],t[i+6]), a1=Math.max(t[i],t[i+3],t[i+6]);
+    const b0=Math.min(t[i+1],t[i+4],t[i+7]), b1=Math.max(t[i+1],t[i+4],t[i+7]);
+    const c0=Math.min(t[i+2],t[i+5],t[i+8]), c1=Math.max(t[i+2],t[i+5],t[i+8]);
+    bb.set([a0,a1,b0,b1,c0,c1], 6*k); yMax[k]=b1;
+    const i0=Math.max(0,Math.floor((a0-x0)/s)), i1=Math.min(nx-1,Math.floor((a1-x0)/s));
+    const j0=Math.max(0,Math.floor((c0-z0)/s)), j1=Math.min(nz-1,Math.floor((c1-z0)/s));
+    for(let a=i0;a<=i1;a++) for(let c=j0;c<=j1;c++){ const key=a*nz+c; let l=cel.get(key); if(!l){ l=[]; cel.set(key,l); } l.push(k); } }
+  ix={ x0,z0,s,nx,nz,cel,bb,yMax }; _idxXZ.set(t, ix); return ix; }
+// Ponto dentro da malha fechada `t`? Paridade de cruzamentos de um raio VERTICAL
+// (+Y), só com os triângulos da coluna do ponto. O ponto é deslocado uma fração
+// de mícron p/ o raio não passar exatamente por arestas de geometria ortogonal.
+function _dentroMalha(px,py,pz, t){
+  const ix=_indiceXZ(t); px+=3.1e-7; pz+=1.7e-7;
+  const a=Math.floor((px-ix.x0)/ix.s), c=Math.floor((pz-ix.z0)/ix.s);
+  if(a<0||c<0||a>=ix.nx||c>=ix.nz) return false;
+  const l=ix.cel.get(a*ix.nz+c); if(!l) return false;
+  let n=0;
+  for(const k of l){ if(ix.yMax[k]<py) continue; const s=_raioTri(px,py,pz, 0,1,0, t, 9*k); if(s>1e-9) n++; }
+  return (n&1)===1; }
+// Distância do ponto à superfície de `t`, mas só procurando até `lim`: devolve
+// `lim` se nenhum triângulo estiver mais perto (= o ponto está mais fundo que lim).
+function _distAte(px,py,pz, t, lim){
+  const ix=_indiceXZ(t); let d=lim;
+  const i0=Math.max(0,Math.floor((px-lim-ix.x0)/ix.s)), i1=Math.min(ix.nx-1,Math.floor((px+lim-ix.x0)/ix.s));
+  const j0=Math.max(0,Math.floor((pz-lim-ix.z0)/ix.s)), j1=Math.min(ix.nz-1,Math.floor((pz+lim-ix.z0)/ix.s));
+  const visto=new Set();
+  for(let a=i0;a<=i1;a++) for(let c=j0;c<=j1;c++){ const l=ix.cel.get(a*ix.nz+c); if(!l) continue;
+    for(const k of l){ if(visto.has(k)) continue; visto.add(k); const b=ix.bb;
+      if(px<b[6*k]-d||px>b[6*k+1]+d||py<b[6*k+2]-d||py>b[6*k+3]+d||pz<b[6*k+4]-d||pz>b[6*k+5]+d) continue;
+      const e=_distPtTri(px,py,pz,t,9*k); if(e<d) d=e; } }
+  return d; }
+// Alguma aresta de um triângulo atravessa o outro? (cobre o cruzamento não coplanar)
+function _triTri(ta, ia, tb, ib){
+  for(let r=0;r<2;r++){ const T1=r?tb:ta, i1=r?ib:ia, T2=r?ta:tb, i2=r?ia:ib;
+    for(let e=0;e<3;e++){ const p=i1+3*e, q=i1+3*((e+1)%3);
+      const dx=T1[q]-T1[p], dy=T1[q+1]-T1[p+1], dz=T1[q+2]-T1[p+2];
+      const s=_raioTri(T1[p],T1[p+1],T1[p+2], dx,dy,dz, T2, i2); if(s>=0 && s<=1) return true; } }
+  return false; }
+// Distância de um ponto ao triângulo t[i..] (ponto mais próximo — Ericson, RTCD 5.1.5).
+function _distPtTri(px,py,pz, t, i){
+  const ax=t[i],ay=t[i+1],az=t[i+2], bx=t[i+3],by=t[i+4],bz=t[i+5], cx=t[i+6],cy=t[i+7],cz=t[i+8];
+  const abx=bx-ax,aby=by-ay,abz=bz-az, acx=cx-ax,acy=cy-ay,acz=cz-az, apx=px-ax,apy=py-ay,apz=pz-az;
+  const d1=abx*apx+aby*apy+abz*apz, d2=acx*apx+acy*apy+acz*apz; let qx,qy,qz;
+  if(d1<=0&&d2<=0){ qx=ax;qy=ay;qz=az; }
+  else { const bpx=px-bx,bpy=py-by,bpz=pz-bz; const d3=abx*bpx+aby*bpy+abz*bpz, d4=acx*bpx+acy*bpy+acz*bpz;
+    if(d3>=0&&d4<=d3){ qx=bx;qy=by;qz=bz; }
+    else { const vc=d1*d4-d3*d2;
+      if(vc<=0&&d1>=0&&d3<=0){ const v=d1/(d1-d3); qx=ax+v*abx;qy=ay+v*aby;qz=az+v*abz; }
+      else { const cpx=px-cx,cpy=py-cy,cpz=pz-cz; const d5=abx*cpx+aby*cpy+abz*cpz, d6=acx*cpx+acy*cpy+acz*cpz;
+        if(d6>=0&&d5<=d6){ qx=cx;qy=cy;qz=cz; }
+        else { const vb=d5*d2-d1*d6;
+          if(vb<=0&&d2>=0&&d6<=0){ const w=d2/(d2-d6); qx=ax+w*acx;qy=ay+w*acy;qz=az+w*acz; }
+          else { const va=d3*d6-d5*d4;
+            if(va<=0&&(d4-d3)>=0&&(d5-d6)>=0){ const w=(d4-d3)/((d4-d3)+(d5-d6)); qx=bx+w*(cx-bx);qy=by+w*(cy-by);qz=bz+w*(cz-bz); }
+            else { const den=1/(va+vb+vc), v=vb*den, w=vc*den; qx=ax+abx*v+acx*w;qy=ay+aby*v+acy*w;qz=az+abz*v+acz*w; } } } } } }
+  return Math.hypot(px-qx,py-qy,pz-qz); }
+// Pontos de amostra dos triângulos `idx` de `t`, só os que caem na caixa `b`,
+// com espaçamento adaptado à área (no máx. ~`cap` pontos).
+function _amostrasNaCaixa(t, idx, b, cap){
+  let area=0; const ar=idx.map(i=>{ const ux=t[i+3]-t[i],uy=t[i+4]-t[i+1],uz=t[i+5]-t[i+2], vx=t[i+6]-t[i],vy=t[i+7]-t[i+1],vz=t[i+8]-t[i+2];
+    const a=Math.hypot(uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx)/2; area+=a; return a; });
+  const passo=Math.max(0.01, Math.sqrt(area/Math.max(1,cap)));
+  const pts=[]; const dentro=(x,y,z)=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1&&z>=b.z0&&z<=b.z1;
+  idx.forEach(i=>{ const L=Math.max(Math.hypot(t[i+3]-t[i],t[i+4]-t[i+1],t[i+5]-t[i+2]), Math.hypot(t[i+6]-t[i],t[i+7]-t[i+1],t[i+8]-t[i+2]), Math.hypot(t[i+6]-t[i+3],t[i+7]-t[i+4],t[i+8]-t[i+5]));
+    const n=Math.min(40, Math.max(1, Math.ceil(L/passo)));
+    for(let u=0;u<=n;u++) for(let v=0;v<=n-u;v++){ const w=n-u-v;
+      const x=(t[i]*u+t[i+3]*v+t[i+6]*w)/n, y=(t[i+1]*u+t[i+4]*v+t[i+7]*w)/n, z=(t[i+2]*u+t[i+5]*v+t[i+8]*w)/n;
+      if(dentro(x,y,z)) pts.push(x,y,z); } });
+  return pts; }
+// Pontos de `pts` dentro da malha `t`: maior profundidade (distância à superfície)
+// e centro dos pontos internos. Profundidade medida até PROF_MAX (acima disso,
+// "≥ 50 cm"). Para cedo quando já tem pontos de sobra e passou da tolerância.
+const PROF_MAX=0.5;
+function _penetracao(pts, t, tol){
+  let prof=0, sx=0,sy=0,sz=0, n=0;
+  for(let k=0;k<pts.length;k+=3){ const x=pts[k],y=pts[k+1],z=pts[k+2];
+    if(!_dentroMalha(x,y,z,t)) continue;
+    n++; sx+=x; sy+=y; sz+=z;
+    if(prof<PROF_MAX){ const d=_distAte(x,y,z,t,PROF_MAX); if(d>prof) prof=d; }
+    if(n>=200 && prof>tol) break; }
+  return { prof, n, c: n?{x:sx/n,y:sy/n,z:sz/n}:null }; }
+// Confirma um par na geometria. Retorna {tipo:'real'|'toque'|'falso'|'semGeo', prof, pt}.
+function _parFino(ta, tb, ba, bb, tol){
+  if(!ta || !tb) return { tipo:'semGeo', prof:0, pt:null };
+  const e=0.002;
+  const ov={ x0:Math.max(ba.min.x,bb.min.x)-e, y0:Math.max(ba.min.y,bb.min.y)-e, z0:Math.max(ba.min.z,bb.min.z)-e,
+             x1:Math.min(ba.max.x,bb.max.x)+e, y1:Math.min(ba.max.y,bb.max.y)+e, z1:Math.min(ba.max.z,bb.max.z)+e };
+  const fa=_trisNaCaixa(ta, ov), fb=_trisNaCaixa(tb, ov);
+  // 1) as superfícies se cruzam?
+  let cruza=false;
+  if(fa.length && fb.length){
+    const bxB=fb.map(i=>[Math.min(tb[i],tb[i+3],tb[i+6]),Math.max(tb[i],tb[i+3],tb[i+6]),Math.min(tb[i+1],tb[i+4],tb[i+7]),Math.max(tb[i+1],tb[i+4],tb[i+7]),Math.min(tb[i+2],tb[i+5],tb[i+8]),Math.max(tb[i+2],tb[i+5],tb[i+8])]);
+    for(const ia of fa){ if(cruza) break;
+      const ax0=Math.min(ta[ia],ta[ia+3],ta[ia+6]), ax1=Math.max(ta[ia],ta[ia+3],ta[ia+6]), ay0=Math.min(ta[ia+1],ta[ia+4],ta[ia+7]), ay1=Math.max(ta[ia+1],ta[ia+4],ta[ia+7]), az0=Math.min(ta[ia+2],ta[ia+5],ta[ia+8]), az1=Math.max(ta[ia+2],ta[ia+5],ta[ia+8]);
+      for(let j=0;j<fb.length;j++){ const q=bxB[j];
+        if(ax1<q[0]||ax0>q[1]||ay1<q[2]||ay0>q[3]||az1<q[4]||az0>q[5]) continue;
+        if(_triTri(ta, ia, tb, fb[j])){ cruza=true; break; } } }
+  }
+  // 2) uma dentro da outra (sem cruzar superfície)?
+  if(!cruza){
+    const contida=(fa.length && _dentroMalha(ta[fa[0]],ta[fa[0]+1],ta[fa[0]+2], tb)) || (fb.length && _dentroMalha(tb[fb[0]],tb[fb[0]+1],tb[fb[0]+2], ta));
+    if(!contida) return { tipo:'falso', prof:0, pt:null };
+  }
+  // 3) quanto entra: pontos de A dentro de B e de B dentro de A
+  const pa=_penetracao(_amostrasNaCaixa(ta, fa, ov, 1500), tb, tol);
+  const pb=pa.prof>tol ? {prof:0,n:0,c:null} : _penetracao(_amostrasNaCaixa(tb, fb, ov, 1500), ta, tol);
+  const prof=Math.max(pa.prof, pb.prof);
+  const pt=pa.c||pb.c||{ x:(ov.x0+ov.x1)/2, y:(ov.y0+ov.y1)/2, z:(ov.z0+ov.z1)/2 };
+  return { tipo: prof>tol ? 'real' : 'toque', prof, pt };
+}
+
+// Conflitos entre A e B. Fase larga: pares cujas CAIXAS se interpenetram além da
+// tolerância `tol` (m), com grade uniforme. Fase fina: cada candidato é confirmado
+// na geometria real (ver acima). Retorna os elementos envolvidos por modelo, p/ destacar.
+// nCand = candidatos pela caixa; nPares = confirmados (+ os sem geometria, nSemGeo).
 export async function clashCandidatos(V, regexesA, regexesB, tol){
   V._cancelar=false; tol = (tol==null?0.01:tol);
   const A=await _caixasDe(V, regexesA), B=await _caixasDe(V, regexesB);
-  if(!A.length || !B.length) return { nPares:0, nA:0, nB:0, vazioA:!A.length, vazioB:!B.length, porModA:{}, porModB:{} };
+  if(!A.length || !B.length) return { nPares:0, nCand:0, nA:0, nB:0, vazioA:!A.length, vazioB:!B.length, porModA:{}, porModB:{} };
   const cell=2.0, grid=new Map();
   const cellsOf=(b)=>{ const out=[];
     for(let cx=Math.floor(b.min.x/cell);cx<=Math.floor(b.max.x/cell);cx++)
@@ -2087,22 +2277,48 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
   const inter=(a,b)=>{ return (Math.min(a.max.x,b.max.x)-Math.max(a.min.x,b.min.x))>tol
     && (Math.min(a.max.y,b.max.y)-Math.max(a.min.y,b.min.y))>tol
     && (Math.min(a.max.z,b.max.z)-Math.max(a.min.z,b.min.z))>tol; };
-  const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0;
-  const pares=[]; const CAP=400;   // lista individual (limitada p/ não travar a UI)
+  // Fase larga: candidatos pela caixa.
+  const cands=[];
   for(let ai=0; ai<A.length; ai++){
     if(V._cancelar) throw new Error('CANCELADO');
     const it=A[ai]; const cand=new Set();
     for(const k of cellsOf(it.b)){ const arr=grid.get(k); if(arr) for(const bi of arr) cand.add(bi); }
     for(const bi of cand){ const jb=B[bi];
       if(jb.mi===it.mi && jb.id===it.id) continue;              // não conflita consigo mesmo
-      if(inter(it.b, jb.b)){ nPares++;
-        const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
-        const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
-        if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id,
-          y:(Math.max(it.b.min.y,jb.b.min.y)+Math.min(it.b.max.y,jb.b.max.y))/2 });
-      }
+      if(inter(it.b, jb.b)) cands.push([it, jb]);
     }
     if(ai%150===0){ if(V.on&&V.on.dica) V.on.dica('Verificando conflitos… '+ai+'/'+A.length); await new Promise(r=>setTimeout(r,0)); }
+  }
+  // Fase fina: geometria real de quem é candidato (uma leitura por peça, cacheada).
+  const idsGeo={};
+  cands.forEach(([a,b])=>{ (idsGeo[a.mi]=idsGeo[a.mi]||new Set()).add(a.id); (idsGeo[b.mi]=idsGeo[b.mi]||new Set()).add(b.id); });
+  const tri={};
+  for(const [mi,set] of Object.entries(idsGeo)){
+    if(V.on&&V.on.dica) V.on.dica('Lendo geometria dos candidatos… ('+cands.length+' pares)');
+    tri[mi]=await _trisCacheados(V, +mi, [...set]);
+  }
+  const porModA={}, porModB={}; const vA=new Set(), vB=new Set(); let nPares=0, nToque=0, nFalso=0, nSemGeo=0;
+  const pares=[]; const CAP=400;   // lista individual (limitada p/ não travar a UI)
+  if(!V._clashPt) V._clashPt=new Map();
+  let t0=performance.now();
+  for(let ci=0; ci<cands.length; ci++){
+    if(V._cancelar) throw new Error('CANCELADO');
+    const [it, jb]=cands[ci];
+    const r=_parFino(tri[it.mi].get(it.id), tri[jb.mi].get(jb.id), it.b, jb.b, tol);
+    if(r.tipo==='falso'){ nFalso++; }
+    else if(r.tipo==='toque'){ nToque++; }
+    else {
+      nPares++; if(r.tipo==='semGeo') nSemGeo++;
+      const ka=it.mi+':'+it.id; if(!vA.has(ka)){ vA.add(ka); (porModA[it.mi]=porModA[it.mi]||[]).push(it.id); }
+      const kb=jb.mi+':'+jb.id; if(!vB.has(kb)){ vB.add(kb); (porModB[jb.mi]=porModB[jb.mi]||[]).push(jb.id); }
+      if(r.pt) V._clashPt.set(it.mi+':'+it.id+'|'+jb.mi+':'+jb.id, r.pt);
+      if(pares.length<CAP) pares.push({ aMi:it.mi, aId:it.id, bMi:jb.mi, bId:jb.id,
+        y: r.pt ? r.pt.y : (Math.max(it.b.min.y,jb.b.min.y)+Math.min(it.b.max.y,jb.b.max.y))/2,
+        prof: r.tipo==='semGeo' ? null : r.prof, semGeo: r.tipo==='semGeo' });
+    }
+    if(performance.now()-t0>60){ t0=performance.now();
+      if(V.on&&V.on.dica) V.on.dica('Conferindo na geometria… '+ci+'/'+cands.length);
+      await new Promise(r=>setTimeout(r,0)); }
   }
   // Nomes dos envolvidos (limitado aos que estão na lista) p/ rotular cada conflito.
   const idsPorMod={};
@@ -2120,7 +2336,7 @@ export async function clashCandidatos(V, regexesA, regexesB, tol){
   //  300 linhas iguais "Tipos de tubos × TQS - Viga retangular".
   let fx=[]; try{ fx=_faixasUnicas(await _faixasPavimento(V)); }catch(_){}
   pares.forEach(p=>{ const f=_faixaNoY(fx, p.y); p.pav=f?f.nome:''; });
-  return { nPares, nA:vA.size, nB:vB.size, porModA, porModB, pares };
+  return { nPares, nCand:cands.length, nToque, nFalso, nSemGeo, nA:vA.size, nB:vB.size, porModA, porModB, pares };
 }
 // Botão de CONTEXTO (🗺️): reexibe o MODELO TODO mantendo o par aceso, SEM mexer
 // na câmera — o prédio "materializa" ao redor do conflito na vista atual. Leve.
@@ -2179,6 +2395,9 @@ export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
 // Ponto (centro) de um conflito, em coordenadas de mundo — p/ ancorar o pino do apontamento.
 export async function pontoClash(V, aMi, aId, bMi, bId){
   const T=V.THREE;
+  // Ponto medido na geometria pela fase fina (centro da parte de uma peça que está dentro da outra).
+  const fino=V._clashPt && (V._clashPt.get(aMi+':'+aId+'|'+bMi+':'+bId) || V._clashPt.get(bMi+':'+bId+'|'+aMi+':'+aId));
+  if(fino) return { x:fino.x, y:fino.y, z:fino.z };
   const caixa=async(mi,id)=>{ try{ const bs=await V.modelos[mi].model.getBoxes([id]); const b=(bs||[])[0]; if(b) return new T.Box3(new T.Vector3(b.min.x,b.min.y,b.min.z), new T.Vector3(b.max.x,b.max.y,b.max.z)); }catch(_){} return null; };
   const bA=await caixa(aMi,aId), bB=await caixa(bMi,bId);
   if(!bA || !bB) return (bA||bB)?.getCenter(new T.Vector3()) || null;
