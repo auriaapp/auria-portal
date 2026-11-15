@@ -108,6 +108,9 @@ body.fvs-abas #fvsAbas{display:flex}
 .fdTk .x:hover{opacity:1;background:rgba(148,163,184,.3)}
 .fdTk.novo{background:#fff;color:#1E3A5F;border-style:dashed;padding-right:12px}
 #fvsSel{position:absolute;left:8px;right:8px;top:8px;z-index:30;display:none;gap:6px;flex-wrap:wrap;align-items:center;background:rgba(255,255,255,.96);border:1px solid #E2E8F0;border-radius:8px;padding:6px 8px;box-shadow:0 3px 12px rgba(15,23,42,.14);font-size:12px;color:#334155}
+/* a barra de seleção não cobre a aba ◂ de propriedades (nem o painel aberto) */
+body.fvs-dock #fvsSel{right:44px}
+body.fvs-dock:has(.bim-props.on) #fvsSel{right:308px}
 #fvsSel.on{display:flex}
 #fvsSel .rot{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#64748B}
 #fvsSel button{border:1px solid #E2E8F0;background:#fff;color:#334155;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
