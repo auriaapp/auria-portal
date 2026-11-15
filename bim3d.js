@@ -764,8 +764,16 @@ function laco(V){
 export async function pivotarCentro(V){
   const r=V.canvas.getBoundingClientRect();
   const hit=await raycast(V, { clientX:r.left+r.width/2, clientY:r.top+r.height/2 });
-  if(!V.vivo || !hit || !(hit.distance>0)) return;
+  if(!V.vivo) return;
   const dir=new V.THREE.Vector3(); V.camera.getWorldDirection(dir);
+  if(!hit || !(hit.distance>0)){
+    // Olhando o vazio: sem onde ancorar, mas o alvo não pode ficar colado na
+    // câmera (zoom travado). Afasta até um piso na escala do modelo.
+    const piso=V.controls.maxDistance/600;
+    if(piso>0 && piso<Infinity && V.camera.position.distanceTo(V.controls.target) < piso)
+      V.controls.target.copy(V.camera.position).addScaledVector(dir, piso);
+    return;
+  }
   // Empurra o alvo 0,5 m para ALÉM da superfície atingida. Sem isso, o
   // dolly da OrbitControls não consegue cruzar parede/vidro — o zoom
   // aproxima câmera do alvo mas nunca cruza, e o alvo estaria EM CIMA
@@ -814,6 +822,22 @@ function ligarEntrada(V){
     pivotarCentro(V).catch(()=>{}).then(()=>{ pivoOcup=false; });
   };
   el.addEventListener('wheel', ()=> pedirPivo(false), { passive:true });
+  // Toque (celular): a pinça é o "wheel" do dedo — sem reancorar durante ela o
+  // zoom encolhe a distância até o piso e para de andar perto do modelo. E a
+  // órbita (2π por altura da tela) fica rápida demais numa tela de ~600 px:
+  // dedo gira com ~45% e a inércia acaba mais cedo; mouse volta ao padrão.
+  const dedos=new Set();
+  el.addEventListener('pointerdown', (e)=>{
+    const toque=e.pointerType==='touch';
+    V.controls.rotateSpeed   = toque ? 0.45 : 1;
+    V.controls.dampingFactor = toque ? 0.12 : 0.05;
+    if(!toque) return;
+    dedos.add(e.pointerId);
+    if(dedos.size===2) pedirPivo(true);
+  });
+  el.addEventListener('pointermove', (e)=>{ if(e.pointerType==='touch' && dedos.size>=2) pedirPivo(false); });
+  el.addEventListener('pointerup',     (e)=> dedos.delete(e.pointerId));
+  el.addEventListener('pointercancel', (e)=> dedos.delete(e.pointerId));
 
   el.addEventListener('pointerdown', (e)=>{
     if(e.button===1){
