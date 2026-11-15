@@ -2482,44 +2482,51 @@ async function _limparFantasma(V){
   if(V._fantasmaIds){ for(const [mi,ids] of Object.entries(V._fantasmaIds)){ const x=V.modelos[mi]; if(x&&ids&&ids.length){ try{ await x.model.setOpacity(ids,1); }catch(_){} try{ await x.model.resetOpacity(ids); }catch(_){} } } }
   V._fantasmaIds=null; V._fantasma=false;
 }
-// Botão de CONTEXTO FANTASMA (🗺️): deixa translúcido só a VIZINHANÇA do clash
-// (conjunto pequeno → setOpacity seguro, sem o estouro do global) e mantém o par
-// OPACO em vermelho/ciano. Como é um zoom local, a vizinhança já basta de contexto.
+// Botão de CONTEXTO (◌/🗺️): mostra SÓ a vizinhança do conflito, translúcida,
+// com o par OPACO em vermelho/ciano, e leva a câmera até o ponto.
+//  2026-11-15: antes o resto do prédio ficava OPACO e a câmera não se mexia —
+//  pela Revisão (sem zoom antes) o par ficava escondido dentro do prédio. Agora:
+//  · centro = ponto medido na geometria (pontoClash), não o meio das caixas;
+//  · caixas do CACHE do clash (getBoxes cru varia com os tiles da câmera);
+//  · o que está fora do raio some (setVisible), o que está dentro fica 12%;
+//  · teto de peças pelas MAIS PRÓXIMAS (antes o 1º modelo gastava o teto).
 export async function mostrarClashFantasma(V, aMi, aId, bMi, bId){
   const T=V.THREE;
   await _limparFantasma(V);
-  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
-  // Região centrada no PONTO do conflito (interseção das caixas), tamanho FIXO.
-  //  Antes eu expandia a UNIÃO das caixas: um tubo longo tinha caixa enorme e a
-  //  vizinhança capturava milhares de peças → setOpacity estourava a memória e
-  //  travava os cliques seguintes. Agora é uma caixa pequena e com TETO.
-  let bA=null,bB=null;
-  try{ bA=((await V.modelos[aMi].model.getBoxes([aId]))||[])[0]; }catch(_){}
-  try{ bB=((await V.modelos[bMi].model.getBoxes([bId]))||[])[0]; }catch(_){}
-  const ctr=(a,b,ax)=> (a&&b)? (Math.max(a.min[ax],b.min[ax])+Math.min(a.max[ax],b.max[ax]))/2 : (a?(a.min[ax]+a.max[ax])/2 : (b?(b.min[ax]+b.max[ax])/2 : null));
-  const px=ctr(bA,bB,'x'), py=ctr(bA,bB,'y'), pz=ctr(bA,bB,'z');
-  if(px!=null){
-    const R=7, TETO=1500;   // 7 m ao redor do conflito; no máx. 1500 peças
-    const reg={minx:px-R,maxx:px+R,miny:py-R,maxy:py+R,minz:pz-R,maxz:pz+R};
-    const fant={}; let total=0;
-    for(let mi=0; mi<V.modelos.length && total<TETO; mi++){ const x=V.modelos[mi];
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  const pt=await pontoClash(V, aMi, aId, bMi, bId);
+  const R=6, TETO=1500;   // 6 m ao redor do conflito; no máx. 1500 peças translúcidas
+  const cand=[];          // [dist², mi, id]
+  if(pt){
+    for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
       let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
       if(!ids.length) continue;
-      let boxes=[]; try{ boxes=await x.model.getBoxes(ids); }catch(_){}
-      const near=[];
-      for(let i=0;i<ids.length && total<TETO;i++){ const b=(boxes||[])[i]; if(!b) continue; const id=ids[i];
-        if(b.min.x<reg.maxx&&b.max.x>reg.minx&&b.min.y<reg.maxy&&b.max.y>reg.miny&&b.min.z<reg.maxz&&b.max.z>reg.minz
-           && !(mi===aMi&&id===aId) && !(mi===bMi&&id===bId)){ near.push(id); total++; }
-      }
-      if(near.length){ fant[mi]=near; try{ await x.model.setOpacity(near, 0.12); }catch(_){} }
+      const bx=await _boxesCacheadas(V, mi, x, ids);
+      for(const id of ids){ const b=bx.get(id); if(!b) continue;
+        if((mi===aMi&&id===aId)||(mi===bMi&&id===bId)) continue;
+        // distância do ponto à CAIXA (0 se dentro): peça longa que passa perto entra
+        const dx=Math.max(b.min.x-pt.x,0,pt.x-b.max.x), dy=Math.max(b.min.y-pt.y,0,pt.y-b.max.y), dz=Math.max(b.min.z-pt.z,0,pt.z-b.max.z);
+        const d2=dx*dx+dy*dy+dz*dz; if(d2<=R*R) cand.push([d2,mi,id]); }
     }
-    V._fantasmaIds=fant;
   }
+  cand.sort((u,v)=>u[0]-v[0]); if(cand.length>TETO) cand.length=TETO;
+  const fant={}; for(const [,mi,id] of cand) (fant[mi]=fant[mi]||[]).push(id);
+  const vis={}; for(const [mi,ids] of Object.entries(fant)) vis[mi]=ids.slice();
+  (vis[aMi]=vis[aMi]||[]).push(aId); (vis[bMi]=vis[bMi]||[]).push(bId);
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    try{ await x.model.setVisible(undefined,false); }catch(_){}
+    if(vis[mi]&&vis[mi].length){ try{ await x.model.setVisible(vis[mi],true); }catch(_){} }
+    if(fant[mi]&&fant[mi].length){ try{ await x.model.setOpacity(fant[mi], 0.12); }catch(_){} }
+  }
+  V._fantasmaIds=fant;
   // par: opaco + cor
   try{ await V.modelos[aMi].model.setOpacity([aId],1); await V.modelos[aMi].model.highlight([aId],{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){}
   try{ await V.modelos[bMi].model.setOpacity([bId],1); await V.modelos[bMi].model.highlight([bId],{color:new T.Color(0x22D3EE),renderedFaces:1,opacity:1,transparent:false}); }catch(_){}
-  V._isolado=false; V._isoladoPorMod=null; V._colorido=false; V._cores=null; V._fantasma=true;
+  V._isolado=true; V._isoladoPorMod=vis; V._ultimaSelecao=vis; V._colorido=false; V._cores=null; V._fantasma=true;
   try{ await V.fragments.update(true); }catch(_){}
+  if(pt) enquadrarPonto(V, pt, 3);   // câmera no conflito com uns metros de entorno
+  try{ await V.fragments.update(true); }catch(_){}
+  return { n: cand.length };
 }
 // Ponto (centro) de um conflito, em coordenadas de mundo — p/ ancorar o pino do apontamento.
 export async function pontoClash(V, aMi, aId, bMi, bId){
@@ -2700,6 +2707,7 @@ export function marcarNivel(V, ponto, modelo){
   return medida;
 }
 export async function limparPeDireito(V){
+  _limparMapaPd(V); await _limparFantasma(V);
   (V.medida.medidas||[]).slice().forEach(md=>{ if(md._peDireito) removerMedida(V, md); });
   if(V.on.medidas) V.on.medidas(V);
   for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} try{ await x.model.setVisible(undefined,true); }catch(_){} }
@@ -2718,6 +2726,229 @@ export async function mostrarPeDireito(V, achados){
   if(V.on.medidas) V.on.medidas(V);
   try{ await V.fragments.update(true); }catch(_){}
   if(Object.keys(porMod).length) await enquadrarIds(V, porMod);
+}
+// ── PÉ-DIREITO EM GRADE (2026-11-15) ───────────────────────────────────────
+//  Em vez de medir cada peça pela caixa, cobre o pavimento com uma grade de
+//  pontos (passo 25/50/100 cm). Em cada ponto:
+//   · PISO = topo da laje estrutural logo abaixo (raio para baixo nas lajes;
+//     ponto sem laje embaixo fica de fora — vazios, fachada, fora do prédio);
+//   · TETO = primeiro obstáculo SUSPENSO acima (raio para cima, geometria exata,
+//     a mesma do clash). Suspenso = caixa começa ≥ 30 cm acima do piso: assim
+//     paredes, pilares, portas, móveis, prumadas e revestimento de piso não
+//     contam, e qualquer outra coisa (registro, sprinkler, peça genérica) conta.
+//  Pontos com altura livre no intervalo [altMin, altMax) são vermelhos e se
+//  juntam em MANCHAS (vizinhos de lado); até 10 cm acima do máximo = âmbar, só
+//  no mapa. Com IfcSpace no modelo, opção de medir só dentro dos ambientes.
+const PDG_FORA=/^IFC(WALL|WALLSTANDARDCASE|COLUMN|DOOR|WINDOW|CURTAINWALL|PLATE|RAILING|STAIR|STAIRFLIGHT|RAMP|RAMPFLIGHT|FURNISHINGELEMENT|FURNITURE|SPACE|OPENINGELEMENT|FOOTING|PILE|SLAB|VIRTUALELEMENT|ANNOTATION|GRID|SITE|BUILDING|BUILDINGSTOREY|PROJECT|SANITARYTERMINAL)$/;
+const _ehElemento=(cat)=> /^IFC/.test(cat) && !/TYPE$|^IFC(PROPERTY|MATERIAL|SIUNIT|DERIVEDUNIT|UNITASSIGNMENT|RELATIONSHIP|REL)/.test(cat);
+function _rotObst(cat){ return PD_ROT[cat] || ({IFCBUILDINGELEMENTPROXY:'Peça genérica',IFCFLOWCONTROLLER:'Registro',IFCVALVE:'Válvula',IFCFIRESUPPRESSIONTERMINAL:'Sprinkler',
+  IFCSANITARYTERMINAL:'Louça',IFCFLOWMOVINGDEVICE:'Bomba/ventilador',IFCUNITARYEQUIPMENT:'Equipamento',IFCENERGYCONVERSIONDEVICE:'Equipamento'})[cat] || cat.replace(/^IFC/,'').toLowerCase(); }
+export async function temAmbientes(V){
+  for(const x of V.modelos){ try{ const g=await x.model.getItemsOfCategories([/^IFCSPACE$/])||{}; if(Object.values(g).some(a=>a&&a.length)) return true; }catch(_){} }
+  return false; }
+// Menor parâmetro de raio vertical (sentido sg=+1 sobe, -1 desce) contra a malha t, no ponto (px,pz).
+function _raioVert(px,py,pz, sg, t){
+  const ix=_indiceXZ(t);
+  const a=Math.floor((px-ix.x0)/ix.s), c=Math.floor((pz-ix.z0)/ix.s);
+  if(a<0||c<0||a>=ix.nx||c>=ix.nz) return Infinity;
+  const l=ix.cel.get(a*ix.nz+c); if(!l) return Infinity;
+  let best=Infinity;
+  for(const k of l){ const b=6*k;
+    if(px<ix.bb[b]||px>ix.bb[b+1]||pz<ix.bb[b+4]||pz>ix.bb[b+5]) continue;
+    if(sg>0 ? ix.bb[b+3]<py : ix.bb[b+2]>py) continue;
+    const s=_raioTri(px,py,pz, 0,sg,0, t, 9*k); if(s>1e-9 && s<best) best=s; }
+  return best; }
+// Menor Y da malha t DENTRO do quadrado [x0,x1]×[z0,z1] (triângulos recortados
+// no quadrado — Sutherland–Hodgman em XZ, Y interpolado). Um raio só no centro
+// da célula perdia peças finas (conector PEX de 3 cm, tubo correndo entre duas
+// linhas da grade); a célula inteira não perde.
+function _minYCelula(t, x0,x1,z0,z1, y0,y1){
+  let best=Infinity;
+  for(const i of _trisNaCaixa(t,{x0,y0,z0,x1,y1,z1})){
+    let P=[[t[i],t[i+1],t[i+2]],[t[i+3],t[i+4],t[i+5]],[t[i+6],t[i+7],t[i+8]]];
+    const corta=(ax,lim,dentroMaior)=>{ const out=[]; for(let k=0;k<P.length;k++){ const a=P[k], b=P[(k+1)%P.length];
+        const ia=dentroMaior?a[ax]>=lim:a[ax]<=lim, ib=dentroMaior?b[ax]>=lim:b[ax]<=lim;
+        if(ia) out.push(a);
+        if(ia!==ib){ const u=(lim-a[ax])/(b[ax]-a[ax]); out.push([a[0]+u*(b[0]-a[0]),a[1]+u*(b[1]-a[1]),a[2]+u*(b[2]-a[2])]); } }
+      P=out; };
+    corta(0,x0,true); if(P.length) corta(0,x1,false); if(P.length) corta(2,z0,true); if(P.length) corta(2,z1,false);
+    for(const q of P) if(q[1]<best) best=q[1];
+  }
+  return best; }
+// Índice simples em planta (célula `s`) de itens pela caixa: Map(chave → [[mi,id,t]...]).
+function _gradeItens(lista, s){ const cel=new Map();
+  for(const it of lista){ const b=it.b;
+    const i0=Math.floor(b.min.x/s), i1=Math.floor(b.max.x/s), j0=Math.floor(b.min.z/s), j1=Math.floor(b.max.z/s);
+    for(let i=i0;i<=i1;i++) for(let j=j0;j<=j1;j++){ const k=i+'|'+j; let l=cel.get(k); if(!l){ l=[]; cel.set(k,l); } l.push(it); } }
+  return { s, cel, em(x,z){ return cel.get(Math.floor(x/s)+'|'+Math.floor(z/s))||[]; } }; }
+export async function verificarPeDireitoGrade(V, opts){
+  V._cancelar=false; const t0=performance.now();
+  let altMin=(opts&&opts.altMin!=null)?+opts.altMin:2.00, altMax=(opts&&opts.altMax!=null)?+opts.altMax:2.30;
+  if(altMin>altMax){ const t=altMin; altMin=altMax; altMax=t; }
+  const ALERTA=0.10, SUSP=0.30;
+  const passo=Math.max(0.1,(opts&&opts.passo)||0.5);
+  const modelIdx=(opts&&opts.modelIdx)||null, pav=(opts&&opts.pav)||null;
+  const soAmb=!!(opts&&opts.ambientes);
+  const faixas=_faixasUnicas(await _faixasPavimento(V));
+  if(!faixas.length) return { erroFaixas:true, manchas:[], grade:[], total:0 };
+  const dica=(t)=>{ if(V.on&&V.on.dica) V.on.dica(t); };
+  // caixas (cache do clash) e categoria de tudo que é elemento
+  const todos=[];   // {mi,id,cat,b}
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    let g={}; try{ g=await x.model.getItemsOfCategories([/^IFC/])||{}; }catch(_){}
+    const ids=[], catOf=new Map();
+    for(const [cat,arr] of Object.entries(g)){ const c=String(cat).toUpperCase(); if(!_ehElemento(c)) continue; (arr||[]).forEach(id=>{ ids.push(id); catOf.set(id,c); }); }
+    if(!ids.length) continue;
+    dica('Pé-direito em grade: lendo caixas… '+(x.disciplina||x.nome||''));
+    const bx=await _boxesCacheadas(V, mi, x, ids);
+    for(const id of ids){ const b=bx.get(id); if(b) todos.push({mi,id,cat:catOf.get(id),b}); }
+  }
+  const ehEst=V.modelos.map(x=>/(EST|FUN|CON|MET)/i.test(String(x.disciplina||'')+' '+String(x.nome||'').replace(/[-_]/g,' ')));
+  const temEst=ehEst.some(Boolean);
+  const AREA_MIN=0.75;   // mancha menor (chuveiro, conector solto) fica só no mapa
+  const manchas=[], grade=[]; let pontos=0, pequenas=0;
+  for(let fi=0; fi<faixas.length; fi++){ const f=faixas[fi];
+    if(pav && f.nome!==pav) continue;
+    if(V._cancelar) throw new Error('CANCELADO');
+    const yF=f.y, yTopo=yF+altMax+ALERTA;
+    // lajes do piso: topo perto do nível. Só da ESTRUTURA quando ela está aberta
+    //  (laje da arquitetura = piso acabado, 4 cm acima → vigas a 2,31 viravam 2,27).
+    const lajes=todos.filter(o=>o.cat==='IFCSLAB' && (!temEst||ehEst[o.mi]) && o.b.max.y>yF-0.4 && o.b.max.y<yF+0.4);
+    if(!lajes.length) continue;
+    // obstáculos: só das disciplinas marcadas, suspensos, com fundo abaixo do topo da busca
+    const obst=todos.filter(o=>(!modelIdx||modelIdx.includes(o.mi)) && !PDG_FORA.test(o.cat)
+      && o.b.min.y>=yF+SUSP-0.15 && o.b.min.y<yTopo && o.b.max.y>yF+SUSP);
+    const amb = soAmb ? todos.filter(o=>o.cat==='IFCSPACE' && o.b.min.y<yF+1.0 && o.b.max.y>yF+1.0) : [];
+    dica('Pé-direito em grade: '+(f.nome||'')+' — geometria…');
+    const porMi=(arr)=>{ const m={}; arr.forEach(o=>{ (m[o.mi]=m[o.mi]||[]).push(o.id); }); return m; };
+    const triDe=async(arr)=>{ for(const [mi,ids] of Object.entries(porMi(arr))){ const m=await _trisCacheados(V, +mi, ids); arr.forEach(o=>{ if(o.mi==mi) o.t=m.get(o.id)||null; }); } return arr.filter(o=>o.t); };
+    const L=await triDe(lajes), O=await triDe(obst), A=soAmb?await triDe(amb):[];
+    if(!L.length) continue;
+    const gL=_gradeItens(L,4), gO=_gradeItens(O,2), gA=soAmb?_gradeItens(A,4):null;
+    let x0=Infinity,x1=-Infinity,z0=Infinity,z1=-Infinity; L.forEach(o=>{ x0=Math.min(x0,o.b.min.x); x1=Math.max(x1,o.b.max.x); z0=Math.min(z0,o.b.min.z); z1=Math.max(z1,o.b.max.z); });
+    const nx=Math.max(1,Math.ceil((x1-x0)/passo)), nz=Math.max(1,Math.ceil((z1-z0)/passo));
+    const cls=new Int8Array(nx*nz);              // 0 nada, 1 livre, 2 âmbar, 3 vermelho, -1 fora
+    const clr=new Float32Array(nx*nz), piso=new Float32Array(nx*nz), quem=new Array(nx*nz);
+    for(let i=0;i<nx;i++){
+      if((i&15)===0){ if(V._cancelar) throw new Error('CANCELADO'); await new Promise(r=>setTimeout(r,0)); }
+      for(let j=0;j<nz;j++){ const k=i*nz+j;
+        const px=x0+(i+0.5)*passo+3.1e-7, pz=z0+(j+0.5)*passo+1.7e-7;
+        // piso: topo da laje mais alta logo abaixo de yF+0,25
+        const yIni=yF+0.25; let yP=-Infinity;
+        for(const o of gL.em(px,pz)){ if(px<o.b.min.x||px>o.b.max.x||pz<o.b.min.z||pz>o.b.max.z) continue;
+          const sd=_raioVert(px,yIni,pz,-1,o.t); if(sd<Infinity){ const y=yIni-sd; if(y>yP) yP=y; } }
+        if(!(yP>yF-0.4)){ cls[k]=-1; continue; }
+        if(gA){ let dentro=false; for(const o of gA.em(px,pz)){ if(px<o.b.min.x||px>o.b.max.x||pz<o.b.min.z||pz>o.b.max.z) continue; if(_dentroMalha(px,yP+1.0,pz,o.t)){ dentro=true; break; } }
+          if(!dentro){ cls[k]=-1; continue; } }
+        pontos++; piso[k]=yP;
+        // teto: o ponto mais baixo de qualquer obstáculo SUSPENSO sobre a célula
+        //  (suspenso em relação ao piso MEDIDO: reservatório apoiado numa base de
+        //  11 cm não é teto — antes comparava com o nível do pavimento).
+        const cx0=x0+i*passo, cz0=z0+j*passo, cx1=cx0+passo, cz1=cz0+passo, yS=yP+SUSP;
+        let best=Infinity, who=null; const vistos=new Set();
+        for(const q of [[cx0,cz0],[cx1,cz0],[cx0,cz1],[cx1,cz1]]) for(const o of gO.em(q[0],q[1])){
+          if(vistos.has(o)) continue; vistos.add(o);
+          if(o.b.max.x<cx0||o.b.min.x>cx1||o.b.max.z<cz0||o.b.min.z>cz1||o.b.max.y<yS||o.b.min.y<yP+0.20||o.b.min.y>=best) continue;
+          const y=_minYCelula(o.t, cx0,cx1,cz0,cz1, yP, Math.min(best,yP+altMax+ALERTA)); if(y<best){ best=y; who=o; } }
+        const c=best<Infinity ? best-yP : Infinity; clr[k]=c;
+        if(c<altMin) cls[k]=1;                        // abaixo do intervalo: fora do foco (como por peça)
+        else if(c<altMax){ cls[k]=3; quem[k]=who; }
+        else if(c<altMax+ALERTA) cls[k]=2;
+        else cls[k]=1;
+      }
+    }
+    // manchas: vermelhos ligados pelos lados
+    const vis=new Uint8Array(nx*nz);
+    for(let k0=0;k0<nx*nz;k0++){ if(cls[k0]!==3||vis[k0]) continue;
+      const pilha=[k0]; vis[k0]=1; const cel=[]; let mn=Infinity, kMin=k0; const cont=new Map();
+      while(pilha.length){ const k=pilha.pop(); cel.push(k); if(clr[k]<mn){ mn=clr[k]; kMin=k; }
+        const o=quem[k]; if(o){ const ky=o.mi+':'+o.id; const e=cont.get(ky); if(e) e.n++; else cont.set(ky,{mi:o.mi,id:o.id,cat:o.cat,n:1}); }
+        const i=(k/nz)|0, j=k%nz;
+        if(i>0&&cls[k-nz]===3&&!vis[k-nz]){ vis[k-nz]=1; pilha.push(k-nz); } if(i<nx-1&&cls[k+nz]===3&&!vis[k+nz]){ vis[k+nz]=1; pilha.push(k+nz); }
+        if(j>0&&cls[k-1]===3&&!vis[k-1]){ vis[k-1]=1; pilha.push(k-1); } if(j<nz-1&&cls[k+1]===3&&!vis[k+1]){ vis[k+1]=1; pilha.push(k+1); } }
+      let a0=Infinity,a1=-Infinity,c0=Infinity,c1=-Infinity; cel.forEach(k=>{ const i=(k/nz)|0, j=k%nz; a0=Math.min(a0,i); a1=Math.max(a1,i); c0=Math.min(c0,j); c1=Math.max(c1,j); });
+      const iM=(kMin/nz)|0, jM=kMin%nz;
+      if(cel.length<2 || cel.length*passo*passo < AREA_MIN-1e-9){ pequenas++; continue; }   // peça pontual (1 célula) também fica só no mapa
+      manchas.push({ pav:f.nome||'', fi, n:cel.length, area:cel.length*passo*passo, min:mn, piso:piso[kMin],
+        pt:{ x:x0+(iM+0.5)*passo, y:piso[kMin]+mn, z:z0+(jM+0.5)*passo },
+        box:{ x0:x0+a0*passo, x1:x0+(a1+1)*passo, z0:z0+c0*passo, z1:z0+(c1+1)*passo }, passo,
+        cels: cel.map(k=>{ const i=(k/nz)|0, j=k%nz; return [x0+i*passo, z0+j*passo, piso[k]]; }),
+        obst:[...cont.values()].sort((u,v)=>v.n-u.n) });
+    }
+    const celulas=[]; for(let k=0;k<nx*nz;k++){ if(cls[k]===2||cls[k]===3){ const i=(k/nz)|0, j=k%nz; celulas.push([x0+i*passo, z0+j*passo, piso[k], cls[k]]); } }
+    grade.push({ pav:f.nome||'', fi, passo, celulas });
+  }
+  manchas.sort((u,v)=> u.min-v.min || v.area-u.area);
+  const CAP=300, cortou=manchas.length>CAP, lista=manchas.slice(0,CAP);
+  // nomes dos obstáculos principais (2 por mancha)
+  const pedir={}; lista.forEach(m=>m.obst.slice(0,2).forEach(o=>{ (pedir[o.mi]=pedir[o.mi]||new Set()).add(o.id); }));
+  const nome={};
+  for(const [mi,set] of Object.entries(pedir)){ const x=V.modelos[mi]; let da=[];
+    try{ da=await x.model.getItemsData([...set],{attributesDefault:true,relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+    (da||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; if(lid==null) return;
+      nome[mi+':'+lid]=String((d.Name&&d.Name.value)||(d.ObjectType&&d.ObjectType.value)||'').split(':')[0].trim(); }); }
+  lista.forEach((m,i)=>{ m.cod='M'+(i+1);
+    // 1 peça → categoria + nome; várias → categorias por ordem de presença + total
+    if(m.obst.length===1){ const o=m.obst[0], r=_rotObst(o.cat), n=nome[o.mi+':'+o.id]; m.obstTxt=(n && !_norm(n).includes(_norm(r)))? r+' '+n : (n||r); }
+    else { const cs=new Map(); m.obst.forEach(o=>{ const r=_rotObst(o.cat); cs.set(r,(cs.get(r)||0)+o.n); });
+      m.obstTxt=[...cs.entries()].sort((u,v)=>v[1]-u[1]).map(e=>e[0]).slice(0,3).join(' + ')+' · '+m.obst.length+' peças'; }
+    m.disc=[...new Set(m.obst.map(o=>{ const x=V.modelos[o.mi]; return x&&(x.disciplina||x.nome)||''; }))].join(', '); });
+  V._pdGrade={ grade, manchas:lista };
+  dica('');
+  return { manchas:lista, grade, total:manchas.length, cortou, pontos, pequenas, areaMin:AREA_MIN, ms:Math.round(performance.now()-t0), altMin, altMax, passo };
+}
+// Mapa no piso: quadradinhos vermelho/âmbar logo acima do piso medido.
+function _limparMapaPd(V){ if(V._pdMapa){ try{ V.scene.remove(V._pdMapa); V._pdMapa.geometry.dispose(); V._pdMapa.material.dispose(); }catch(_){} V._pdMapa=null; } }
+export function mostrarMapaPd(V, fis, sel){
+  const T=V.THREE; _limparMapaPd(V);
+  const G=(V._pdGrade&&V._pdGrade.grade)||[]; const pos=[], col=[];
+  const R=[0.91,0.30,0.24], A=[0.91,0.59,0.04], S=[0.95,0.55,0.16];
+  // mancha selecionada: laranja (seleção no Auria), por cima das demais
+  const selCel=()=>{ if(!(sel && sel.cels)) return; const p=sel.passo, m=p*0.06;   // desenhada por ÚLTIMO (fica por cima)
+    for(const [x,z,y] of sel.cels){ const yy=y+0.05, a=x+m, b=x+p-m, d=z+m, e=z+p-m;
+      pos.push(a,yy,d, b,yy,e, b,yy,d,  a,yy,d, a,yy,e, b,yy,e); for(let q=0;q<6;q++) col.push(...S); } };
+  for(const g of G){ if(fis && !fis.includes(g.fi)) continue; const p=g.passo, m=p*0.06;
+    for(const [x,z,y,c] of g.celulas){ const yy=y+0.03, a=x+m, b=x+p-m, d=z+m, e=z+p-m, k=c===3?R:A;
+      pos.push(a,yy,d, b,yy,e, b,yy,d,  a,yy,d, a,yy,e, b,yy,e); for(let q=0;q<6;q++) col.push(...k); } }
+  selCel();
+  if(!pos.length) return 0;
+  const geo=new T.BufferGeometry(); geo.setAttribute('position',new T.Float32BufferAttribute(pos,3)); geo.setAttribute('color',new T.Float32BufferAttribute(col,3));
+  const mat=new T.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:0.6,side:T.DoubleSide,depthWrite:false});
+  const mesh=new T.Mesh(geo,mat); mesh.renderOrder=5; V.scene.add(mesh); V._pdMapa=mesh;
+  try{ V.fragments.update(true); }catch(_){}
+  return pos.length/18; }
+// Clique numa mancha: só o entorno do pavimento (translúcido), obstáculos da
+// mancha opacos em vermelho, mapa daquele pavimento e câmera na mancha.
+export async function mostrarManchaPd(V, m){
+  const T=V.THREE; if(!m) return;
+  await _limparFantasma(V);
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  const f=(_faixasUnicas(await _faixasPavimento(V)))[m.fi]||null;
+  const yLo=m.piso-0.5, yHi=f&&isFinite(f.y1)?f.y1+0.3:m.piso+3.5, M=3;
+  const reg={x0:m.box.x0-M,x1:m.box.x1+M,z0:m.box.z0-M,z1:m.box.z1+M};
+  const dest={}; m.obst.forEach(o=>{ (dest[o.mi]=dest[o.mi]||[]).push(o.id); });
+  const cx=(reg.x0+reg.x1)/2, cz=(reg.z0+reg.z1)/2, cand=[];
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
+    if(!ids.length) continue; const bx=await _boxesCacheadas(V, mi, x, ids); const ds=new Set(dest[mi]||[]);
+    for(const id of ids){ const b=bx.get(id); if(!b||ds.has(id)) continue;
+      if(b.max.x<reg.x0||b.min.x>reg.x1||b.max.z<reg.z0||b.min.z>reg.z1||b.max.y<yLo||b.min.y>yHi) continue;
+      const dx=Math.max(b.min.x-cx,0,cx-b.max.x), dz=Math.max(b.min.z-cz,0,cz-b.max.z); cand.push([dx*dx+dz*dz,mi,id]); } }
+  cand.sort((u,v)=>u[0]-v[0]); if(cand.length>1500) cand.length=1500;
+  const fant={}; cand.forEach(([,mi,id])=>{ (fant[mi]=fant[mi]||[]).push(id); });
+  const vis={}; for(let mi=0; mi<V.modelos.length; mi++){ const v=[...(fant[mi]||[]),...(dest[mi]||[])]; if(v.length) vis[mi]=v; }
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    try{ await x.model.setVisible(undefined,false); }catch(_){}
+    if(vis[mi]){ try{ await x.model.setVisible(vis[mi],true); }catch(_){} }
+    if(fant[mi]){ try{ await x.model.setOpacity(fant[mi],0.12); }catch(_){} } }
+  V._fantasmaIds=fant; V._fantasma=true;
+  for(const [mi,ids] of Object.entries(dest)){ try{ await V.modelos[mi].model.setOpacity(ids,1); await V.modelos[mi].model.highlight(ids,{color:new T.Color(0xEF4444),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  V._isolado=true; V._isoladoPorMod=vis; V._ultimaSelecao=vis; V._colorido=false; V._cores=null;
+  mostrarMapaPd(V,[m.fi],m);
+  try{ await V.fragments.update(true); }catch(_){}
+  const r=Math.max(2.5, (m.box.x1-m.box.x0)/2, (m.box.z1-m.box.z0)/2);
+  _fitBox(V, new T.Box3(new T.Vector3(m.box.x0-1,m.piso,m.box.z0-1), new T.Vector3(m.box.x1+1,m.piso+Math.max(2.6,r),m.box.z1+1)));
+  try{ await V.fragments.update(true); }catch(_){}
 }
 export async function zoomPeDireito(V, mi, id){ try{ await enquadrarIds(V, {[mi]:[id]}); }catch(_){} }
 // Lista de pavimentos (nomes únicos), p/ os seletores. Prefere a ESTRUTURA
