@@ -430,10 +430,12 @@
                  background:linear-gradient(135deg,transparent 50%,var(--mut) 50%,var(--mut) 60%,transparent 60%,transparent 70%,var(--mut) 70%,var(--mut) 80%,transparent 80%);z-index:2}
   .cdeWin.max .cdeWin-resize{display:none}
   /* Taskbar de janelas minimizadas — só aparece se houver alguma */
-  #cdeTaskbar{display:none;flex-wrap:wrap;gap:6px;padding:6px 10px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
+  /* Uma linha só: abas com largura própria (não encolhem com a quantidade) e a
+     barra ROLA na horizontal — dedo arrasta, roda do mouse rola de lado. */
+  #cdeTaskbar{display:none;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;gap:6px;padding:6px 10px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
   .cdeTask{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
            padding:5px 8px 5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;
-           display:inline-flex;align-items:center;gap:6px;max-width:220px;overflow:hidden}
+           display:inline-flex;align-items:center;gap:6px;max-width:220px;overflow:hidden;flex:none}
   .cdeTask:hover{border-color:var(--accent)}
   .cdeTask.act{background:var(--navy);color:#fff;border-color:var(--navy)}
   .cdeTask.min{opacity:.55}
@@ -6637,6 +6639,15 @@ function atualizarTaskbar(){
   const bar = $('cdeTaskbar');
   if(!WIN_STATE.list.length){ bar.style.display='none'; bar.innerHTML=''; return; }
   bar.style.display='flex';
+  const rolagem=bar.scrollLeft;
+  if(!bar._rolaRoda){
+    // roda vertical do mouse vira rolagem lateral quando há abas escondidas
+    bar._rolaRoda=true;
+    bar.addEventListener('wheel',(e)=>{
+      if(bar.scrollWidth<=bar.clientWidth || Math.abs(e.deltaX)>=Math.abs(e.deltaY)) return;
+      bar.scrollLeft+=e.deltaY; e.preventDefault();
+    },{ passive:false });
+  }
   bar.innerHTML = WIN_STATE.list.map(w=>{
     const cod = w.DOC_SEL ? w.DOC_SEL.codigo : (w.fedLabel || '(sem prancha)');
     const ic  = w.isFed ? '<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.6 3.4 6.2v7.6L10 17.4l6.6-3.6V6.2z"/><path d="M3.4 6.2 10 9.8l6.6-3.6M10 9.8v7.6"/></svg>' : '<svg class="ci" viewBox="0 0 20 20" aria-hidden="true"><path d="M4.4 2.6h6.8l4.4 4.4v10.4H4.4z"/><path d="M11.2 2.6v4.4h4.4"/><path d="M7 10.4h6M7 13.2h4"/></svg>';
@@ -6649,6 +6660,14 @@ function atualizarTaskbar(){
       <span class="cdeTaskX" title="Fechar" onclick="event.stopPropagation();cdeTaskFechar('${w.id}')">✕</span>
     </div>`;
   }).join('');
+  // refazer o HTML zera a rolagem: devolve onde estava e garante a aba ativa à vista
+  bar.scrollLeft=rolagem;
+  const act=bar.querySelector('.cdeTask.act');
+  if(act){
+    const ini=act.getBoundingClientRect().left-bar.getBoundingClientRect().left+bar.scrollLeft, fim=ini+act.offsetWidth;
+    if(ini<bar.scrollLeft) bar.scrollLeft=ini-10;
+    else if(fim>bar.scrollLeft+bar.clientWidth) bar.scrollLeft=fim-bar.clientWidth+10;
+  }
 }
 // Arrastar as abas para reordená-las (reordena WIN_STATE.list e re-renderiza).
 // O X fecha a janela pela aba. Ver CdeWin.fechar().
