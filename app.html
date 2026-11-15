@@ -872,6 +872,28 @@ html[data-tema=claro] .rvShAv{color:#92610A}
 .rvAnSv.on{background:var(--rvLar);border-color:var(--rvLar);color:#1a1205;font-weight:800}
 .rvAnSv:disabled{opacity:.5;cursor:default}
 /* item 113 F1: apontamento em vários locais */
+/* item 113 F2: pendências por local × disciplina */
+.locChip.ok{color:#34D399;border-color:rgba(52,211,153,.45)}
+.pdBar{display:inline-block;width:46px;height:5px;border-radius:3px;background:rgba(233,180,76,.35);overflow:hidden;margin-left:5px;vertical-align:1px}
+.pdBar b{display:block;height:100%;background:#34D399}
+.discChip{font:700 10px Cascadia Mono,Consolas,monospace;border:1px solid rgba(233,180,76,.55);color:#E9B44C;border-radius:4px;padding:0 5px;white-space:nowrap;flex:none}
+.discChip.ok{border-color:rgba(52,211,153,.45);color:#34D399}
+.pdTop{font-size:11px;color:var(--mut);margin-bottom:6px}
+.pdT{width:100%;border-collapse:separate;border-spacing:0 3px;font-size:11.5px}
+.pdT th{font:700 10px Cascadia Mono,Consolas,monospace;color:var(--mut);text-align:center;padding:2px 4px}
+.pdT th:first-child{text-align:left}
+.pdT td{background:var(--bg2);padding:3px 5px;text-align:center}
+.pdT td:first-child{border-radius:6px 0 0 6px}
+.pdT td:last-child{border-radius:0 6px 6px 0}
+.pdL{font:700 11px Cascadia Mono,Consolas,monospace;color:#9EC1FF;text-align:left!important}
+.pdC{font-size:10.5px;font-weight:700;border-radius:20px;padding:1px 9px;border:1px solid;background:transparent;cursor:pointer;white-space:nowrap}
+.pdC.ok{color:#34D399;border-color:rgba(52,211,153,.45)}
+.pdC.pend{color:#E9B44C;border-color:rgba(233,180,76,.55)}
+.pdC.lin{color:var(--mut);border-color:var(--line);font-weight:500}
+.pdC.na{color:var(--mut);border:none;cursor:default}
+.pdC:disabled{cursor:default}
+.pdC:not(:disabled):hover{border-color:var(--accent);color:var(--accent)}
+.pdFt{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .locChip{display:inline-flex;align-items:center;gap:3px;font:700 10px Cascadia Mono,Consolas,monospace;color:var(--rvLar,#F28C28);border:1px solid rgba(242,140,40,.5);border-radius:4px;padding:0 5px;white-space:nowrap;flex:none}
 .pbNav{width:24px;height:22px;border-radius:6px;border:1px solid var(--line);background:var(--bg2);color:var(--txt);cursor:pointer;font-size:14px;line-height:1;padding:0}
 .pbNav:hover{border-color:var(--accent);color:var(--accent)}
@@ -1702,6 +1724,10 @@ body.app-pj.pj-cria #btnNota,body:not(.app-pj):not(.app-ro) #btnNota{display:inl
       <label>Participantes e prazos</label>
       <div id="apParts"></div>
       <button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="addPartRow()">＋ participante</button>
+    </div>
+    <div class="fg" id="apPendFg" style="display:none">
+      <label>Pendências por local e disciplina</label>
+      <div id="apPend"></div>
     </div>
     <div class="fg">
       <label>Pins na prancha</label>
@@ -3669,6 +3695,7 @@ async function carregarApts(){
       .select('*').eq('empreendimento_id', EMP.id).limit(1000);
     if(error) throw error;
     APTS=data||[];
+    try{ await aptPendCarregar(); }catch(_){}   // item 113 F2
     if(APP_PJ) await pjCarregarMarcas();
   }catch(e){ console.error('carregarApts:', e.message||e); }
   popularFiltroDisc(); renderListaApts(); renderPins(); renderDrawings(); renderSideRight();
@@ -3887,7 +3914,9 @@ function setPinEdit(on){
 // Local = prancha de um pin 2D (pid; sem pid = prancha do apontamento). O número
 // de locais vai dentro da cabeça do pin (opção C2) e no cartão ("N locais").
 function _aptPids(a){ const s=new Set(); ((a&&a.pontos_json)||[]).forEach(pt=>{ if(pt && !pt.k3d){ const p=pt.pid||a.prancha_id; if(p) s.add(p); } }); return [...s]; }
-function _aptNLocais(a){ return _aptPids(a).length; }
+function _aptNLocais(a){
+  if(a && a!==APT_EDIT && typeof PEND!=='undefined'){ const k=new Set(_aptPend(a).map(r=>r.local_key).filter(k=>k!=='geral')); if(k.size) return k.size; }   // F2: por pavimento
+  return _aptPids(a).length; }
 const _PID_INFO=new Map();   // pid → { doc, pav }: prancha → documento do CDE → código do pavimento
 async function _pidInfo(pids){
   const faltam=pids.filter(p=>!_PID_INFO.has(p));
@@ -3911,9 +3940,90 @@ function _locChip(a){
   return `<span class="locChip" title="Em ${n} locais${cods.length?': '+esc(cods.join(', ')):''}">${_icH('camadas',11)} ${n} locais${faixa?' · '+esc(faixa):''}</span>`;
 }
 // Balão do pin: "Local 3 de 12" com ‹ › e os pavimentos para pular direto.
+// ═══ Item 113 F2: pendência por disciplina × local ═════════════════════════════
+// Linhas em apontamento_pendencia_auria (nascem/somem por gatilho no banco). Só a
+// coordenação marca, pela RPC apt_pend_marcar, que fecha/reabre o apontamento.
+let PEND=new Map();   // id do apontamento → linhas
+async function aptPendCarregar(){
+  PEND=new Map(); if(!EMP) return;
+  const { data, error }=await sb.from('apontamento_pendencia_auria')
+    .select('id,apontamento_id,local_key,prancha_id,pav,disciplina,estado,resolvido_em,resolvido_por_nome').eq('empreendimento_id',EMP.id).limit(5000);
+  if(error){ console.warn('pendências:', error.message); return; }
+  (data||[]).forEach(r=>{ if(!PEND.has(r.apontamento_id)) PEND.set(r.apontamento_id,[]); PEND.get(r.apontamento_id).push(r); });
+}
+function _aptPend(a){ return (a && a.id && PEND.get(a.id)) || []; }
+function _pendLocais(rows){
+  const m=new Map();
+  rows.forEach(r=>{ const x=m.get(r.local_key)||{ key:r.local_key, pav:r.pav||'', pend:0, ok:0 }; if(r.estado==='pendente') x.pend++; else x.ok++; m.set(r.local_key,x); });
+  return [...m.values()].sort((x,y)=>_pavOrdem(x.pav)-_pavOrdem(y.pav));
+}
+function _pendNome(x){ return x.pav || (x.key==='geral' ? 'geral' : 'prancha'); }
+// Cartão: o que AINDA falta. Até 4 locais pelo nome; de 5 em diante, contagem + barra.
+function _pendChip(a){
+  const rows=_aptPend(a); if(!rows.length) return _locChip(a);
+  const locs=_pendLocais(rows), discs=[...new Set(rows.map(r=>r.disciplina))], ic=_icH('camadas',11);
+  let h='';
+  if(locs.length>1){
+    const pend=locs.filter(x=>x.pend>0), ok=locs.length-pend.length, nomes=pend.map(_pendNome);
+    if(!pend.length) h+=`<span class="locChip ok" title="Resolvido em todos os ${locs.length} locais">${ic} ${locs.length} locais ✓</span>`;
+    else if(pend.length<=4) h+=`<span class="locChip" title="Falta em: ${esc(nomes.join(', '))}${ok?' · '+ok+' resolvido(s)':''}">${ic} falta em ${esc(nomes.join(' '))}</span>`;
+    else h+=`<span class="locChip" title="Falta em: ${esc(nomes.join(', '))}">${ic} ${pend.length} pendentes · ${ok} resolvidos<i class="pdBar"><b style="width:${Math.round(ok/locs.length*100)}%"></b></i></span>`;
+  }
+  if(discs.length>1) h+=discs.map(d=>{ const p=rows.some(r=>r.disciplina===d&&r.estado==='pendente');
+    return `<span class="discChip${p?'':' ok'}" title="${esc(discFullName(d)||d)}${p?' · com pendência':' · resolvida'}">${esc(rvSigla(d))}${p?'':' ✓'}</span>`; }).join('');
+  return h;
+}
+// Editor: tabela local × disciplina. Clique na célula marca/reabre (só coordenação;
+// o banco confere de novo). Some quando é 1 local × 1 disciplina (o status já diz tudo).
+function renderPend(){
+  const fg=$('apPendFg'), el=$('apPend'); if(!fg||!el) return;
+  const a=APT_EDIT, rows=(a && !a._novo) ? _aptPend(a) : [];
+  const locs=_pendLocais(rows), discs=[...new Set(rows.map(r=>r.disciplina))];
+  if(!rows.length || (locs.length<2 && discs.length<2)){ fg.style.display='none'; el.innerHTML=''; return; }
+  fg.style.display='';
+  const pode=!APP_RO && !APP_PJ;
+  const dt=r=>r.resolvido_em?new Date(r.resolvido_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
+  const lista=ids=>'['+ids.map(i=>"'"+i+"'").join(',')+']';
+  const cel=r=>{ if(!r) return '<td><span class="pdC na">—</span></td>'; const ok=r.estado==='resolvido';
+    const tit=ok?('Resolvido'+(r.resolvido_em?' em '+new Date(r.resolvido_em).toLocaleDateString('pt-BR'):'')+(r.resolvido_por_nome?' por '+r.resolvido_por_nome:'')+(pode?' · clique para reabrir':''))
+                :('Pendente'+(pode?' · clique para marcar resolvido':''));
+    return `<td><button class="pdC ${ok?'ok':'pend'}" ${pode?`onclick="aptPendMarcar(${lista([r.id])},${!ok})"`:'disabled'} title="${esc(tit)}">${ok?'✓ '+dt(r):'pendente'}</button></td>`; };
+  const resol=locs.filter(x=>!x.pend).length;
+  let h=`<div class="pdTop">${resol} de ${locs.length} local(is) resolvido(s)${pode?' · clique numa célula para marcar':''}</div>
+    <table class="pdT"><tr><th>Local</th>${discs.map(d=>`<th title="${esc(discFullName(d)||d)}">${esc(rvSigla(d))}</th>`).join('')}${pode&&discs.length>1?'<th></th>':''}</tr>`;
+  locs.forEach(x=>{
+    const rs=discs.map(d=>rows.find(r=>r.local_key===x.key&&r.disciplina===d));
+    const ids=rs.filter(r=>r&&r.estado==='pendente').map(r=>r.id);
+    h+=`<tr><td class="pdL">${esc(_pendNome(x))}</td>${rs.map(cel).join('')}${pode&&discs.length>1?`<td>${ids.length>1?`<button class="pdC lin" onclick="aptPendMarcar(${lista(ids)},true)" title="Resolver este local em todas as disciplinas">todas</button>`:''}</td>`:''}</tr>`;
+  });
+  h+='</table>';
+  if(pode && locs.length>1){
+    const bts=discs.map(d=>{ const ids=rows.filter(r=>r.disciplina===d&&r.estado==='pendente').map(r=>r.id);
+      return ids.length>1?`<button class="btn-sec" style="font-size:11px;padding:3px 8px" onclick="aptPendMarcar(${lista(ids)},true)">Resolver ${esc(rvSigla(d))} nos ${ids.length} locais</button>`:''; }).join('');
+    if(bts) h+=`<div class="pdFt">${bts}</div>`;
+  }
+  el.innerHTML=h;
+}
+async function aptPendMarcar(ids, resolvido){
+  const a=APT_EDIT; if(!a || !ids || !ids.length) return;
+  try{
+    const { error }=await sb.rpc('apt_pend_marcar',{ p_emp:EMP.id, p_apt:a.id, p_ids:ids, p_resolvido:!!resolvido });
+    if(error) throw error;
+    await aptPendCarregar();
+    const { data:ap }=await sb.from('apontamentos').select('status').eq('empreendimento_id',EMP.id).eq('id',a.id).maybeSingle();
+    if(ap && ap.status!==a.status){
+      a.status=ap.status; const s=$('apStatus'); if(s) s.value=ap.status;
+      const x=APTS.find(y=>y.id===a.id); if(x) x.status=ap.status;
+      rvAviso(a.id+(ap.status==='Resolvido'?': todas as pendências resolvidas — apontamento Resolvido.':': reaberto, ainda há pendência.'));
+    }
+    renderPend(); renderListaApts(); renderPins();
+  }catch(e){ rvAlerta('Não consegui marcar a pendência: '+_anErroMsg(e)); }
+}
 let _PB_PID=null;
 async function _balaoLocais(a, ai, pidAtual){
-  const info=(await _pidInfo(_aptPids(a))).sort((x,y)=>_pavOrdem(x.pav)-_pavOrdem(y.pav));
+  const visto=new Set(), info=(await _pidInfo(_aptPids(a))).sort((x,y)=>_pavOrdem(x.pav)-_pavOrdem(y.pav))
+    .filter(x=>{ const k=x.pav||x.pid; if(visto.has(k)) return false; visto.add(k); return true; });
+  if(info.length && !info.some(x=>x.pid===pidAtual)){ const cur=(await _pidInfo([pidAtual]))[0]; const j=info.findIndex(x=>x.pav && cur && x.pav===cur.pav); if(j>=0) pidAtual=info[j].pid; }
   const el=$('pbLocais'); if(!el || !info.length) return;
   const n=info.length, k=Math.max(0,info.findIndex(x=>x.pid===pidAtual));
   const ir=j=>`aptIrLocal(${ai},'${info[(j+n)%n].pid}')`;
@@ -9266,6 +9376,7 @@ function apDiscMudou(){
 }
 function abrirEditor(){
   const a=APT_EDIT;
+  setTimeout(()=>{ try{ renderPend(); }catch(_){} }, 0);   // item 113 F2
   _apLocalManual=new Set(); _apPinsN=(a.pontos_json||[]).length;   // antes de qualquer renderPinsList
   { const bim=_aptDim(a)==='bim';
     window._aptTtlHtml=`<span class="dtag ${bim?'bim':'d2'}">${bim?'BIM':'2D'}</span><span class="ap-cod">${esc(a.id||'')}</span>`
@@ -10032,7 +10143,7 @@ function renderListaApts(){
       const local=a.local_txt?(' · '+_icH('pin',12)+' '+esc(a.local_txt)):'';
       return `<div class="ap-card critL${a._filho?' ap-filho':''}${pjCls(a)}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
         <div class="t">${tituloHtml}</div>${elo?`<div style="margin-top:2px">${elo}</div>`:''}
-        <div class="m" style="color:${mc};margin-top:3px;display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0">${tags} ${esc(discFullName(a.disciplina)||'')}</span>${_locChip(a)}${critTag}</div>
+        <div class="m" style="color:${mc};margin-top:3px;display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0">${tags} ${esc(discFullName(a.disciplina)||'')}</span>${_pendChip(a)}${critTag}</div>
         ${a.descricao?`<div style="font-size:11px;color:${mc};margin-top:5px;opacity:.9;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(a.descricao)}</div>`:''}
         ${(prazo||local||nesta)?`<div style="font-size:10.5px;color:${mc};margin-top:5px;opacity:.9">${prazo}${local}${nesta?' · '+_icH('pin',12)+' nesta prancha':''}</div>`:''}
         ${thumbs?`<div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">${thumbs}</div>`:''}
@@ -10040,7 +10151,7 @@ function renderListaApts(){
     }
     return `<div class="ap-card critL${a._filho?' ap-filho':''}${pjCls(a)}" style="${cs};position:relative" onclick="clicarAptLista(${i})">
       <div class="t">${tituloHtml}</div>
-      <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${_locChip(a)}${elo}${critTag}</div>
+      <div class="m" style="color:${mc};display:flex;gap:6px;align-items:center"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tags} ${esc(discFullName(a.disciplina)||'')}${nesta?' · 📍 nesta prancha':''}</span>${_pendChip(a)}${elo}${critTag}</div>
     </div>`;
   };
   // ORGANIZAÇÃO: com uma prancha aberta e SEM filtro de disciplina específico,
