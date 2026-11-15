@@ -155,7 +155,7 @@ export async function carregar(V, modelos, msg){
     aviso(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
     const model = await V.fragments.load(bytes, { modelId:(opts_id(V))+':'+(m.id||m.nome), camera:V.camera });
     if(V._job!==meu || !V.vivo) return;
-    const w={ ...m, model, visivel:true };
+    const w={ ...m, model, visivel:true, _bytes:(bytes&&bytes.byteLength)||0 };
     _ligarCor(V, w);
     V.modelos.push(w);
     V.scene.add(model.object);
@@ -196,6 +196,7 @@ let _seq=0; function opts_id(V){ return V._id || (V._id='v'+(++_seq)); }
 //  O download é paralelo; a montagem, um modelo por vez (como em carregar()).
 export function adicionarModelo(V, m, msg){
   const id = m.id||m.nome;
+  if(V._guardados && V._guardados.has(id)) return recuperarUm(V, id);   // guardado: volta sem baixar
   V._entrando = V._entrando || new Map();
   if(V._entrando.has(id)) return V._entrando.get(id);   // pedido repetido: mesma carga
   const p = _adicionar(V, m, msg).finally(()=>V._entrando.delete(id));
@@ -222,7 +223,7 @@ async function _montar(V, m, bytes, meu, aviso){
     camera: V.camera
   });
   if(V._job!==meu || !V.vivo){ try{ model.dispose(); }catch(_){} return null; }
-  const wrapper = { ...m, model, visivel:true };
+  const wrapper = { ...m, model, visivel:true, _bytes:(bytes&&bytes.byteLength)||0 };
   _ligarCor(V, wrapper);
   const eraVazio = V.modelos.length === 0;
   V.modelos.push(wrapper);
@@ -325,9 +326,62 @@ export async function descarregarUm(V, idBusca){
   if(V.modelos.length){ try{ await V.fragments.update(true); }catch(_){} }
 }
 
+// ── Guardar modelo (troca de análise, item 109b) ─────────────────────────────
+//  Tira da cena SEM soltar a memória: voltar a ele (adicionarModelo com o mesmo
+//  id) é instantâneo, sem baixar nem montar de novo. O teto é pelo tamanho do
+//  .frag baixado; passou, solta o guardado há mais tempo. Nunca solta um modelo
+//  que está na cena (V.modelos).
+export const GUARDA_TETO = { bytes: 300*1024*1024, qtd: 6 };
+export async function guardarUm(V, idBusca){
+  const i = V.modelos.findIndex(x => (x.arquivoId||x.id||x.nome) === idBusca);
+  if(i<0) return;
+  const x = V.modelos[i];
+  V.modelos.splice(i, 1);
+  try{ V.scene.remove(x.model.object); }catch(_){}
+  if(V._xrayUlt && V._xrayUlt.modelo === x) V._xrayUlt = null;
+  if(V._escondidos && V._escondidos.has(x)) V._escondidos.delete(x);
+  V._xrayReady = false; V._xrayCache = null;
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;
+  V._guardados = V._guardados || new Map();
+  V._guardados.delete(idBusca); V._guardados.set(idBusca, x);   // Map guarda a ordem: o 1º é o mais antigo
+  await _guardaTeto(V);
+  if(V.modelos.length){ try{ await V.fragments.update(true); }catch(_){} }
+}
+async function _guardaTeto(V){
+  const G=V._guardados; if(!G) return;
+  const soma=()=>{ let s=0; for(const x of G.values()) s+=x._bytes||0; return s; };
+  while(G.size && (G.size>GUARDA_TETO.qtd || soma()>GUARDA_TETO.bytes)){
+    const [id, x] = G.entries().next().value;
+    G.delete(id);
+    try{ await x.model.dispose(); }catch(_){}
+  }
+}
+export async function recuperarUm(V, idBusca){
+  const x = V._guardados && V._guardados.get(idBusca); if(!x) return null;
+  V._guardados.delete(idBusca);
+  const eraVazio = V.modelos.length === 0;
+  x.visivel = true; try{ x.model.object.visible = true; }catch(_){}
+  V.modelos.push(x);
+  V.scene.add(x.model.object);
+  aplicarFaces(V, true);
+  redimensionar(V);
+  if(eraVazio) enquadrar(V);
+  V._xrayReady = false; V._xrayCache = null;
+  V.niveis=null; V._faixas=null; V.porNivel=null; V._storeys=null; V._boxCache=null;
+  try{ await V.fragments.update(true); }catch(_){}
+  V._pronto = true;
+  if(V._espacosOn===false){ try{ await setEspacosVisiveis(V,false); }catch(_){} }
+  return x;
+}
+export function guardadosInfo(V){
+  const G=(V&&V._guardados)||new Map(); let bytes=0; for(const x of G.values()) bytes+=x._bytes||0;
+  return { qtd:G.size, bytes, ids:[...G.keys()] };
+}
+
 export function descartar(V){
   if(!V) return;
   V.vivo=false; V._job++;
+  if(V._guardados) V._guardados.clear();   // fragments.dispose() abaixo solta todos
   if(V.raf) cancelAnimationFrame(V.raf);
   if(V.ro){ try{ V.ro.disconnect(); }catch(_){} }
   limparMedidas(V); sumirArestas(V); sumirAjudaCorte(V);
@@ -670,6 +724,7 @@ function laco(V){
   const passo=()=>{
     if(!V.vivo) return;
     V.raf=requestAnimationFrame(passo);
+    if(V.pausado){ tAnt=performance.now(); return; }   // 3D guardado fora da tela (troca de análise): não desenha
     const agora=performance.now();
     const dt=Math.min((agora-tAnt)/1000, 0.1); tAnt=agora;   // aba em 2º plano daria dt enorme
     if(V.andar.ativo) andarQuadro(V, dt); else V.controls.update();
