@@ -895,6 +895,22 @@ html[data-tema=claro] .rvShN{color:#1E3A8A}
 .rvShAv{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.4;color:#E9B44C;background:rgba(233,180,76,.09);border:1px solid rgba(233,180,76,.35);border-radius:9px;padding:7px 9px;margin-top:4px}
 .rvAsk .bx .rvShAv b{font-size:11.5px}
 html[data-tema=claro] .rvShAv{color:#92610A}
+/* item 111: lista de projetistas escolhidos */
+.rvShBx{max-height:88vh;overflow:auto}
+.rvShPjBx{border:1px solid var(--rvLar,#F28C28);border-top:none;border-radius:0 0 10px 10px;margin:-7px 0 6px;padding:8px 10px;background:var(--bg2)}
+.rvShPjBx #rvShQ{width:100%;box-sizing:border-box;margin-bottom:6px}
+#rvShLst{max-height:240px;overflow:auto}
+.rvShSec{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);padding:6px 2px 3px}
+.rvShTd{margin-left:auto;background:none;border:0;color:var(--rvLar,#F28C28);font:inherit;font-size:10.5px;font-weight:700;text-transform:none;letter-spacing:0;cursor:pointer}
+.rvShP{display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:7px;cursor:pointer}.rvShP:hover{background:var(--panel)}
+.rvShP .nm{flex:1;min-width:0;display:flex;flex-direction:column}.rvShP .nm b{font-size:12.5px;font-weight:600}.rvShP .nm small{font-size:11px;color:var(--mut)}
+.rvShP .ds{display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end}
+.rvShP .ds i{font:700 10px Consolas,'Cascadia Mono',monospace;font-style:normal;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--mut)}
+.rvShP .ds i.on{border-color:rgba(233,180,76,.55);color:#E9B44C}
+.rvShTodos{display:flex;gap:8px;align-items:flex-start;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);cursor:pointer}
+.rvShTodos span{display:flex;flex-direction:column}.rvShTodos b{font-size:12px}.rvShTodos small{font-size:11px;color:var(--mut)}
+.rvShVz{font-size:11.5px;color:var(--mut);padding:6px 2px}
+.rvShCnt{font-size:11.5px;color:var(--mut)}
 .rvGira{width:10px;height:10px;border-radius:50%;border:2px solid var(--rvLarT);border-top-color:var(--rvLar);flex:none;animation:rvGira .8s linear infinite}
 @keyframes rvGira{to{transform:rotate(360deg)}}
 .rvAnIn{flex:none;background:var(--bg2);border:1px solid var(--rvLar);color:var(--txt);border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;font-weight:600;outline:none;box-shadow:0 0 0 2px var(--rvLarT)}
@@ -2523,6 +2539,7 @@ async function carregarAnalises(){
     try{ const { data }=await sb.from('analises_auria').select('*').eq('empreendimento_id',EMP.id).order('criado_em',{ascending:false}); ANALISES=data||[]; }
     catch(e){ console.warn('carregarAnalises:',e.message||e); }
     try{ await anPastasCarregar(); }catch(e){ console.warn('pastas:',e.message||e); }   // item 108
+    try{ await anCompCarregar(); }catch(e){ console.warn('compartilhadas:',e.message||e); }   // item 111
   }
   renderAnalises();
 }
@@ -11352,7 +11369,9 @@ async function rvPrepararCats(){
     const sug=[['Vigas','Tubulação'],['Lajes','Tubulação'],['Vigas','Dutos'],['Pilares','Tubulação'],['Paredes','Tubulação']].filter(p=>tem(p[0])&&tem(p[1]));
     RV.pares = sug.length ? sug.slice(0,2) : (CLASH_PRES.length>1 ? [[CLASH_PRES[0].lbl, CLASH_PRES[1].lbl]] : []);
   }
-  if(!RV.pavs){ try{ RV.pavs=(await B3.listaPavimentos(F3D)||[]).map(p=>p.nome); }catch(_){ RV.pavs=[]; } }
+  // Mesma lista que a verificação usa para filtrar (nível das lajes, 1 nome por nível):
+  //  a dos storeys trazia subníveis "_(P.A_0,06)" que nunca casavam → 0 achados (item 116).
+  if(!RV.pavs){ try{ RV.pavs=(await (B3.pavimentosPeDireito||B3.listaPavimentos)(F3D)||[]).map(p=>p.nome); }catch(_){ RV.pavs=[]; } }
   if(RV.temAmb==null){ try{ RV.temAmb=!!(await B3.temAmbientes(F3D)); }catch(_){ RV.temAmb=false; } }
 }
 const RV_PRONTOS=[['Vigas','Tubulação'],['Lajes','Tubulação'],['Vigas','Dutos'],['Lajes','Dutos'],['Pilares','Tubulação'],['Vigas','Elétrica'],['Paredes','Tubulação'],['Paredes','Dutos'],['Tubulação','Dutos'],['Portas','Tubulação']];
@@ -12022,10 +12041,24 @@ function rvAnCtx(ev,id){
 }
 // Faixas: as mesmas dos apontamentos, mais "Só eu", com que toda análise nasce.
 const RV_AN_FX=[['privada','Só eu','Fica na sua lista. Ninguém mais vê.'],['Coordenação','Coordenação','Analistas e gerência deste empreendimento.'],
-  ['Projeto','Projeto','Coordenação + projetistas.'],['Público','Público','Inclui obra e setor.']];
+  ['Projeto','Projetistas escolhidos','Coordenação + só as pessoas marcadas abaixo.'],['Público','Público','Inclui obra (no App Obra) e setor (só no CDE, em consulta).']];
 function rvAnFxNome(a){ return (RV_AN_FX.find(f=>f[0]===(a&&a.visibilidade))||RV_AN_FX[0])[1]; }
+// Item 111: "PROJ 2" = quantos projetistas recebem; o balão lista os nomes.
+let AN_COMP=new Map();   // analise_id → [nomes] (só das análises que a coordenação enxerga)
+async function anCompCarregar(){
+  AN_COMP=new Map(); if(!EMP || APP_PJ) return;
+  const ids=ANALISES.filter(a=>a.visibilidade==='Projeto').map(a=>a.id); if(!ids.length) return;
+  const { data, error }=await sb.from('analise_compartilha_auria').select('analise_id,projetista_id,projetistas_auria(nome,email)').in('analise_id',ids);
+  if(error){ console.warn('compartilhadas:', error.message); return; }
+  (data||[]).forEach(r=>{ const p=r.projetistas_auria||{}; if(!AN_COMP.has(r.analise_id)) AN_COMP.set(r.analise_id,[]); AN_COMP.get(r.analise_id).push(p.nome||p.email||'projetista'); });
+}
 function rvAnFx(a){ const v=a.visibilidade; if(!v||v==='privada') return '';
-  return `<span class="rvFx ${v==='Projeto'?'pj':v==='Público'?'pu':''}" title="Compartilhada: ${esc(v)}">${v==='Projeto'?'PROJ':v==='Público'?'PÚB':'COORD'}</span>`; }
+  if(v==='Projeto'){
+    const ns=AN_COMP.get(a.id)||[], txt=a.todos_projetistas?'TODOS':(APP_PJ?'':String(ns.length));
+    const tit=a.todos_projetistas?'Compartilhada com todos os projetistas do empreendimento':(APP_PJ?'Compartilhada com você':'Compartilhada com '+(ns.length?ns.join(', '):'nenhum projetista ainda'));
+    return `<span class="rvFx pj" title="${esc(tit)}">PROJ${txt?' '+txt:''}</span>`;
+  }
+  return `<span class="rvFx ${v==='Público'?'pu':''}" title="Compartilhada: ${esc(v)}">${v==='Público'?'PÚB':'COORD'}</span>`; }
 function rvAnTitulo(a){ return rvAnNomeTela(a)+' · '+_anResumo(a)+(rvAnMinha(a) ? (APP_RO?'':' · duplo clique renomeia · botão direito: opções') : ' · só consulta'+(a.atualizado_por_nome?' · de '+a.atualizado_por_nome:'')); }
 // A análise guarda só referências: cada pessoa abre o que o CDE deixa ela ver. Aqui
 // a mesma conta do CDE (vigente publicada, senão a mais recente) diz o que não abriria.
@@ -12046,23 +12079,64 @@ function rvAnForaDe(al, v){
   const fora= ok ? al.itens.filter(i=>!ok.includes(i.status)).map(i=>i.nome) : [];
   return v==='privada' ? [] : [...fora, ...al.locais];
 }
+// Disciplinas (códigos) da análise: pelos códigos dos arquivos das pranchas e pela disciplina dos modelos.
+function _anDiscsCod(an){
+  const s=new Set(), cod=t=>{ t=String(t||'').toUpperCase().trim(); if(!t) return;
+    if(COD_DISC[t]) s.add(t); else { const k=Object.keys(COD_DISC).find(c=>String(COD_DISC[c]).toUpperCase()===t); if(k) s.add(k); } };
+  (an.pranchas||[]).forEach(m=>String(m.arquivo_nome||'').toUpperCase().split(/[^A-Z]+/).forEach(t=>{ if(COD_DISC[t]) s.add(t); }));
+  (an.modelos||[]).forEach(m=>{ cod(m.disciplina); String(m.codigo||'').toUpperCase().split(/[^A-Z]+/).forEach(t=>{ if(COD_DISC[t]) s.add(t); }); });
+  return s;
+}
+// Item 111 (mockups/app_analises_compartilhar_v2.html): "Projetistas escolhidos" abre a lista
+// de PESSOAS. Sugeridos = projetistas das disciplinas da análise, DESMARCADOS (quem marca é o
+// coordenador). "Todos os projetistas" é chave à parte, desligada por padrão. Grava tudo de
+// uma vez pela RPC analise_compartilhar (só o dono; o banco confere de novo).
 async function rvAnCompartilhar(id){
   const an=ANALISES.find(a=>a.id===id); if(!an||APP_RO||!rvAnMinha(an)) return;
-  let v=an.visibilidade||'privada', al={ itens:[], locais:[] };
-  try{ al=await rvAnAlcance(an); }catch(e){ console.warn('alcance da análise:', e); }
+  let v=an.visibilidade||'privada', todos=!!an.todos_projetistas, al={ itens:[], locais:[] }, PJ=[], sel=new Set(), q='', erroPj='';
+  const [r1,r2,r3]=await Promise.allSettled([rvAnAlcance(an), sb.rpc('analise_projetistas',{ p_emp:EMP.id }),
+    sb.from('analise_compartilha_auria').select('projetista_id').eq('analise_id',id)]);
+  if(r1.status==='fulfilled') al=r1.value; else console.warn('alcance da análise:', r1.reason);
+  if(r2.status==='fulfilled' && !r2.value.error) PJ=r2.value.data||[]; else erroPj='Não consegui carregar os projetistas do empreendimento.';
+  if(r3.status==='fulfilled' && !r3.value.error) (r3.value.data||[]).forEach(r=>sel.add(r.projetista_id));
+  const discs=_anDiscsCod(an), sug=p=>(p.discs||[]).some(d=>discs.has(d));
+  PJ.sort((a,b)=>(sug(b)-sug(a)) || (b.designado-a.designado) || String(a.nome).localeCompare(String(b.nome),'pt'));
   const ov=document.createElement('div'); ov.className='rvAsk';
+  const linha=p=>`<label class="rvShP"><input type="checkbox" data-p="${p.id}" ${sel.has(p.id)?'checked':''}><span class="nm"><b>${esc(p.nome||p.email)}</b><small>${esc(p.empresa||'')}</small></span><span class="ds">${(p.discs||[]).map(d=>`<i class="${discs.has(d)?'on':''}">${esc(d)}</i>`).join('')}</span></label>`;
+  const pintarLista=()=>{
+    const el=ov.querySelector('#rvShLst'); if(!el) return;
+    const f=PJ.filter(p=>!q || (p.nome+' '+p.empresa+' '+p.email+' '+(p.discs||[]).join(' ')).toLowerCase().includes(q));
+    const s=f.filter(sug), o=f.filter(p=>!sug(p)), sIds=s.map(p=>p.id).filter(i=>!sel.has(i));
+    el.innerHTML=(erroPj?`<div class="rvShAv">${esc(erroPj)}</div>`:'')
+      +(!PJ.length&&!erroPj?'<div class="rvShVz">Nenhum projetista cadastrado neste empreendimento.</div>':'')
+      +(s.length?`<div class="rvShSec">Sugeridos · disciplinas da análise${sIds.length>1?` <button class="rvShTd" data-todos-sug>marcar os ${sIds.length}</button>`:''}</div>`+s.map(linha).join(''):'')
+      +(o.length?`<div class="rvShSec">${s.length?'Outros projetistas do empreendimento':'Projetistas do empreendimento'}</div>`+o.map(linha).join(''):'')
+      +(q&&!f.length?'<div class="rvShVz">Ninguém encontrado.</div>':'');
+    el.querySelectorAll('input[data-p]').forEach(c=>c.onchange=()=>{ if(c.checked) sel.add(c.dataset.p); else sel.delete(c.dataset.p); const st=el.scrollTop; pintarLista(); el.scrollTop=st; pintarRodape(); });
+    const ts=el.querySelector('[data-todos-sug]'); if(ts) ts.onclick=()=>{ sIds.forEach(i=>sel.add(i)); pintarLista(); pintarRodape(); };
+  };
+  const pintarRodape=()=>{ const b=ov.querySelector('[data-r="s"]'), n=ov.querySelector('#rvShN2'); if(!b) return;
+    const k=sel.size; if(n) n.textContent= v!=='Projeto' ? '' : todos ? 'Todos os projetistas' : (k? k+' projetista'+(k>1?'s':'') : 'Nenhum projetista marcado');
+    b.textContent= v==='privada' ? 'Salvar' : 'Compartilhar'; };
   const pintar=()=>{ const fora=rvAnForaDe(al,v), n=(al.itens.length+al.locais.length);
-    ov.innerHTML=`<div class="bx"><b>Compartilhar análise</b><div class="rvShN">${esc(rvAnNomeTela(an))}</div>`
-      +RV_AN_FX.map(f=>`<button class="rvShO ${f[0]===v?'on':''}" data-v="${esc(f[0])}"><i></i><span><b>${esc(f[1])}</b><small>${esc(f[2])}</small></span></button>`).join('')
+    ov.innerHTML=`<div class="bx rvShBx"><b>Compartilhar análise</b><div class="rvShN">${esc(rvAnNomeTela(an))}</div>`
+      +RV_AN_FX.map(f=>`<button class="rvShO ${f[0]===v?'on':''}" data-v="${esc(f[0])}"><i></i><span><b>${esc(f[1])}</b><small>${esc(f[2])}</small></span></button>`
+        +(f[0]==='Projeto'&&v==='Projeto'?`<div class="rvShPjBx"><input id="rvShQ" placeholder="Buscar projetista ou empresa…" value="${esc(q)}"><div id="rvShLst"></div>
+          <label class="rvShTodos"><input type="checkbox" id="rvShTodos" ${todos?'checked':''}><span><b>Todos os projetistas do empreendimento</b><small>Inclui quem for designado depois. Use só quando a análise for de interesse geral.</small></span></label></div>`:'')).join('')
       +(fora.length?`<div class="rvShAv">${_icH('alerta',15)}<span>${fora.length} de ${n} arquivo(s) pode(m) não abrir, ou abrir em revisão anterior, para quem receber: <b>${esc(fora.slice(0,3).join(', '))}${fora.length>3?' …':''}</b></span></div>`:'')
-      +`<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on">${v==='privada'?'Salvar':'Compartilhar'}</button></div></div>`;
+      +`<div style="display:flex;gap:8px;align-items:center;margin-top:12px"><span id="rvShN2" class="rvShCnt"></span><span style="flex:1"></span><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on"></button></div></div>`;
     ov.querySelectorAll('.rvShO').forEach(b=>b.onclick=()=>{ v=b.dataset.v; pintar(); });
+    const qi=ov.querySelector('#rvShQ'); if(qi) qi.oninput=()=>{ q=qi.value.trim().toLowerCase(); pintarLista(); };
+    const tt=ov.querySelector('#rvShTodos'); if(tt) tt.onchange=()=>{ todos=tt.checked; pintarRodape(); };
     ov.querySelector('[data-r="c"]').onclick=fechar;
-    ov.querySelector('[data-r="s"]').onclick=async()=>{ fechar();
-      if(v===(an.visibilidade||'privada')) return;
-      try{ const { data, error }=await sb.from('analises_auria').update({ visibilidade:v }).eq('id',id).select('id'); if(error) throw error; if(!data||!data.length) throw new Error('row-level security');
-        await carregarAnalises(); rvAviso(v==='privada' ? 'Análise só sua de novo.' : 'Análise compartilhada: '+v+'.'); }
+    ov.querySelector('[data-r="s"]').onclick=async()=>{
+      if(v==='Projeto' && !todos && !sel.size && !confirm('Nenhum projetista marcado: só a coordenação verá esta análise. Continuar?')) return;
+      fechar();
+      try{ const { error }=await sb.rpc('analise_compartilhar',{ p_id:id, p_vis:v, p_todos:(v==='Projeto'&&todos), p_pessoas:[...sel] }); if(error) throw error;
+        await carregarAnalises();
+        rvAviso(v==='privada' ? 'Análise só sua de novo.' : v==='Projeto' ? (todos?'Compartilhada com todos os projetistas.':'Compartilhada com '+sel.size+' projetista(s).') : 'Análise compartilhada: '+rvAnFxNome({visibilidade:v})+'.'); }
       catch(e){ rvAlerta('Erro ao compartilhar: '+_anErroMsg(e)); } };
+    pintarLista(); pintarRodape();
   };
   const kd=e=>{ if(e.key==='Escape') fechar(); };
   const fechar=()=>{ ov.remove(); document.removeEventListener('keydown',kd,true); };
