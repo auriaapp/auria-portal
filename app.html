@@ -881,6 +881,9 @@ html[data-tema=claro] .rvCwX{color:#C0392B}
 .anPst .cam{color:var(--mut);font-weight:400}.anPst .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .anPst .n,.anPop .n{font-family:Consolas,'Cascadia Mono',monospace;font-size:10.5px;color:var(--mut)}
 .rvAnT.fora{border-style:dashed}
+.rvAnT.dragging{opacity:.45}.rvAnT.drop{box-shadow:inset 3px 0 0 var(--rvLar,#F28C28);border-color:var(--rvLar,#F28C28)}
+.anRol.arrastando .rvAnT *{pointer-events:none}
+.anPst.alvo{border-style:dashed;border-color:var(--rvLar,#F28C28)}.anPst.drop{background:var(--rvLarT)}
 .rvAnT .org{flex:none;font-size:10px;color:var(--mut);font-weight:400;border-right:1px solid var(--line);padding-right:6px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rvAnT .x{color:var(--mut);font-size:11px;padding:0 1px}.rvAnT .x:hover{color:#E74C3C}
 .anSep{width:1px;height:22px;background:var(--line);flex:none;margin:0 2px}
@@ -12242,13 +12245,35 @@ function anRecente(id){ if(!id||!EMP) return; const l=_anLer('rec',[]).filter(x=
 function anDaPasta(k){
   if(k==='@rec'){
     const ord=_anLer('rec',[]), pos=id=>{ const i=ord.indexOf(id); return i<0?999:i; };
-    return ANALISES.slice().sort((a,b)=>pos(a.id)-pos(b.id) || String(b.atualizado_em||b.criado_em).localeCompare(String(a.atualizado_em||a.criado_em))).slice(0,AN_REC_MAX);
+    return anOrdenar(k, ANALISES.slice().sort((a,b)=>pos(a.id)-pos(b.id) || String(b.atualizado_em||b.criado_em).localeCompare(String(a.atualizado_em||a.criado_em))).slice(0,AN_REC_MAX));
   }
-  if(k==='@comp') return ANALISES.filter(a=>!rvAnMinha(a));
+  if(k==='@comp') return anOrdenar(k, ANALISES.filter(a=>!rvAnMinha(a)));
   const naPasta = k==='@soltas' ? (a=>!AN_NA.has(a.id))
     : (a=>{ const p=AN_NA.get(a.id); return p===k || (p && (_anPasta(p)||{}).pasta_mae===k); });
-  return ANALISES.filter(naPasta).sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em)));
+  return anOrdenar(k, ANALISES.filter(naPasta).sort((a,b)=>String(a.criado_em).localeCompare(String(b.criado_em))));
 }
+// Ordem escolhida arrastando as abas (como no CDE): por pasta, neste computador.
+function anOrdenar(k, lista){
+  const ord=(_anLer('ord',{})||{})[k]; if(!Array.isArray(ord)||!ord.length) return lista;
+  const pos=id=>{ const i=ord.indexOf(id); return i<0?1e6:i; };
+  return lista.map((a,i)=>[a,i]).sort((x,y)=>(pos(x[0].id)-pos(y[0].id))||(x[1]-y[1])).map(x=>x[0]);
+}
+let AN_DRAG=null;
+const _anArrasta=!window.matchMedia('(pointer:coarse)').matches;   // no toque, arrastar disputa com a rolagem
+function anDragStart(ev,id){ AN_DRAG=id; ev.currentTarget.classList.add('dragging'); const r=$('anRol'); if(r) r.classList.add('arrastando');
+  const b=$('anPstBtn'); if(b) b.classList.add('alvo'); ev.dataTransfer.effectAllowed='move'; try{ ev.dataTransfer.setData('text/plain',id); }catch(_){} }
+function anDragEnd(ev){ AN_DRAG=null; try{ ev.currentTarget.classList.remove('dragging'); }catch(_){} const r=$('anRol'); if(r) r.classList.remove('arrastando');
+  const b=$('anPstBtn'); if(b) b.classList.remove('alvo','drop'); _anLimpaDrop(); }
+function _anLimpaDrop(){ document.querySelectorAll('#rvAnTabs .drop').forEach(x=>x.classList.remove('drop')); }
+function anDragOver(ev,id){ if(!AN_DRAG) return; ev.preventDefault(); ev.dataTransfer.dropEffect='move'; _anLimpaDrop(); if(AN_DRAG!==id) ev.currentTarget.classList.add('drop'); }
+function anDrop(ev,id){
+  ev.preventDefault(); _anLimpaDrop(); const de=AN_DRAG; AN_DRAG=null; if(!de||de===id) return;
+  const ids=anDaPasta(AN_PASTA).map(a=>a.id), from=ids.indexOf(de), to=ids.indexOf(id); if(from<0||to<0) return;
+  ids.splice(from,1); ids.splice(to,0,de);
+  const o=_anLer('ord',{})||{}; o[AN_PASTA]=ids; _anGrava('ord',o); rvAnRender();
+}
+// Soltar a aba no botão da pasta = Mover para pasta…
+function anDropPasta(ev){ ev.preventDefault(); const id=AN_DRAG; AN_DRAG=null; _anLimpaDrop(); const b=$('anPstBtn'); if(b) b.classList.remove('alvo','drop'); if(id) anMoverEscolher({ currentTarget:b }, id); }
 function anPastaAbrir(k){
   if(!_anPastaValida(k)) return; AN_PASTA=k; _anGrava('pasta',k); anPopFechar(); rvAnRender();
 }
@@ -12344,7 +12369,8 @@ function _anAba(a, sujo, fora){
   const ativa=a.id===(RV_AN_ABRINDO||ANALISE_ATUAL);
   const org=fora?`<span class="org" title="Da pasta ${esc(anPastaNomeDe(a.id))}">${esc(anPastaNomeDe(a.id))}</span>`:'';
   const x=(fora&&!ativa)?`<span class="x" title="Tirar da barra (não fecha nem apaga)" onclick="event.stopPropagation();anForaTirar('${a.id}')">✕</span>`:'';
-  return `<button class="rvAnT ${ativa?'act':''} ${fora?'fora':''}" data-id="${a.id}" title="${esc(anPastaNomeDe(a.id))} › ${esc(rvAnTitulo(a))}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${org}${a.id===RV_AN_ABRINDO?_anPg(a.id):((RV_AN_PROX&&RV_AN_PROX.id===a.id)?'<i class="rvGira" title="Abre em seguida"></i>':'')}${rvAnMinha(a)?'':_icH('olho',13)}<span class="l">${esc(rvAnNomeTela(a))}</span>${rvAnFx(a)}${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}${x}</button>`;
+  const dg=(!fora&&_anArrasta)?` draggable="true" ondragstart="anDragStart(event,'${a.id}')" ondragend="anDragEnd(event)" ondragover="anDragOver(event,'${a.id}')" ondrop="anDrop(event,'${a.id}')"`:'';
+  return `<button class="rvAnT ${ativa?'act':''} ${fora?'fora':''}" data-id="${a.id}"${dg} title="${esc(anPastaNomeDe(a.id))} › ${esc(rvAnTitulo(a))}${dg?' · arraste para reordenar ou solte na pasta para mover':''}" onclick="rvAnAbrir('${a.id}')" ondblclick="rvAnEditar('${a.id}')" oncontextmenu="rvAnCtx(event,'${a.id}')">${org}${a.id===RV_AN_ABRINDO?_anPg(a.id):((RV_AN_PROX&&RV_AN_PROX.id===a.id)?'<i class="rvGira" title="Abre em seguida"></i>':'')}${rvAnMinha(a)?'':_icH('olho',13)}<span class="l">${esc(rvAnNomeTela(a))}</span>${rvAnFx(a)}${a.id===ANALISE_ATUAL&&sujo?'<i class="dot" title="Alterada — não salva"></i>':''}${x}</button>`;
 }
 function rvAnRender(){
   const el=$('rvAnTabs'); if(!el || RV_AN_EDIT) return;
@@ -12358,7 +12384,7 @@ function rvAnRender(){
   AN_FORA=AN_FORA.filter(id=>ANALISES.some(a=>a.id===id));
   const fora=AN_FORA.filter(id=>!naLista.has(id)).map(id=>ANALISES.find(a=>a.id===id)).filter(Boolean);
   const cam=anPastaCaminho(AN_PASTA), ix=cam.lastIndexOf(' › ');
-  let h=`<button class="anPst ${$('anPop')?'on':''}" id="anPstBtn" onclick="anPopAbrir(event)" title="Trocar de pasta · Ctrl+K abre a Biblioteca">${_icH('pasta',14)}<span class="l">${ix>0?'<span class="cam">'+esc(cam.slice(0,ix))+' › </span>':''}${esc(ix>0?cam.slice(ix+3):cam)}</span><span class="n">${lista.length}</span>▾</button>`;
+  let h=`<button class="anPst ${$('anPop')?'on':''}" id="anPstBtn" onclick="anPopAbrir(event)" ondragover="if(AN_DRAG){event.preventDefault();this.classList.add('drop');}" ondragleave="this.classList.remove('drop')" ondrop="anDropPasta(event)" title="Trocar de pasta · Ctrl+K abre a Biblioteca">${_icH('pasta',14)}<span class="l">${ix>0?'<span class="cam">'+esc(cam.slice(0,ix))+' › </span>':''}${esc(ix>0?cam.slice(ix+3):cam)}</span><span class="n">${lista.length}</span>▾</button>`;
   if(fora.length) h+=fora.map(a=>_anAba(a,sujo,true)).join('')+'<span class="anSep"></span>';
   h+='<div class="anRol" id="anRol">';
   h+=lista.map(a=>_anAba(a,sujo,false)).join('');
