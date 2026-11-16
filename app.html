@@ -430,6 +430,9 @@
   .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   .part-blk{border:1px solid var(--line);border-radius:9px;padding:7px 8px;margin-bottom:6px;background:var(--bg2)}
+  #selFoco.focoOculto{border-color:#E9B44C!important;color:#E9B44C!important}
+  .pinPrSel{margin-left:4px;font-size:10.5px;padding:1px 4px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--txt);max-width:150px;font-family:Consolas,'Cascadia Mono',monospace}
+  .pinOutra{font-size:9.5px;color:#E9B44C;font-weight:700;margin-left:2px}
   .part-blk .partInsL{display:block;font-size:9px;color:var(--rvLar,#F28C28);margin-top:6px;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
   .part-blk textarea.partIns{width:100%;margin-top:3px;border:1.5px solid var(--line);border-left:3px solid var(--rvLar,#F28C28);border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;background:var(--panel);color:var(--txt);resize:vertical;min-height:38px;outline:none}
   .part-blk textarea.partIns:focus{border-color:var(--rvLar,#F28C28)} .part-blk.insFlash{box-shadow:0 0 0 2px var(--rvLar,#F28C28);transition:box-shadow .3s}
@@ -3159,7 +3162,7 @@ function renderCamadas(){
   updateFoco();
 }
 function toggleLock(v){ LOCK_POS=!!v; if(LOCK_POS) fecharWin('pos'); renderCamadas(); }
-function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); renderPins(); renderListaApts(); }
+function camVis(i,v){ LAYERS[i].visible=v; if(i>0) salvarEstadoCamada(LAYERS[i]); F.valido=false; render(); renderPins(); renderListaApts(); try{ _focoSelAtualiza(); mkRender(); }catch(_){} }
 // Arrastar a opacidade redesenhava o PDF de todas as camadas a cada pixel e a barra
 // travava. Agora o arraste recompõe as cópias do último quadro (F.prev), e o desenho
 // em qualidade total só roda quando a mão para.
@@ -3680,12 +3683,13 @@ async function mudarPagina(delta){
     if(PIN_EDIT && APT_EDIT){
       // Frente BIM só recebe pin no modelo — o 2D do mesmo problema é a frente 2D ligada.
       if(APT_EDIT.dimensao==='bim'){ $('modoHint').textContent='apontamento BIM: marque no modelo 3D'; return; }
-      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()});
-      renderPins(); renderPinsList(); _peerBroadcast(); return;
+      if(_focoAviso()) return;                               // item 121: foco numa camada oculta
+      _pinNovo(pt, e); return;                               // item 121: vai para a prancha DO apontamento (pergunta se o foco é outra)
     }
     // Split 2D/2D: apontamento aberto no OUTRO lado em edição de pins → o pin vai pra ele
     if(PEER_EDIT){ peerCall('__peerAddPin',{nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()}); return; }
     // 3) "Apontar" (barra) → cria novo apontamento (one-shot)
+    if(APONTAR && _focoAviso()) return;                 // item 121
     if(APONTAR){ APONTAR=false; $('btnApontar').classList.remove('on');
       $('stage').classList.toggle('modo-pin', PIN_EDIT);
       $('modoHint').textContent='';
@@ -3958,6 +3962,49 @@ function peerWin(){
 }
 function peerCall(fn){ const args=[].slice.call(arguments,1); const w=peerWin();
   try{ if(w && typeof w[fn]==='function') return w[fn].apply(w,args); }catch(e){ console.warn('split peer',fn,e); } return null; }
+// ── Item 121 (mockups/app_camada_foco_pins.html): camada em foco × o que se cria ──
+// (a) foco numa camada OCULTA → avisa antes de criar pin, apontamento ou marcação;
+// (b) pin novo de apontamento vai para a prancha DO apontamento; com o foco em outra, pergunta 1x.
+let FOCO_AVISO_OK=new Set(), _focoAvisoUma=false;
+function _focoOcultoL(){ const L=LAYERS[FOCO_LI]; return (L && L.visible===false && LAYERS.length>1) ? L : null; }
+function _focoAvisoKey(L){ return (typeof ANALISE_ATUAL!=='undefined'&&ANALISE_ATUAL||'rasc')+'|'+((L&&L.prancha&&L.prancha.id)||''); }
+function _focoSugerido(){ const aid=APT_EDIT&&APT_EDIT.prancha_id; let i=aid?LAYERS.findIndex(L=>L&&L.prancha&&L.prancha.id===aid&&L.visible!==false):-1;
+  if(i<0) i=LAYERS.findIndex(L=>L&&L.visible!==false); return i; }
+function _camCod(L){ const p=L&&L.prancha; return (p&&(String(p.codigo||p.arquivo_nome||L.nome||'prancha').replace(/\s*[·-]\s*R\d+[A-Z]?$/i,'')))||'prancha'; }
+function _camSigla(L){ const p=L&&L.prancha; const d=(p&&(p.disciplina||deduzDisc(L.nome||p.codigo||'')))||''; return (typeof rvSigla==='function'&&rvSigla(d))||d||_camCod(L); }
+function _focoAviso(){
+  const L=_focoOcultoL(); if(!L) return false;
+  if(_focoAvisoUma){ _focoAvisoUma=false; return false; }
+  if(FOCO_AVISO_OK.has(_focoAvisoKey(L))) return false;
+  if(document.getElementById('focoAv')) return true;
+  const si=_focoSugerido(), Ls=si>=0?LAYERS[si]:null;
+  const ov=document.createElement('div'); ov.className='rvAsk'; ov.id='focoAv';
+  ov.innerHTML=`<div class="bx" style="border-color:#E9B44C"><b style="display:flex;gap:8px;align-items:center"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="#E9B44C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 17.6 16.4H2.4z"/><path d="M10 8.2v3.6M10 14v.1"/></svg>A camada em foco está oculta</b>
+    <div class="mkVxTx" style="margin:6px 0 0">A <span class="discChip">${esc(_camCod(L))}</span> está em foco, mas escondida. O que você criar agora fica nela: pins e apontamentos <b>não vão aparecer</b> enquanto ela estiver oculta.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px"><button data-r="m" class="rvCwB on">Mostrar a ${esc(_camSigla(L))}</button>${Ls&&si!==FOCO_LI?`<button data-r="f" class="rvCwB">Focar na ${esc(_camSigla(Ls))}</button>`:''}<button data-r="c" class="rvCwB">Continuar assim</button></div>
+    <label style="display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--mut);margin-top:10px;cursor:pointer"><input type="checkbox" id="focoAvNao"> não avisar de novo nesta análise</label></div>`;
+  const fim=()=>{ if(ov.querySelector('#focoAvNao').checked) FOCO_AVISO_OK.add(_focoAvisoKey(L)); ov.remove(); };
+  ov.querySelector('[data-r="m"]').onclick=()=>{ fim(); try{ const i=LAYERS.indexOf(L); camVis(i,true); renderCamadas(); }catch(_){} rvAviso('Camada '+_camSigla(L)+' visível. Clique de novo para continuar.'); };
+  const bf=ov.querySelector('[data-r="f"]'); if(bf) bf.onclick=()=>{ fim(); setFoco(si); rvAviso('Foco na '+_camSigla(Ls)+'. Clique de novo para continuar.'); };
+  ov.querySelector('[data-r="c"]').onclick=()=>{ fim(); _focoAvisoUma=true; rvAviso('Clique de novo para continuar na '+_camSigla(L)+' (oculta).'); };
+  document.body.appendChild(ov); return true;
+}
+function _focoSelAtualiza(){ const sel=$('selFoco'); if(!sel) return; const L=_focoOcultoL(); sel.classList.toggle('focoOculto',!!L);
+  [...sel.options].forEach((o,i)=>{ const oc=LAYERS[i]&&LAYERS[i].visible===false; o.textContent=o.textContent.replace(/ · oculta$/,'')+(oc?' · oculta':''); }); }
+function _pinNovo(pt, e){
+  const a=APT_EDIT, fid=_pranchaFocoId(), aid=a.prancha_id, La=aid?LAYERS.find(L=>L&&L.prancha&&L.prancha.id===aid):null;
+  const pôr=pid=>{ (a.pontos_json=a.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid}); renderPins(); renderPinsList(); _peerBroadcast(); };
+  if(a._pinPid){ pôr(a._pinPid); return; }
+  if(!La || !aid || aid===fid){ pôr(fid); return; }
+  const Lf=LAYERS[FOCO_LI], x=e?e.clientX:0, y=e?e.clientY:0, ond={ getBoundingClientRect:()=>({left:x,right:x,top:y,bottom:y}) };
+  const esc2=(L,tx)=>`<span class="discChip">${esc(_camCod(L))}</span> ${tx}`;
+  rvMenu({ currentTarget:ond }, [
+    { ic:'', t:'<b>Este pin vai para qual prancha?</b>', f:()=>{} },
+    { ic:'●', t:esc2(La,'· do apontamento (recomendado)'), f:()=>{ a._pinPid=aid; pôr(aid); rvAviso('Os próximos pins deste apontamento vão para '+_camCod(La)+'. Dá para trocar na lista de pins.'); } },
+    { ic:'○', t:esc2(Lf,'· em foco'), f:()=>{ a._pinPid=fid; pôr(fid); rvAviso('Os próximos pins deste apontamento vão para '+_camCod(Lf)+'. Dá para trocar na lista de pins.'); } }
+  ]);
+}
+function pinTrocarPrancha(i, pid){ const a=APT_EDIT; if(!a||!a.pontos_json||!a.pontos_json[i]) return; a.pontos_json[i].pid=pid||null; renderPins(); renderPinsList(); _peerBroadcast(); }
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
 function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id; return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
 function _aptVisivel(a){ return !!_layerDoApt(a) || (a.pontos_json||[]).some(pt=>pt.pid && _pinVisivel(a,pt)); }
@@ -4789,7 +4836,8 @@ function renderCotaPanel(){
     </div>
     <div style="max-height:105px;overflow:auto">${listaCotas}</div>
     <div style="border-top:1px solid var(--line);margin-top:9px;padding-top:9px">
-      <div style="font-size:10px;color:var(--mut);margin-bottom:5px">Novas cotas e áreas ficam na análise. Abaixo, as da prancha (anteriores).</div>
+      <div style="font-size:10px;color:var(--mut);margin-bottom:5px">Novas cotas e áreas ficam na análise. Abaixo, as <b>da prancha</b> (anteriores): aparecem em todas as análises dela.</div>
+      ${((TRENA.cotas||[]).length+(TRENA.areas||[]).length)&&!APP_RO?`<button class="btn-sec" onclick="trenaTrazerParaAnalise()" style="width:100%;padding:5px;font-size:11px;margin-bottom:6px">Trazer para esta análise (${(TRENA.cotas||[]).length+(TRENA.areas||[]).length})</button>`:''}
       <button class="btn-sec" onclick="toggleCota();mkToggle(true);MK_MED='area';mkFerr('medir')" ${calOk?'':'disabled title="Calibre a escala primeiro"'}
         style="width:100%;padding:5px;font-size:11px${COTA_MODE==='area'?';background:var(--accent);border-color:var(--accent);color:#fff':''}${calOk?'':';opacity:.5;cursor:not-allowed'}">📐 Área (polígono)</button>
       ${COTA_MODE==='area'?'<div style="font-size:10px;color:var(--mut);margin-top:5px">clique para marcar os vértices · botão direito conclui</div>':''}
@@ -4807,6 +4855,16 @@ function setCotaMode(m){
     : COTA_MODE==='area' ? 'clique para marcar os vértices do polígono · botão direito conclui'
     : (APONTAR?'clique na prancha para criar o apontamento':'');
   renderDrawings(); renderCotaPanel();
+}
+// Item 121: cotas/áreas antigas da PRANCHA viram marcações DESTA análise (saem da prancha).
+function trenaTrazerParaAnalise(){
+  const cs=TRENA.cotas||[], as=TRENA.areas||[], n=cs.length+as.length; if(!n||APP_RO) return;
+  if(!confirm(`Trazer ${n} cota(s)/área(s) da prancha para esta análise?\n\nElas passam a ser marcações desta análise e deixam de aparecer nas outras análises que abrem esta prancha.`)) return;
+  const pr=(PRANCHA&&PRANCHA.id)||null;
+  cs.forEach(c=>{ const m=mkNova('cota',{a:c.a,b:c.b,metros:c.metros,cor:c.color||COTA_COLOR}); m.prancha_id=c.pid||pr; m.pg=c.pg||1; m._an=true; mkGravar(m); });
+  as.forEach(a=>{ const m=mkNova('area',{pts:a.pts,m2:a.m2,cor:a.color||AREA_COLOR}); m.prancha_id=a.pid||pr; m.pg=a.pg||1; m._an=true; mkGravar(m); });
+  TRENA.cotas=[]; TRENA.areas=[]; salvarTrena(); renderDrawings(); renderCotaPanel();
+  rvAviso(n+' medida(s) agora na análise'+(ANALISE_ATUAL?'':' (vão junto ao salvar a análise)')+'.');
 }
 function delCota(i){ if(TRENA.cotas&&i>=0&&i<TRENA.cotas.length){ TRENA.cotas.splice(i,1); salvarTrena(); renderDrawings(); renderCotaPanel(); } }
 function delArea(i){ if(TRENA.areas&&i>=0&&i<TRENA.areas.length){ TRENA.areas.splice(i,1); salvarTrena(); renderDrawings(); renderCotaPanel(); } }
@@ -4846,8 +4904,8 @@ function cotaEnd(e){
         const m=parseFloat((v||'').replace(',','.'));
         if(m>0){
           TRENA.m_por_pt=m/Lpt; salvarTrena();
-          COTA_MODE='cota';                                    // calibrou → sai da calibragem e já entra no modo trena (medir)
-          $('modoHint').textContent='arraste para medir uma distância';
+          COTA_MODE=null;                                      // calibrou → mede como marcação da análise (item 121), não na prancha
+          setTimeout(()=>{ try{ if($('cotaPanel').style.display!=='none') toggleCota(); mkToggle(true); MK_MED='cota'; mkFerr('medir'); }catch(_){} },0);
         }
       }else if(COTA_MODE==='cota'){                            // Medir: NUNCA pergunta (usa a escala)
         if(!TRENA.m_por_pt){ alert('Calibre a escala primeiro no botão 🎯 Calibrar.'); }
@@ -9456,7 +9514,7 @@ function updateFoco(){
     const curto=(typeof VZ!=='undefined'&&VZ.tb==='icone'&&cod) ? (cod.split(' · ')[0].split('-').pop()+(cod.indexOf(' · ')>0?' · '+cod.split(' · ').slice(1).join(' · '):'')) : cod;   // item 114
     return `<option value="${i}"${i===FOCO_LI?' selected':''} title="${esc(cod)}">${esc(d)}${curto?' · '+esc(curto):''}${i===0?' (base)':''}</option>`; }).join('');
   const Lf=LAYERS[FOCO_LI]; sel.title='Prancha em foco: '+((Lf&&(Lf.prancha.codigo||Lf.nome))||'')+' — novos apontamentos herdam a disciplina dela';
-  updateIaPranchaSel();
+  updateIaPranchaSel(); try{ _focoSelAtualiza(); }catch(_){}
   if(BIM_ON) bimEnsure();   // 3D acompanha a disciplina/prancha em foco
 }
 function hojeBr(){ const d=new Date(); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear(); }
@@ -9899,11 +9957,17 @@ async function criarFrenteBim(){
     + (fornSemModelador(a.disciplina)?' Sem modelador designado em '+a.disciplina+': entrou o responsável geral da disciplina.':'')); }catch(_){}
 }
 
+function _pinPranchaSel(pt,i){
+  const a=APT_EDIT, pid=pt.pid||(a&&a.prancha_id), cams=LAYERS.filter(L=>L&&L.prancha); if(cams.length<2 && pid===(cams[0]&&cams[0].prancha.id)) return '';
+  const Lp=cams.find(L=>L.prancha.id===pid), dA=a&&a.disciplina, outra=Lp&&dA&&_camSigla(Lp)&&rvSigla(dA)&&_camSigla(Lp)!==rvSigla(dA);
+  const ops=cams.map(L=>`<option value="${esc(L.prancha.id)}"${L.prancha.id===pid?' selected':''}>${esc(_camCod(L))}${L.visible===false?' (oculta)':''}</option>`).join('')+(Lp?'':`<option value="${esc(pid||'')}" selected>prancha fora desta análise</option>`);
+  return `<select class="pinPrSel" title="Prancha deste pin" ${APP_RO?'disabled':''} onchange="pinTrocarPrancha(${i},this.value)">${ops}</select>${outra?'<span class="pinOutra" title="O pin está numa prancha de outra disciplina">outra disciplina</span>':''}`;
+}
 function renderPinsList(){
   const pts=(APT_EDIT&&APT_EDIT.pontos_json)||[];
   $('apPinsList').innerHTML = pts.length
     ? pts.map((pt,i)=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:2px 6px 2px 10px;margin:0 5px 5px 0;font-size:11px">
-        ${pt.k3d?('🧊 3D · '+esc(pt.mdisc||'modelo')):('📍 pág. '+(pt.pg||1))}
+        ${pt.k3d?('🧊 3D · '+esc(pt.mdisc||'modelo')):('📍 pág. '+(pt.pg||1))}${pt.k3d?'':_pinPranchaSel(pt,i)}
         <button class="btn-sec" style="padding:1px 6px;font-size:11px;border-radius:10px" onclick="removerPinApt(${i})">✕</button></span>`).join('')
     : '<span style="font-size:11px;color:var(--mut)">Nenhum pin. Ligue “Editar pins” e clique na prancha ou no modelo 3D.</span>';
   if(APT_EDIT && !APT_EDIT._novo){
@@ -12841,7 +12905,7 @@ function mkAn(){ return ANALISE_ATUAL ? ANALISES.find(a=>a.id===ANALISE_ATUAL) :
 function mkPode(){ if(APP_RO||APP_PJ||(typeof MK_FIXO!=='undefined'&&MK_FIXO)) return false; const a=mkAn(); return !ANALISE_ATUAL || (a && rvAnMinha(a)); }
 function mkPid(){ return (typeof _pranchaFocoId==='function') ? _pranchaFocoId() : (PRANCHA&&PRANCHA.id); }
 function mkLayer(pid){ return LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid); }
-function mkVisivel(m){ const L=mkLayer(m.prancha_id); return !!(L && L.visible!==false) && (m.pg||1)===V.pageNum && !(typeof MK_OCULTA_ANT!=='undefined' && MK_OCULTA_ANT && mkAntiga(m)); }
+function mkVisivel(m){ const L=mkLayer(m.prancha_id); return (!(m.dados||{}).cam || !!(L && L.visible!==false)) && (m.pg||1)===V.pageNum && !(typeof MK_OCULTA_ANT!=='undefined' && MK_OCULTA_ANT && mkAntiga(m)); }
 function mkPt(e){ const r=$('stage').getBoundingClientRect(); return screenToPage(e.clientX-r.left, e.clientY-r.top); }
 function mkProxNum(){ return MARCS.filter(m=>m.tipo==='balao').reduce((x,m)=>Math.max(x,m.numero||0),0)+1; }
 
@@ -13143,7 +13207,7 @@ function mkVal(m,k){ const d=m.dados||{};
   switch(k){ case 'cor': return d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C'); case 'sw': { const v=_mkSw(m); return MK_SW.reduce((a,b)=>Math.abs(b-v)<Math.abs(a-v)?b:a); }
     case 'ls': return _mkLs(d); case 'pt': return _mkPt(m); case 'tam': return d.tam||'M'; case 'fill': return d.fill||'none'; case 'fo': return d.fo!=null?+d.fo:.15;
     case 'op': return _mkOp(m); case 'neg': return !!d.neg; case 'fundo': return !!d.fundo; case 'borda': return m.tipo==='chamada'?d.borda!==false:!!d.borda;
-    case 'g': return d.g||'porta'; case 'w': return d.w!=null?+d.w:.8; case 'dir': return d.dir||'d'; }
+    case 'cam': return !!d.cam; case 'g': return d.g||'porta'; case 'w': return d.w!=null?+d.w:.8; case 'dir': return d.dir||'d'; }
   return null; }
 const MK_MISTO={};
 function _mkLinhaIc(ls,w){ const da=ls==='dash'?'6 3':ls==='dot'?'0.1 4':ls==='dashdot'?'7 3 0.1 3':''; return `<svg viewBox="0 0 30 14" width="30" height="14"><path d="M3 7h24" stroke="currentColor" stroke-width="${w||2}" stroke-linecap="round"${da?` stroke-dasharray="${da}"`:''}/></svg>`; }
@@ -13155,6 +13219,7 @@ function mkPainelHtml(objs, ferr){
   const tipos=[...new Set(objs.map(o=>o.tipo))];
   let secs=(MK_SECS[tipos[0]]||[]).filter(s=>tipos.every(t=>(MK_SECS[t]||[]).includes(s)));
   if(ferr==='carimbo') secs=['tam'];
+  if(!ferr && objs.length && objs.every(o=>o._ad==null && o.id)) secs=['cam'].concat(secs);   // item 121: aparece com a análise × só com a camada
   const v=k=>{ const vs=[...new Set(objs.map(o=>JSON.stringify(mkVal(o,k))))]; return vs.length===1?JSON.parse(vs[0]):MK_MISTO; };
   const q=x=>JSON.stringify(x).replace(/"/g,'&quot;');
   const seg=(k,ops)=>`<div class="mkpSeg">${ops.map(([val,html,tip])=>`<button class="${v(k)===val?'on':''}" title="${esc(tip||'')}" onclick="mkProp('${k}',${q(val)})">${html}</button>`).join('')}</div>`;
@@ -13175,6 +13240,9 @@ function mkPainelHtml(objs, ferr){
     fill:()=>{ const f=v('fill'); return `<div class="mkpSec">${lb('Preenchimento', f==='cor'&&v('fo')!==MK_MISTO?Math.round(v('fo')*100)+'%':null)}<div class="mkpChs">${chips('fill',[['none','sem'],['cor','cor'],['hatch','hachura'],['hatchX','cruzada']])}</div>${f==='cor'?rg('fo',5,80):''}</div>`; },
     op:()=>`<div class="mkpSec">${lb('Opacidade', v('op')===MK_MISTO?'misto':Math.round(v('op')*100)+'%')}${rg('op',10,100)}</div>`,
     tx:()=>`<div class="mkpSec">${lb('Texto')}<div class="mkpChs">${chips('tam',[['P','P'],['M','M'],['G','G']])}<span class="mkpSp"></span>${tog('neg','N','font-weight:900')}${tog('borda','borda')}</div></div>`,
+    cam:()=>{ const c=v('cam'), Ls=[...new Set(objs.map(o=>o.prancha_id))].map(id=>mkLayer(id)), L=Ls.length===1?Ls[0]:null, o=objs[0];
+      const ref=objs.length===1&&L?`<div class="mkpNt">Feita na <span class="discChip">${esc(_camCod(L))}</span>${o.cde_revisao_id&&typeof MK_REVS!=='undefined'&&MK_REVS.get(o.cde_revisao_id)?' '+esc(MK_REVS.get(o.cde_revisao_id)):''} · ${o.criado_em?new Date(o.criado_em).toLocaleDateString('pt-BR'):''}</div>`:'';
+      return `<div class="mkpSec">${lb('Aparece')}<div class="mkpSeg"><button class="${c===false?'on':''}" onclick="mkProp('cam',false)">com a análise</button><button class="${c===true?'on':''}" onclick="mkProp('cam',true)">só com ${L?'a '+esc(_camSigla(L)):'a camada'}</button></div>${ref}</div>`; },
     gab:()=>{ const g=v('g'), w=v('w'), dr=v('dir'), um=g!==MK_MISTO;
       const pc=(id,t,ex)=>`<button class="mkpCh ${g===id?'on':''}" onclick="mkProp('gab',${q(Object.assign({g:id},ex||{}))})">${t}</button>`;
       return `<div class="mkpSec">${lb('Peça', um&&g!=='porta'?String(MK_GAB[g].w.toFixed(2)+' × '+MK_GAB[g].h.toFixed(2)).replace(/\./g,',')+' m':null)}<div class="mkpChs">${pc('porta','Porta',{w:.8})}${pc('pia','Lavatório')}${pc('vaso','Vaso')}</div></div>`
@@ -13190,7 +13258,7 @@ function mkProp(k,v){
   if(MK_TOOL!=='sel'){ if(MK_TOOL==='medir') return; MK_PADRAO[MK_TOOL]=Object.assign({},MK_PADRAO[MK_TOOL]||{},vv); mkPadSalvar(); mkRegua(); try{ renderDrawings(); }catch(_){} return; }
   const objs=mkSelObjs(); if(!objs.length || !mkPodeAqui()) return;
   const g=mkUndoAbre();
-  objs.forEach(m=>{ if(!mkTemProp(m.tipo,k)) return; const nd=Object.assign({},m.dados,vv); if(k==='ls') delete nd.tr; if(k==='fill' && v==='cor' && nd.fo==null) nd.fo=.15; mkAtualizar(m,nd); });
+  objs.forEach(m=>{ if(k==='cam'?m._ad!=null:!mkTemProp(m.tipo,k)) return; const nd=Object.assign({},m.dados,vv); if(k==='ls') delete nd.tr; if(k==='fill' && v==='cor' && nd.fo==null) nd.fo=.15; mkAtualizar(m,nd); });
   mkUndoFecha(g); mkRender();
 }
 function mkUsarPadrao(){ const o=mkSelObjs()[0]; if(!o) return; const pad={};
@@ -13300,6 +13368,7 @@ function mkInstalar(){
       return; }
     if(!mkPodeAqui()) return;
     e.stopImmediatePropagation(); e.preventDefault();
+    if(!_mkPoly && !_mkCh && _focoAviso()) return;          // item 121: foco numa camada oculta
     const pt=mkPt(e), q={nx:pt.nx,ny:pt.ny};
     if(MK_TOOL==='nuvem'){
       if(_mkPoly){ const f=pageToScreen(_mkPoly.dados.pts[0].nx,_mkPoly.dados.pts[0].ny), r=$('stage').getBoundingClientRect();
