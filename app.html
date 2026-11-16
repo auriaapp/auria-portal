@@ -688,6 +688,9 @@ body.vz-dir-emp #sideRight #rvDMk{display:block!important}
 .mkFil{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
 .mkFil button{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:20px;padding:2px 9px;font:inherit;font-size:11px;cursor:pointer}
 .mkFil button.on{border-color:var(--rvLar,#F28C28);color:var(--rvLar,#F28C28);background:var(--rvLarT)}
+#mkRegua .mkT.mkVirar{color:var(--rvLar,#F28C28)}
+.mkIt.rs{border-style:dashed}.mkIt.rs .tx small{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.mkVxTx{font-size:12px;color:var(--mut);line-height:1.45;margin:4px 0 8px}
 #mkRegua .mkRo{font-size:9.5px;color:var(--mut);text-align:center;line-height:1.1;padding:3px 0}
 #btnMarcar.on{background:var(--rvLarT);border-color:var(--rvLar,#F28C28);color:var(--rvLar,#F28C28)}
 .rvDRes>div:first-child{display:none!important}
@@ -1827,6 +1830,10 @@ body.app-pj.pj-cria #btnNota,body:not(.app-pj):not(.app-ro) #btnNota{display:inl
     <div class="fg" id="apPendFg" style="display:none">
       <label>Pendências por local e disciplina</label>
       <div id="apPend"></div>
+    </div>
+    <div class="fg" id="apOrigemFg" style="display:none">
+      <label>Análise de origem</label>
+      <div id="apOrigem"></div>
     </div>
     <div class="fg" id="apVincFg">
       <label>Vinculados</label>
@@ -4563,6 +4570,7 @@ function fillPaint(s){
 
 // Serializa uma forma em SVG (coords de tela via pageToScreen)
 function shapeToSvg(s, preview){
+  if(s && s.t==='mk'){ try{ return mkSvg({ tipo:s.mk, dados:Object.assign({}, s.dados, { cor:s.color }), id:'' }, 'apt'); }catch(_){ return ''; } }   // item 110 F2
   const P=p=>pageToScreen(p.nx,p.ny), col=s.color||'#E74C3C', w=s.w||2, op=preview?0.85:1;
   const st=`stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" opacity="${op}"`;
   if(s.t==='free'){
@@ -4642,14 +4650,14 @@ function renderDrawings(){
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
     if(!_layerDoApt(a)) return;   // desenhos de qualquer prancha aberta e visível (base ou overlay)
     if(_aptResolvidoOculto(a)) return;
-    (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
+    (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s.t==='mk'?Object.assign({},s,{color:corPrio(a.prioridade)}):s, false); });
   });
   // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
   if(APT_EDIT){
     (APT_EDIT.drawings_json||[]).forEach((s,i)=>{
       if(!naPagina(s)) return;
       if(i===_hiliteIdx){ out+=shapeToSvg(Object.assign({},s,{color:'#22D3EE',w:(s.w||2)+6,fill:'none'}), true); }  // halo
-      out+=shapeToSvg(s, false);
+      out+=shapeToSvg(s.t==='mk'?Object.assign({},s,{color:corPrio(APT_EDIT.prioridade)}):s, false);
     });
     if(_draw) out+=shapeToSvg(_draw, true);
     out+=polyPreviewSvg();
@@ -9669,7 +9677,7 @@ function apDiscMudou(){
 }
 function abrirEditor(){
   const a=APT_EDIT;
-  setTimeout(()=>{ try{ renderPend(); }catch(_){} try{ renderVinc(); }catch(_){} }, 0);   // item 113 F2/F4
+  setTimeout(()=>{ try{ renderPend(); }catch(_){} try{ renderVinc(); }catch(_){} try{ renderOrigem(); }catch(_){} }, 0);   // item 113 F2/F4 + 110 F2
   _apLocalManual=new Set(); _apPinsN=(a.pontos_json||[]).length;   // antes de qualquer renderPinsList
   { const bim=_aptDim(a)==='bim';
     window._aptTtlHtml=`<span class="dtag ${bim?'bim':'d2'}">${bim?'BIM':'2D'}</span><span class="ap-cod">${esc(a.id||'')}</span>`
@@ -10238,6 +10246,7 @@ async function salvarApt(){
       participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs, anexos_json:anexos,
       pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
       prancha_id:a.prancha_id||null,
+      analise_origem_id: a.analise_origem_id || undefined,   // item 110 F2: análise onde nasceu
       // Se a prancha veio do CDE, marca em qual revisão o apontamento nasceu.
       // Só grava em CRIAÇÃO — edições posteriores não sobrescrevem a origem.
       cde_revisao_id: (a._novo && a.cde_revisao_id) ? a.cde_revisao_id : undefined
@@ -12687,7 +12696,7 @@ const RV_IC_CLASSES={'Paredes':'parede','Pilares':'pilar','Vigas':'viga','Lajes'
 // (opção A) com Selecionar V · Nuvem N · Chamada C · Balão B · Marcador H · Texto T.
 // Análise salva: grava ao terminar cada marcação. Análise ainda não salva: fica em
 // memória e vai junto no 💾 Salvar. Só o dono da análise marca; os outros só veem.
-let MK_ON=false, MK_TOOL='sel', MK_COR='#E74C3C', MK_TAM='M', MK_SEL=null, MK_OCULTA=false, MK_NEG=false, MK_FUNDO=false, MK_FILT='todas', _mkPoly=null;
+let MK_ON=false, MK_TOOL='sel', MK_COR='#E74C3C', MK_TAM='M', MK_SEL=null, MK_OCULTA=false, MK_NEG=false, MK_FUNDO=false, MK_FILT='todas', _mkPoly=null, MK_SELS=new Set();
 let MARCS=[], MK_AN=undefined, _mk=null, _mkCh=null, MK_SEQ=0, MK_FLUSH=false;
 const MK_TOOLS=[['sel','V','Selecionar'],['nuvem','N','Nuvem de revisão'],['chamada','C','Texto com chamada'],['balao','B','Balão numerado'],['marcador','H','Marcador'],['texto','T','Texto']];
 const MK_CORES=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111'];
@@ -12699,7 +12708,10 @@ const MK_SVG={
   chamada:'<circle cx="4.5" cy="15.5" r="1.3"/><path d="M5.5 14.5L10 9"/><rect x="9.5" y="3.5" width="8" height="5.5" rx="1"/>',
   balao:'<circle cx="10" cy="10" r="6.5"/><path d="M10 7v6"/>',
   marcador:'<path d="M4 15.5h7" stroke-width="3.2" opacity=".55"/><path d="M12.5 4.5l3 3-6 6H6.5v-3z"/>',
-  texto:'<path d="M5 5h10M10 5v11"/>'
+  texto:'<path d="M5 5h10M10 5v11"/>',
+  virar:'<path d="M10 17.5s-5.2-4.7-5.2-8.6a5.2 5.2 0 0 1 10.4 0c0 3.9-5.2 8.6-5.2 8.6z"/><path d="M10 6.2v5.2M7.4 8.8h5.2"/>',
+  anexar:'<path d="M13.5 7.5l-5.6 5.6a2 2 0 0 1-2.8-2.8l6-6a3.2 3.2 0 0 1 4.5 4.5l-6.2 6.2a4.4 4.4 0 0 1-6.2-6.2l5.4-5.4"/>',
+  rastro:'<path d="M4 10h9M10 6l4 4-4 4"/>'
 };
 function _mkIc(k,s){ return `<svg viewBox="0 0 20 20" width="${s||16}" height="${s||16}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${MK_SVG[k]||''}</svg>`; }
 function mkAn(){ return ANALISE_ATUAL ? ANALISES.find(a=>a.id===ANALISE_ATUAL) : null; }
@@ -12716,7 +12728,7 @@ async function mkCarregar(){
   const an=ANALISE_ATUAL||null; if(an===MK_AN) return;
   // Rascunho só passa para a análise que ACABOU de ser salva (abrir outra descarta o rascunho).
   const pend=(MK_AN==null && MK_FLUSH) ? MARCS.filter(m=>m._local) : [];
-  MK_AN=an; MK_SEL=null; _mk=null; _mkCh=null;
+  MK_AN=an; mkSel(null); _mk=null; _mkCh=null;
   if(!an){ MARCS=[]; mkRender(); return; }
   try{
     const { data, error }=await sb.from('analise_marcacao_auria').select('*').eq('analise_id',an).order('criado_em');
@@ -12738,7 +12750,7 @@ async function mkGravar(m){
     if(error) throw error;
     const i=MARCS.indexOf(m);
     if(i<0){ try{ await sb.from('analise_marcacao_auria').delete().eq('id',data.id); }catch(_){} return; }   // apagada enquanto gravava
-    if(MK_SEL===m.id) MK_SEL=data.id; MARCS[i]=data;
+    if(MK_SELS.delete(m.id)) MK_SELS.add(data.id); if(MK_SEL===m.id) MK_SEL=data.id; MARCS[i]=data;
   }catch(e){ MARCS=MARCS.filter(x=>x!==m); rvAlerta('Não consegui gravar a marcação: '+_anErroMsg(e)); }
   mkRender();
 }
@@ -12749,7 +12761,7 @@ async function mkAtualizar(m, dados){
 }
 async function mkApagar(id){
   const m=MARCS.find(x=>x.id===id); if(!m||!mkPode()) return;
-  MARCS=MARCS.filter(x=>x!==m); if(MK_SEL===id) MK_SEL=null; mkRender();
+  MARCS=MARCS.filter(x=>x!==m); MK_SELS.delete(id); if(MK_SEL===id) MK_SEL=null; mkRender();
   if(m._local || String(id).startsWith('tmp')) return;   // ainda não gravada: a gravação em curso desfaz sozinha
   try{ const { error }=await sb.from('analise_marcacao_auria').delete().eq('id',id); if(error) throw error; }
   catch(e){ MARCS.push(m); mkRender(); rvAlerta('Não consegui apagar a marcação: '+_anErroMsg(e)); }
@@ -12775,7 +12787,7 @@ function _mkNuvemPts(P0, r, fechar){
 }
 function _mkTxtW(t,fs){ return Math.max(fs, String(t||'').length*fs*0.56); }
 function mkSvg(m, prev){
-  const P=p=>pageToScreen(p.nx,p.ny), d=m.dados||{}, c=d.cor||'#E74C3C', T=MK_TAMS[d.tam||'M']||MK_TAMS.M, sel=m.id&&m.id===MK_SEL;
+  const P=p=>pageToScreen(p.nx,p.ny), d=m.dados||{}, c=d.cor||'#E74C3C', T=MK_TAMS[d.tam||'M']||MK_TAMS.M, sel=!!(m.id&&MK_SELS.has(m.id));
   let g='', bb=null;
   if(m.tipo==='nuvem' && (d.pts||[]).length>=2){ const q=d.pts.map(P), fecha=!prev||d.pts.length>=3&&!m._aberta;
     const pp=q.map(p=>[p.x,p.y]); if(prev && m._cur){ const c=P(m._cur); pp.push([c.x,c.y]); }
@@ -12803,7 +12815,7 @@ function mkSvg(m, prev){
   const halo=(sel&&bb)?`<rect x="${bb[0].toFixed(1)}" y="${bb[1].toFixed(1)}" width="${(bb[2]-bb[0]).toFixed(1)}" height="${(bb[3]-bb[1]).toFixed(1)}" rx="4" fill="none" stroke="#F28C28" stroke-width="1.5" stroke-dasharray="5 3"/>`:'';
   // área de clique: a caixa toda (fácil de pegar a nuvem pelo meio) quando a régua está em Selecionar
   const hit=(!prev&&bb&&MK_ON&&MK_TOOL==='sel')?`<rect x="${bb[0].toFixed(1)}" y="${bb[1].toFixed(1)}" width="${(bb[2]-bb[0]).toFixed(1)}" height="${(bb[3]-bb[1]).toFixed(1)}" fill="transparent"/>`:'';
-  return `<g class="mkG" data-mk="${prev?'':esc(m.id||'')}" opacity="${prev?0.8:1}" style="pointer-events:${(!prev&&MK_ON&&MK_TOOL==='sel')?'visiblePainted':'none'};cursor:pointer">${hit}${g}${halo}</g>`;
+  return `<g class="mkG" data-mk="${prev?'':esc(m.id||'')}" opacity="${prev===true?0.8:1}" style="pointer-events:${(!prev&&MK_ON&&MK_TOOL==='sel')?'visiblePainted':'none'};cursor:pointer">${hit}${g}${halo}</g>`;
 }
 function mkSvgTudo(){
   if(!V.page || !PRANCHA || MK_OCULTA) return '';
@@ -12830,22 +12842,23 @@ function mkRegua(){
     if(MK_TOOL==='texto'||MK_TOOL==='chamada') h+=`<span class="mkSep"></span><button class="mkTam ${MK_NEG?'on':''}" style="font-weight:900" data-tip="Negrito" onclick="MK_NEG=!MK_NEG;mkRegua()">N</button>`
       +(MK_TOOL==='texto'?`<button class="mkTam ${MK_FUNDO?'on':''}" data-tip="Fundo branco (lê sobre hachura)" onclick="MK_FUNDO=!MK_FUNDO;mkRegua()">▭</button>`:'');
   }
-  if(MK_SEL && pode) h+=`<span class="mkSep"></span><button class="mkT" data-tip="Apagar a selecionada · Delete" onclick="mkApagar('${MK_SEL}')"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg></button>`;
+  if(MK_SELS.size && pode) h+=`<span class="mkSep"></span><button class="mkT mkVirar" data-tip="Virar apontamento${MK_SELS.size>1?' ('+MK_SELS.size+')':''}" onclick="mkVirar(event)">${_mkIc('virar',17)}</button><button class="mkT" data-tip="Anexar a um apontamento…" onclick="mkAnexar(event)">${_mkIc('anexar',17)}</button>`;
+  if(MK_SELS.size && pode) h+=`<button class="mkT" data-tip="Apagar ${MK_SELS.size>1?'as '+MK_SELS.size+' selecionadas':'a selecionada'} · Delete" onclick="[...MK_SELS].forEach(mkApagar)"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg></button>`;
   el.innerHTML=h+(pode?'':'<div class="mkRo" title="Análise de outra pessoa: só consulta. Salve uma cópia para marcar por cima.">só<br>ver</div>');
   const b=$('btnMarcar'); if(b) b.classList.toggle('on',MK_ON);
 }
 function mkToggle(on){
   MK_ON = on==null ? !MK_ON : !!on;
   if(MK_ON){ try{ if(DRAW_TOOL) setDrawTool(DRAW_TOOL); }catch(_){} try{ if(PIN_EDIT) setPinEdit(false); }catch(_){} if(typeof COTA_MODE!=='undefined' && COTA_MODE){ try{ toggleCota(); }catch(_){} } }
-  else { MK_TOOL='sel'; _mk=null; _mkCh=null; MK_SEL=null; }
+  else { MK_TOOL='sel'; _mk=null; _mkCh=null; mkSel(null); }
   mkHint(); mkRender(); $('stage').classList.toggle('modo-pin', MK_ON && MK_TOOL!=='sel');
 }
-function mkFerr(k){ if(k!=='sel' && !mkPode()) return; MK_TOOL=k; _mk=null; _mkCh=null; _mkPoly=null; if(k!=='sel') MK_SEL=null; if(k==='marcador' && MK_COR==='#E74C3C') MK_COR='#F1C40F'; if(k!=='marcador' && MK_COR==='#F1C40F') MK_COR='#E74C3C';
+function mkFerr(k){ if(k!=='sel' && !mkPode()) return; MK_TOOL=k; _mk=null; _mkCh=null; _mkPoly=null; if(k!=='sel') mkSel(null); if(k==='marcador' && MK_COR==='#E74C3C') MK_COR='#F1C40F'; if(k!=='marcador' && MK_COR==='#F1C40F') MK_COR='#E74C3C';
   $('stage').classList.toggle('modo-pin', MK_TOOL!=='sel'); mkHint(); mkRender(); }
 function mkCor(c){ MK_COR=c; mkRegua(); }
 function mkTam(t){ MK_TAM=t; mkRegua(); }
 function mkHint(){ const h=$('modoHint'); if(!h) return;
-  const t={ sel:'Marcar: clique numa marcação para selecionar · Delete apaga · Esc sai', nuvem:_mkPoly?'Nuvem por pontos: clique os cantos · clique no 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Nuvem: arraste um retângulo · ou clique ponto a ponto para contorno irregular',
+  const t={ sel:'Marcar: clique seleciona · Shift+clique soma · com seleção: Virar apontamento / Anexar · Delete apaga · Esc sai', nuvem:_mkPoly?'Nuvem por pontos: clique os cantos · clique no 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Nuvem: arraste um retângulo · ou clique ponto a ponto para contorno irregular',
     chamada:_mkCh?'Chamada: clique onde fica o texto':'Chamada: clique no ponto a indicar', balao:'Balão: clique para numerar ('+mkProxNum()+') · em cima de uma nuvem ou chamada, fica preso a ela',
     marcador:'Marcador: arraste por cima do desenho · Shift deixa reto', texto:'Texto: clique onde escrever', balaoP:'' };
   h.textContent=MK_ON ? (t[MK_TOOL]||'')+(ANALISE_ATUAL?'':' · análise ainda não salva: as marcações vão junto no 💾 Salvar') : ''; }
@@ -12872,7 +12885,7 @@ function mkInstalar(){
     if(!MK_ON || e.button!==0 || !V.page) return;
     if(e.target.closest('#mkRegua,#cotaPanel,#iaPanel')) return;
     const g=e.target.closest && e.target.closest('.mkG[data-mk]');
-    if(MK_TOOL==='sel'){ if(g && g.dataset.mk){ MK_SEL=g.dataset.mk; mkRender(); e.stopImmediatePropagation(); e.preventDefault(); } else if(MK_SEL){ MK_SEL=null; mkRender(); } return; }
+    if(MK_TOOL==='sel'){ if(g && g.dataset.mk){ mkSel(g.dataset.mk, e.shiftKey); mkRender(); e.stopImmediatePropagation(); e.preventDefault(); } else if(MK_SELS.size){ mkSel(null); mkRender(); } return; }
     if(!mkPode()) return;
     e.stopImmediatePropagation(); e.preventDefault();
     const pt=mkPt(e), q={nx:pt.nx,ny:pt.ny};
@@ -12917,7 +12930,7 @@ function mkInstalar(){
     const tg=e.target; if(tg && (tg.tagName==='INPUT'||tg.tagName==='TEXTAREA'||tg.tagName==='SELECT'||tg.isContentEditable)) return;
     if(e.key==='Enter' && _mkPoly){ mkPolyFim(); e.preventDefault(); return; }
     if(e.key==='Escape'){ if(_mkCh||_mk||_mkPoly){ _mkCh=null; _mk=null; _mkPoly=null; mkHint(); mkRender(); } else if(MK_TOOL!=='sel') mkFerr('sel'); else if(MK_SEL){ MK_SEL=null; mkRender(); } else mkToggle(false); e.preventDefault(); return; }
-    if((e.key==='Delete'||e.key==='Backspace') && MK_SEL){ mkApagar(MK_SEL); e.preventDefault(); return; }
+    if((e.key==='Delete'||e.key==='Backspace') && MK_SELS.size){ [...MK_SELS].forEach(mkApagar); e.preventDefault(); return; }
     const t=MK_TOOLS.find(x=>x[1]===e.key.toUpperCase()); if(t){ mkFerr(t[0]); e.preventDefault(); }
   });
 }
@@ -12948,8 +12961,12 @@ function mkLista(){
   grupos.forEach((ms,pid)=>{
     const L=mkLayer(pid), cod=(L&&L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome||L.nome))||'Prancha fora da tela';
     h+=`<div class="mkGr"><span class="ap-cod">${esc(cod)}</span><i>${ms.length}</i></div>`;
-    ms.forEach(m=>{ const d=m.dados||{}, rot=m.tipo==='balao'?(m.numero+' · balão'+(d.preso&&MARCS.some(x=>x.id===d.preso)?' na '+MK_NOME[(MARCS.find(x=>x.id===d.preso)||{}).tipo].toLowerCase():'')):(['texto','chamada'].includes(m.tipo)?(d.txt||MK_NOME[m.tipo]):MK_NOME[m.tipo]);
-      h+=`<div class="mkIt ${m.id===MK_SEL?'on':''} ${L?'':'fora'}" onclick="mkIr('${esc(m.id)}')" title="${L?'Mostrar na prancha':'Abra esta prancha para ver a marcação'}"><span class="ic" style="color:${d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C')}">${_mkIc(m.tipo,15)}</span><span class="tx"><b>${esc(rot)}</b><small>${esc(m.autor_nome||'')} · ${dt(m.criado_em)}${(m.pg||1)>1?' · pág. '+m.pg:''}</small></span>${pode?`<button class="x" title="Apagar" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`; });
+    ms.forEach(m=>{ const d=m.dados||{};
+      if(m.tipo==='rastro'){ const ap=APTS.find(a=>a.id===d.apt);
+        h+=`<div class="mkIt rs" onclick="mkRastroAbrir('${esc(m.id)}')" title="Abrir o apontamento"><span class="ic" style="color:${ap?corPrio(ap.prioridade):'var(--mut)'}">${_mkIc('rastro',15)}</span><span class="tx"><b><span class="ap-cod">${esc(d.apt||'?')}</span> · ${esc((ap&&ap.titulo)||d.titulo||'')}</b><small>${ap?`<span class="ap-st" style="background:${corStatus(ap.status)}22;color:${corStatus(ap.status)}">${esc(ap.status||'—')}</span>`:'apagado'}${ap&&ap.prazo_min?' · prazo '+esc(ap.prazo_min):''} · ${d.anexo?'anexada':'virou apontamento'} ${dt(m.criado_em)}</small></span>${pode&&!d.anexo&&ap?`<button class="x" title="Desfazer (só se ainda não chegou a ninguém)" onclick="event.stopPropagation();mkDesfazer('${esc(m.id)}')">↶</button>`:''}${pode?`<button class="x" title="Tirar o rastro da análise (o apontamento continua)" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`;
+        return; }
+      const rot=m.tipo==='balao'?(m.numero+' · balão'+(d.preso&&MARCS.some(x=>x.id===d.preso)?' na '+MK_NOME[(MARCS.find(x=>x.id===d.preso)||{}).tipo].toLowerCase():'')):(['texto','chamada'].includes(m.tipo)?(d.txt||MK_NOME[m.tipo]):MK_NOME[m.tipo]);
+      h+=`<div class="mkIt ${MK_SELS.has(m.id)?'on':''} ${L?'':'fora'}" onclick="if(event.shiftKey){ mkSel('${esc(m.id)}',true); mkRender(); } else mkIr('${esc(m.id)}')" title="${L?'Mostrar na prancha':'Abra esta prancha para ver a marcação'}"><span class="ic" style="color:${d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C')}">${_mkIc(m.tipo,15)}</span><span class="tx"><b>${esc(rot)}</b><small>${esc(m.autor_nome||'')} · ${dt(m.criado_em)}${(m.pg||1)>1?' · pág. '+m.pg:''}</small></span>${pode?`<button class="x" title="Apagar" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`; });
   });
   el.innerHTML=h;
 }
@@ -12958,7 +12975,7 @@ async function mkIr(id){
   const m=MARCS.find(x=>x.id===id); if(!m) return; const L=mkLayer(m.prancha_id);
   if(!L){ rvAviso('Abra a prancha desta marcação para vê-la.'); return; }
   if(!MK_ON) mkToggle(true); if(MK_TOOL!=='sel') mkFerr('sel');
-  MK_SEL=id; MK_OCULTA=false;
+  mkSel(id); MK_OCULTA=false;
   if((m.pg||1)!==V.pageNum){ V.pageNum=m.pg||1; try{ F.valido=false; await carregarPagina(); }catch(_){} }
   const d=m.dados||{}, ps=[d.a,d.b].concat(d.pts||[]).filter(Boolean); if(ps.length){
     const cx=ps.reduce((s,p)=>s+p.nx,0)/ps.length, cy=ps.reduce((s,p)=>s+p.ny,0)/ps.length, dm=pageDims(), stg=$('stage');
@@ -12975,6 +12992,177 @@ window.addEventListener('load',()=>{
   const tb=$('btnCota'); if(tb && !$('btnMarcar')) tb.insertAdjacentHTML('beforebegin', `<button class="tb app-wr" id="btnMarcar" onclick="mkToggle()" title="Marcação da análise: nuvem, chamada, balão, marcador e texto">${_mkIc('nuvem',15).replace('<svg','<svg style="vertical-align:-3px"')}<span class="vzTx"> Marcar</span></button>`);
   mkInstalar();
   setTimeout(mkAbaMontar, 0);
+});
+</script>
+<script>
+// ═══ Item 110 fase 2: VIRAR APONTAMENTO (mockups/app_marcacao_prancha.html, seção 3) ═══
+// O desenho MUDA DE DONO: sai da análise e vira desenho do apontamento (t:'mk', na cor da
+// criticidade). Na análise fica um RASTRO "→ EST-4" com status ao vivo, que guarda as
+// marcações originais para desfazer. O nº do balão fica na análise (é da reunião).
+// "Liberar esta análise para projetistas de X" (item 111): caixa DESMARCADA; marcada, lista
+// as pessoas da disciplina com o responsável já marcado. Desfazer: só enquanto o
+// apontamento não chegou a ninguém (sem e-mail, sem leitura, sem conversa).
+let MK_FILA=[], MK_SALVANDO=false;
+function mkSel(id, somar){
+  if(!id){ MK_SELS.clear(); MK_SEL=null; return; }
+  if(somar){ if(MK_SELS.has(id)) MK_SELS.delete(id); else MK_SELS.add(id); }
+  else MK_SELS=new Set([id]);
+  MK_SEL=MK_SELS.size?[...MK_SELS].pop():null;
+}
+function mkConvertiveis(){ return MARCS.filter(m=>MK_SELS.has(m.id) && !['balao','rastro'].includes(m.tipo)); }
+function _mkCentro(m){ const ps=mkGeo(m); return { nx:ps.reduce((s,p)=>s+p.nx,0)/ps.length, ny:ps.reduce((s,p)=>s+p.ny,0)/ps.length }; }
+function _mkTextos(g){ return g.filter(m=>['texto','chamada'].includes(m.tipo)).map(m=>(m.dados||{}).txt).filter(Boolean); }
+function _mkDisc(m){ const L=mkLayer(m.prancha_id), p=L&&L.prancha; return (p&&(p.disciplina||deduzDisc(p.codigo||p.arquivo_nome||'')))||''; }
+
+// Botão "Virar apontamento": com várias, pergunta se é um só ou um para cada.
+function mkVirar(ev){
+  if(!mkPode()) return;
+  if(!ANALISE_ATUAL){ rvAviso('Salve a análise antes de virar apontamento.'); return; }
+  const g=mkConvertiveis(); if(!g.length){ rvAviso('Selecione uma nuvem, chamada, texto ou marcador (Shift+clique soma).'); return; }
+  const prs=new Set(g.map(m=>m.prancha_id+'|'+(m.pg||1)));
+  if(g.length===1) return mkVirarDialogo([g], null);
+  const ops=[{ic:'📍', t:'Um apontamento com as '+g.length, f:()=>{ if(prs.size>1) return rvAviso('Para um apontamento só, as marcações precisam estar na mesma prancha e página.'); mkVirarDialogo([g], null); }},
+             {ic:'📍', t:'Um apontamento para cada ('+g.length+')', f:()=>mkVirarDialogo(g.map(m=>[m]), null)}];
+  rvMenu(ev&&ev.currentTarget?ev:{ currentTarget:$('mkRegua') }, ops);
+}
+// "Anexar a…": apontamentos abertos desta prancha primeiro, depois os da mesma disciplina.
+function mkAnexar(ev){
+  if(!mkPode()) return; if(!ANALISE_ATUAL){ rvAviso('Salve a análise antes de anexar.'); return; }
+  const g=mkConvertiveis(); if(!g.length){ rvAviso('Selecione as marcações que são evidência do apontamento.'); return; }
+  const pid=g[0].prancha_id, sig=rvSigla(_mkDisc(g[0])||''), abertos=APTS.filter(a=>!['Resolvido','Reprovado','Retirado'].includes(a.status||'') && !aptEhNota(a) && (a.dimensao||'2d')!=='bim');
+  const peso=a=>(a.prancha_id===pid||(a.pontos_json||[]).some(p=>p&&p.pid===pid)?0:rvSigla(a.disciplina||'')===sig?1:2);
+  const l=abertos.sort((a,b)=>peso(a)-peso(b)||String(a.id).localeCompare(String(b.id),'pt',{numeric:true})).slice(0,14);
+  if(!l.length){ rvAviso('Nenhum apontamento aberto para anexar.'); return; }
+  rvMenu(ev&&ev.currentTarget?ev:{ currentTarget:$('mkRegua') }, l.map(a=>({ic:peso(a)?'·':'📍', t:'<b class="ap-cod">'+esc(a.id)+'</b>&nbsp;'+esc((a.titulo||'').slice(0,38)), f:()=>mkVirarDialogo([g], a.id)})));
+}
+// Caixa de confirmação: aviso de faixa (1x por análise) + liberar para os projetistas.
+async function mkVirarDialogo(grupos, aptAlvo){
+  const an=mkAn(); if(!an) return;
+  const alvo=aptAlvo?APTS.find(a=>a.id===aptAlvo):null;
+  const discNome=alvo?(alvo.disciplina||''):(_mkDisc(grupos[0][0])||discAtiva()||''), sig=rvSigla(discNome||'').toUpperCase();
+  let PJ=[], ja=new Set();
+  const libera=an.visibilidade!=='Público' && !(an.visibilidade==='Projeto'&&an.todos_projetistas);
+  if(libera){ try{ const [r1,r2]=await Promise.all([sb.rpc('analise_projetistas',{p_emp:EMP.id}), sb.from('analise_compartilha_auria').select('projetista_id').eq('analise_id',an.id)]);
+    PJ=((r1&&r1.data)||[]).filter(p=>(p.discs||[]).includes(sig)); ((r2&&r2.data)||[]).forEach(r=>ja.add(r.projetista_id)); }catch(_){} }
+  const faltam=PJ.filter(p=>!(an.visibilidade==='Projeto'&&ja.has(p.id)));
+  const resp=new Set(String(fornEmails_(discNome,'2d')||'').toLowerCase().split(/[,;\s]+/).filter(Boolean));
+  const sel=new Set(faltam.filter(p=>resp.has(String(p.email||'').toLowerCase())||p.designado&&!resp.size).map(p=>p.id));
+  const avKey='an_avfx_'+an.id; let avisou=false; try{ avisou=!!localStorage.getItem(avKey); }catch(_){}
+  const aviso=!avisou && (an.visibilidade||'privada')!=='Público';
+  const n=grupos.reduce((s,g)=>s+g.length,0), ov=document.createElement('div'); ov.className='rvAsk';
+  const pintar=lib=>{
+    ov.innerHTML=`<div class="bx rvShBx"><b>${alvo?'Anexar ao '+esc(alvo.id):(grupos.length>1?'Virar '+grupos.length+' apontamentos':'Virar apontamento')}</b>
+      <div class="rvShN">${n} marcaç${n>1?'ões':'ão'} · ${esc(rvAnNomeTela(an))}${alvo?' → '+esc(alvo.titulo||''):''}</div>
+      <div class="mkVxTx">O desenho ${alvo?'passa para o '+esc(alvo.id):'vira o desenho do apontamento'} e sai da análise; nela fica só o rastro${alvo?'':' “→ código”'} com o status ao vivo. O número dos balões fica na análise.</div>`
+      +(aviso?`<div class="rvShAv">${_icH('alerta',15)}<span>Esta análise é <b>${esc(rvAnFxNome(an))}</b>. Ao virar apontamento, o desenho e o texto passam a ser vistos por quem está na faixa do apontamento (coordenação e projetistas de ${esc(sig||'—')}). As outras marcações continuam só da análise.</span></div>`:'')
+      +(libera&&faltam.length?`<label class="rvShTodos"><input type="checkbox" id="mkLib" ${lib?'checked':''}><span><b>Liberar esta análise para projetistas de ${esc(sig)}</b><small>Eles poderão abrir “${esc(rvAnNomeTela(an))}” a partir do apontamento, só para consulta.</small></span></label>`
+        +(lib?`<div class="rvShPjBx" style="border-top:1px solid var(--rvLar,#F28C28);border-radius:10px;margin:6px 0">${faltam.map(p=>`<label class="rvShP"><input type="checkbox" data-p="${p.id}" ${sel.has(p.id)?'checked':''}><span class="nm"><b>${esc(p.nome||p.email)}</b><small>${esc(p.empresa||'')}${resp.has(String(p.email||'').toLowerCase())?' · responsável pela disciplina':''}</small></span><span class="ds"><i class="on">${esc(sig)}</i></span></label>`).join('')}</div>`:''):'')
+      +`<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on">${alvo?'Anexar':'Virar apontamento'}</button></div></div>`;
+    const cb=ov.querySelector('#mkLib'); if(cb) cb.onchange=()=>pintar(cb.checked);
+    ov.querySelectorAll('input[data-p]').forEach(c=>c.onchange=()=>{ if(c.checked) sel.add(c.dataset.p); else sel.delete(c.dataset.p); });
+    ov.querySelector('[data-r="c"]').onclick=()=>ov.remove();
+    ov.querySelector('[data-r="s"]').onclick=()=>{ const lib2=!!(ov.querySelector('#mkLib')||{}).checked; ov.remove();
+      if(aviso){ try{ localStorage.setItem(avKey,'1'); }catch(_){} }
+      MK_FILA=grupos.map(g=>({ g, alvo:aptAlvo, liberar:lib2?[...sel]:[] }));
+      mkFilaProx(); };
+  };
+  pintar(false); document.body.appendChild(ov);
+}
+// Abre o editor do próximo da fila, já preenchido (pin, desenho, texto, print).
+async function mkFilaProx(){
+  const it=MK_FILA.shift(); if(!it) return;
+  const g=it.g, m0=g[0], li=LAYERS.findIndex(L=>L&&L.prancha&&L.prancha.id===m0.prancha_id);
+  if(li<0){ rvAviso('Abra a prancha destas marcações para virar apontamento.'); MK_FILA=[]; return; }
+  if(li!==FOCO_LI) setFoco(li);
+  if((m0.pg||1)!==V.pageNum){ V.pageNum=m0.pg||1; try{ F.valido=false; await carregarPagina(); }catch(_){} }
+  // Apontamento NOVO já ganha o print automático do local (que pega as marcações); o anexo precisa do seu.
+  let print=null; if(it.alvo){ try{ print=await _printDesenhos(g.map(m=>m.dados)); }catch(_){} }
+  const dw=g.map(m=>({ t:'mk', mk:m.tipo, pg:m.pg||1, color:'#E74C3C', dados:JSON.parse(JSON.stringify(m.dados||{})) }));
+  const origem={ an:ANALISE_ATUAL, ids:g.map(m=>m.id), marcs:g.map(m=>({ tipo:m.tipo, dados:m.dados, numero:m.numero||null, prancha_id:m.prancha_id, cde_documento_id:m.cde_documento_id||null, cde_revisao_id:m.cde_revisao_id||null, pg:m.pg||1, autor_nome:m.autor_nome||'' })), liberar:it.liberar };
+  const txt=_mkTextos(g);
+  if(it.alvo){
+    const i=APTS.findIndex(a=>a.id===it.alvo); if(i<0){ MK_FILA=[]; return; }
+    abrirAptIdx(i); await new Promise(r=>setTimeout(r,60)); if(!APT_EDIT) return;
+    const a=APT_EDIT; a.drawings_json=(a.drawings_json||[]).concat(dw);
+    const c=_mkCentro(m0); if(!(a.pontos_json||[]).some(p=>p&&!p.k3d&&(p.pid||a.prancha_id)===m0.prancha_id)) (a.pontos_json=a.pontos_json||[]).push({ nx:c.nx, ny:c.ny, pg:m0.pg||1, pid:m0.prancha_id });
+    if(txt.length){ a.descricao=(a.descricao?a.descricao+'\n':'')+txt.join('\n'); const d=$('apDesc'); if(d) d.value=a.descricao; }
+    logAdd(g.length+' marcação(ões) anexada(s) da análise “'+rvAnNomeTela(mkAn()||{nome:''})+'”.');
+    a._mkOrigem=origem;
+  } else {
+    const c=_mkCentro(m0); novoApontamento(c.nx, c.ny); if(!APT_EDIT) return;
+    const a=APT_EDIT; a.drawings_json=dw; a.analise_origem_id=ANALISE_ATUAL; a._mkOrigem=origem;
+    if(txt.length){ a.titulo=txt[0].slice(0,90); a.descricao=txt.join('\n'); }
+    const t=$('apTitulo'), d=$('apDesc'); if(t) t.value=a.titulo||''; if(d) d.value=a.descricao||'';
+  }
+  if(print){ APT_IMGS.push({ data:print }); try{ renderImgs(); }catch(_){} }
+  try{ renderDrawings(); renderDrawTools(); renderPins(); renderPinsList(); }catch(_){}
+  mkSel(null); mkRender();
+  rvAviso((it.alvo?'Confira e salve o '+it.alvo:'Confira o apontamento e salve')+(MK_FILA.length?' · depois abre o próximo ('+MK_FILA.length+')':'')+'. Cancelar não mexe nas marcações.');
+}
+// Depois que o apontamento foi SALVO: tira as marcações da análise, grava o rastro e libera.
+async function mkPosSalvar(ed){
+  const o=ed._mkOrigem; if(!o||!o.an) return;
+  const reais=o.ids.filter(id=>!String(id).startsWith('tmp'));
+  try{
+    if(reais.length){ const { error }=await sb.from('analise_marcacao_auria').delete().in('id',reais); if(error) throw error; }
+    const m0=o.marcs[0]||{};
+    const { error:e2 }=await sb.from('analise_marcacao_auria').insert({ analise_id:o.an, empreendimento_id:EMP.id, prancha_id:m0.prancha_id||null, cde_documento_id:m0.cde_documento_id||null,
+      cde_revisao_id:m0.cde_revisao_id||null, pg:m0.pg||1, tipo:'rastro', dados:{ apt:ed.id, titulo:ed.titulo||'', anexo:!ed.analise_origem_id||ed.analise_origem_id!==o.an, marcs:o.marcs }, autor:USER.id, autor_nome:USER.nome||'' });
+    if(e2) throw e2;
+    if(o.liberar && o.liberar.length){
+      const an=ANALISES.find(a=>a.id===o.an)||{};
+      const { data:jl }=await sb.from('analise_compartilha_auria').select('projetista_id').eq('analise_id',o.an);
+      const pessoas=[...new Set(((jl||[]).map(r=>r.projetista_id)).concat(o.liberar))];
+      const { error:e3 }=await sb.rpc('analise_compartilhar',{ p_id:o.an, p_vis:'Projeto', p_todos:!!an.todos_projetistas, p_pessoas:pessoas });
+      if(e3) throw e3;
+      await carregarAnalises();
+    }
+  }catch(e){ rvAlerta('O apontamento foi salvo, mas não consegui atualizar a análise: '+_anErroMsg(e)); }
+  MK_AN=undefined; await mkCarregar();
+  if(MK_FILA.length) setTimeout(mkFilaProx, 300);
+}
+// Desfazer: só se o apontamento não chegou a ninguém (sem e-mail de participante, sem leitura
+// de outra pessoa, sem conversa). Depois disso é registro formal: Reprovar ou Cancelar.
+async function mkDesfazerPode(r){
+  const a=APTS.find(x=>x.id===(r.dados||{}).apt); if(!a) return { ok:false, porque:'O apontamento não existe mais.' };
+  if((r.dados||{}).anexo) return { ok:false, porque:'Anexo a um apontamento que já existia: tire o desenho pelo editor dele.' };
+  if(a.criado_por_id && a.criado_por_id!==USER.id) return { ok:false, porque:'Só quem criou o apontamento desfaz.' };
+  if((a.mensagens||[]).length) return { ok:false, porque:'Já tem conversa: use Reprovar ou Cancelar.' };
+  const emails=Object.values(a.participantes||{}).map(p=>p&&p.emails||'').join(',').split(/[,;\s]+/).filter(x=>x.includes('@'));
+  if(emails.length) return { ok:false, porque:'Já foi enviado por e-mail a '+emails.length+' participante(s): use Reprovar ou Cancelar.' };
+  try{ const { data }=await sb.from('apt_leitura_auria').select('usuario_id').eq('empreendimento_id',EMP.id).eq('apontamento_id',a.id).neq('usuario_id',USER.id).limit(1);
+    if(data&&data.length) return { ok:false, porque:'Já foi visto: use Reprovar ou Cancelar.' }; }catch(_){}
+  return { ok:true, a };
+}
+async function mkDesfazer(id){
+  const r=MARCS.find(x=>x.id===id); if(!r||!mkPode()) return;
+  const v=await mkDesfazerPode(r); if(!v.ok){ rvAlerta('Não dá para desfazer: '+v.porque); return; }
+  if(!confirm('Desfazer '+v.a.id+'? O apontamento é apagado e o desenho volta a ser marcação desta análise.')) return;
+  try{
+    const { error }=await sb.from('apontamentos').delete().eq('empreendimento_id',EMP.id).eq('id',v.a.id); if(error) throw error;
+    const rows=((r.dados||{}).marcs||[]).map(m=>Object.assign({}, m, { analise_id:r.analise_id, empreendimento_id:EMP.id, autor:USER.id }));
+    if(rows.length){ const { error:e2 }=await sb.from('analise_marcacao_auria').insert(rows); if(e2) throw e2; }
+    await sb.from('analise_marcacao_auria').delete().eq('id',id);
+    await carregarApts(); MK_AN=undefined; await mkCarregar(); rvAviso(v.a.id+' desfeito: o desenho voltou para a análise.');
+  }catch(e){ rvAlerta('Não consegui desfazer: '+_anErroMsg(e)); }
+}
+function mkRastroAbrir(id){ const r=MARCS.find(x=>x.id===id); const i=APTS.findIndex(a=>a.id===((r||{}).dados||{}).apt); if(i<0){ rvAviso('Apontamento não encontrado (pode ter sido apagado).'); return; } clicarAptLista(i); }
+// Editor: "Análise de origem" — só aparece para quem enxerga a análise (ANALISES já vem filtrada pela RLS).
+function renderOrigem(){
+  const fg=$('apOrigemFg'), el=$('apOrigem'); if(!fg||!el) return;
+  const a=APT_EDIT, an=a&&a.analise_origem_id&&ANALISES.find(x=>x.id===a.analise_origem_id);
+  if(!an || a._novo){ fg.style.display='none'; return; }
+  fg.style.display='';
+  el.innerHTML=`<button class="vcAbrir" onclick="fecharApt();rvAnAbrir('${an.id}')" title="Abrir a análise onde este apontamento nasceu${rvAnMinha(an)?'':' (só consulta)'}">${_icH('pasta',13)} <span class="vcTit">${esc(rvAnNomeTela(an))}</span><span class="ap-st" style="background:var(--rvLarT);color:var(--rvLar)">abrir</span></button>`;
+}
+window.addEventListener('load',()=>{
+  // salvarApt: só depois de SALVO (o editor fecha) mexe na análise; o fecharApt solto (Cancelar) limpa a fila.
+  const sv=window.salvarApt; if(typeof sv==='function') window.salvarApt=async function(){
+    const ed=APT_EDIT; MK_SALVANDO=true; let r;
+    try{ r=await sv.apply(this,arguments); } finally{ MK_SALVANDO=false; }
+    if(ed && ed._mkOrigem && APT_EDIT===null) await mkPosSalvar(ed);
+    return r; };
+  const fa=window.fecharApt; if(typeof fa==='function') window.fecharApt=function(){ if(!MK_SALVANDO && APT_EDIT && APT_EDIT._mkOrigem && MK_FILA.length){ MK_FILA=[]; rvAviso('Fila de apontamentos cancelada. As marcações continuam na análise.'); } return fa.apply(this,arguments); };
 });
 </script>
 </body>
