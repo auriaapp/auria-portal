@@ -430,6 +430,13 @@
   .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   .part-blk{border:1px solid var(--line);border-radius:9px;padding:7px 8px;margin-bottom:6px;background:var(--bg2)}
+  .part-blk .partInsL{display:block;font-size:9px;color:var(--rvLar,#F28C28);margin-top:6px;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+  .part-blk textarea.partIns{width:100%;margin-top:3px;border:1.5px solid var(--line);border-left:3px solid var(--rvLar,#F28C28);border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;background:var(--panel);color:var(--txt);resize:vertical;min-height:38px;outline:none}
+  .part-blk textarea.partIns:focus{border-color:var(--rvLar,#F28C28)} .part-blk.insFlash{box-shadow:0 0 0 2px var(--rvLar,#F28C28);transition:box-shadow .3s}
+  #insAc{position:fixed;z-index:9800;width:260px;background:var(--panel2,#212F4D);border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 28px rgba(0,0,0,.45);overflow:hidden;font-size:12px}
+  #insAc .h{font-size:10px;color:var(--mut);padding:6px 10px;border-bottom:1px solid var(--line)}
+  #insAc .o{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;color:var(--txt)} #insAc .o small{color:var(--mut);margin-left:auto;font-size:10.5px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #insAc .o.on,#insAc .o:hover{background:var(--rvLarT,rgba(242,140,40,.14))}
   .part-blk input,.part-blk select{border:1.5px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12px;outline:none;width:100%;background:var(--panel);color:var(--txt);color-scheme:dark}
   /* Janela do editor é estreita: grids de 3 colunas viram 2 */
   #modalApt .g3{grid-template-columns:1fr 1fr}
@@ -7296,7 +7303,7 @@ async function expRelatorioGerar(){
   }catch(e){ alert('Não foi possível montar o relatório: '+((e&&e.message)||e)); go.disabled=false; go.textContent='📄 Gerar relatório'; }
 }
 function _expDias(a){ if(a.status==='Resolvido') return ''; const d=_parseData(a.prazo_min); if(!d) return ''; const t=new Date(); t.setHours(0,0,0,0); return Math.round((t-d)/864e5); }
-function _expResp(a){ const ps=a.participantes||{}; return Object.entries(ps).map(([d,p])=>{ const em=(p&&p.emails)||[]; return d+(em.length?' ('+em.join(', ')+')':''); }).join(' | '); }
+function _expResp(a){ const ps=a.participantes||{}; return Object.entries(ps).map(([d,p])=>{ const em=[].concat((p&&p.emails)||[]).filter(Boolean), ins=((p&&p.instrucao)||'').trim(); return d+(em.length?' ('+em.join(', ')+')':'')+(ins?' — instrução: '+ins:''); }).join(' | '); }
 function _expPrazo(a){ if(a.prazo_min) return _dispData(a.prazo_min); const ps=a.participantes||{}; const pr=Object.values(ps).map(p=>p&&p.prazo).filter(Boolean).sort()[0]; return pr?_dispData(pr):''; }
 function _expConclusao(a){ const ps=a.participantes||{}; const c=Object.values(ps).map(p=>p&&p.conclusao).filter(Boolean).sort().pop(); return c?_dispData(c):''; }
 async function expApontamentosXlsx(){
@@ -10026,7 +10033,8 @@ function apStatusMudou(){
 }
 
 function renderParts(){
-  const ps=APT_EDIT.participantes||{};
+  const ps=APT_EDIT.participantes||{}, multi=Object.keys(ps).length>=2, roIns=APP_RO||APP_PJ;
+  try{ _insAcInstalar(); }catch(_){}
   $('apParts').innerHTML=Object.keys(ps).map((d,i)=>{
     const p=ps[d]||{};
     const forn=FORN_DISC[d];
@@ -10043,6 +10051,8 @@ function renderParts(){
         <div style="flex:1"><span style="font-size:9px;color:var(--mut)">conclusão</span><input data-f="conclusao" type="date" value="${brToIso(p.conclusao)}"></div>
       </div>
       ${forn?`<div style="font-size:9.5px;color:var(--mut);margin-top:3px">🏢 ${esc(forn.empresa)}</div>`:''}
+      <div class="partInsW" style="${multi||(p.instrucao||'').trim()?'':'display:none'}"><span class="partInsL">instrução para ${esc(rvSigla(d)||d)}</span>
+        <textarea data-f="instrucao" class="partIns" rows="2" ${roIns?'disabled':''} placeholder="${roIns?'':'opcional · o que esta disciplina deve fazer (atalho: @ na descrição)'}" onkeydown="if(event.key==='Escape'){event.preventDefault();const t=$('apDesc');if(t)t.focus();}">${esc(p.instrucao||'')}</textarea></div>
     </div>`;
   }).join('');
 }
@@ -10059,14 +10069,44 @@ function onPartDisc(sel){
   renderParts();
 }
 function lerParts(){
-  const out={};
+  const out={}, prev=(APT_EDIT&&APT_EDIT.participantes)||{};
   document.querySelectorAll('#apParts .part-blk').forEach(r=>{
     const g=f=>{ const el=r.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():''; };
     const d=g('disc'); if(!d) return;
-    out[d]={ nivel:g('nivel'), emails:g('emails'),
-             prazo:isoToBr(g('prazo')), conclusao:isoToBr(g('conclusao')) };
+    out[d]=Object.assign({}, prev[d]||{}, { nivel:g('nivel'), emails:g('emails'),
+             prazo:isoToBr(g('prazo')), conclusao:isoToBr(g('conclusao')) });
+    const ins=r.querySelector('[data-f="instrucao"]'); if(ins){ const v=ins.value.trim(); if(v) out[d].instrucao=v.slice(0,1000); else delete out[d].instrucao; }
   });
   return out;
+}
+// ── Item 119: "@" na descrição abre as disciplinas do apontamento; escolher leva para a instrução dela ──
+let _insAc=null;
+function _insAcInstalar(){ const ta=$('apDesc'); if(!ta||ta._insAc) return; ta._insAc=1;
+  ta.addEventListener('input',_insAcAtualiza); ta.addEventListener('keydown',_insAcTecla,true); ta.addEventListener('blur',()=>setTimeout(_insAcFecha,180)); }
+function _insAcFecha(){ const e=$('insAc'); if(e) e.remove(); _insAc=null; }
+function _insAcAtualiza(){
+  const ta=$('apDesc'); if(!ta||APP_RO||APP_PJ||!APT_EDIT){ _insAcFecha(); return; }
+  const ds=[...document.querySelectorAll('#apParts .part-blk [data-f="disc"]')].map(x=>x.value).filter(Boolean);
+  const m=/(^|\s)@([^\s@]*)$/.exec(ta.value.slice(0,ta.selectionStart||0));
+  if(ds.length<2 || !m){ _insAcFecha(); return; }
+  const q=m[2].toLowerCase(), op=ds.filter(d=>!q || String(rvSigla(d)||d).toLowerCase().startsWith(q) || String(discFullName(d)||d).toLowerCase().split(/[\s/-]+/).some(w=>w.startsWith(q)));
+  if(!op.length){ _insAcFecha(); return; }
+  _insAc={ ini:(ta.selectionStart||0)-m[2].length-1, fim:ta.selectionStart||0, op, i:Math.min((_insAc&&_insAc.i)||0, op.length-1) };
+  let el=$('insAc'); if(!el){ el=document.createElement('div'); el.id='insAc'; document.body.appendChild(el); }
+  const r=ta.getBoundingClientRect(); el.style.left=Math.round(Math.min(r.left+12, innerWidth-270))+'px'; el.style.top=Math.round(Math.min(r.bottom+4, innerHeight-200))+'px';
+  el.innerHTML='<div class="h">Instrução para qual disciplina?</div>'+op.map((d,i)=>{ const f=FORN_DISC[d]||FORN_DISC[rvSigla(d)]||{};
+    return `<div class="o ${i===_insAc.i?'on':''}" onmousedown="event.preventDefault();_insAcEscolhe(${i})"><span class="discChip">${esc(rvSigla(d)||d)}</span>${esc(discFullName(d)||d)}<small>${esc(f.empresa||'')}</small></div>`; }).join('');
+}
+function _insAcTecla(e){ if(!_insAc) return;
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); _insAc.i=(_insAc.i+(e.key==='ArrowDown'?1:-1)+_insAc.op.length)%_insAc.op.length; _insAcAtualiza(); }
+  else if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); _insAcEscolhe(_insAc.i); }
+  else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); _insAcFecha(); } }
+function _insAcEscolhe(i){ const ta=$('apDesc'), st=_insAc; if(!ta||!st) return; const d=st.op[i]; _insAcFecha();
+  ta.value=(ta.value.slice(0,st.ini)+ta.value.slice(st.fim)).replace(/[ \t]+$/,'');   // o "@HID" sai da descrição
+  const blk=[...document.querySelectorAll('#apParts .part-blk')].find(b=>{ const s=b.querySelector('[data-f="disc"]'); return s&&s.value===d; }); if(!blk) return;
+  const w=blk.querySelector('.partInsW'), t=blk.querySelector('[data-f="instrucao"]'); if(w) w.style.display=''; if(!t) return;
+  blk.scrollIntoView({block:'nearest'}); blk.classList.add('insFlash'); setTimeout(()=>blk.classList.remove('insFlash'),1200);
+  t.focus(); t.selectionStart=t.selectionEnd=t.value.length;
 }
 function addPartRow(){
   APT_EDIT.participantes=lerParts();
@@ -10216,7 +10256,10 @@ async function salvarApt(){
   a.status=$('apStatus').value; a.disciplina=$('apDisc').value;
   a.local_txt=_apLocalLer().join('; ');
   a.visibilidade=$('apVisib').value;
+  const _insAntes=Object.fromEntries(Object.entries(a.participantes||{}).map(([k,p])=>[k,((p&&p.instrucao)||'').trim()]));
   a.participantes=lerParts();
+  if(!a._novo) Object.entries(a.participantes).forEach(([k,p])=>{ const v=((p&&p.instrucao)||'').trim(), o=_insAntes[k]||'';
+    if(v!==o) logAdd((v?(o?'Instrução da ':'Instrução definida para ')+k+(o?' alterada':''):'Instrução da '+k+' removida')+' por '+USER.nome+'.'); });
   // 113 F3: a conclusão é POR DISCIPLINA (o banco preenche pelas pendências).
   // Reaberto à mão → limpa as conclusões (o banco reabre as pendências).
   // Todas as disciplinas com pendência concluídas → Resolvido.
@@ -12768,13 +12811,13 @@ const RV_IC_CLASSES={'Paredes':'parede','Pilares':'pilar','Vigas':'viga','Lajes'
 let MK_ON=false, MK_TOOL='sel', MK_COR='#E74C3C', MK_TAM='M', MK_SEL=null, MK_OCULTA=false, MK_NEG=false, MK_FUNDO=false, MK_FILT='todas', _mkPoly=null, MK_SELS=new Set(), MK_TRAC=false, MK_MED='cota', MK_ND=true, _mkMove=null;
 let MARCS=[], MK_AN=undefined, _mk=null, _mkCh=null, MK_SEQ=0, MK_FLUSH=false;
 const MK_TOOLS=[['sel','V','Selecionar'],['nuvem','N','Nuvem de revisão'],['chamada','C','Texto com chamada'],['balao','B','Balão numerado'],['carimbo','K','Carimbo'],['marcador','H','Marcador'],['texto','T','Texto'],
-  ['-'],['seta','A','Seta'],['linha','L','Linha'],['polilinha','U','Polilinha'],['retangulo','R','Retângulo'],['elipse','E','Elipse'],['poligono','P','Polígono'],['livre','F','Livre'],['-'],['medir','M','Medir (cota e área)'],['-'],['desfazer','','Desfazer · Ctrl+Z']];
+  ['-'],['seta','A','Seta'],['linha','L','Linha'],['polilinha','U','Polilinha'],['retangulo','R','Retângulo'],['elipse','E','Elipse'],['poligono','P','Polígono'],['livre','F','Livre'],['-'],['gabarito','G','Gabarito em escala'],['medir','M','Medir (cota e área)'],['-'],['desfazer','','Desfazer · Ctrl+Z']];
 const MK_FORMAS=['seta','linha','polilinha','retangulo','elipse','poligono','livre'];
 // Carimbos decididos em 15/11 (cor de cada um) + texto livre.
 const MK_CARIMBOS=[['VERIFICAR','#E67E22'],['AJUSTAR','#C9A400'],['ATENÇÃO','#E74C3C'],['CONFORME','#27AE60'],['NÃO CONFORME','#C0392B'],['LIBERADO','#2980B9'],['CANCELADO','#7F8C8D']];
 const MK_CORES=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111','#FFFFFF'];
 const MK_TAMS={P:{arco:7,txt:12,mar:10,bal:9,tr:1.6,car:12},M:{arco:11,txt:15,mar:16,bal:11,tr:2.4,car:15},G:{arco:16,txt:20,mar:24,bal:14,tr:4,car:20}};
-const MK_NOME={nuvem:'Nuvem',chamada:'Chamada',balao:'Balão',marcador:'Marcador',texto:'Texto',carimbo:'Carimbo',seta:'Seta',linha:'Linha',polilinha:'Polilinha',retangulo:'Retângulo',elipse:'Elipse',poligono:'Polígono',livre:'Livre',cota:'Cota',area:'Área'};
+const MK_NOME={nuvem:'Nuvem',chamada:'Chamada',balao:'Balão',marcador:'Marcador',texto:'Texto',carimbo:'Carimbo',seta:'Seta',linha:'Linha',polilinha:'Polilinha',retangulo:'Retângulo',elipse:'Elipse',poligono:'Polígono',livre:'Livre',gabarito:'Gabarito',cota:'Cota',area:'Área'};
 const MK_SVG={
   sel:'<path d="M5 3l11 6-5 1.5L8.5 16z"/>',
   nuvem:'<path d="M4 13a2.4 2.4 0 0 1 1-4.6 3 3 0 0 1 5.6-1.6 2.6 2.6 0 0 1 4.6 1.6A2.3 2.3 0 0 1 15 13z"/>',
@@ -12785,6 +12828,7 @@ const MK_SVG={
   carimbo:'<rect x="3" y="11.5" width="14" height="4.5" rx="1"/><path d="M7.5 11.5V9.4a2.5 2.5 0 1 1 5 0v2.1M5 18h10"/>',
   seta:'<path d="M4 16L15.5 4.5M9.5 4.5h6v6"/>', polilinha:'<path d="M3 15.6 7.4 6.4l5 6.6 4.6-8.6"/>', desfazer:'<path d="M7 5 3.4 8.6 7 12.2"/><path d="M3.6 8.6h8.2a4.4 4.4 0 0 1 0 8.8H9"/>', retangulo:'<rect x="3.5" y="5" width="13" height="10" rx="1"/>', linha:'<path d="M4 16L16 4"/>',
   elipse:'<ellipse cx="10" cy="10" rx="7" ry="5"/>', poligono:'<path d="M10 3.5l6.5 4.7-2.5 7.8H6L3.5 8.2z"/>', livre:'<path d="M3.5 13c2-4 4-5.5 5.5-3.5s3 2.5 4.5-1 3-3.5 3-3.5"/>',
+  gabarito:'<path d="M3.4 16.6V3.4h11"/><path d="M14.4 3.4A11 11 0 0 1 3.4 14.4" stroke-dasharray="2 2"/><rect x="9.6" y="9.6" width="7" height="7" rx="1.4"/>', girar:'<path d="M15.6 9.4A5.8 5.8 0 1 1 13 4.6"/><path d="M13.2 1.8 13 4.6l-2.8.4"/>', espelhar:'<path d="M10 2.6v14.8" stroke-dasharray="2 2"/><path d="M7.6 5.4 3 10l4.6 4.6zM12.4 5.4 17 10l-4.6 4.6z"/>',
   medir:'<path d="M3 13.5L13.5 3l3.5 3.5L6.5 17z"/><path d="M6 10.5l1.5 1.5M8.5 8l1.5 1.5M11 5.5l1.5 1.5"/>',
   cota:'<path d="M3 10h14M3 7v6M17 7v6"/>', area:'<path d="M4 5l11 1.5L13 16 5 13z"/>', duplicar:'<rect x="7" y="7" width="9.5" height="9.5" rx="1.5"/><path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7"/>',
   virar:'<path d="M10 17.5s-5.2-4.7-5.2-8.6a5.2 5.2 0 0 1 10.4 0c0 3.9-5.2 8.6-5.2 8.6z"/><path d="M10 6.2v5.2M7.4 8.8h5.2"/>',
@@ -12885,7 +12929,8 @@ const MK_PAD0={
   balao:{cor:'#E74C3C',tam:'M'}, carimbo:{tam:'M'}, marcador:{cor:'#F1C40F',tam:'M',op:.38}, texto:{cor:'#E74C3C',tam:'M',neg:false,fundo:false,borda:false},
   seta:{cor:'#E74C3C',sw:2,ls:'solid',pt:'end',op:1}, linha:{cor:'#E74C3C',sw:2,ls:'solid',pt:'none',op:1}, polilinha:{cor:'#E74C3C',sw:2,ls:'solid',pt:'none',op:1},
   retangulo:{cor:'#E74C3C',sw:2,ls:'solid',fill:'none',fo:.15,op:1}, elipse:{cor:'#E74C3C',sw:2,ls:'solid',fill:'none',fo:.15,op:1},
-  poligono:{cor:'#E74C3C',sw:2,ls:'solid',fill:'none',fo:.15,op:1}, livre:{cor:'#E74C3C',sw:2,ls:'solid',op:1} };
+  poligono:{cor:'#E74C3C',sw:2,ls:'solid',fill:'none',fo:.15,op:1}, livre:{cor:'#E74C3C',sw:2,ls:'solid',op:1},
+  gabarito:{cor:'#2980B9',sw:1.5,g:'porta',w:.8,dir:'d',rot:0} };
 let MK_PADRAO=(()=>{ try{ return JSON.parse(localStorage.getItem('auria_mk_padrao')||'{}')||{}; }catch(_){ return {}; } })();
 function mkPadSalvar(){ try{ localStorage.setItem('auria_mk_padrao', JSON.stringify(MK_PADRAO)); }catch(_){} }
 function mkEst(t){ return Object.assign({}, MK_PAD0[t]||{}, MK_PADRAO[t]||{}); }
@@ -12976,6 +13021,28 @@ function mkEditarTexto(m){
     const v=m.tipo==='carimbo'?t.trim().toUpperCase().slice(0,40):t.trim().slice(0,300);
     mkAtualizar(m, Object.assign({}, d, { txt:v })); });
 }
+// ── Gabaritos em escala (2026-11-16, mockups/app_gabaritos_escala.html) ──────
+// Medidas em METROS; desenhadas com a calibragem da prancha (TRENA.m_por_pt): recalibrar ajusta.
+// Origem: porta = dobradiça (parede no eixo x, folha para cima); lavatório e vaso = meio do lado encostado na parede.
+const MK_GAB={ porta:{nome:'Porta', larg:[.6,.7,.8,.9]}, pia:{nome:'Lavatório', w:.5, h:.4}, vaso:{nome:'Vaso sanitário', w:.4, h:.7} };
+function _mkGab(d,k,c,sw){ const F=n=>n.toFixed(1), M=v=>v*k, g=d.g||'porta', st=`stroke="${c}" stroke-width="${F(sw)}" stroke-linejoin="round"`;
+  if(g==='porta'){ const L=M(d.w||.8), t=Math.max(2,M(.035));
+    return { bb:[-t,-L,L,0], cota:String((d.w||.8).toFixed(2)).replace('.',',')+' m',
+      svg:`<line x1="0" y1="0" x2="${F(L)}" y2="0" stroke="${c}" stroke-width="1" stroke-dasharray="2 3" opacity=".55"/><rect x="${F(-t)}" y="${F(-L)}" width="${F(t)}" height="${F(L)}" fill="#fff" ${st}/><path d="M${F(L)} 0 A${F(L)} ${F(L)} 0 0 0 0 ${F(-L)}" fill="none" stroke="${c}" stroke-width="${F(Math.max(1,sw*.8))}" stroke-dasharray="5 3"/>` }; }
+  if(g==='pia'){ const W=M(.5), H=M(.4);
+    return { bb:[-W/2,0,W/2,H], svg:`<rect x="${F(-W/2)}" y="0" width="${F(W)}" height="${F(H)}" rx="${F(M(.03))}" fill="#fff" ${st}/><ellipse cx="0" cy="${F(H*.56)}" rx="${F(W*.36)}" ry="${F(H*.3)}" fill="none" ${st}/><circle cx="0" cy="${F(H*.56)}" r="${F(Math.max(1.2,M(.012)))}" fill="${c}"/><circle cx="0" cy="${F(H*.14)}" r="${F(Math.max(1.5,M(.02)))}" fill="none" ${st}/>` }; }
+  // vaso com caixa acoplada: caixa 0,40×0,17 na parede; bacia 0,35 de lados retos e frente arredondada; assento
+  return { bb:[-M(.2),0,M(.2),M(.7)], svg:`<rect x="${F(M(-.2))}" y="0" width="${F(M(.4))}" height="${F(M(.17))}" rx="${F(M(.025))}" fill="#fff" ${st}/>`
+    +`<path d="M${F(M(-.175))} ${F(M(.17))} L${F(M(-.175))} ${F(M(.44))} A${F(M(.175))} ${F(M(.26))} 0 0 0 ${F(M(.175))} ${F(M(.44))} L${F(M(.175))} ${F(M(.17))}" fill="#fff" ${st}/>`
+    +`<path d="M${F(M(-.115))} ${F(M(.25))} Q0 ${F(M(.215))} ${F(M(.115))} ${F(M(.25))} L${F(M(.115))} ${F(M(.44))} A${F(M(.115))} ${F(M(.19))} 0 0 1 ${F(M(-.115))} ${F(M(.44))} Z" fill="none" ${st}/>`
+    +`<line x1="${F(M(-.12))}" y1="${F(M(.085))}" x2="${F(M(.12))}" y2="${F(M(.085))}" stroke="${c}" stroke-width="1" opacity=".5"/>` };
+}
+let _mkGhost=null;
+function mkGabGirar(){ if(MK_TOOL==='gabarito'){ const e=mkEst('gabarito'); mkProp('gab',{rot:((e.rot||0)+1)%4}); return; }
+  const os=mkSelObjs().filter(o=>o.tipo==='gabarito'); if(!os.length) return; const g=mkUndoAbre(); os.forEach(o=>mkAtualizar(o,Object.assign({},o.dados,{rot:(((o.dados||{}).rot||0)+1)%4}))); mkUndoFecha(g); mkRender(); }
+function mkGabEspelhar(){ if(MK_TOOL==='gabarito'){ const e=mkEst('gabarito'); mkProp('gab',{dir:e.dir==='e'?'d':'e'}); return; }
+  const os=mkSelObjs().filter(o=>o.tipo==='gabarito'); if(!os.length) return; const g=mkUndoAbre(); os.forEach(o=>mkAtualizar(o,Object.assign({},o.dados,{dir:(o.dados||{}).dir==='e'?'d':'e'}))); mkUndoFecha(g); mkRender(); }
+function mkGabLarg(){ const t=prompt('Largura da porta, em metros (ex.: 0,75):',''); if(!t) return; const v=parseFloat(String(t).replace(',','.')); if(!(v>.3&&v<3)) { rvAviso('Largura inválida.'); return; } mkProp('gab',{w:Math.round(v*100)/100}); }
 function _mkTxtW(t,fs){ return Math.max(fs, String(t||'').length*fs*0.56); }
 let MK_ESC=1;   // escala dos tamanhos (texto, arco, traço) — o PDF usa maior, pois a prancha sai em alta resolução
 function mkSvg(m, prev){
@@ -13031,6 +13098,12 @@ function mkSvg(m, prev){
       +`<text x="${F(A.x)}" y="${F(A.y-h/2+6+fs*0.82)}" text-anchor="middle" font-size="${fs}" font-weight="900" letter-spacing="1" fill="${c}">${esc(txt)}</text>`
       +(d.nd?`<text x="${F(A.x)}" y="${F(A.y+h/2-6)}" text-anchor="middle" font-size="${F(fs*0.58)}" font-weight="700" fill="${c}">${esc(d.nd)}</text>`:'')+'</g>';
     bb=[A.x-w/2-4,A.y-h/2-6,A.x+w/2+4,A.y+h/2+6]; }
+  else if(m.tipo==='gabarito' && d.a){ const mpp=(typeof TRENA!=='undefined'&&TRENA.m_por_pt)||d.mpp;
+    if(mpp){ const A=P(d.a), db=_basePageDims(), dp=pageDims(), k=(dp.w*V.zoom/db.w)/mpp, G=_mkGab(d,k,c,Math.max(1,(d.sw||1.5)*MK_ESC)), sx=d.dir==='e'?-1:1, rot=((d.rot||0)%4)*90;
+      g=`<g transform="translate(${F(A.x)} ${F(A.y)}) rotate(${rot}) scale(${sx} 1)">${G.svg}</g>`;
+      const an=rot*Math.PI/180, cs=Math.cos(an), sn=Math.sin(an), pts=[[G.bb[0],G.bb[1]],[G.bb[2],G.bb[1]],[G.bb[2],G.bb[3]],[G.bb[0],G.bb[3]]].map(([x,y])=>{ x*=sx; return [A.x+x*cs-y*sn, A.y+x*sn+y*cs]; });
+      bb=[Math.min(...pts.map(p=>p[0]))-3,Math.min(...pts.map(p=>p[1]))-3,Math.max(...pts.map(p=>p[0]))+3,Math.max(...pts.map(p=>p[1]))+3];
+      if(prev===true && G.cota){ const cx=(bb[0]+bb[2])/2, ty=bb[3]+16; g+=`<rect x="${F(cx-24)}" y="${F(ty-11)}" width="48" height="15" rx="3" fill="#0EA5E9"/><text x="${F(cx)}" y="${F(ty)}" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">${G.cota}</text>`; } } }
   else if(m.tipo==='cota' && d.a && d.b){ const A=P(d.a), B=P(d.b); g=cotaToSvg({a:d.a,b:d.b,metros:d.metros,color:d.cor||COTA_COLOR}, !!prev);
     bb=[Math.min(A.x,B.x)-14,Math.min(A.y,B.y)-14,Math.max(A.x,B.x)+14,Math.max(A.y,B.y)+14]; }
   else if(m.tipo==='area' && (d.pts||[]).length){ const q=d.pts.map(P);
@@ -13053,6 +13126,7 @@ function mkSvgTudo(){
   let h=MARCS.filter(mkVisivel).map(m=>mkSvg(m,false)).join('');
   if(_mk) h+=mkSvg(_mk,true);
   if(_mkPoly) h+=mkSvg(_mkPoly,true);
+  if(_mkGhost && MK_TOOL==='gabarito' && mkPodeAqui()) h+=mkSvg(mkNova('gabarito',Object.assign({a:_mkGhost},mkEst('gabarito'))),true);
   if(_mkCh && _mkCh.cur) h+=mkSvg(mkNova('chamada',Object.assign({a:_mkCh.a,b:_mkCh.cur,txt:''},mkEst('chamada'))),true);
   return h;
 }
@@ -13062,13 +13136,14 @@ function mkRender(){ try{ renderDrawings(); }catch(_){} mkRegua(); mkLista(); }
 // Seções do painel por tipo (mockup app_marcacao_propriedades, seção 1)
 const MK_SECS={ nuvem:['cor','sw','ls','arco','fill'], chamada:['cor','sw','ls','ptA','tx'], balao:['cor','tam'], carimbo:['cor','tam'], marcador:['cor','larg','op'],
   texto:['cor','tx2'], seta:['cor','sw','ls','pt','op'], linha:['cor','sw','ls','pt','op'], polilinha:['cor','sw','ls','pt','op'],
-  retangulo:['cor','sw','ls','fill','op'], elipse:['cor','sw','ls','fill','op'], poligono:['cor','sw','ls','fill','op'], livre:['cor','sw','ls','op'], cota:['cor'], area:['cor'] };
-const MK_SEC_KEYS={ cor:['cor'], sw:['sw'], ls:['ls'], pt:['pt'], ptA:['pt'], arco:['tam'], tam:['tam'], larg:['tam'], fill:['fill','fo'], op:['op'], tx:['tam','neg','borda'], tx2:['tam','neg','fundo','borda'] };
+  retangulo:['cor','sw','ls','fill','op'], elipse:['cor','sw','ls','fill','op'], poligono:['cor','sw','ls','fill','op'], livre:['cor','sw','ls','op'], gabarito:['gab','cor'], cota:['cor'], area:['cor'] };
+const MK_SEC_KEYS={ cor:['cor'], sw:['sw'], ls:['ls'], pt:['pt'], ptA:['pt'], arco:['tam'], tam:['tam'], larg:['tam'], fill:['fill','fo'], op:['op'], tx:['tam','neg','borda'], tx2:['tam','neg','fundo','borda'], gab:['gab'] };
 function mkTemProp(tipo,k){ return (MK_SECS[tipo]||[]).some(s=>(MK_SEC_KEYS[s]||[]).includes(k)); }
 function mkVal(m,k){ const d=m.dados||{};
   switch(k){ case 'cor': return d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C'); case 'sw': { const v=_mkSw(m); return MK_SW.reduce((a,b)=>Math.abs(b-v)<Math.abs(a-v)?b:a); }
     case 'ls': return _mkLs(d); case 'pt': return _mkPt(m); case 'tam': return d.tam||'M'; case 'fill': return d.fill||'none'; case 'fo': return d.fo!=null?+d.fo:.15;
-    case 'op': return _mkOp(m); case 'neg': return !!d.neg; case 'fundo': return !!d.fundo; case 'borda': return m.tipo==='chamada'?d.borda!==false:!!d.borda; }
+    case 'op': return _mkOp(m); case 'neg': return !!d.neg; case 'fundo': return !!d.fundo; case 'borda': return m.tipo==='chamada'?d.borda!==false:!!d.borda;
+    case 'g': return d.g||'porta'; case 'w': return d.w!=null?+d.w:.8; case 'dir': return d.dir||'d'; }
   return null; }
 const MK_MISTO={};
 function _mkLinhaIc(ls,w){ const da=ls==='dash'?'6 3':ls==='dot'?'0.1 4':ls==='dashdot'?'7 3 0.1 3':''; return `<svg viewBox="0 0 30 14" width="30" height="14"><path d="M3 7h24" stroke="currentColor" stroke-width="${w||2}" stroke-linecap="round"${da?` stroke-dasharray="${da}"`:''}/></svg>`; }
@@ -13100,15 +13175,22 @@ function mkPainelHtml(objs, ferr){
     fill:()=>{ const f=v('fill'); return `<div class="mkpSec">${lb('Preenchimento', f==='cor'&&v('fo')!==MK_MISTO?Math.round(v('fo')*100)+'%':null)}<div class="mkpChs">${chips('fill',[['none','sem'],['cor','cor'],['hatch','hachura'],['hatchX','cruzada']])}</div>${f==='cor'?rg('fo',5,80):''}</div>`; },
     op:()=>`<div class="mkpSec">${lb('Opacidade', v('op')===MK_MISTO?'misto':Math.round(v('op')*100)+'%')}${rg('op',10,100)}</div>`,
     tx:()=>`<div class="mkpSec">${lb('Texto')}<div class="mkpChs">${chips('tam',[['P','P'],['M','M'],['G','G']])}<span class="mkpSp"></span>${tog('neg','N','font-weight:900')}${tog('borda','borda')}</div></div>`,
+    gab:()=>{ const g=v('g'), w=v('w'), dr=v('dir'), um=g!==MK_MISTO;
+      const pc=(id,t,ex)=>`<button class="mkpCh ${g===id?'on':''}" onclick="mkProp('gab',${q(Object.assign({g:id},ex||{}))})">${t}</button>`;
+      return `<div class="mkpSec">${lb('Peça', um&&g!=='porta'?String(MK_GAB[g].w.toFixed(2)+' × '+MK_GAB[g].h.toFixed(2)).replace(/\./g,',')+' m':null)}<div class="mkpChs">${pc('porta','Porta',{w:.8})}${pc('pia','Lavatório')}${pc('vaso','Vaso')}</div></div>`
+        +(g==='porta'?`<div class="mkpSec">${lb('Largura da folha', w===MK_MISTO?'misto':String((+w).toFixed(2)).replace('.',',')+' m')}<div class="mkpChs">${MK_GAB.porta.larg.map(x=>`<button class="mkpCh ${w===x?'on':''}" onclick="mkProp('gab',{w:${x}})">${String(x.toFixed(2)).replace('.',',')}</button>`).join('')}<button class="mkpCh ${w!==MK_MISTO&&!MK_GAB.porta.larg.includes(w)?'on':''}" onclick="mkGabLarg()">outra…</button></div></div>`
+          +`<div class="mkpSec">${lb('Abre para')}<div class="mkpSeg"><button class="${dr==='e'?'on':''}" onclick="mkProp('gab',{dir:'e'})">esquerda</button><button class="${dr==='d'?'on':''}" onclick="mkProp('gab',{dir:'d'})">direita</button></div></div>`:'')
+        +`<div class="mkpSec">${lb('Posição')}<div class="mkpChs"><button class="mkpCh" onclick="mkGabGirar()">${_mkIc('girar',13)} girar 90°</button><button class="mkpCh" onclick="mkGabEspelhar()">${_mkIc('espelhar',13)} espelhar</button></div>${ferr?`<div class="mkpNt">Teclas: <b>R</b> gira e <b>X</b> espelha antes de clicar.</div>`:''}<div class="mkpNt">${TRENA.m_por_pt?'✓ escala da prancha calibrada':'⚠ calibre a escala no 📏 Cotas'}</div></div>`; },
     tx2:()=>`<div class="mkpSec">${lb('Texto')}<div class="mkpChs">${chips('tam',[['P','P'],['M','M'],['G','G']])}<span class="mkpSp"></span>${tog('neg','N','font-weight:900')}${tog('fundo','fundo')}${tog('borda','borda')}</div></div>`
   };
   return secs.map(s=>S[s]?S[s]():'').join('');
 }
 function mkProp(k,v){
-  if(MK_TOOL!=='sel'){ if(MK_TOOL==='medir') return; MK_PADRAO[MK_TOOL]=Object.assign({},MK_PADRAO[MK_TOOL]||{},{[k]:v}); mkPadSalvar(); mkRegua(); return; }
+  const vv=(k==='gab'&&v&&typeof v==='object')?v:{[k]:v};
+  if(MK_TOOL!=='sel'){ if(MK_TOOL==='medir') return; MK_PADRAO[MK_TOOL]=Object.assign({},MK_PADRAO[MK_TOOL]||{},vv); mkPadSalvar(); mkRegua(); try{ renderDrawings(); }catch(_){} return; }
   const objs=mkSelObjs(); if(!objs.length || !mkPodeAqui()) return;
   const g=mkUndoAbre();
-  objs.forEach(m=>{ if(!mkTemProp(m.tipo,k)) return; const nd=Object.assign({},m.dados,{[k]:v}); if(k==='ls') delete nd.tr; if(k==='fill' && v==='cor' && nd.fo==null) nd.fo=.15; mkAtualizar(m,nd); });
+  objs.forEach(m=>{ if(!mkTemProp(m.tipo,k)) return; const nd=Object.assign({},m.dados,vv); if(k==='ls') delete nd.tr; if(k==='fill' && v==='cor' && nd.fo==null) nd.fo=.15; mkAtualizar(m,nd); });
   mkUndoFecha(g); mkRender();
 }
 function mkUsarPadrao(){ const o=mkSelObjs()[0]; if(!o) return; const pad={};
@@ -13124,6 +13206,7 @@ function mkRegua(){
   const pode=mkPodeAqui(), apt=mkAlvo()==='apt';
   let h=MK_TOOLS.map(([k,a,n])=>k==='-'?'<span class="mkSep"></span>'
     :k==='desfazer'?`<button class="mkT" ${!pode||!mkUndoPode()?'disabled':''} data-tip="${n}" aria-label="${n}" onclick="mkDesfazerUlt()">${_mkIc(k,17)}</button>`
+    :k==='gabarito'&&!TRENA.m_por_pt?`<button class="mkT" disabled data-tip="Gabarito em escala · calibre a prancha no 📏 Cotas" aria-label="${n}">${_mkIc(k,17)}</button>`
     :`<button class="mkT ${MK_TOOL===k?'on':''}" ${k!=='sel'&&!pode?'disabled':''} data-tip="${n} · ${a}" aria-label="${n} (${a})" onclick="mkFerr('${k}')">${_mkIc(k,17)}</button>`).join('');
   // Painel de propriedades: ferramenta ativa OU marcação(ões) selecionada(s)
   const alvoTx=apt?`<div class="mkpAlvo">${_mkIc('virar',12)} desenho do apontamento <b>${esc(APT_EDIT._novo?'novo':APT_EDIT.id)}</b></div>`:'';
@@ -13159,7 +13242,7 @@ function mkToggle(on){
   else { MK_TOOL='sel'; _mk=null; _mkCh=null; mkSel(null); }
   mkHint(); mkRender(); $('stage').classList.toggle('modo-pin', MK_ON && MK_TOOL!=='sel');
 }
-function mkFerr(k){ if(k==='desfazer'){ mkDesfazerUlt(); return; } if(k!=='sel' && !mkPodeAqui()) return; MK_TOOL=k; _mk=null; _mkCh=null; _mkPoly=null; if(k!=='sel') mkSel(null);
+function mkFerr(k){ if(k==='desfazer'){ mkDesfazerUlt(); return; } _mkGhost=null; if(k!=='sel' && !mkPodeAqui()) return; MK_TOOL=k; _mk=null; _mkCh=null; _mkPoly=null; if(k!=='sel') mkSel(null);
   $('stage').classList.toggle('modo-pin', MK_TOOL!=='sel'); mkHint(); mkRender(); }
 function mkCor(c){ MK_COR=c; mkRegua(); }
 function mkTam(t){ MK_TAM=t; mkRegua(); }
@@ -13167,7 +13250,7 @@ function mkHint(){ const h=$('modoHint'); if(!h) return;
   const t={ sel:'Marcar: clique seleciona · arraste move · Shift+clique soma · com seleção: Virar apontamento / Anexar / Duplicar · Delete apaga · Esc sai', nuvem:_mkPoly?'Nuvem por pontos: clique os cantos · clique no 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Nuvem: arraste um retângulo · ou clique ponto a ponto para contorno irregular',
     chamada:_mkCh?'Chamada: clique onde fica o texto':'Chamada: clique no ponto a indicar', balao:'Balão: clique para numerar ('+mkProxNum()+') · em cima de uma nuvem ou chamada, fica preso a ela',
     marcador:'Marcador: arraste por cima do desenho · Shift deixa reto', texto:'Texto: clique onde escrever', carimbo:'Carimbo: clique onde carimbar e escolha',
-    seta:'Seta: arraste do começo até a ponta', linha:'Linha: arraste', polilinha:_mkPoly?'Polilinha: clique os pontos · duplo clique ou Enter termina · Esc cancela':'Polilinha: clique ponto a ponto', retangulo:'Retângulo: arraste', elipse:'Elipse: arraste', livre:'Livre: desenhe arrastando',
+    gabarito:'Gabarito: clique para pôr a peça em tamanho real · R gira · X espelha', seta:'Seta: arraste do começo até a ponta', linha:'Linha: arraste', polilinha:_mkPoly?'Polilinha: clique os pontos · duplo clique ou Enter termina · Esc cancela':'Polilinha: clique ponto a ponto', retangulo:'Retângulo: arraste', elipse:'Elipse: arraste', livre:'Livre: desenhe arrastando',
     poligono:_mkPoly?'Polígono: clique os cantos · 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Polígono: clique ponto a ponto',
     medir:!TRENA.m_por_pt?'Medir: calibre a escala primeiro no 📏 Cotas (🎯 Calibrar)':MK_MED==='cota'?'Cota: arraste de um ponto ao outro':(_mkPoly?'Área: clique os vértices · 1º ponto, duplo clique ou Enter fecha':'Área: clique os vértices do contorno') };
   h.textContent=MK_ON ? (t[MK_TOOL]||'')+(mkAlvo()==='apt'?' · desenhando no apontamento '+(APT_EDIT._novo?'novo':APT_EDIT.id):(ANALISE_ATUAL?'':' · análise ainda não salva: as marcações vão junto no 💾 Salvar')) : ''; }
@@ -13236,6 +13319,8 @@ function mkInstalar(){
         if(_mkPoly.dados.pts.length>=3 && Math.hypot(e.clientX-r.left-f.x, e.clientY-r.top-f.y)<12) mkPolyFim(); else _mkPoly.dados.pts.push(q); }
       else { _mkPoly=mkNova(tp,Object.assign({pts:[q]},tp==='area'?{cor:AREA_COLOR}:mkEst('poligono')),{_aberta:true}); mkHint(); }
       mkRender(); return; }
+    else if(MK_TOOL==='gabarito'){ if(!TRENA.m_por_pt){ rvAviso('Calibre a escala primeiro: 📏 Cotas → 🎯 Calibrar.'); return; }
+      mkGravar(mkNova('gabarito',Object.assign({a:q,mpp:TRENA.m_por_pt},mkEst('gabarito')))); }
     else if(MK_TOOL==='medir'){ if(!TRENA.m_por_pt){ rvAviso('Calibre a escala primeiro: 📏 Cotas → 🎯 Calibrar.'); return; } _mk=mkNova('cota',{a:q,b:q,cor:COTA_COLOR}); }
     else if(MK_TOOL==='carimbo'){ const x=e.clientX, y=e.clientY, ond={ getBoundingClientRect:()=>({left:x,right:x,top:y,bottom:y}) };
       const pôr=(txt,cor)=>{ const nd=MK_ND?((USER&&USER.nome)||'')+' · '+new Date().toLocaleDateString('pt-BR'):''; mkGravar(mkNova('carimbo',{a:q,txt,cor,tam:mkEst('carimbo').tam||'M',nd})); };
@@ -13265,6 +13350,8 @@ function mkInstalar(){
       if(_mk.tipo==='cota') _mk.dados.metros=_ptLen(_mk.dados.a,q)*TRENA.m_por_pt; try{ renderDrawings(); }catch(_){} e.stopImmediatePropagation(); }
     else if(_mkPoly){ const p=mkPt(e); _mkPoly._cur={nx:p.nx,ny:p.ny}; try{ renderDrawings(); }catch(_){} }
     else if(_mkCh){ const p=mkPt(e); _mkCh.cur={nx:p.nx,ny:p.ny}; try{ renderDrawings(); }catch(_){} }
+    else if(MK_ON && MK_TOOL==='gabarito' && V.page){ const r=$('stage').getBoundingClientRect(), den=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom&&!(e.target.closest&&e.target.closest('#mkRegua'));
+      const p=den?mkPt(e):null; _mkGhost=p?{nx:p.nx,ny:p.ny}:null; try{ renderDrawings(); }catch(_){} }
   }, true);
   window.addEventListener('mouseup', e=>{
     if(_mkMove){ const mv=_mkMove; _mkMove=null; e.stopImmediatePropagation();
@@ -13295,6 +13382,8 @@ function mkInstalar(){
     if(_mkPoly && _mkPoly.tipo==='polilinha' && e.key==='Escape'){ _mkPoly=null; mkHint(); mkRender(); e.preventDefault(); return; }
     if(e.key==='Escape'){ if(_mkCh||_mk||_mkPoly){ _mkCh=null; _mk=null; _mkPoly=null; mkHint(); mkRender(); } else if(MK_TOOL!=='sel') mkFerr('sel'); else if(MK_SELS.size){ mkSel(null); mkRender(); } else mkToggle(false); e.preventDefault(); return; }
     if((e.key==='Delete'||e.key==='Backspace') && MK_SELS.size){ mkApagarSel(); e.preventDefault(); return; }
+    const ehGab=MK_TOOL==='gabarito' || (MK_TOOL==='sel' && MK_SELS.size && mkSelObjs().every(o=>o.tipo==='gabarito'));
+    if(ehGab && /^[rRxX]$/.test(e.key)){ if(e.key.toLowerCase()==='r') mkGabGirar(); else mkGabEspelhar(); e.preventDefault(); return; }
     const t=MK_TOOLS.find(x=>x[1]&&x[1]===e.key.toUpperCase()); if(t){ mkFerr(t[0]); e.preventDefault(); }
   });
 }
@@ -13803,7 +13892,7 @@ async function mkPdfGerar(o){
         fonte(0,0,7.2); const dl=a.descricao?pdf.splitTextToSize(String(a.descricao),cw).slice(0,28):[];
         fonte(0,0,6.8); const rl=resp?pdf.splitTextToSize((resp.autor_nome||resp.autor_email||'Projetista')+' · '+new Date(resp.criado_em).toLocaleDateString('pt-BR')+' — '+(resp.texto||''),cw-3).slice(0,4):[];
         const temImg=!!(rec||prt.length);
-        const hh=4+5+tl.length*3.6+9.5+(ps.length?4.4+ps.length*4.2:0)+(dl.length?3.4+dl.length*3.15:0)+(temImg?48:0)+(rl.length?3.6+rl.length*3:0)+2;
+        const hh=4+5+tl.length*3.6+9.5+(ps.length?4.4+ps.length*4.2:0)+ps.reduce((t,[dd,pp])=>t+((pp&&String(pp.instrucao||'').trim())?Math.min(3,Math.ceil(String(pp.instrucao).length/110))*3+.6:0),0)+(dl.length?3.4+dl.length*3.15:0)+(temImg?48:0)+(rl.length?3.6+rl.length*3:0)+2;
         if(y+hh>fim()+1 && y>40){ y=nova(false,false,tit); }
         const y0=y, x0=mg+3.5, late=_mkStK(a)!=='res'&&estaAtrasado(a);
         // linha 1: número, código, disciplina, criticidade, status
@@ -13832,7 +13921,8 @@ async function mkPdfGerar(o){
             cor(C.mid); pdf.text(p.prazo?_dispData(p.prazo):'—',c2[2]+.6,y);
             if(p.conclusao){ fonte(0,1,6.7); cor(C.res); pdf.text('concluiu '+_dispData(p.conclusao),c2[3]+.6,y); }
             else { fonte(0,1,6.7); cor(_mkStK(a)==='res'?C.mid:C.late); pdf.text(_mkStK(a)==='res'?'—':'falta concluir',c2[3]+.6,y); }
-            y+=4.2; });
+            y+=4.2;
+            const ins=String(p.instrucao||'').trim(); if(ins){ fonte(0,0,6.4); cor(C.an); pdf.splitTextToSize('Instrução: '+ins, cw-22).slice(0,3).forEach(l=>{ pdf.text(l,c2[1]+.6,y-.8); y+=3; }); y+=.6; } });
           y+=.6; }
         // descrição
         if(dl.length){ fonte(0,1,4.9); pdf.setCharSpace(.25); cor(C.soft); pdf.text('DESCRIÇÃO',x0,y); pdf.setCharSpace(0); y+=3.3;
