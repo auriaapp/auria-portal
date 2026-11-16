@@ -4006,8 +4006,15 @@ function _pinNovo(pt, e){
 }
 function pinTrocarPrancha(i, pid){ const a=APT_EDIT; if(!a||!a.pontos_json||!a.pontos_json[i]) return; a.pontos_json[i].pid=pid||null; renderPins(); renderPinsList(); _peerBroadcast(); }
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
-function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id; return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
-function _aptVisivel(a){ return !!_layerDoApt(a) || (a.pontos_json||[]).some(pt=>pt.pid && _pinVisivel(a,pt)); }
+// Item 122: o pin aparece com a camada da prancha dele visível OU, se essa prancha está na análise
+// (mesmo oculta, alinhada), com alguma camada visível de disciplina PARTICIPANTE do apontamento.
+// Prancha fora da análise não desenha (as coordenadas são de outra folha).
+function _aptDiscVisivel(a){ if(!a) return false; const sg=d=>String((typeof rvSigla==='function'&&rvSigla(d))||d||'').toUpperCase();
+  const ds=new Set(Object.keys(a.participantes||{}).concat(a.disciplina?[a.disciplina]:[]).map(sg).filter(Boolean)); if(!ds.size) return false;
+  return LAYERS.some(L=>L&&L.prancha&&L.visible!==false&&ds.has(sg(L.prancha.disciplina||deduzDisc(L.nome||L.prancha.codigo||'')))); }
+function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id, L=LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid); if(!L) return false; return L.visible!==false || _aptDiscVisivel(a); }
+function _aptPorParticipante(a){ const L=a&&LAYERS.find(L=>L&&L.prancha&&L.prancha.id===a.prancha_id); return !!L && L.visible===false && _aptDiscVisivel(a); }
+function _aptVisivel(a){ return !!_layerDoApt(a) || _aptPorParticipante(a) || (a.pontos_json||[]).some(pt=>pt.pid && _pinVisivel(a,pt)); }
 function _peerBroadcast(){
   peerCall('__peerEdit', (PIN_EDIT && APT_EDIT) ? { id:APT_EDIT.id, id_num:APT_EDIT.id_num, prioridade:APT_EDIT.prioridade,
     prancha_id:APT_EDIT.prancha_id, pontos:JSON.parse(JSON.stringify(APT_EDIT.pontos_json||[])) } : null);
@@ -4723,7 +4730,7 @@ function renderDrawings(){
   // Desenhos de OUTROS apontamentos desta prancha (somente leitura)
   APTS.forEach(a=>{
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
-    if(!_layerDoApt(a)) return;   // desenhos de qualquer prancha aberta e visível (base ou overlay)
+    if(!_layerDoApt(a) && !_aptPorParticipante(a)) return;   // desenhos de prancha visível — ou oculta, com disciplina participante visível (item 122)
     if(_aptResolvidoOculto(a)) return;
     (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s.t==='mk'&&!s.cp?Object.assign({},s,{color:corPrio(a.prioridade)}):s, false); });
   });
