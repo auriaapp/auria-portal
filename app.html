@@ -684,6 +684,9 @@ body.vz-dir-emp #sideRight #rvDMk{display:block!important}
 #mkRegua .mkTam{width:26px;height:20px;border:1px solid var(--line);border-radius:5px;background:none;color:var(--mut);font:700 10.5px inherit;cursor:pointer}
 #mkRegua .mkTam.on{color:var(--rvLar,#F28C28);border-color:var(--rvLar,#F28C28)}
 #mkRegua [data-tip]{position:relative}
+.mkRevAv{display:flex;gap:8px;align-items:flex-start;font-size:11.5px;line-height:1.4;color:var(--txt);background:rgba(233,180,76,.09);border:1px solid rgba(233,180,76,.4);border-radius:9px;padding:8px 9px;margin-bottom:8px}
+.mkRevAv b{color:#E9B44C}.mkRevBt{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.mkRevBt .btn-sec{font-size:11px;padding:3px 8px}
+.mkRevTag{font:800 9.5px Consolas,monospace;background:#64748B;color:#fff;border-radius:3px;padding:0 4px}
 #mkProps{position:absolute;left:calc(100% + 8px);top:0;display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 9px;box-shadow:0 8px 22px rgba(0,0,0,.35);min-width:132px}
 #mkProps .mkPrT{font-size:11px;font-weight:800;color:var(--txt)}
 #mkProps .mkPrL{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
@@ -12120,6 +12123,7 @@ function rvAnCtx(ev,id){
   if(an && !rvAnMinha(an)) return rvMenu(ev, (id===ANALISE_ATUAL ? [{ic:'💾', t:'Salvar cópia para mim', f:()=>rvAnSalvar(true)}] : [{ic:'👁', t:'Abrir para consulta', f:()=>rvAnAbrir(id)}]).concat([mv]));
   const ops=[{ic:'✎', t:'Renomear', f:()=>rvAnEditar(id)}, mv];
   if(id===ANALISE_ATUAL) ops.push({ic:'⧉', t:'Salvar como nova', f:()=>rvAnSalvar(true)});
+  if(id===ANALISE_ATUAL) ops.push({ic:'📄', t:'PDF da análise…', f:()=>mkPdfDialogo()});
   ops.push({ic:'➤', t:'Compartilhar…<span style="margin-left:auto;color:var(--mut);font-size:11px">'+esc(rvAnFxNome(an))+'</span>', f:()=>rvAnCompartilhar(id)});
   ops.push({ic:'🗑', t:'Excluir análise', f:()=>rvAnExcluir(id)});
   rvMenu(ev, ops);
@@ -12735,15 +12739,16 @@ const MK_SVG={
 function _mkIc(k,s){ return `<svg viewBox="0 0 20 20" width="${s||16}" height="${s||16}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${MK_SVG[k]||''}</svg>`; }
 function mkAn(){ return ANALISE_ATUAL ? ANALISES.find(a=>a.id===ANALISE_ATUAL) : null; }
 // Pode marcar: análise minha (ou rascunho ainda não salvo), sem ser só leitura/projetista.
-function mkPode(){ if(APP_RO||APP_PJ) return false; const a=mkAn(); return !ANALISE_ATUAL || (a && rvAnMinha(a)); }
+function mkPode(){ if(APP_RO||APP_PJ||(typeof MK_FIXO!=='undefined'&&MK_FIXO)) return false; const a=mkAn(); return !ANALISE_ATUAL || (a && rvAnMinha(a)); }
 function mkPid(){ return (typeof _pranchaFocoId==='function') ? _pranchaFocoId() : (PRANCHA&&PRANCHA.id); }
 function mkLayer(pid){ return LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid); }
-function mkVisivel(m){ const L=mkLayer(m.prancha_id); return !!(L && L.visible!==false) && (m.pg||1)===V.pageNum; }
+function mkVisivel(m){ const L=mkLayer(m.prancha_id); return !!(L && L.visible!==false) && (m.pg||1)===V.pageNum && !(typeof MK_OCULTA_ANT!=='undefined' && MK_OCULTA_ANT && mkAntiga(m)); }
 function mkPt(e){ const r=$('stage').getBoundingClientRect(); return screenToPage(e.clientX-r.left, e.clientY-r.top); }
 function mkProxNum(){ return MARCS.filter(m=>m.tipo==='balao').reduce((x,m)=>Math.max(x,m.numero||0),0)+1; }
 
 // ── Carregar / gravar ────────────────────────────────────────────────────────
 async function mkCarregar(){
+  if(typeof MK_FIXO!=='undefined' && MK_FIXO) return;   // janela "revisão ao lado": marcações fixas, só consulta
   const an=ANALISE_ATUAL||null; if(an===MK_AN) return;
   // Rascunho só passa para a análise que ACABOU de ser salva (abrir outra descarta o rascunho).
   const pend=(MK_AN==null && MK_FLUSH) ? MARCS.filter(m=>m._local) : [];
@@ -12755,6 +12760,7 @@ async function mkCarregar(){
     MARCS=data||[];
   }catch(e){ console.warn('marcações:', e.message||e); MARCS=[]; }
   if(pend.length && mkPode()){ for(const m of pend){ delete m._local; delete m.id; await mkGravar(m); } }   // rascunho que acabou de ser salvo
+  try{ if(typeof mkRevsCarregar==='function') await mkRevsCarregar(); }catch(_){}
   mkRender();
 }
 async function mkGravar(m){
@@ -12805,8 +12811,10 @@ function _mkNuvemPts(P0, r, fechar){
   return d;
 }
 function _mkTxtW(t,fs){ return Math.max(fs, String(t||'').length*fs*0.56); }
+let MK_ESC=1;   // escala dos tamanhos (texto, arco, traço) — o PDF usa maior, pois a prancha sai em alta resolução
 function mkSvg(m, prev){
-  const P=p=>pageToScreen(p.nx,p.ny), d=m.dados||{}, c=d.cor||'#E74C3C', T=MK_TAMS[d.tam||'M']||MK_TAMS.M, sel=!!(m.id&&MK_SELS.has(m.id));
+  const T0=MK_TAMS[(m.dados||{}).tam||'M']||MK_TAMS.M, T=MK_ESC===1?T0:Object.fromEntries(Object.entries(T0).map(([k,v])=>[k,v*MK_ESC]));
+  const P=p=>pageToScreen(p.nx,p.ny), d=m.dados||{}, c=d.cor||'#E74C3C', sel=!!(m.id&&MK_SELS.has(m.id));
   let g='', bb=null;
   if(m.tipo==='nuvem' && (d.pts||[]).length>=2){ const q=d.pts.map(P), fecha=!prev||d.pts.length>=3&&!m._aberta;
     const pp=q.map(p=>[p.x,p.y]); if(prev && m._cur){ const c=P(m._cur); pp.push([c.x,c.y]); }
@@ -12858,7 +12866,9 @@ function mkSvg(m, prev){
   const halo=(sel&&bb)?`<rect x="${bb[0].toFixed(1)}" y="${bb[1].toFixed(1)}" width="${(bb[2]-bb[0]).toFixed(1)}" height="${(bb[3]-bb[1]).toFixed(1)}" rx="4" fill="none" stroke="#F28C28" stroke-width="1.5" stroke-dasharray="5 3"/>`:'';
   // área de clique: a caixa toda (fácil de pegar a nuvem pelo meio) quando a régua está em Selecionar
   const hit=(!prev&&bb&&MK_ON&&MK_TOOL==='sel')?`<rect x="${bb[0].toFixed(1)}" y="${bb[1].toFixed(1)}" width="${(bb[2]-bb[0]).toFixed(1)}" height="${(bb[3]-bb[1]).toFixed(1)}" fill="transparent"/>`:'';
-  return `<g class="mkG" data-mk="${prev?'':esc(m.id||'')}" opacity="${prev===true?0.8:1}" style="pointer-events:${(!prev&&MK_ON&&MK_TOOL==='sel')?'visiblePainted':'none'};cursor:pointer">${hit}${g}${halo}</g>`;
+  const ant=!prev && m.id && typeof mkAntiga==='function' && mkAntiga(m);
+  const tag=(ant&&bb)?`<g opacity="1"><rect x="${bb[0].toFixed(1)}" y="${(bb[1]-15).toFixed(1)}" width="${(String(mkRevNome(m.cde_revisao_id)).length*6.4+10).toFixed(1)}" height="13" rx="3" fill="#64748B"/><text x="${(bb[0]+5).toFixed(1)}" y="${(bb[1]-5.5).toFixed(1)}" font-size="9.5" font-weight="800" fill="#fff">${esc(mkRevNome(m.cde_revisao_id))}</text></g>`:'';
+  return `<g class="mkG" data-mk="${prev?'':esc(m.id||'')}" opacity="${prev===true?0.8:ant?0.45:1}" style="pointer-events:${(!prev&&MK_ON&&MK_TOOL==='sel')?'visiblePainted':'none'};cursor:pointer">${hit}${g}${halo}${tag}</g>`;
 }
 function mkSvgTudo(){
   if(!V.page || !PRANCHA || MK_OCULTA) return '';
@@ -13050,7 +13060,8 @@ function mkLista(){
   const LIS=MARCS.filter(FIL[MK_FILT]||FIL.todas);
   const grupos=new Map(); LIS.forEach(m=>{ const k=m.prancha_id||'—'; if(!grupos.has(k)) grupos.set(k,[]); grupos.get(k).push(m); });
   const pode=mkPode(), dt=s=>{ const d=new Date(s); return isNaN(d)?'':d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
-  let h=`<div class="mkHd"><span>${MARCS.length} marcaç${MARCS.length>1?'ões':'ão'}${an?'':' · não salva'}</span><button class="btn-sec" onclick="mkOcultar()">${MK_OCULTA?'Mostrar todas':'Ocultar todas'}</button></div>`
+  let h=`<div class="mkHd"><span>${MARCS.length} marcaç${MARCS.length>1?'ões':'ão'}${an?'':' · não salva'}</span><button class="btn-sec" onclick="mkOcultar()">${MK_OCULTA?'Mostrar todas':'Ocultar todas'}</button><button class="btn-sec" onclick="mkPdfDialogo()" title="PDF da análise com as marcações">PDF</button></div>`
+    +(typeof mkAvisoHtml==='function'?mkAvisoHtml():'')
     +`<div class="mkFil">${[['todas','Todas'],['minhas','Minhas'],['nuvens','Nuvens'],['textos','Textos'],['medidas','Medidas'],['rev','Desta revisão']].map(([k,t])=>`<button class="${MK_FILT===k?'on':''}" onclick="MK_FILT='${k}';mkLista()">${t}</button>`).join('')}</div>`
     +(LIS.length?'':'<div class="mkVz" style="padding:10px">Nenhuma marcação neste filtro.</div>');
   grupos.forEach((ms,pid)=>{
@@ -13061,7 +13072,7 @@ function mkLista(){
         h+=`<div class="mkIt rs" onclick="mkRastroAbrir('${esc(m.id)}')" title="Abrir o apontamento"><span class="ic" style="color:${ap?corPrio(ap.prioridade):'var(--mut)'}">${_mkIc('rastro',15)}</span><span class="tx"><b><span class="ap-cod">${esc(d.apt||'?')}</span> · ${esc((ap&&ap.titulo)||d.titulo||'')}</b><small>${ap?`<span class="ap-st" style="background:${corStatus(ap.status)}22;color:${corStatus(ap.status)}">${esc(ap.status||'—')}</span>`:'apagado'}${ap&&ap.prazo_min?' · prazo '+esc(ap.prazo_min):''} · ${d.anexo?'anexada':'virou apontamento'} ${dt(m.criado_em)}</small></span>${pode&&!d.anexo&&ap?`<button class="x" title="Desfazer (só se ainda não chegou a ninguém)" onclick="event.stopPropagation();mkDesfazer('${esc(m.id)}')">↶</button>`:''}${pode?`<button class="x" title="Tirar o rastro da análise (o apontamento continua)" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`;
         return; }
       const rot=m.tipo==='cota'?((d.metros!=null?d.metros.toFixed(2).replace('.',','):'—')+' m · cota'):m.tipo==='area'?((d.m2!=null?d.m2.toFixed(2).replace('.',','):'—')+' m² · área'):m.tipo==='carimbo'?(d.txt||'Carimbo'):m.tipo==='balao'?(m.numero+' · balão'+(d.preso&&MARCS.some(x=>x.id===d.preso)?' na '+MK_NOME[(MARCS.find(x=>x.id===d.preso)||{}).tipo].toLowerCase():'')):(['texto','chamada'].includes(m.tipo)?(d.txt||MK_NOME[m.tipo]):MK_NOME[m.tipo]);
-      h+=`<div class="mkIt ${MK_SELS.has(m.id)?'on':''} ${L?'':'fora'}" onclick="if(event.shiftKey){ mkSel('${esc(m.id)}',true); mkRender(); } else mkIr('${esc(m.id)}')" title="${L?'Mostrar na prancha':'Abra esta prancha para ver a marcação'}"><span class="ic" style="color:${d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C')}">${_mkIc(m.tipo,15)}</span><span class="tx"><b>${esc(rot)}</b><small>${esc(m.autor_nome||'')} · ${dt(m.criado_em)}${(m.pg||1)>1?' · pág. '+m.pg:''}</small></span>${pode?`<button class="x" title="Apagar" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`; });
+      h+=`<div class="mkIt ${MK_SELS.has(m.id)?'on':''} ${L?'':'fora'}" onclick="if(event.shiftKey){ mkSel('${esc(m.id)}',true); mkRender(); } else mkIr('${esc(m.id)}')" title="${L?'Mostrar na prancha':'Abra esta prancha para ver a marcação'}"><span class="ic" style="color:${d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C')}">${_mkIc(m.tipo,15)}</span><span class="tx"><b>${esc(rot)}</b><small>${esc(m.autor_nome||'')} · ${dt(m.criado_em)}${(m.pg||1)>1?' · pág. '+m.pg:''}${mkAntiga(m)?` · <span class="mkRevTag">${esc(mkRevNome(m.cde_revisao_id))}</span>`:''}</small></span>${pode&&mkAntiga(m)?`<button class="x" title="Trazer para a ${esc(mkRevNome(mkRevAtual(m)))} (revisão atual)" onclick="event.stopPropagation();mkTrazer('${esc(m.id)}')">↥</button>`:''}${pode?`<button class="x" title="Apagar" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`; });
   });
   el.innerHTML=h;
 }
@@ -13258,6 +13269,155 @@ window.addEventListener('load',()=>{
     if(ed && ed._mkOrigem && APT_EDIT===null) await mkPosSalvar(ed);
     return r; };
   const fa=window.fecharApt; if(typeof fa==='function') window.fecharApt=function(){ if(!MK_SALVANDO && APT_EDIT && APT_EDIT._mkOrigem && MK_FILA.length){ MK_FILA=[]; rvAviso('Fila de apontamentos cancelada. As marcações continuam na análise.'); } return fa.apply(this,arguments); };
+});
+</script>
+<script>
+// ═══ Item 110 fase 4: REVISÃO NOVA da prancha + PDF da análise (mockups/app_marcacao_prancha.html, seções 4 e 6) ═══
+// Revisão: cada marcação guarda a revisão do CDE onde nasceu. Se a prancha agora está em
+// outra, a marcação aparece esmaecida com a etiqueta da revisão de origem (ex.: R00) e a aba
+// avisa: "Abrir a R00 ao lado" (tela dividida, já com as marcações daquela revisão),
+// "Ocultar as antigas" ou "Manter como estão". "Trazer para a R01" atualiza a marcação.
+let MK_REVS=new Map(), MK_OCULTA_ANT=false, MK_FIXO=false;
+function mkRevAtual(m){ const L=mkLayer(m.prancha_id), p=L&&L.prancha; return (p&&(p._cde_revisao_id||p.cde_revisao_id))||null; }
+function mkAntiga(m){ const r=mkRevAtual(m); return !!(m.cde_revisao_id && r && m.cde_revisao_id!==r && m.tipo!=='rastro'); }
+function mkRevNome(id){ return (id&&MK_REVS.get(id))||'rev. anterior'; }
+async function mkRevsCarregar(){
+  const ids=new Set(); MARCS.forEach(m=>{ if(m.cde_revisao_id) ids.add(m.cde_revisao_id); const r=mkRevAtual(m); if(r) ids.add(r); });
+  const falta=[...ids].filter(i=>!MK_REVS.has(i)); if(!falta.length) return;
+  try{ const { data }=await sb.from('cde_revisao_auria').select('id,revisao').in('id',falta); (data||[]).forEach(r=>MK_REVS.set(r.id, r.revisao||'R?')); }catch(_){}
+}
+// Grupos de marcações antigas por prancha: { pid, doc, revAnt, revAtual, n }
+function mkAntigasGrupos(){
+  const g=new Map();
+  MARCS.filter(m=>mkAntiga(m) && mkLayer(m.prancha_id)).forEach(m=>{ const k=m.prancha_id+'|'+m.cde_revisao_id;
+    const x=g.get(k)||{ pid:m.prancha_id, doc:m.cde_documento_id, revAnt:m.cde_revisao_id, revAtual:mkRevAtual(m), n:0 }; x.n++; g.set(k,x); });
+  return [...g.values()];
+}
+function mkAvisoKey(){ return 'an_revok_'+(ANALISE_ATUAL||'')+'_'+mkAntigasGrupos().map(x=>x.revAnt).sort().join(','); }
+function mkAvisoHtml(){
+  const gs=mkAntigasGrupos(); if(!gs.length) return '';
+  let ok=false; try{ ok=!!localStorage.getItem(mkAvisoKey()); }catch(_){} if(ok && !MK_OCULTA_ANT) return '';
+  return gs.map(x=>{ const L=mkLayer(x.pid), cod=(L&&L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome))||'prancha';
+    return `<div class="mkRevAv">${_icH('alerta',15)}<div><b>${x.n} marcaç${x.n>1?'ões foram feitas':'ão foi feita'} na ${esc(mkRevNome(x.revAnt))}</b> de ${esc(cod)}, que agora está na ${esc(mkRevNome(x.revAtual))}. ${x.n>1?'Elas aparecem':'Ela aparece'} esmaecida${x.n>1?'s':''}, com a etiqueta ${esc(mkRevNome(x.revAnt))}.
+      <div class="mkRevBt">${x.doc?`<button class="btn-sec" onclick="mkRevAoLado('${x.doc}','${x.revAnt}')">Abrir a ${esc(mkRevNome(x.revAnt))} ao lado</button>`:''}<button class="btn-sec" onclick="MK_OCULTA_ANT=!MK_OCULTA_ANT;mkRender()">${MK_OCULTA_ANT?'Mostrar as antigas':'Ocultar as antigas'}</button><button class="btn-sec" onclick="try{localStorage.setItem(mkAvisoKey(),'1')}catch(_){};MK_OCULTA_ANT=false;mkRender()">Manter como estão</button></div></div></div>`; }).join('');
+}
+// "Abrir a R00 ao lado": tela dividida 2D·2D com a revisão antiga e as marcações dela (só consulta).
+function mkRevAoLado(doc, rev){
+  if(!ANALISE_ATUAL) return;
+  try{ if(document.body.classList.contains('split2d')) split2dToggle(); }catch(_){}
+  split2dAbrir(doc);
+  const f=$('peerPane'); if(f) f.src=f.src+'&cde_rev='+encodeURIComponent(rev)+'&mk_an='+encodeURIComponent(ANALISE_ATUAL)+'&mk_rev='+encodeURIComponent(rev);
+  rvAviso('Abrindo a '+mkRevNome(rev)+' ao lado, com as marcações feitas nela.');
+}
+async function mkTrazer(id){
+  const m=MARCS.find(x=>x.id===id); if(!m||!mkPode()) return; const r=mkRevAtual(m); if(!r) return;
+  const ant=m.cde_revisao_id; m.cde_revisao_id=r; mkRender();
+  if(m._local || String(id).startsWith('tmp')) return;
+  try{ const { error }=await sb.from('analise_marcacao_auria').update({ cde_revisao_id:r, atualizado_em:new Date().toISOString() }).eq('id',id); if(error) throw error;
+    rvAviso('Marcação trazida para a '+mkRevNome(r)+'.'); }
+  catch(e){ m.cde_revisao_id=ant; mkRender(); rvAlerta('Não consegui atualizar a marcação: '+_anErroMsg(e)); }
+}
+
+// ── PDF da análise ───────────────────────────────────────────────────────────
+// A prancha inteira em alta resolução, montada em ladrilhos com o mesmo render do App
+// (todas as camadas visíveis, cores e opacidades), + marcações (+ apontamentos, se pedido),
+// e uma página final com a lista. jsPDF carregado só na hora.
+function _mkJsPdf(){ return window.jspdf ? Promise.resolve(window.jspdf) : new Promise((ok,er)=>{ const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'; s.onload=()=>ok(window.jspdf); s.onerror=()=>er(new Error('não carregou o gerador de PDF')); document.head.appendChild(s); }); }
+const _mkSono=ms=>new Promise(r=>setTimeout(r,ms));
+async function _mkEsperaRender(){ for(let i=0;i<120;i++){ await _mkSono(70); if(!_rendering && frameCobre()) return; } }
+async function _mkSvgImg(svg, W, H){
+  const cl=svg.cloneNode(true); cl.setAttribute('xmlns','http://www.w3.org/2000/svg'); cl.setAttribute('width',W); cl.setAttribute('height',H); cl.setAttribute('viewBox','0 0 '+W+' '+H); cl.removeAttribute('style');
+  const url=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)],{type:'image/svg+xml'}));
+  try{ return await new Promise((ok,er)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=er; i.src=url; }); } finally{ setTimeout(()=>URL.revokeObjectURL(url),2000); }
+}
+async function _mkCapturaPagina(comApt, prog){
+  const st=$('stage'), cv=$('pdfCanvas'), W=st.clientWidth, H=st.clientHeight, d=pageDims();
+  const Z=Math.min(4, 3400/Math.max(d.w,d.h)), TW=Math.round(d.w*Z), TH=Math.round(d.h*Z);
+  const out=document.createElement('canvas'); out.width=TW; out.height=TH; const c=out.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,TW,TH);
+  const nx=Math.ceil(TW/W), ny=Math.ceil(TH/H);
+  for(let iy=0;iy<ny;iy++) for(let ix=0;ix<nx;ix++){
+    prog&&prog(Math.round(100*(iy*nx+ix)/(nx*ny)));
+    V.zoom=Z; V.panX=ix*W; V.panY=iy*H; updateCss(); scheduleRender(0); await _mkEsperaRender();
+    try{ renderDrawings(); if(comApt) renderPins(); }catch(_){}
+    const sr=st.getBoundingClientRect(), cr=cv.getBoundingClientRect(), kx=cv.width/cr.width, ky=cv.height/cr.height;
+    c.drawImage(cv,(sr.left-cr.left)*kx,(sr.top-cr.top)*ky,W*kx,H*ky, ix*W,iy*H,W,H);
+    try{ c.drawImage(await _mkSvgImg($('drawSvg'),W,H), ix*W,iy*H,W,H); }catch(_){}
+    if(comApt){ try{ c.drawImage(await _mkSvgImg($('pinsSvg'),W,H), ix*W,iy*H,W,H); }catch(_){} }
+  }
+  return out;
+}
+function mkPdfDialogo(){
+  const an=mkAn(); if(!an){ rvAviso('Salve a análise antes de exportar o PDF.'); return; }
+  if(!V.page){ rvAviso('Abra a análise com as pranchas antes de exportar.'); return; }
+  const ov=document.createElement('div'); ov.className='rvAsk';
+  ov.innerHTML=`<div class="bx"><b>PDF da análise</b><div class="rvShN">${esc(rvAnNomeTela(an))}</div>
+    <label class="rvShTodos"><input type="checkbox" id="mkPdfMk" checked><span><b>Marcações</b><small>Nuvens, chamadas, balões, carimbos, formas e medidas desta análise.</small></span></label>
+    <label class="rvShTodos"><input type="checkbox" id="mkPdfApt"><span><b>Apontamentos visíveis</b><small>Pins e desenhos dos apontamentos que estão na tela agora (respeita os filtros).</small></span></label>
+    <label class="rvShTodos"><input type="checkbox" id="mkPdfLis" checked><span><b>Lista no fim</b><small>Cada marcação com número, texto, autor e data${''}.</small></span></label>
+    <div class="mkVxTx">A prancha sai inteira em alta resolução, com as camadas e cores que estão na tela. Leva alguns segundos.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on">Gerar PDF</button></div></div>`;
+  ov.querySelector('[data-r="c"]').onclick=()=>ov.remove();
+  ov.querySelector('[data-r="s"]').onclick=()=>{ const o={ mk:ov.querySelector('#mkPdfMk').checked, apt:ov.querySelector('#mkPdfApt').checked, lis:ov.querySelector('#mkPdfLis').checked }; ov.remove(); mkPdfGerar(o); };
+  document.body.appendChild(ov);
+}
+async function mkPdfGerar(o){
+  const an=mkAn(); if(!an) return;
+  const salvo={ zoom:V.zoom, panX:V.panX, panY:V.panY, pg:V.pageNum, sels:new Set(MK_SELS), oc:MK_OCULTA, on:MK_ON, apts:APTS, pins:$('pinsSvg').style.display };
+  const h=$('modoHint'), prog=p=>{ if(h) h.textContent='Gerando PDF… '+p+'%'; };
+  let jsp; try{ jsp=await _mkJsPdf(); }catch(e){ rvAlerta('Não consegui carregar o gerador de PDF: '+e.message); return; }
+  try{
+    MK_SELS=new Set(); MK_OCULTA=!o.mk; if(MK_ON){ MK_ON=false; mkRegua(); } MK_ESC=2.2;
+    if(!o.apt){ APTS=[]; $('pinsSvg').style.display='none'; }
+    const pgs=[...new Set(MARCS.filter(m=>m.tipo!=='rastro'&&mkLayer(m.prancha_id)).map(m=>m.pg||1))].sort((a,b)=>a-b); if(!pgs.length) pgs.push(V.pageNum);
+    let pdf=null; const base=LAYERS[0]&&LAYERS[0].prancha, codBase=(base&&(base.codigo||base.arquivo_nome))||'prancha';
+    for(const pg of pgs){
+      if(pg!==V.pageNum){ V.pageNum=pg; F.valido=false; await carregarPagina(); }
+      const cvs=await _mkCapturaPagina(o.apt, prog), land=cvs.width>=cvs.height;
+      if(!pdf) pdf=new jsp.jsPDF({ orientation:land?'landscape':'portrait', unit:'mm', format:'a3' }); else pdf.addPage('a3', land?'landscape':'portrait');
+      const PW=pdf.internal.pageSize.getWidth(), PH=pdf.internal.pageSize.getHeight(), mg=10, top=16;
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(12); pdf.text(String(rvAnNomeTela(an)), mg, 10);
+      pdf.setFont('helvetica','normal'); pdf.setFontSize(8.5);
+      pdf.text((EMP.nome||'')+'  ·  '+LAYERS.filter(L=>L.visible!==false).map(L=>(L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome))||L.nome).join(' + ')+(pgs.length>1?'  ·  pág. '+pg:'')+'  ·  '+new Date().toLocaleString('pt-BR')+'  ·  '+(USER.nome||''), mg, 14);
+      const aw=PW-2*mg, ah=PH-top-mg, k=Math.min(aw/cvs.width, ah/cvs.height), iw=cvs.width*k, ih=cvs.height*k;
+      pdf.addImage(cvs.toDataURL('image/jpeg',0.9),'JPEG', mg+(aw-iw)/2, top, iw, ih);
+      pdf.setDrawColor(200); pdf.rect(mg+(aw-iw)/2, top, iw, ih);
+    }
+    if(o.lis){
+      pdf.addPage('a4','portrait'); const PW=pdf.internal.pageSize.getWidth(), PH=pdf.internal.pageSize.getHeight(); let y=16;
+      const linha=(t,tam,neg,cor)=>{ pdf.setFont('helvetica',neg?'bold':'normal'); pdf.setFontSize(tam||9); if(cor) pdf.setTextColor(cor); else pdf.setTextColor(30);
+        pdf.splitTextToSize(String(t), PW-24).forEach(l=>{ if(y>PH-14){ pdf.addPage('a4','portrait'); y=16; } pdf.text(l,12,y); y+=(tam||9)*0.45; }); };
+      linha(rvAnNomeTela(an)+' — marcações', 13, true); y+=2;
+      const lis=MARCS.filter(m=>m.tipo!=='rastro'), ras=MARCS.filter(m=>m.tipo==='rastro');
+      if(o.mk){ lis.forEach((m,i)=>{ const d=m.dados||{}, L=mkLayer(m.prancha_id), cod=(L&&L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome))||'—';
+        const val=m.tipo==='cota'&&d.metros!=null?d.metros.toFixed(2).replace('.',',')+' m':m.tipo==='area'&&d.m2!=null?d.m2.toFixed(2).replace('.',',')+' m²':(d.txt||'');
+        linha((i+1)+'. '+(MK_NOME[m.tipo]||m.tipo)+(m.tipo==='balao'?' '+m.numero:'')+(val?' — '+val:''), 9.5, true);
+        linha(cod+(mkAntiga(m)?' · feita na '+mkRevNome(m.cde_revisao_id):'')+' · '+(m.autor_nome||'')+' · '+new Date(m.criado_em).toLocaleString('pt-BR'), 8, false, 110); y+=1.2; }); }
+      if(ras.length){ y+=3; linha('Viraram apontamento', 11, true);
+        ras.forEach(r=>{ const d=r.dados||{}, ap=APTS.find(a=>a.id===d.apt)||(salvo.apts||[]).find(a=>a.id===d.apt); linha('-> '+(d.apt||'?')+' · '+((ap&&ap.titulo)||d.titulo||'')+(ap?' · '+ap.status:''), 9); }); }
+      if(o.apt){ const vis=(salvo.apts||[]).filter(a=>_layerDoApt(a) && !_aptResolvidoOculto(a)); if(vis.length){ y+=3; linha('Apontamentos nas pranchas', 11, true);
+        vis.forEach(a=>linha(a.id+' · '+(a.titulo||'')+' · '+(a.status||'')+(a.prioridade?' · '+critRot(a.prioridade):''), 9)); } }
+    }
+    const nome=String(rvAnNomeTela(an)).replace(/[\\/:*?"<>|]+/g,'-').slice(0,80)+'.pdf';
+    pdf.save(nome); rvAviso('PDF gerado: '+nome);
+  }catch(e){ rvAlerta('Não consegui gerar o PDF: '+((e&&e.message)||e)); }
+  finally{
+    MK_ESC=1; APTS=salvo.apts; $('pinsSvg').style.display=salvo.pins; MK_SELS=salvo.sels; MK_OCULTA=salvo.oc; MK_ON=salvo.on;
+    if(salvo.pg!==V.pageNum){ V.pageNum=salvo.pg; F.valido=false; try{ await carregarPagina(); }catch(_){} }
+    V.zoom=salvo.zoom; V.panX=salvo.panX; V.panY=salvo.panY; updateCss(); scheduleRender(0); try{ renderPins(); }catch(_){} mkHint(); mkRender();
+  }
+}
+
+window.addEventListener('load',()=>{
+  // Janela embutida "R00 ao lado": mostra as marcações daquela revisão, só consulta.
+  const q=new URLSearchParams(location.search), an=q.get('mk_an'), rv=q.get('mk_rev');
+  if(EMBED && an && rv){ MK_FIXO=true; MK_AN=null;
+    const tenta=async(n)=>{ if(!PRANCHA){ if(n<40) setTimeout(()=>tenta(n+1),500); return; }
+      try{ const { data }=await sb.from('analise_marcacao_auria').select('*').eq('analise_id',an).eq('cde_revisao_id',rv); MARCS=(data||[]).filter(m=>m.tipo!=='rastro');
+        const p=LAYERS[0]&&LAYERS[0].prancha; if(p) MARCS.forEach(m=>{ m.prancha_id=p.id; });   // a revisão antiga abre como base aqui
+        mkRender(); rvAviso(MARCS.length+' marcação(ões) desta revisão (só consulta)'); }catch(e){ console.warn('marcações da revisão:',e); } };
+    setTimeout(()=>tenta(0),800);
+  }
 });
 </script>
 </body>
