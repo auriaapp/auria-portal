@@ -684,6 +684,15 @@ body.vz-dir-emp #sideRight #rvDMk{display:block!important}
 #mkRegua .mkTam{width:26px;height:20px;border:1px solid var(--line);border-radius:5px;background:none;color:var(--mut);font:700 10.5px inherit;cursor:pointer}
 #mkRegua .mkTam.on{color:var(--rvLar,#F28C28);border-color:var(--rvLar,#F28C28)}
 #mkRegua [data-tip]{position:relative}
+#mkProps{position:absolute;left:calc(100% + 8px);top:0;display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 9px;box-shadow:0 8px 22px rgba(0,0,0,.35);min-width:132px}
+#mkProps .mkPrT{font-size:11px;font-weight:800;color:var(--txt)}
+#mkProps .mkPrL{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+#mkProps .mkPrK{font-size:10px;color:var(--mut);margin-right:2px}
+#mkProps .mkPrN{font-size:10.5px;color:var(--mut);max-width:150px;line-height:1.3}
+#mkProps .mkCores{display:grid;grid-template-columns:repeat(7,18px);gap:3px}
+#mkProps .mkTam{width:auto;min-width:24px;padding:0 6px}
+#mkProps .mkChip{border:1px solid var(--line);border-radius:6px;background:none;color:var(--mut);font:inherit;font-size:11px;padding:2px 7px;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+#mkProps .mkChip.on{border-color:var(--rvLar,#F28C28);color:var(--rvLar,#F28C28);background:var(--rvLarT)}
 #mkRegua [data-tip]:hover::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;transform:translateY(-50%);white-space:nowrap;background:#0B1220;color:#fff;font:600 11.5px 'Segoe UI',system-ui,sans-serif;padding:4px 9px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.35);pointer-events:none;z-index:5}
 .mkFil{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
 .mkFil button{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:20px;padding:2px 9px;font:inherit;font-size:11px;cursor:pointer}
@@ -4755,11 +4764,12 @@ function renderCotaPanel(){
     <div style="font-size:10.5px;color:${calOk?'var(--ok)':'var(--warn)'};margin-bottom:7px">${calOk?'✓ Escala calibrada':'⚠ Escala não calibrada'}</div>
     <div style="display:flex;gap:5px;margin-bottom:8px">
       <button class="btn-sec" onclick="setCotaMode('cal')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cal'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">🎯 Calibrar</button>
-      <button class="btn-sec" onclick="setCotaMode('cota')" style="flex:1;padding:5px;font-size:11px${COTA_MODE==='cota'?';background:var(--accent);border-color:var(--accent);color:#fff':''}">📏 Medir</button>
+      <button class="btn-sec" onclick="toggleCota();mkToggle(true);MK_MED='cota';mkFerr('medir')" title="A cota nova fica na análise (✎ Marcar → Medir)" style="flex:1;padding:5px;font-size:11px">📏 Medir</button>
     </div>
     <div style="max-height:105px;overflow:auto">${listaCotas}</div>
     <div style="border-top:1px solid var(--line);margin-top:9px;padding-top:9px">
-      <button class="btn-sec" onclick="setCotaMode('area')" ${calOk?'':'disabled title="Calibre a escala primeiro"'}
+      <div style="font-size:10px;color:var(--mut);margin-bottom:5px">Novas cotas e áreas ficam na análise. Abaixo, as da prancha (anteriores).</div>
+      <button class="btn-sec" onclick="toggleCota();mkToggle(true);MK_MED='area';mkFerr('medir')" ${calOk?'':'disabled title="Calibre a escala primeiro"'}
         style="width:100%;padding:5px;font-size:11px${COTA_MODE==='area'?';background:var(--accent);border-color:var(--accent);color:#fff':''}${calOk?'':';opacity:.5;cursor:not-allowed'}">📐 Área (polígono)</button>
       ${COTA_MODE==='area'?'<div style="font-size:10px;color:var(--mut);margin-top:5px">clique para marcar os vértices · botão direito conclui</div>':''}
       <div style="max-height:105px;overflow:auto;margin-top:6px">${listaAreas}</div>
@@ -12696,12 +12706,16 @@ const RV_IC_CLASSES={'Paredes':'parede','Pilares':'pilar','Vigas':'viga','Lajes'
 // (opção A) com Selecionar V · Nuvem N · Chamada C · Balão B · Marcador H · Texto T.
 // Análise salva: grava ao terminar cada marcação. Análise ainda não salva: fica em
 // memória e vai junto no 💾 Salvar. Só o dono da análise marca; os outros só veem.
-let MK_ON=false, MK_TOOL='sel', MK_COR='#E74C3C', MK_TAM='M', MK_SEL=null, MK_OCULTA=false, MK_NEG=false, MK_FUNDO=false, MK_FILT='todas', _mkPoly=null, MK_SELS=new Set();
+let MK_ON=false, MK_TOOL='sel', MK_COR='#E74C3C', MK_TAM='M', MK_SEL=null, MK_OCULTA=false, MK_NEG=false, MK_FUNDO=false, MK_FILT='todas', _mkPoly=null, MK_SELS=new Set(), MK_TRAC=false, MK_MED='cota', MK_ND=true, _mkMove=null;
 let MARCS=[], MK_AN=undefined, _mk=null, _mkCh=null, MK_SEQ=0, MK_FLUSH=false;
-const MK_TOOLS=[['sel','V','Selecionar'],['nuvem','N','Nuvem de revisão'],['chamada','C','Texto com chamada'],['balao','B','Balão numerado'],['marcador','H','Marcador'],['texto','T','Texto']];
+const MK_TOOLS=[['sel','V','Selecionar'],['nuvem','N','Nuvem de revisão'],['chamada','C','Texto com chamada'],['balao','B','Balão numerado'],['carimbo','K','Carimbo'],['marcador','H','Marcador'],['texto','T','Texto'],
+  ['-'],['seta','A','Seta'],['retangulo','R','Retângulo'],['linha','L','Linha'],['elipse','E','Elipse'],['poligono','P','Polígono'],['livre','F','Livre'],['-'],['medir','M','Medir (cota e área)']];
+const MK_FORMAS=['seta','linha','retangulo','elipse','poligono','livre'];
+// Carimbos decididos em 15/11 (cor de cada um) + texto livre.
+const MK_CARIMBOS=[['VERIFICAR','#E67E22'],['AJUSTAR','#C9A400'],['ATENÇÃO','#E74C3C'],['CONFORME','#27AE60'],['NÃO CONFORME','#C0392B'],['LIBERADO','#2980B9'],['CANCELADO','#7F8C8D']];
 const MK_CORES=['#E74C3C','#E67E22','#F1C40F','#27AE60','#2980B9','#8E44AD','#111111'];
-const MK_TAMS={P:{arco:7,txt:12,mar:10,bal:9},M:{arco:11,txt:15,mar:16,bal:11},G:{arco:16,txt:20,mar:24,bal:14}};
-const MK_NOME={nuvem:'Nuvem',chamada:'Chamada',balao:'Balão',marcador:'Marcador',texto:'Texto'};
+const MK_TAMS={P:{arco:7,txt:12,mar:10,bal:9,tr:1.6,car:12},M:{arco:11,txt:15,mar:16,bal:11,tr:2.4,car:15},G:{arco:16,txt:20,mar:24,bal:14,tr:4,car:20}};
+const MK_NOME={nuvem:'Nuvem',chamada:'Chamada',balao:'Balão',marcador:'Marcador',texto:'Texto',carimbo:'Carimbo',seta:'Seta',linha:'Linha',retangulo:'Retângulo',elipse:'Elipse',poligono:'Polígono',livre:'Livre',cota:'Cota',area:'Área'};
 const MK_SVG={
   sel:'<path d="M5 3l11 6-5 1.5L8.5 16z"/>',
   nuvem:'<path d="M4 13a2.4 2.4 0 0 1 1-4.6 3 3 0 0 1 5.6-1.6 2.6 2.6 0 0 1 4.6 1.6A2.3 2.3 0 0 1 15 13z"/>',
@@ -12709,6 +12723,11 @@ const MK_SVG={
   balao:'<circle cx="10" cy="10" r="6.5"/><path d="M10 7v6"/>',
   marcador:'<path d="M4 15.5h7" stroke-width="3.2" opacity=".55"/><path d="M12.5 4.5l3 3-6 6H6.5v-3z"/>',
   texto:'<path d="M5 5h10M10 5v11"/>',
+  carimbo:'<rect x="3" y="11.5" width="14" height="4.5" rx="1"/><path d="M7.5 11.5V9.4a2.5 2.5 0 1 1 5 0v2.1M5 18h10"/>',
+  seta:'<path d="M4 16L15.5 4.5M9.5 4.5h6v6"/>', retangulo:'<rect x="3.5" y="5" width="13" height="10" rx="1"/>', linha:'<path d="M4 16L16 4"/>',
+  elipse:'<ellipse cx="10" cy="10" rx="7" ry="5"/>', poligono:'<path d="M10 3.5l6.5 4.7-2.5 7.8H6L3.5 8.2z"/>', livre:'<path d="M3.5 13c2-4 4-5.5 5.5-3.5s3 2.5 4.5-1 3-3.5 3-3.5"/>',
+  medir:'<path d="M3 13.5L13.5 3l3.5 3.5L6.5 17z"/><path d="M6 10.5l1.5 1.5M8.5 8l1.5 1.5M11 5.5l1.5 1.5"/>',
+  cota:'<path d="M3 10h14M3 7v6M17 7v6"/>', area:'<path d="M4 5l11 1.5L13 16 5 13z"/>', duplicar:'<rect x="7" y="7" width="9.5" height="9.5" rx="1.5"/><path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7"/>',
   virar:'<path d="M10 17.5s-5.2-4.7-5.2-8.6a5.2 5.2 0 0 1 10.4 0c0 3.9-5.2 8.6-5.2 8.6z"/><path d="M10 6.2v5.2M7.4 8.8h5.2"/>',
   anexar:'<path d="M13.5 7.5l-5.6 5.6a2 2 0 0 1-2.8-2.8l6-6a3.2 3.2 0 0 1 4.5 4.5l-6.2 6.2a4.4 4.4 0 0 1-6.2-6.2l5.4-5.4"/>',
   rastro:'<path d="M4 10h9M10 6l4 4-4 4"/>'
@@ -12811,6 +12830,30 @@ function mkSvg(m, prev){
   else if(m.tipo==='texto' && d.a){ const A=P(d.a), fs=T.txt, w=_mkTxtW(d.txt,fs)*(d.neg?1.08:1);
     g=(d.fundo?`<rect x="${(A.x-4).toFixed(1)}" y="${(A.y-fs-1).toFixed(1)}" width="${(w+8).toFixed(1)}" height="${(fs+8).toFixed(1)}" rx="3" fill="#fff" fill-opacity=".94"/>`:'')+`<text x="${A.x.toFixed(1)}" y="${A.y.toFixed(1)}" font-size="${fs}" font-weight="${d.neg?800:600}" fill="${c}" stroke="#fff" stroke-width="${d.fundo?0:3}" paint-order="stroke" stroke-linejoin="round">${esc(d.txt||'')}</text>`;
     bb=[A.x-3,A.y-fs-2,A.x+w+3,A.y+5]; }
+  else if(MK_FORMAS.includes(m.tipo)){ const w=T.tr, da=d.tr?` stroke-dasharray="${(w*3.2).toFixed(1)} ${(w*2.2).toFixed(1)}"`:'', st=`stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"${da}`;
+    const ps=((d.pts&&d.pts.length)?d.pts:[d.a,d.b].filter(Boolean)).map(P); if(prev&&m._cur&&m._aberta) ps.push(P(m._cur));
+    if(ps.length>=2 || (m.tipo==='poligono'&&ps.length)){
+      const xs=ps.map(p=>p.x), ys=ps.map(p=>p.y), F=n=>n.toFixed(1);
+      if(m.tipo==='livre'||(m.tipo==='poligono'&&prev&&m._aberta)) g=`<path d="${ps.map((p,i)=>(i?'L':'M')+F(p.x)+' '+F(p.y)).join(' ')}" fill="none" ${st}/>`+(m._aberta?ps.slice(0,-1).map((p,i)=>`<circle cx="${F(p.x)}" cy="${F(p.y)}" r="${i?3:4.5}" fill="${i?c:'#fff'}" stroke="${c}" stroke-width="1.5"/>`).join(''):'');
+      else if(m.tipo==='poligono') g=`<polygon points="${ps.map(p=>F(p.x)+','+F(p.y)).join(' ')}" fill="none" ${st}/>`;
+      else { const A=ps[0], B=ps[1];
+        if(m.tipo==='linha') g=`<line x1="${F(A.x)}" y1="${F(A.y)}" x2="${F(B.x)}" y2="${F(B.y)}" ${st}/>`;
+        else if(m.tipo==='seta'){ const an=Math.atan2(B.y-A.y,B.x-A.x), hl=Math.max(10,w*4);
+          g=`<line x1="${F(A.x)}" y1="${F(A.y)}" x2="${F(B.x)}" y2="${F(B.y)}" ${st}/><path d="M${F(B.x-hl*Math.cos(an-0.42))} ${F(B.y-hl*Math.sin(an-0.42))} L${F(B.x)} ${F(B.y)} L${F(B.x-hl*Math.cos(an+0.42))} ${F(B.y-hl*Math.sin(an+0.42))}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`; }
+        else if(m.tipo==='retangulo') g=`<rect x="${F(Math.min(A.x,B.x))}" y="${F(Math.min(A.y,B.y))}" width="${F(Math.abs(B.x-A.x))}" height="${F(Math.abs(B.y-A.y))}" fill="none" ${st}/>`;
+        else if(m.tipo==='elipse') g=`<ellipse cx="${F((A.x+B.x)/2)}" cy="${F((A.y+B.y)/2)}" rx="${F(Math.abs(B.x-A.x)/2)}" ry="${F(Math.abs(B.y-A.y)/2)}" fill="none" ${st}/>`; }
+      bb=[Math.min(...xs)-w-3,Math.min(...ys)-w-3,Math.max(...xs)+w+3,Math.max(...ys)+w+3]; } }
+  else if(m.tipo==='carimbo' && d.a){ const A=P(d.a), fs=T.car, txt=String(d.txt||''), w=_mkTxtW(txt,fs)*1.12+18, h=fs+12+(d.nd?fs*0.62+4:0), F=n=>n.toFixed(1);
+    g=`<g transform="rotate(-4 ${F(A.x)} ${F(A.y)})"><rect x="${F(A.x-w/2)}" y="${F(A.y-h/2)}" width="${F(w)}" height="${F(h)}" rx="4" fill="#fff" fill-opacity=".55" stroke="${c}" stroke-width="2.4"/><rect x="${F(A.x-w/2+3)}" y="${F(A.y-h/2+3)}" width="${F(w-6)}" height="${F(h-6)}" rx="2.5" fill="none" stroke="${c}" stroke-width="1"/>`
+      +`<text x="${F(A.x)}" y="${F(A.y-h/2+6+fs*0.82)}" text-anchor="middle" font-size="${fs}" font-weight="900" letter-spacing="1" fill="${c}">${esc(txt)}</text>`
+      +(d.nd?`<text x="${F(A.x)}" y="${F(A.y+h/2-6)}" text-anchor="middle" font-size="${F(fs*0.58)}" font-weight="700" fill="${c}">${esc(d.nd)}</text>`:'')+'</g>';
+    bb=[A.x-w/2-4,A.y-h/2-6,A.x+w/2+4,A.y+h/2+6]; }
+  else if(m.tipo==='cota' && d.a && d.b){ const A=P(d.a), B=P(d.b); g=cotaToSvg({a:d.a,b:d.b,metros:d.metros,color:d.cor||COTA_COLOR}, !!prev);
+    bb=[Math.min(A.x,B.x)-14,Math.min(A.y,B.y)-14,Math.max(A.x,B.x)+14,Math.max(A.y,B.y)+14]; }
+  else if(m.tipo==='area' && (d.pts||[]).length){ const q=d.pts.map(P);
+    if(prev&&m._aberta){ const pp=q.slice(); if(m._cur) pp.push(P(m._cur)); g=`<path d="${pp.map((p,i)=>(i?'L':'M')+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' ')}" fill="none" stroke="${AREA_COLOR}" stroke-width="2" stroke-dasharray="6 4"/>`+q.map((p,i)=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i?3:4.5}" fill="${i?AREA_COLOR:'#fff'}" stroke="${AREA_COLOR}" stroke-width="1.5"/>`).join(''); }
+    else g=areaToSvg({pts:d.pts,m2:d.m2,color:d.cor||AREA_COLOR});
+    bb=[Math.min(...q.map(p=>p.x))-4,Math.min(...q.map(p=>p.y))-4,Math.max(...q.map(p=>p.x))+4,Math.max(...q.map(p=>p.y))+4]; }
   if(!g) return '';
   const halo=(sel&&bb)?`<rect x="${bb[0].toFixed(1)}" y="${bb[1].toFixed(1)}" width="${(bb[2]-bb[0]).toFixed(1)}" height="${(bb[3]-bb[1]).toFixed(1)}" rx="4" fill="none" stroke="#F28C28" stroke-width="1.5" stroke-dasharray="5 3"/>`:'';
   // área de clique: a caixa toda (fácil de pegar a nuvem pelo meio) quando a régua está em Selecionar
@@ -12835,14 +12878,23 @@ function mkRegua(){
     ['mousedown','mouseup','click','dblclick','contextmenu','wheel','pointerdown'].forEach(t=>el.addEventListener(t,e=>e.stopPropagation())); }
   el.style.display='';
   const pode=mkPode();
-  let h=MK_TOOLS.map(([k,a,n])=>`<button class="mkT ${MK_TOOL===k?'on':''}" ${k!=='sel'&&!pode?'disabled':''} data-tip="${n} · ${a}" aria-label="${n} (${a})" onclick="mkFerr('${k}')">${_mkIc(k,17)}</button>`).join('');
+  let h=MK_TOOLS.map(([k,a,n])=>k==='-'?'<span class="mkSep"></span>':`<button class="mkT ${MK_TOOL===k?'on':''}" ${k!=='sel'&&!pode?'disabled':''} data-tip="${n} · ${a}" aria-label="${n} (${a})" onclick="mkFerr('${k}')">${_mkIc(k,17)}</button>`).join('');
+  // Barra de propriedades ao lado da régua (mockup seção 1): só com uma ferramenta de desenho.
   if(MK_TOOL!=='sel' && pode){
-    h+='<span class="mkSep"></span>'+MK_CORES.map(c=>`<button class="mkCor ${MK_COR===c?'on':''}" style="--c:${c}" title="Cor" onclick="mkCor('${c}')"></button>`).join('');
-    h+='<span class="mkSep"></span>'+['P','M','G'].map(t=>`<button class="mkTam ${MK_TAM===t?'on':''}" data-tip="Tamanho ${t}" onclick="mkTam('${t}')">${t}</button>`).join('');
-    if(MK_TOOL==='texto'||MK_TOOL==='chamada') h+=`<span class="mkSep"></span><button class="mkTam ${MK_NEG?'on':''}" style="font-weight:900" data-tip="Negrito" onclick="MK_NEG=!MK_NEG;mkRegua()">N</button>`
-      +(MK_TOOL==='texto'?`<button class="mkTam ${MK_FUNDO?'on':''}" data-tip="Fundo branco (lê sobre hachura)" onclick="MK_FUNDO=!MK_FUNDO;mkRegua()">▭</button>`:'');
+    const nm=(MK_TOOLS.find(x=>x[0]===MK_TOOL)||[])[2]||'';
+    let pr=`<div class="mkPrT">${esc(nm)}</div>`;
+    if(MK_TOOL==='medir') pr+=`<div class="mkPrL">${[['cota','Cota'],['area','Área']].map(([k,t])=>`<button class="mkChip ${MK_MED===k?'on':''}" onclick="MK_MED='${k}';_mk=null;_mkPoly=null;mkHint();mkRegua()">${_mkIc(k,13)} ${t}</button>`).join('')}</div>`
+      +`<div class="mkPrN">${TRENA.m_por_pt?'✓ escala da prancha calibrada':'⚠ calibre a escala no 📏 Cotas'}</div>`;
+    else {
+      if(MK_TOOL!=='carimbo') pr+=`<div class="mkPrL mkCores">${MK_CORES.map(c=>`<button class="mkCor ${MK_COR===c?'on':''}" style="--c:${c}" title="Cor" onclick="mkCor('${c}')"></button>`).join('')}</div>`;
+      pr+=`<div class="mkPrL"><span class="mkPrK">${MK_FORMAS.includes(MK_TOOL)?'traço':MK_TOOL==='nuvem'?'arco':'tamanho'}</span>${['P','M','G'].map(t=>`<button class="mkTam ${MK_TAM===t?'on':''}" onclick="mkTam('${t}')">${MK_FORMAS.includes(MK_TOOL)?{P:'fina',M:'média',G:'grossa'}[t]:t}</button>`).join('')}</div>`;
+      if(MK_FORMAS.includes(MK_TOOL)) pr+=`<div class="mkPrL"><button class="mkChip ${MK_TRAC?'on':''}" onclick="MK_TRAC=!MK_TRAC;mkRegua()">- - tracejado</button></div>`;
+      if(MK_TOOL==='texto'||MK_TOOL==='chamada') pr+=`<div class="mkPrL"><button class="mkChip ${MK_NEG?'on':''}" style="font-weight:900" onclick="MK_NEG=!MK_NEG;mkRegua()">N negrito</button>${MK_TOOL==='texto'?`<button class="mkChip ${MK_FUNDO?'on':''}" onclick="MK_FUNDO=!MK_FUNDO;mkRegua()">▭ fundo</button>`:''}</div>`;
+      if(MK_TOOL==='carimbo') pr+=`<div class="mkPrL"><button class="mkChip ${MK_ND?'on':''}" onclick="MK_ND=!MK_ND;mkRegua()">nome e data</button></div><div class="mkPrN">clique na prancha e escolha o carimbo</div>`;
+    }
+    h+=`<div id="mkProps">${pr}</div>`;
   }
-  if(MK_SELS.size && pode) h+=`<span class="mkSep"></span><button class="mkT mkVirar" data-tip="Virar apontamento${MK_SELS.size>1?' ('+MK_SELS.size+')':''}" onclick="mkVirar(event)">${_mkIc('virar',17)}</button><button class="mkT" data-tip="Anexar a um apontamento…" onclick="mkAnexar(event)">${_mkIc('anexar',17)}</button>`;
+  if(MK_SELS.size && pode) h+=`<span class="mkSep"></span><button class="mkT mkVirar" data-tip="Virar apontamento${MK_SELS.size>1?' ('+MK_SELS.size+')':''}" onclick="mkVirar(event)">${_mkIc('virar',17)}</button><button class="mkT" data-tip="Anexar a um apontamento…" onclick="mkAnexar(event)">${_mkIc('anexar',17)}</button><button class="mkT" data-tip="Duplicar" onclick="mkDuplicar()">${_mkIc('duplicar',17)}</button>`;
   if(MK_SELS.size && pode) h+=`<button class="mkT" data-tip="Apagar ${MK_SELS.size>1?'as '+MK_SELS.size+' selecionadas':'a selecionada'} · Delete" onclick="[...MK_SELS].forEach(mkApagar)"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg></button>`;
   el.innerHTML=h+(pode?'':'<div class="mkRo" title="Análise de outra pessoa: só consulta. Salve uma cópia para marcar por cima.">só<br>ver</div>');
   const b=$('btnMarcar'); if(b) b.classList.toggle('on',MK_ON);
@@ -12858,16 +12910,28 @@ function mkFerr(k){ if(k!=='sel' && !mkPode()) return; MK_TOOL=k; _mk=null; _mkC
 function mkCor(c){ MK_COR=c; mkRegua(); }
 function mkTam(t){ MK_TAM=t; mkRegua(); }
 function mkHint(){ const h=$('modoHint'); if(!h) return;
-  const t={ sel:'Marcar: clique seleciona · Shift+clique soma · com seleção: Virar apontamento / Anexar · Delete apaga · Esc sai', nuvem:_mkPoly?'Nuvem por pontos: clique os cantos · clique no 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Nuvem: arraste um retângulo · ou clique ponto a ponto para contorno irregular',
+  const t={ sel:'Marcar: clique seleciona · arraste move · Shift+clique soma · com seleção: Virar apontamento / Anexar / Duplicar · Delete apaga · Esc sai', nuvem:_mkPoly?'Nuvem por pontos: clique os cantos · clique no 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Nuvem: arraste um retângulo · ou clique ponto a ponto para contorno irregular',
     chamada:_mkCh?'Chamada: clique onde fica o texto':'Chamada: clique no ponto a indicar', balao:'Balão: clique para numerar ('+mkProxNum()+') · em cima de uma nuvem ou chamada, fica preso a ela',
-    marcador:'Marcador: arraste por cima do desenho · Shift deixa reto', texto:'Texto: clique onde escrever', balaoP:'' };
+    marcador:'Marcador: arraste por cima do desenho · Shift deixa reto', texto:'Texto: clique onde escrever', carimbo:'Carimbo: clique onde carimbar e escolha',
+    seta:'Seta: arraste do começo até a ponta', linha:'Linha: arraste', retangulo:'Retângulo: arraste', elipse:'Elipse: arraste', livre:'Livre: desenhe arrastando',
+    poligono:_mkPoly?'Polígono: clique os cantos · 1º ponto, duplo clique ou Enter fecha · Esc cancela':'Polígono: clique ponto a ponto',
+    medir:!TRENA.m_por_pt?'Medir: calibre a escala primeiro no 📏 Cotas (🎯 Calibrar)':MK_MED==='cota'?'Cota: arraste de um ponto ao outro':(_mkPoly?'Área: clique os vértices · 1º ponto, duplo clique ou Enter fecha':'Área: clique os vértices do contorno') };
   h.textContent=MK_ON ? (t[MK_TOOL]||'')+(ANALISE_ATUAL?'':' · análise ainda não salva: as marcações vão junto no 💾 Salvar') : ''; }
 
+function mkDuplicar(){
+  if(!mkPode()) return; const sel=MARCS.filter(m=>MK_SELS.has(m.id) && m.tipo!=='rastro'); if(!sel.length) return;
+  const off=0.015, mv=q=>q&&({nx:q.nx+off,ny:q.ny+off}), novos=[];
+  sel.forEach(m=>{ const d=JSON.parse(JSON.stringify(m.dados||{})); if(d.a) d.a=mv(d.a); if(d.b) d.b=mv(d.b); if(d.pts) d.pts=d.pts.map(mv); delete d.preso;
+    const n=Object.assign(mkNova(m.tipo,d), { prancha_id:m.prancha_id, pg:m.pg, cde_documento_id:m.cde_documento_id, cde_revisao_id:m.cde_revisao_id }, m.tipo==='balao'?{numero:mkProxNum()}:{});
+    novos.push(n); mkGravar(n); });
+  MK_SELS=new Set(novos.map(n=>n.id)); MK_SEL=novos.length?novos[novos.length-1].id:null; mkRender();
+}
 function mkPolyFim(){
   const m=_mkPoly; _mkPoly=null; if(!m) return; const ps=m.dados.pts;
   // duplo clique soma o mesmo ponto duas vezes: tira repetidos colados
   m.dados.pts=ps.filter((p,i)=>!i||Math.hypot(p.nx-ps[i-1].nx,p.ny-ps[i-1].ny)>0.002);
   delete m._aberta; delete m._cur; mkHint();
+  if(m.tipo==='area' && m.dados.pts.length>=3) m.dados.m2=_polyAreaM2(m.dados.pts);
   if(m.dados.pts.length>=3) mkGravar(m); else mkRender();
 }
 // Balão preso: nuvem/chamada visível cuja caixa contém o clique (a de cima primeiro).
@@ -12885,7 +12949,14 @@ function mkInstalar(){
     if(!MK_ON || e.button!==0 || !V.page) return;
     if(e.target.closest('#mkRegua,#cotaPanel,#iaPanel')) return;
     const g=e.target.closest && e.target.closest('.mkG[data-mk]');
-    if(MK_TOOL==='sel'){ if(g && g.dataset.mk){ mkSel(g.dataset.mk, e.shiftKey); mkRender(); e.stopImmediatePropagation(); e.preventDefault(); } else if(MK_SELS.size){ mkSel(null); mkRender(); } return; }
+    if(MK_TOOL==='sel'){
+      if(g && g.dataset.mk){ const id=g.dataset.mk;
+        if(e.shiftKey) mkSel(id,true); else if(!MK_SELS.has(id)) mkSel(id);
+        // arrastar move a seleção (só o dono; a chamada move só o texto, a linha fica presa ao ponto)
+        if(mkPode() && MK_SELS.has(id)){ const p=mkPt(e); _mkMove={ p0:{nx:p.nx,ny:p.ny}, orig:new Map(MARCS.filter(m=>MK_SELS.has(m.id)||(m.tipo==='balao'&&(m.dados||{}).preso&&MK_SELS.has(m.dados.preso))).map(m=>[m.id,JSON.parse(JSON.stringify(m.dados||{}))])), moveu:false }; }
+        mkRender(); e.stopImmediatePropagation(); e.preventDefault(); }
+      else if(MK_SELS.size){ mkSel(null); mkRender(); }
+      return; }
     if(!mkPode()) return;
     e.stopImmediatePropagation(); e.preventDefault();
     const pt=mkPt(e), q={nx:pt.nx,ny:pt.ny};
@@ -12896,6 +12967,20 @@ function mkInstalar(){
       _mk=mkNova('nuvem',{a:q,b:q,cor:MK_COR,tam:MK_TAM});
     }
     else if(MK_TOOL==='marcador') _mk=mkNova('marcador',{pts:[q],cor:MK_COR,tam:MK_TAM});
+    else if(MK_TOOL==='livre') _mk=mkNova('livre',{pts:[q],cor:MK_COR,tam:MK_TAM,tr:MK_TRAC});
+    else if(['seta','linha','retangulo','elipse'].includes(MK_TOOL)) _mk=mkNova(MK_TOOL,{a:q,b:q,cor:MK_COR,tam:MK_TAM,tr:MK_TRAC});
+    else if(MK_TOOL==='poligono' || (MK_TOOL==='medir'&&MK_MED==='area')){
+      const tp=MK_TOOL==='poligono'?'poligono':'area'; if(tp==='area'&&!TRENA.m_por_pt){ rvAviso('Calibre a escala primeiro: 📏 Cotas → 🎯 Calibrar.'); return; }
+      if(_mkPoly){ const f=pageToScreen(_mkPoly.dados.pts[0].nx,_mkPoly.dados.pts[0].ny), r=$('stage').getBoundingClientRect();
+        if(_mkPoly.dados.pts.length>=3 && Math.hypot(e.clientX-r.left-f.x, e.clientY-r.top-f.y)<12) mkPolyFim(); else _mkPoly.dados.pts.push(q); }
+      else { _mkPoly=mkNova(tp,{pts:[q],cor:tp==='area'?AREA_COLOR:MK_COR,tam:MK_TAM,tr:MK_TRAC},{_aberta:true}); mkHint(); }
+      mkRender(); return; }
+    else if(MK_TOOL==='medir'){ if(!TRENA.m_por_pt){ rvAviso('Calibre a escala primeiro: 📏 Cotas → 🎯 Calibrar.'); return; } _mk=mkNova('cota',{a:q,b:q,cor:COTA_COLOR}); }
+    else if(MK_TOOL==='carimbo'){ const x=e.clientX, y=e.clientY, ond={ getBoundingClientRect:()=>({left:x,right:x,top:y,bottom:y}) };
+      const pôr=(txt,cor)=>{ const nd=MK_ND?((USER&&USER.nome)||'')+' · '+new Date().toLocaleDateString('pt-BR'):''; mkGravar(mkNova('carimbo',{a:q,txt,cor,tam:MK_TAM,nd})); };
+      rvMenu({ currentTarget:ond }, MK_CARIMBOS.map(([t,c])=>({ ic:`<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c}"></span>`, t:`<b style="color:${c}">${t}</b>`, f:()=>pôr(t,c) }))
+        .concat([{ ic:'✎', t:'Texto livre…', f:()=>{ const t=prompt('Texto do carimbo:',''); if(t&&t.trim()) pôr(t.trim().toUpperCase().slice(0,40), MK_COR); } }]));
+      return; }
     else if(MK_TOOL==='balao'){ const n=mkProxNum(), alvo=mkAlvoEm(q), dd={a:q,cor:MK_COR,tam:MK_TAM};
       if(alvo){ dd.preso=alvo.id; dd.a=mkCanto(alvo); }   // preso a uma nuvem/chamada: vai para o canto dela
       mkGravar(mkNova('balao',dd,{numero:n})); mkHint(); }
@@ -12907,13 +12992,23 @@ function mkInstalar(){
     mkRender();
   }, true);
   window.addEventListener('mousemove', e=>{
-    if(_mk){ const p=mkPt(e), q={nx:p.nx,ny:p.ny}; if(_mk.tipo==='nuvem') _mk.dados.b=q; else if(e.shiftKey) _mk.dados.pts=[_mk.dados.pts[0],q]; else _mk.dados.pts.push(q); try{ renderDrawings(); }catch(_){} e.stopImmediatePropagation(); }
+    if(_mkMove){ const p=mkPt(e), dx=p.nx-_mkMove.p0.nx, dy=p.ny-_mkMove.p0.ny; if(Math.hypot(dx,dy)>0.001) _mkMove.moveu=true;
+      if(_mkMove.moveu){ const mv=q=>q&&({nx:q.nx+dx,ny:q.ny+dy});
+        _mkMove.orig.forEach((o,id)=>{ const m=MARCS.find(x=>x.id===id); if(!m) return; const d=JSON.parse(JSON.stringify(o));
+          if(m.tipo==='chamada') d.b=mv(o.b); else { if(o.a) d.a=mv(o.a); if(o.b) d.b=mv(o.b); if(o.pts) d.pts=o.pts.map(mv); }
+          m.dados=d; });
+        try{ renderDrawings(); }catch(_){} } e.stopImmediatePropagation(); return; }
+    if(_mk){ const p=mkPt(e), q={nx:p.nx,ny:p.ny}; if(_mk.dados.pts){ if(e.shiftKey) _mk.dados.pts=[_mk.dados.pts[0],q]; else _mk.dados.pts.push(q); } else _mk.dados.b=q;
+      if(_mk.tipo==='cota') _mk.dados.metros=_ptLen(_mk.dados.a,q)*TRENA.m_por_pt; try{ renderDrawings(); }catch(_){} e.stopImmediatePropagation(); }
     else if(_mkPoly){ const p=mkPt(e); _mkPoly._cur={nx:p.nx,ny:p.ny}; try{ renderDrawings(); }catch(_){} }
     else if(_mkCh){ const p=mkPt(e); _mkCh.cur={nx:p.nx,ny:p.ny}; try{ renderDrawings(); }catch(_){} }
   }, true);
   window.addEventListener('mouseup', e=>{
+    if(_mkMove){ const mv=_mkMove; _mkMove=null; e.stopImmediatePropagation();
+      if(mv.moveu) mv.orig.forEach((o,id)=>{ const m=MARCS.find(x=>x.id===id); if(m) mkAtualizar(m, m.dados); });
+      mkRender(); return; }
     if(!_mk) return; const m=_mk; _mk=null; e.stopImmediatePropagation();
-    const d=m.dados, ok = m.tipo==='nuvem' ? Math.hypot(d.b.nx-d.a.nx,d.b.ny-d.a.ny)>0.004 : d.pts.length>=2;
+    const d=m.dados, ok = d.pts ? d.pts.length>=2 : Math.hypot(d.b.nx-d.a.nx,d.b.ny-d.a.ny)>0.004;
     if(ok) mkGravar(m);
     else if(m.tipo==='nuvem'){ _mkPoly=mkNova('nuvem',{pts:[d.a],cor:d.cor,tam:d.tam},{_aberta:true}); mkHint(); mkRender(); }   // clique sem arrastar = nuvem por pontos
     else mkRender();
@@ -12929,9 +13024,9 @@ function mkInstalar(){
     if(!MK_ON || e.ctrlKey || e.metaKey || e.altKey) return;
     const tg=e.target; if(tg && (tg.tagName==='INPUT'||tg.tagName==='TEXTAREA'||tg.tagName==='SELECT'||tg.isContentEditable)) return;
     if(e.key==='Enter' && _mkPoly){ mkPolyFim(); e.preventDefault(); return; }
-    if(e.key==='Escape'){ if(_mkCh||_mk||_mkPoly){ _mkCh=null; _mk=null; _mkPoly=null; mkHint(); mkRender(); } else if(MK_TOOL!=='sel') mkFerr('sel'); else if(MK_SEL){ MK_SEL=null; mkRender(); } else mkToggle(false); e.preventDefault(); return; }
+    if(e.key==='Escape'){ if(_mkCh||_mk||_mkPoly){ _mkCh=null; _mk=null; _mkPoly=null; mkHint(); mkRender(); } else if(MK_TOOL!=='sel') mkFerr('sel'); else if(MK_SELS.size){ mkSel(null); mkRender(); } else mkToggle(false); e.preventDefault(); return; }
     if((e.key==='Delete'||e.key==='Backspace') && MK_SELS.size){ [...MK_SELS].forEach(mkApagar); e.preventDefault(); return; }
-    const t=MK_TOOLS.find(x=>x[1]===e.key.toUpperCase()); if(t){ mkFerr(t[0]); e.preventDefault(); }
+    const t=MK_TOOLS.find(x=>x[1]&&x[1]===e.key.toUpperCase()); if(t){ mkFerr(t[0]); e.preventDefault(); }
   });
 }
 
@@ -12950,13 +13045,13 @@ function mkLista(){
   const an=mkAn();
   if(!MARCS.length){ el.innerHTML=`<div class="mkVz">${_mkIc('nuvem',22)}<b>Nenhuma marcação${an?' nesta análise':''}</b><span>Ligue <b>✎ Marcar</b> na barra da prancha. As marcações ficam guardadas na análise${an?'':' (ao salvá-la)'}.</span><button class="btn-sec" onclick="mkToggle(true)">✎ Marcar</button></div>`; return; }
   const revDe=m=>{ const L=mkLayer(m.prancha_id); return L&&L.prancha&&(L.prancha._cde_revisao_id||L.prancha.cde_revisao_id)||null; };
-  const FIL={ todas:()=>true, minhas:m=>!m.autor||m.autor===USER.id||m._local, nuvens:m=>m.tipo==='nuvem', textos:m=>['texto','chamada','balao'].includes(m.tipo),
+  const FIL={ todas:()=>true, minhas:m=>!m.autor||m.autor===USER.id||m._local, nuvens:m=>m.tipo==='nuvem', textos:m=>['texto','chamada','balao','carimbo'].includes(m.tipo), medidas:m=>['cota','area'].includes(m.tipo),
     rev:m=>!m.cde_revisao_id || m.cde_revisao_id===revDe(m) };
   const LIS=MARCS.filter(FIL[MK_FILT]||FIL.todas);
   const grupos=new Map(); LIS.forEach(m=>{ const k=m.prancha_id||'—'; if(!grupos.has(k)) grupos.set(k,[]); grupos.get(k).push(m); });
   const pode=mkPode(), dt=s=>{ const d=new Date(s); return isNaN(d)?'':d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
   let h=`<div class="mkHd"><span>${MARCS.length} marcaç${MARCS.length>1?'ões':'ão'}${an?'':' · não salva'}</span><button class="btn-sec" onclick="mkOcultar()">${MK_OCULTA?'Mostrar todas':'Ocultar todas'}</button></div>`
-    +`<div class="mkFil">${[['todas','Todas'],['minhas','Minhas'],['nuvens','Nuvens'],['textos','Textos'],['rev','Desta revisão']].map(([k,t])=>`<button class="${MK_FILT===k?'on':''}" onclick="MK_FILT='${k}';mkLista()">${t}</button>`).join('')}</div>`
+    +`<div class="mkFil">${[['todas','Todas'],['minhas','Minhas'],['nuvens','Nuvens'],['textos','Textos'],['medidas','Medidas'],['rev','Desta revisão']].map(([k,t])=>`<button class="${MK_FILT===k?'on':''}" onclick="MK_FILT='${k}';mkLista()">${t}</button>`).join('')}</div>`
     +(LIS.length?'':'<div class="mkVz" style="padding:10px">Nenhuma marcação neste filtro.</div>');
   grupos.forEach((ms,pid)=>{
     const L=mkLayer(pid), cod=(L&&L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome||L.nome))||'Prancha fora da tela';
@@ -12965,7 +13060,7 @@ function mkLista(){
       if(m.tipo==='rastro'){ const ap=APTS.find(a=>a.id===d.apt);
         h+=`<div class="mkIt rs" onclick="mkRastroAbrir('${esc(m.id)}')" title="Abrir o apontamento"><span class="ic" style="color:${ap?corPrio(ap.prioridade):'var(--mut)'}">${_mkIc('rastro',15)}</span><span class="tx"><b><span class="ap-cod">${esc(d.apt||'?')}</span> · ${esc((ap&&ap.titulo)||d.titulo||'')}</b><small>${ap?`<span class="ap-st" style="background:${corStatus(ap.status)}22;color:${corStatus(ap.status)}">${esc(ap.status||'—')}</span>`:'apagado'}${ap&&ap.prazo_min?' · prazo '+esc(ap.prazo_min):''} · ${d.anexo?'anexada':'virou apontamento'} ${dt(m.criado_em)}</small></span>${pode&&!d.anexo&&ap?`<button class="x" title="Desfazer (só se ainda não chegou a ninguém)" onclick="event.stopPropagation();mkDesfazer('${esc(m.id)}')">↶</button>`:''}${pode?`<button class="x" title="Tirar o rastro da análise (o apontamento continua)" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`;
         return; }
-      const rot=m.tipo==='balao'?(m.numero+' · balão'+(d.preso&&MARCS.some(x=>x.id===d.preso)?' na '+MK_NOME[(MARCS.find(x=>x.id===d.preso)||{}).tipo].toLowerCase():'')):(['texto','chamada'].includes(m.tipo)?(d.txt||MK_NOME[m.tipo]):MK_NOME[m.tipo]);
+      const rot=m.tipo==='cota'?((d.metros!=null?d.metros.toFixed(2).replace('.',','):'—')+' m · cota'):m.tipo==='area'?((d.m2!=null?d.m2.toFixed(2).replace('.',','):'—')+' m² · área'):m.tipo==='carimbo'?(d.txt||'Carimbo'):m.tipo==='balao'?(m.numero+' · balão'+(d.preso&&MARCS.some(x=>x.id===d.preso)?' na '+MK_NOME[(MARCS.find(x=>x.id===d.preso)||{}).tipo].toLowerCase():'')):(['texto','chamada'].includes(m.tipo)?(d.txt||MK_NOME[m.tipo]):MK_NOME[m.tipo]);
       h+=`<div class="mkIt ${MK_SELS.has(m.id)?'on':''} ${L?'':'fora'}" onclick="if(event.shiftKey){ mkSel('${esc(m.id)}',true); mkRender(); } else mkIr('${esc(m.id)}')" title="${L?'Mostrar na prancha':'Abra esta prancha para ver a marcação'}"><span class="ic" style="color:${d.cor||(m.tipo==='marcador'?'#F1C40F':'#E74C3C')}">${_mkIc(m.tipo,15)}</span><span class="tx"><b>${esc(rot)}</b><small>${esc(m.autor_nome||'')} · ${dt(m.criado_em)}${(m.pg||1)>1?' · pág. '+m.pg:''}</small></span>${pode?`<button class="x" title="Apagar" onclick="event.stopPropagation();mkApagar('${esc(m.id)}')">✕</button>`:''}</div>`; });
   });
   el.innerHTML=h;
