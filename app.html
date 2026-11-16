@@ -13331,7 +13331,7 @@ async function _mkSvgImg(svg, W, H){
   const url=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)],{type:'image/svg+xml'}));
   try{ return await new Promise((ok,er)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=er; i.src=url; }); } finally{ setTimeout(()=>URL.revokeObjectURL(url),2000); }
 }
-async function _mkCapturaPagina(comApt, prog){
+async function _mkCapturaPagina(prog){
   const st=$('stage'), cv=$('pdfCanvas'), W=st.clientWidth, H=st.clientHeight, d=pageDims();
   const Z=Math.min(4, 3400/Math.max(d.w,d.h)), TW=Math.round(d.w*Z), TH=Math.round(d.h*Z);
   const out=document.createElement('canvas'); out.width=TW; out.height=TH; const c=out.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,TW,TH);
@@ -13339,13 +13339,44 @@ async function _mkCapturaPagina(comApt, prog){
   for(let iy=0;iy<ny;iy++) for(let ix=0;ix<nx;ix++){
     prog&&prog(Math.round(100*(iy*nx+ix)/(nx*ny)));
     V.zoom=Z; V.panX=ix*W; V.panY=iy*H; updateCss(); scheduleRender(0); await _mkEsperaRender();
-    try{ renderDrawings(); if(comApt) renderPins(); }catch(_){}
+    try{ renderDrawings(); }catch(_){}
     const sr=st.getBoundingClientRect(), cr=cv.getBoundingClientRect(), kx=cv.width/cr.width, ky=cv.height/cr.height;
     c.drawImage(cv,(sr.left-cr.left)*kx,(sr.top-cr.top)*ky,W*kx,H*ky, ix*W,iy*H,W,H);
     try{ c.drawImage(await _mkSvgImg($('drawSvg'),W,H), ix*W,iy*H,W,H); }catch(_){}
-    if(comApt){ try{ c.drawImage(await _mkSvgImg($('pinsSvg'),W,H), ix*W,iy*H,W,H); }catch(_){} }
   }
   return out;
+}
+// Pins NUMERADOS (o mesmo número na prancha, na lista e na ficha), cor = criticidade.
+function _mkPinR(cvs){ return Math.max(9, Math.round(Math.max(cvs.width,cvs.height)*0.0062)); }
+function _mkPinsDesenha(cvs, pins){
+  const c=cvs.getContext('2d'), r=_mkPinR(cvs);
+  pins.forEach(p=>{ const x=p.nx*cvs.width, y=p.ny*cvs.height, cy=y-1.6*r;
+    c.beginPath(); c.moveTo(x,y); c.lineTo(x-r*.62,cy+r*.78); c.arc(x,cy,r,2.243,0.899+2*Math.PI); c.closePath();
+    c.fillStyle=p.cor; c.fill(); c.lineWidth=Math.max(2,r*.16); c.strokeStyle='#fff'; c.stroke();
+    c.fillStyle='#fff'; c.font=`800 ${Math.round(r*(p.n>=100?.78:p.n>=10?.95:1.1))}px "Segoe UI",Arial,sans-serif`; c.textAlign='center'; c.textBaseline='middle'; c.fillText(String(p.n),x,cy+r*.06); });
+}
+// Recorte da prancha em volta do pin (para a ficha), pin destacado em laranja.
+function _mkRecorte(cvs, p){
+  const r=_mkPinR(cvs), S=Math.max(cvs.width,cvs.height), w=Math.min(cvs.width,Math.round(S*.17)), h=Math.min(cvs.height,Math.round(w*.75));
+  const px=p.nx*cvs.width, py=p.ny*cvs.height-1.6*r;
+  const x=Math.max(0,Math.min(cvs.width-w,Math.round(px-w/2))), y=Math.max(0,Math.min(cvs.height-h,Math.round(py-h/2)));
+  const o=document.createElement('canvas'); o.width=w; o.height=h; const c=o.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,w,h);
+  c.drawImage(cvs,x,y,w,h,0,0,w,h); c.strokeStyle='#E8960A'; c.lineWidth=Math.max(3,r*.22); c.beginPath(); c.arc(px-x,py-y,r*1.9,0,7); c.stroke();
+  return { d:o.toDataURL('image/jpeg',.88), w, h };
+}
+// Imagem (print, logo) → dataURL reduzido. fetch passa pelo AuriaMidia (assina o bucket privado).
+async function _mkImgData(url, max, png){
+  try{ const blob=await fetch(url).then(r=>r.ok?r.blob():null); if(!blob) return null; const ou=URL.createObjectURL(blob);
+    try{ const im=await new Promise((ok,er)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=er; i.src=ou; });
+      const iw=im.naturalWidth||max, ih=im.naturalHeight||max, k=Math.min(1,max/Math.max(iw,ih));
+      const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(iw*k)); c.height=Math.max(1,Math.round(ih*k)); const x=c.getContext('2d');
+      if(!png){ x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); } x.drawImage(im,0,0,c.width,c.height);
+      if(png){ try{ const D=x.getImageData(0,0,c.width,c.height).data; let x0=c.width,y0=c.height,x1=-1,y1=-1;   // logo: corta a margem transparente
+        for(let yy=0;yy<c.height;yy++) for(let xx=0;xx<c.width;xx++) if(D[(yy*c.width+xx)*4+3]>16){ if(xx<x0)x0=xx; if(xx>x1)x1=xx; if(yy<y0)y0=yy; if(yy>y1)y1=yy; }
+        if(x1>=x0 && (x1-x0+1<c.width || y1-y0+1<c.height)){ const t=document.createElement('canvas'); t.width=x1-x0+1; t.height=y1-y0+1; t.getContext('2d').drawImage(c,-x0,-y0);
+          return { d:t.toDataURL('image/png'), w:t.width, h:t.height, f:'PNG' }; } }catch(_){} }
+      return { d:c.toDataURL(png?'image/png':'image/jpeg',.86), w:c.width, h:c.height, f:png?'PNG':'JPEG' }; }
+    finally{ URL.revokeObjectURL(ou); } }catch(_){ return null; }
 }
 function mkPdfDialogo(){
   const an=mkAn(); if(!an){ rvAviso('Salve a análise antes de exportar o PDF.'); return; }
@@ -13353,58 +13384,272 @@ function mkPdfDialogo(){
   const ov=document.createElement('div'); ov.className='rvAsk';
   ov.innerHTML=`<div class="bx"><b>PDF da análise</b><div class="rvShN">${esc(rvAnNomeTela(an))}</div>
     <label class="rvShTodos"><input type="checkbox" id="mkPdfMk" checked><span><b>Marcações</b><small>Nuvens, chamadas, balões, carimbos, formas e medidas desta análise.</small></span></label>
-    <label class="rvShTodos"><input type="checkbox" id="mkPdfApt"><span><b>Apontamentos visíveis</b><small>Pins e desenhos dos apontamentos que estão na tela agora (respeita os filtros).</small></span></label>
-    <label class="rvShTodos"><input type="checkbox" id="mkPdfLis" checked><span><b>Lista no fim</b><small>Cada marcação com número, texto, autor e data${''}.</small></span></label>
+    <label class="rvShTodos"><input type="checkbox" id="mkPdfApt" checked><span><b>Apontamentos abertos</b><small>Pins numerados na prancha e uma folha de resumo (prancha e lista). Todos os não resolvidos das pranchas abertas, sem depender do filtro da tela.</small></span></label>
+    <div id="mkPdfAptOp" style="padding-left:26px">
+      <label class="rvShTodos"><input type="radio" name="mkPdfDet" value="0" checked><span><b>Só a lista</b><small>Código, título, disciplina, status e prazo.</small></span></label>
+      <label class="rvShTodos"><input type="radio" name="mkPdfDet" value="1"><span><b>Lista + detalhe completo</b><small>Uma ficha por apontamento: datas, prazo e atraso, responsáveis por disciplina, descrição, recorte da prancha, prints e a última resposta do projetista.</small></span></label>
+      <label class="rvShTodos"><input type="checkbox" id="mkPdfRes"><span><b>Incluir também os resolvidos</b></span></label>
+    </div>
+    <label class="rvShTodos"><input type="checkbox" id="mkPdfLis" checked><span><b>Lista das marcações</b><small>Cada marcação com tipo, texto ou valor, prancha, autor e data.</small></span></label>
     <div class="mkVxTx">A prancha sai inteira em alta resolução, com as camadas e cores que estão na tela. Leva alguns segundos.</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-r="c" class="rvCwB">Cancelar</button><button data-r="s" class="rvCwB on">Gerar PDF</button></div></div>`;
+  const ap=ov.querySelector('#mkPdfApt'), op=ov.querySelector('#mkPdfAptOp');
+  ap.onchange=()=>{ op.style.opacity=ap.checked?'':'.4'; op.querySelectorAll('input').forEach(i=>i.disabled=!ap.checked); };
   ov.querySelector('[data-r="c"]').onclick=()=>ov.remove();
-  ov.querySelector('[data-r="s"]').onclick=()=>{ const o={ mk:ov.querySelector('#mkPdfMk').checked, apt:ov.querySelector('#mkPdfApt').checked, lis:ov.querySelector('#mkPdfLis').checked }; ov.remove(); mkPdfGerar(o); };
+  ov.querySelector('[data-r="s"]').onclick=()=>{ const o={ mk:ov.querySelector('#mkPdfMk').checked, apt:ap.checked, det:ap.checked&&ov.querySelector('input[name="mkPdfDet"]:checked').value==='1',
+    res:ap.checked&&ov.querySelector('#mkPdfRes').checked, lis:ov.querySelector('#mkPdfLis').checked }; ov.remove(); mkPdfGerar(o); };
   document.body.appendChild(ov);
 }
+// Status do apontamento → chave de cor (mesma paleta do Relatório PDF de apontamentos).
+function _mkStK(a){ const s=String(a.status||'').toLowerCase(); return s==='resolvido'?'res':(/an[áa]lise/.test(s)?'an':'ab'); }
+const _MKC={ bar:[14,23,38], acc:[232,150,10], navy:[30,58,95], ink:[15,23,42], mid:[51,65,85], soft:[100,116,139], line:[213,221,232], zeb:[246,249,252],
+  ab:[52,101,164], abT:[232,239,248], an:[194,65,12], anT:[253,243,225], res:[47,133,90], resT:[231,245,236], late:[169,50,38], rvAnt:[148,163,184] };
+function _mkHex(h){ h=String(h||'#6B7280').replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+
 async function mkPdfGerar(o){
   const an=mkAn(); if(!an) return;
   const salvo={ zoom:V.zoom, panX:V.panX, panY:V.panY, pg:V.pageNum, sels:new Set(MK_SELS), oc:MK_OCULTA, on:MK_ON, apts:APTS, pins:$('pinsSvg').style.display };
-  const h=$('modoHint'), prog=p=>{ if(h) h.textContent='Gerando PDF… '+p+'%'; };
+  const h=$('modoHint'), prog=(t,p)=>{ if(h) h.textContent='Gerando PDF… '+t+(p!=null?' '+p+'%':''); };
   let jsp; try{ jsp=await _mkJsPdf(); }catch(e){ rvAlerta('Não consegui carregar o gerador de PDF: '+e.message); return; }
+  const C=_MKC, nomeAn=String(rvAnNomeTela(an)||'Análise');
   try{
+    prog('preparando…');
+    // ── o que entra ──
+    const sel=o.apt ? (salvo.apts||[]).filter(a=>!aptEhNota(a) && _aptVisivel(a) && (o.res || a.status!=='Resolvido'))
+      .sort((x,y)=>String(x.id).localeCompare(String(y.id),'pt',{numeric:true})) : [];
+    const NUM=new Map(sel.map((a,i)=>[a.id,i+1]));
+    const pins=[]; sel.forEach(a=>(a.pontos_json||[]).forEach(pt=>{ if(pt&&!pt.k3d&&pt.nx!=null&&_pinVisivel(a,pt)) pins.push({ a, id:a.id, n:NUM.get(a.id), nx:pt.nx, ny:pt.ny, pg:pt.pg||1, cor:corPrioTxt(a.prioridade) }); }));
+    const marcs=MARCS.filter(m=>m.tipo!=='rastro'&&mkLayer(m.prancha_id));
+    const pgs=[...new Set([...(o.mk?marcs.map(m=>m.pg||1):[]), ...pins.map(p=>p.pg)])].sort((a,b)=>a-b); if(!pgs.length) pgs.push(V.pageNum);
+    // pranchas com a revisão
+    const camadas=LAYERS.filter(L=>L&&L.visible!==false&&L.prancha);
+    const revIds=camadas.map(L=>L.prancha._cde_revisao_id||L.prancha.cde_revisao_id).filter(Boolean).filter(i=>!MK_REVS.has(i));
+    marcs.forEach(m=>{ if(m.cde_revisao_id&&!MK_REVS.has(m.cde_revisao_id)) revIds.push(m.cde_revisao_id); });
+    if(revIds.length){ try{ const { data }=await sb.from('cde_revisao_auria').select('id,revisao').in('id',[...new Set(revIds)]); (data||[]).forEach(r=>MK_REVS.set(r.id,r.revisao||'R?')); }catch(_){} }
+    const codL=L=>String(L.prancha.codigo||L.prancha.arquivo_nome||L.nome||'prancha').replace(/\s*[·-]\s*R\d+[A-Z]?$/i,'');   // a revisão vai na etiqueta
+    const revL=L=>{ const id=L.prancha._cde_revisao_id||L.prancha.cde_revisao_id; return (id&&MK_REVS.get(id))||L.prancha.revisao||''; };
+    const segPr=[]; camadas.forEach((L,i)=>{ if(i) segPr.push({t:' + '}); segPr.push({t:codL(L),m:1}); const r=revL(L); if(r) segPr.push({t:r,rv:1}); });
+    const segEmp=[...(EMP.codigo?[{t:EMP.codigo,m:1},{t:' · '}]:[]), {t:EMP.nome||''}];
+    const LG=await _mkImgData('logo_symbol.png',240,true), EL=EMP.logo_url?await _mkImgData(EMP.logo_url,400,true):null;
+    // última resposta do projetista (só na ficha completa)
+    const RESP={}, PRT={};
+    if(o.det && sel.length){
+      prog('lendo conversas…');
+      try{ const ids=sel.map(a=>a.id);
+        for(let i=0;i<ids.length;i+=150){ const th=await sb.from('threads_auria').select('id,apontamento_id').eq('tipo','apontamento').eq('empreendimento_id',EMP.id).in('apontamento_id',ids.slice(i,i+150));
+          const ths=th.data||[]; if(!ths.length) continue; const por={}; ths.forEach(t=>por[t.id]=t.apontamento_id);
+          const ms=await sb.from('mensagens_auria').select('thread_id,autor_nome,autor_email,texto,criado_em').eq('de','projetista').in('thread_id',ths.map(t=>t.id)).order('criado_em',{ascending:false});
+          (ms.data||[]).forEach(m=>{ const ap=por[m.thread_id]; if(ap&&!RESP[ap]) RESP[ap]=m; }); } }catch(e){ console.warn('PDF: conversas',e); }
+      prog('carregando prints…');
+      for(const a of sel){ const us=(a.imagens_json||[]).slice(0,3); PRT[a.id]=(await Promise.all(us.map((u,i)=>_mkImgData(u,i?500:1400,false)))).filter(Boolean); }
+    }
+
+    // ── captura das pranchas ──
     MK_SELS=new Set(); MK_OCULTA=!o.mk; if(MK_ON){ MK_ON=false; mkRegua(); } MK_ESC=2.2;
-    if(!o.apt){ APTS=[]; $('pinsSvg').style.display='none'; }
-    const pgs=[...new Set(MARCS.filter(m=>m.tipo!=='rastro'&&mkLayer(m.prancha_id)).map(m=>m.pg||1))].sort((a,b)=>a-b); if(!pgs.length) pgs.push(V.pageNum);
-    let pdf=null; const base=LAYERS[0]&&LAYERS[0].prancha, codBase=(base&&(base.codigo||base.arquivo_nome))||'prancha';
+    APTS=sel; $('pinsSvg').style.display='none';
+    const CAP={};
     for(const pg of pgs){
       if(pg!==V.pageNum){ V.pageNum=pg; F.valido=false; await carregarPagina(); }
-      const cvs=await _mkCapturaPagina(o.apt, prog), land=cvs.width>=cvs.height;
-      if(!pdf) pdf=new jsp.jsPDF({ orientation:land?'landscape':'portrait', unit:'mm', format:'a3' }); else pdf.addPage('a3', land?'landscape':'portrait');
-      const PW=pdf.internal.pageSize.getWidth(), PH=pdf.internal.pageSize.getHeight(), mg=10, top=16;
-      pdf.setFont('helvetica','bold'); pdf.setFontSize(12); pdf.text(String(rvAnNomeTela(an)), mg, 10);
-      pdf.setFont('helvetica','normal'); pdf.setFontSize(8.5);
-      pdf.text((EMP.nome||'')+'  ·  '+LAYERS.filter(L=>L.visible!==false).map(L=>(L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome))||L.nome).join(' + ')+(pgs.length>1?'  ·  pág. '+pg:'')+'  ·  '+new Date().toLocaleString('pt-BR')+'  ·  '+(USER.nome||''), mg, 14);
-      const aw=PW-2*mg, ah=PH-top-mg, k=Math.min(aw/cvs.width, ah/cvs.height), iw=cvs.width*k, ih=cvs.height*k;
-      pdf.addImage(cvs.toDataURL('image/jpeg',0.9),'JPEG', mg+(aw-iw)/2, top, iw, ih);
-      pdf.setDrawColor(200); pdf.rect(mg+(aw-iw)/2, top, iw, ih);
+      const cvs=await _mkCapturaPagina(p=>prog('prancha'+(pgs.length>1?' pág. '+pg:''),p));
+      _mkPinsDesenha(cvs, pins.filter(p=>p.pg===pg));
+      CAP[pg]={ cvs, d:cvs.toDataURL('image/jpeg',.9) };
     }
-    if(o.lis){
-      pdf.addPage('a4','portrait'); const PW=pdf.internal.pageSize.getWidth(), PH=pdf.internal.pageSize.getHeight(); let y=16;
-      const linha=(t,tam,neg,cor)=>{ pdf.setFont('helvetica',neg?'bold':'normal'); pdf.setFontSize(tam||9); if(cor) pdf.setTextColor(cor); else pdf.setTextColor(30);
-        pdf.splitTextToSize(String(t), PW-24).forEach(l=>{ if(y>PH-14){ pdf.addPage('a4','portrait'); y=16; } pdf.text(l,12,y); y+=(tam||9)*0.45; }); };
-      linha(rvAnNomeTela(an)+' — marcações', 13, true); y+=2;
-      const lis=MARCS.filter(m=>m.tipo!=='rastro'), ras=MARCS.filter(m=>m.tipo==='rastro');
-      if(o.mk){ lis.forEach((m,i)=>{ const d=m.dados||{}, L=mkLayer(m.prancha_id), cod=(L&&L.prancha&&(L.prancha.codigo||L.prancha.arquivo_nome))||'—';
+    const REC={}; sel.forEach(a=>{ const p=pins.find(x=>x.id===a.id); if(p&&CAP[p.pg]) REC[a.id]=_mkRecorte(CAP[p.pg].cvs,p); });
+    prog('montando…');
+
+    // ── jsPDF: utilitários de desenho ──
+    let pdf=null; const META=[null];
+    const nova=(a3,land,tit)=>{ const fmt=a3?'a3':'a4', ori=land?'landscape':'portrait';
+      if(!pdf) pdf=new jsp.jsPDF({ orientation:ori, unit:'mm', format:fmt }); else pdf.addPage(fmt,ori);
+      META[pdf.getNumberOfPages()]={ a3, tit }; return a3?33.7:32.7; };
+    const PW=()=>pdf.internal.pageSize.getWidth(), PH=()=>pdf.internal.pageSize.getHeight(), mg=10;
+    const cor=(c,f)=>{ if(f==='d') pdf.setDrawColor(c[0],c[1],c[2]); else if(f==='f') pdf.setFillColor(c[0],c[1],c[2]); else pdf.setTextColor(c[0],c[1],c[2]); };
+    const fonte=(m,b,s)=>{ pdf.setFont(m?'courier':'helvetica', b?'bold':'normal'); pdf.setFontSize(s); };
+    const corta=(t,w)=>{ t=String(t==null?'':t); if(pdf.getTextWidth(t)<=w) return t; while(t.length>1&&pdf.getTextWidth(t+'…')>w) t=t.slice(0,-1); return t+'…'; };
+    // texto em pedaços: {t, m:mono navy, b:negrito, rv:etiqueta de revisão, c:cor}
+    const segs=(x,y,ss,maxW,s)=>{ const x0=x;
+      for(const g of ss){ if(!g||g.t==null||g.t==='') continue;
+        if(g.rv){ fonte(1,1,s-1.6); const w=pdf.getTextWidth(g.t)+1.4; if(x+1+w>x0+maxW) break; cor(g.c||C.navy,'f'); pdf.roundedRect(x+.8,y-2.35,w,3,.5,.5,'F'); cor([255,255,255]); pdf.text(g.t,x+1.5,y-.1); x+=w+1.2; continue; }
+        fonte(g.m,g.m||g.b,s); cor(g.c||(g.m?C.navy:C.ink));
+        const rest=x0+maxW-x; if(pdf.getTextWidth(g.t)>rest){ pdf.text(corta(g.t,rest),x,y); break; } pdf.text(g.t,x,y); x+=pdf.getTextWidth(g.t); }
+      return x; };
+    const sec=(y,t,sub)=>{ fonte(0,1,6.4); pdf.setCharSpace(.45); cor(C.navy); pdf.text(t.toUpperCase(),mg,y); const w=pdf.getTextWidth(t.toUpperCase())+t.length*.45; pdf.setCharSpace(0);
+      cor(C.line,'d'); pdf.setLineWidth(.2); pdf.line(mg,y+1.7,PW()-mg,y+1.7); cor(C.acc,'f'); pdf.rect(mg,y+1.2,w,.6,'F');
+      if(sub){ fonte(0,0,6.6); cor(C.soft); pdf.text(sub,mg+w+3,y); } return y+5.5; };
+    const chip=(x,y,t,fg,bg)=>{ fonte(0,1,5.6); const w=pdf.getTextWidth(t)+2.4; cor(bg,'f'); pdf.roundedRect(x,y-2.45,w,3.2,.6,.6,'F'); cor(fg); pdf.text(t,x+1.2,y); return w+1.2; };
+    const tag=(x,y,t)=>{ fonte(1,1,5.6); const w=pdf.getTextWidth(t)+2.2; cor(C.line,'d'); pdf.setLineWidth(.2); pdf.roundedRect(x,y-2.45,w,3.2,.5,.5,'S'); cor(C.mid); pdf.text(t,x+1.1,y); return w+1.2; };
+    const numero=(x,yc,n,c)=>{ const r=n>=100?2.2:1.85; cor(c,'f'); pdf.circle(x+r,yc,r,'F'); fonte(0,1,n>=100?4.6:5.4); cor([255,255,255]); pdf.text(String(n),x+r,yc+.65,{align:'center'}); return 2*r+1.4; };
+    const statusChip=(x,y,a)=>{ const k=_mkStK(a); let w=chip(x,y,a.status||'—',C[k],C[k+'T']); const d=+_expDias(a);
+      if(k!=='res'&&estaAtrasado(a)) w+=chip(x+w,y,(d>0?d+' d ':'')+'atraso',[255,255,255],C.late); return w; };
+    const img=(im,x,y,w,h,alias)=>{ const k=Math.min(w/im.w,h/im.h), iw=im.w*k, ih=im.h*k; pdf.addImage(im.d,im.f||'JPEG',x+(w-iw)/2,y+(h-ih)/2,iw,ih,alias); };
+    const fim=y=>PH()-13;
+
+    // ── folha(s) A3: prancha(s) da análise ──
+    for(const pg of pgs){
+      const cv=CAP[pg].cvs, land=cv.width>=cv.height, top=nova(true,land,'Análise de projeto');
+      const aw=PW()-2*mg, ah=PH()-top-17, k=Math.min(aw/cv.width,ah/cv.height), iw=cv.width*k, ih=cv.height*k, ix=mg+(aw-iw)/2;
+      pdf.addImage(CAP[pg].d,'JPEG',ix,top,iw,ih,'pg'+pg); cor([184,196,212],'d'); pdf.setLineWidth(.25); pdf.rect(ix,top,iw,ih);
+      // legenda
+      let x=mg, y=PH()-12.2; fonte(0,1,5.4); pdf.setCharSpace(.35); cor(C.soft); pdf.text('LEGENDA',x,y); pdf.setCharSpace(0); x+=14;
+      const nmk=o.mk?marcs.filter(m=>(m.pg||1)===pg).length:0, pp=pins.filter(p=>p.pg===pg);
+      if(nmk){ cor([214,40,40],'d'); pdf.setLineWidth(.45); for(let i=0;i<3;i++) pdf.lines([[1.2,-1.6],[1.2,1.6]],x+i*2.4,y-.3,[1,1],'S',false);
+        fonte(0,0,7); cor(C.mid); pdf.text(nmk+' marcaç'+(nmk>1?'ões':'ão')+' da análise',x+8.5,y); x+=8.5+pdf.getTextWidth(nmk+' marcações da análise')+7; }
+      if(pp.length){ const ns=[...new Set(pp.map(p=>p.n))]; ns.slice(0,3).forEach(n=>{ const p=pp.find(q=>q.n===n); x+=numero(x,y-.9,n,_mkHex(p.cor)); });
+        fonte(0,0,7); cor(C.mid); pdf.text((ns.length>3?'…  ':' ')+ns.length+' apontamento'+(ns.length>1?'s':'')+(o.res?'':' aberto'+(ns.length>1?'s':''))+' (cor = criticidade; lista e detalhe nas folhas seguintes)',x+1,y); }
+    }
+
+    // ── A4: resumo dos apontamentos (prancha na largura do A4 + lista) ──
+    if(sel.length){
+      let y=nova(false,false,'Apontamentos'+(o.res?'':' abertos'));
+      y=sec(y,'Resumo', o.res?'apontamentos nas pranchas desta análise':'não resolvidos nas pranchas desta análise');
+      const cnt={ab:0,an:0,res:0}; sel.forEach(a=>cnt[_mkStK(a)]++); const nat=sel.filter(a=>_mkStK(a)!=='res'&&estaAtrasado(a)).length, nsev=sel.filter(a=>critRot(a.prioridade)==='Severa').length;
+      let bx=mg; const bw=PW()-2*mg; ['ab','an','res'].forEach(k=>{ if(!cnt[k]) return; const w=bw*cnt[k]/sel.length; cor(C[k],'f'); pdf.rect(bx,y-1.2,w,1.4,'F'); bx+=w; }); y+=3.8;
+      let x=mg; fonte(0,1,7.4); cor(C.ink); const t0=sel.length+(o.res?' apontamento'+(sel.length>1?'s':''):' aberto'+(sel.length>1?'s':'')); pdf.text(t0,x,y); x+=pdf.getTextWidth(t0)+3;
+      [['ab','em aberto'],['an','em análise'],['res','resolvido'+(cnt.res>1?'s':'')]].forEach(([k,r])=>{ if(!cnt[k]) return; cor(C[k],'f'); pdf.rect(x,y-2,2.1,2.1,'F'); fonte(0,0,7.2); cor(C.mid); const t=cnt[k]+' '+r; pdf.text(t,x+3,y); x+=3+pdf.getTextWidth(t)+3.5; });
+      if(nat){ fonte(0,1,7.2); cor(C.late); const t='·  '+nat+' em atraso'; pdf.text(t,x,y); x+=pdf.getTextWidth(t)+3; }
+      if(nsev){ fonte(0,0,7.2); cor(C.mid); pdf.text('·  '+nsev+' severo'+(nsev>1?'s':''),x,y); }
+      y+=4.5;
+      for(const pg of pgs.filter(pg=>pins.some(p=>p.pg===pg))){
+        const cv=CAP[pg].cvs, aw=PW()-2*mg, k=Math.min(aw/cv.width,(PH()*.46)/cv.height), iw=cv.width*k, ih=cv.height*k, ix=mg+(aw-iw)/2;
+        if(y+ih>fim()) y=nova(false,false,'Apontamentos'+(o.res?'':' abertos'));
+        pdf.addImage(CAP[pg].d,'JPEG',ix,y,iw,ih,'pg'+pg); cor([184,196,212],'d'); pdf.setLineWidth(.25); pdf.rect(ix,y,iw,ih);
+        fonte(0,1,5.2); pdf.setCharSpace(.25); const cap='PRANCHA DA ANÁLISE'+(pgs.length>1?' · PÁG. '+pg:''); const cw=pdf.getTextWidth(cap)+cap.length*.25+2.4;
+        cor([255,255,255],'f'); pdf.rect(ix+.4,y+.4,cw,3.4,'F'); cor(C.soft); pdf.text(cap,ix+1.6,y+2.8); pdf.setCharSpace(0);
+        y+=ih+4;
+      }
+      // lista
+      const col=[mg, mg+8, mg+34, 0, 0, 0]; col[5]=PW()-mg-17; col[4]=col[5]-33; col[3]=col[4]-15;
+      const cab=yy=>{ fonte(0,1,5.3); pdf.setCharSpace(.25); cor(C.soft); ['','Código','Título','Disc.','Status','Prazo'].forEach((t,i)=>pdf.text(t.toUpperCase(),col[i]+.6,yy)); pdf.setCharSpace(0);
+        cor(C.line,'d'); pdf.setLineWidth(.2); pdf.line(mg,yy+1.3,PW()-mg,yy+1.3); return yy+4.6; };
+      y=cab(y);
+      sel.forEach((a,i)=>{ if(y+5.2>fim()){ y=nova(false,false,'Apontamentos'+(o.res?'':' abertos')); y=cab(y); }
+        if(i%2){ cor(C.zeb,'f'); pdf.rect(mg,y-3.5,PW()-2*mg,5.2,'F'); }
+        numero(col[0]+.6,y-.9,NUM.get(a.id),_mkHex(corPrioTxt(a.prioridade)));
+        fonte(1,1,7.2); cor(C.navy); pdf.text(corta(a.id,col[2]-col[1]-1.5),col[1]+.6,y);
+        fonte(0,0,7.2); cor(C.ink); pdf.text(corta(a.titulo||'',col[3]-col[2]-2),col[2]+.6,y);
+        fonte(1,1,6.6); cor(C.navy); pdf.text(corta(rvSigla(a.disciplina)||a.disciplina||'',col[4]-col[3]-1),col[3]+.6,y);
+        statusChip(col[4]+.6,y-.1,a);
+        fonte(0,0,7); cor(C.mid); pdf.text(_expPrazo(a)||'—',col[5]+.6,y);
+        y+=5.2; });
+    }
+
+    // ── A4: ficha completa de cada apontamento (opcional) ──
+    if(o.det && sel.length){
+      const tit='Apontamentos · detalhe completo';
+      let y=nova(false,false,tit); y=sec(y,'Detalhe completo','uma ficha por apontamento');
+      const cw=PW()-2*mg-6;
+      for(const a of sel){
+        const ps=Object.entries(a.participantes||{}), resp=RESP[a.id], prt=PRT[a.id]||[], rec=REC[a.id];
+        fonte(0,1,8.6); const tl=pdf.splitTextToSize(a.titulo||'(sem título)',cw);
+        fonte(0,0,7.2); const dl=a.descricao?pdf.splitTextToSize(String(a.descricao),cw).slice(0,28):[];
+        fonte(0,0,6.8); const rl=resp?pdf.splitTextToSize((resp.autor_nome||resp.autor_email||'Projetista')+' · '+new Date(resp.criado_em).toLocaleDateString('pt-BR')+' — '+(resp.texto||''),cw-3).slice(0,4):[];
+        const temImg=!!(rec||prt.length);
+        const hh=4+5+tl.length*3.6+9.5+(ps.length?4.4+ps.length*4.2:0)+(dl.length?3.4+dl.length*3.15:0)+(temImg?48:0)+(rl.length?3.6+rl.length*3:0)+2;
+        if(y+hh>fim()+1 && y>40){ y=nova(false,false,tit); }
+        const y0=y, x0=mg+3.5, late=_mkStK(a)!=='res'&&estaAtrasado(a);
+        // linha 1: número, código, disciplina, criticidade, status
+        y+=4.2; let x=x0; x+=numero(x,y-.9,NUM.get(a.id),_mkHex(corPrioTxt(a.prioridade)));
+        fonte(1,1,9.2); cor(C.navy); pdf.text(String(a.id),x,y); x+=pdf.getTextWidth(String(a.id))+2.2;
+        if(a.disciplina) x+=tag(x,y-.2,rvSigla(a.disciplina)||a.disciplina);
+        if(critRot(a.prioridade)) x+=tag(x,y-.2,critRot(a.prioridade).toUpperCase());
+        statusChip(x+.4,y-.2,a);
+        y+=4.4; fonte(0,1,8.6); cor(C.ink); tl.forEach(l=>{ pdf.text(l,x0,y); y+=3.6; }); y-=1.6;
+        // faixa: aberto em · prazo · atraso · local
+        const fx=[['Aberto em',(_dispData(a.data_criacao)||'')+(a.criado_por_nome?' · '+a.criado_por_nome:'')],['Prazo',_expPrazo(a)||'—'],
+          ['Atraso',(late&&+_expDias(a)>0)?_expDias(a)+' dias':'—'],['Local',[a.arquivo_nome||a.codigo||'',a.local_txt||''].filter(Boolean).join(' · ')||'—']];
+        const fw=[1.35,.75,.6,1.5], ft=fw.reduce((s,v)=>s+v,0); let fxx=x0; cor(C.line,'d'); pdf.setLineWidth(.2); pdf.rect(x0,y,cw,7.6);
+        fx.forEach(([l,v],i)=>{ const w=cw*fw[i]/ft; if(i) pdf.line(fxx,y,fxx,y+7.6);
+          fonte(0,1,4.9); pdf.setCharSpace(.25); cor(C.soft); pdf.text(l.toUpperCase(),fxx+1.6,y+2.6); pdf.setCharSpace(0);
+          fonte(0,i===2&&v!=='—',6.9); cor(i===2&&v!=='—'?C.late:C.mid); pdf.text(corta(v,w-3),fxx+1.6,y+6.1); fxx+=w; cor(C.line,'d'); });
+        y+=10.4;
+        // responsáveis por disciplina
+        if(ps.length){ const c2=[x0,x0+20,x0+cw-48,x0+cw-30];
+          fonte(0,1,4.9); pdf.setCharSpace(.25); cor(C.soft); ['Disciplina','Responsável','Prazo','Situação'].forEach((t,i)=>pdf.text(t.toUpperCase(),c2[i]+.6,y)); pdf.setCharSpace(0);
+          cor(C.line,'d'); pdf.line(x0,y+1.1,x0+cw,y+1.1); y+=4.4;
+          ps.forEach(([d,p],i)=>{ p=p||{}; const f=FORN_DISC[d]||FORN_DISC[rvSigla(d)]||{}, em=[].concat(p.emails||[]).filter(Boolean).join(', ');
+            if(i%2){ cor(C.zeb,'f'); pdf.rect(x0,y-3,cw,4.2,'F'); }
+            fonte(1,1,6.6); cor(C.navy); pdf.text(corta(rvSigla(d)||d,c2[1]-c2[0]-1.5),c2[0]+.6,y);
+            fonte(0,0,6.7); cor(C.ink); pdf.text(corta([f.empresa||discFullName(d)||'',em].filter(Boolean).join(' · '),c2[2]-c2[1]-2),c2[1]+.6,y);
+            cor(C.mid); pdf.text(p.prazo?_dispData(p.prazo):'—',c2[2]+.6,y);
+            if(p.conclusao){ fonte(0,1,6.7); cor(C.res); pdf.text('concluiu '+_dispData(p.conclusao),c2[3]+.6,y); }
+            else { fonte(0,1,6.7); cor(_mkStK(a)==='res'?C.mid:C.late); pdf.text(_mkStK(a)==='res'?'—':'falta concluir',c2[3]+.6,y); }
+            y+=4.2; });
+          y+=.6; }
+        // descrição
+        if(dl.length){ fonte(0,1,4.9); pdf.setCharSpace(.25); cor(C.soft); pdf.text('DESCRIÇÃO',x0,y); pdf.setCharSpace(0); y+=3.3;
+          fonte(0,0,7.2); cor(C.ink); dl.forEach(l=>{ pdf.text(l,x0,y); y+=3.15; }); y+=.4; }
+        // recorte da prancha + prints
+        if(temImg){ const ih=45; let ix=x0; const bw=(cw-26)/2;
+          if(rec){ cor([184,196,212],'d'); pdf.setLineWidth(.25); pdf.rect(ix,y,bw,ih); img({d:rec.d,w:rec.w,h:rec.h,f:'JPEG'},ix,y,bw,ih);
+            fonte(1,0,5.2); const cp='recorte · '+(a.arquivo_nome||a.codigo||''); const w=pdf.getTextWidth(cp)+2; cor([255,255,255],'f'); pdf.rect(ix+bw-w-.4,y+ih-3.6,w,3.2,'F'); cor(C.soft); pdf.text(cp,ix+bw-w+.6,y+ih-1.2); ix+=bw+3; }
+          if(prt[0]){ cor(C.line,'d'); pdf.rect(ix,y,bw,ih); img(prt[0],ix+.4,y+.4,bw-.8,ih-.8); ix+=bw+3; }
+          const mini=prt.slice(1,3); mini.forEach((m,i)=>{ const mh=(ih-2)/2; cor(C.line,'d'); pdf.rect(ix,y+i*(mh+2),20,mh); img(m,ix+.3,y+i*(mh+2)+.3,19.4,mh-.6); });
+          y+=ih+3; }
+        // última resposta do projetista
+        if(rl.length){ fonte(0,1,4.9); pdf.setCharSpace(.25); cor(C.soft); pdf.text('ÚLTIMA RESPOSTA DO PROJETISTA',x0+3,y); pdf.setCharSpace(0); y+=3.2;
+          cor(C.acc,'f'); pdf.rect(x0,y-5.6,.6,rl.length*3+3,'F'); fonte(0,0,6.8); cor(C.mid); rl.forEach(l=>{ pdf.text(l,x0+3,y); y+=3; }); }
+        y+=1.4;
+        // moldura da ficha (borda esquerda vermelha se atrasado)
+        cor(C.line,'d'); pdf.setLineWidth(.25); pdf.roundedRect(mg,y0,PW()-2*mg,y-y0,.8,.8,'S'); cor(late?C.late:C.navy,'f'); pdf.rect(mg,y0,1,y-y0,'F');
+        y+=3.5;
+      }
+    }
+
+    // ── A4: lista das marcações ──
+    if(o.lis && o.mk && marcs.length){
+      const tit='Marcações da análise', ras=MARCS.filter(m=>m.tipo==='rastro');
+      let y=nova(false,false,tit); y=sec(y,'Marcações',marcs.length+(ras.length?' · '+ras.length+' virou'+(ras.length>1?'aram':'')+' apontamento':''));
+      const col=[mg, mg+7, mg+29, 0, 0]; col[4]=PW()-mg-34; col[3]=col[4]-44;
+      const cab=yy=>{ fonte(0,1,5.3); pdf.setCharSpace(.25); cor(C.soft); ['#','Tipo','Texto / valor','Prancha','Autor · data'].forEach((t,i)=>pdf.text(t.toUpperCase(),col[i]+.6,yy)); pdf.setCharSpace(0);
+        cor(C.line,'d'); pdf.setLineWidth(.2); pdf.line(mg,yy+1.3,PW()-mg,yy+1.3); return yy+4.6; };
+      y=cab(y);
+      marcs.forEach((m,i)=>{ if(y+5>fim()){ y=nova(false,false,tit); y=cab(y); }
+        const d=m.dados||{}, L=mkLayer(m.prancha_id);
         const val=m.tipo==='cota'&&d.metros!=null?d.metros.toFixed(2).replace('.',',')+' m':m.tipo==='area'&&d.m2!=null?d.m2.toFixed(2).replace('.',',')+' m²':(d.txt||'');
-        linha((i+1)+'. '+(MK_NOME[m.tipo]||m.tipo)+(m.tipo==='balao'?' '+m.numero:'')+(val?' — '+val:''), 9.5, true);
-        linha(cod+(mkAntiga(m)?' · feita na '+mkRevNome(m.cde_revisao_id):'')+' · '+(m.autor_nome||'')+' · '+new Date(m.criado_em).toLocaleString('pt-BR'), 8, false, 110); y+=1.2; }); }
-      if(ras.length){ y+=3; linha('Viraram apontamento', 11, true);
-        ras.forEach(r=>{ const d=r.dados||{}, ap=APTS.find(a=>a.id===d.apt)||(salvo.apts||[]).find(a=>a.id===d.apt); linha('-> '+(d.apt||'?')+' · '+((ap&&ap.titulo)||d.titulo||'')+(ap?' · '+ap.status:''), 9); }); }
-      if(o.apt){ const vis=(salvo.apts||[]).filter(a=>_layerDoApt(a) && !_aptResolvidoOculto(a)); if(vis.length){ y+=3; linha('Apontamentos nas pranchas', 11, true);
-        vis.forEach(a=>linha(a.id+' · '+(a.titulo||'')+' · '+(a.status||'')+(a.prioridade?' · '+critRot(a.prioridade):''), 9)); } }
+        if(i%2){ cor(C.zeb,'f'); pdf.rect(mg,y-3.4,PW()-2*mg,5,'F'); }
+        fonte(0,0,7); cor(C.mid); pdf.text(String(i+1),col[0]+.6,y);
+        cor(C.ink); pdf.text((MK_NOME[m.tipo]||m.tipo)+(m.tipo==='balao'&&m.numero?' '+m.numero:''),col[1]+.6,y);
+        const vs=[{t:val||'—',m:m.tipo==='cota'||m.tipo==='area'}]; if(mkAntiga(m)) vs.push({t:' '},{t:mkRevNome(m.cde_revisao_id),rv:1,c:C.rvAnt});
+        segs(col[2]+.6,y,vs,col[3]-col[2]-2,7);
+        fonte(1,1,6.6); cor(C.navy); pdf.text(corta(L?codL(L):'—',col[4]-col[3]-1.5),col[3]+.6,y);
+        fonte(0,0,6.8); cor(C.mid); pdf.text(corta((m.autor_nome||'')+' · '+new Date(m.criado_em).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}),PW()-mg-col[4]-1),col[4]+.6,y);
+        y+=5; });
+      if(ras.length){ y+=3; if(y+10>fim()){ y=nova(false,false,tit); } y=sec(y,'Viraram apontamento');
+        ras.forEach(r=>{ if(y+5>fim()){ y=nova(false,false,tit); }
+          const d=r.dados||{}, ap=(salvo.apts||[]).find(a=>a.id===d.apt);
+          fonte(1,1,7); cor(C.navy); pdf.text(String(d.apt||'?'),mg+.6,y); fonte(0,0,7); cor(C.ink); pdf.text(corta((ap&&ap.titulo)||d.titulo||'',PW()-2*mg-70),mg+26,y);
+          if(ap) statusChip(PW()-mg-40,y-.1,ap); y+=5; }); }
     }
-    const nome=String(rvAnNomeTela(an)).replace(/[\\/:*?"<>|]+/g,'-').slice(0,80)+'.pdf';
-    pdf.save(nome); rvAviso('PDF gerado: '+nome);
-  }catch(e){ rvAlerta('Não consegui gerar o PDF: '+((e&&e.message)||e)); }
+
+    // ── cabeçalho e rodapé em todas as folhas (Folha i / N) ──
+    const N=pdf.getNumberOfPages();
+    for(let i=1;i<=N;i++){ pdf.setPage(i); const M=META[i]||{}, a3=!!M.a3, W=PW(), H=PH(), hb=a3?11:10, y0=mg;
+      cor(C.bar,'f'); pdf.rect(mg,y0,W-2*mg,hb,'F'); cor(C.acc,'f'); pdf.rect(mg,y0+hb,W-2*mg,.7,'F');
+      let tx=mg+3; if(LG){ const lh=hb-3.6, lw=lh*LG.w/LG.h; pdf.addImage(LG.d,'PNG',mg+2.4,y0+1.8,lw,lh,'lgAuria'); tx=mg+2.4+lw+2.6; }
+      let rx=W-mg-2;
+      if(EL){ const sh=hb-2.6, sw=Math.max(sh+2,Math.min(42,sh*EL.w/EL.h+3)); rx=W-mg-2-sw; cor([255,255,255],'f'); cor(C.acc,'d'); pdf.setLineWidth(.35); pdf.roundedRect(rx,y0+1.3,sw,sh,1,1,'FD'); img(EL,rx+.8,y0+2,sw-1.6,sh-1.4,'lgEmp'); rx-=3; }
+      fonte(0,1,a3?8.4:7.4); pdf.setCharSpace(a3?.55:.45); cor([225,232,242]); pdf.text(corta(String(M.tit||'').toUpperCase(),rx-tx-20),tx,y0+(a3?4.9:4.5)); pdf.setCharSpace(0);
+      fonte(0,0,a3?7:6.4); cor([143,166,192]); pdf.text(corta(nomeAn,rx-tx),tx,y0+(a3?8.8:8.1));
+      // faixa de identificação
+      const y1=y0+hb+.7, hh=8, folha=[{t:i+' / '+N,m:1}];
+      const FS=a3?[['Empreendimento',segEmp,1.25],['Pranchas sobrepostas',segPr,2.2],['Autor',[{t:(USER&&USER.nome)||''}],.9],['Emitido em',[{t:new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})}],.9],['Folha',folha,.55]]
+               :[['Pranchas',segPr,1.6],['Empreendimento',segEmp,1.1],['Folha',folha,.5]];
+      const tot=FS.reduce((s,f)=>s+f[2],0), aw=W-2*mg; let fx=mg; cor(C.line,'d'); pdf.setLineWidth(.2); pdf.rect(mg,y1,aw,hh);
+      FS.forEach(([l,ss,p],j)=>{ const w=aw*p/tot; if(j){ cor(C.line,'d'); pdf.line(fx,y1,fx,y1+hh); }
+        fonte(0,1,5); pdf.setCharSpace(.3); cor(C.soft); pdf.text(l.toUpperCase(),fx+2,y1+2.9); pdf.setCharSpace(0);
+        segs(fx+2,y1+6.4,ss,w-4,a3?7.4:7); fx+=w; });
+      // rodapé
+      cor(C.line,'d'); pdf.setLineWidth(.2); pdf.line(mg,H-8.5,W-mg,H-8.5);
+      fonte(0,0,6.2); cor(C.soft); pdf.text(corta('Auria · '+nomeAn+(EMP.codigo?' · '+EMP.codigo:''),W-2*mg-30),mg,H-5.6);
+      pdf.text('Folha '+i+' / '+N,W-mg,H-5.6,{align:'right'});
+    }
+    const nome=nomeAn.replace(/[\\/:*?"<>|]+/g,'-').slice(0,80)+'.pdf';
+    pdf.save(nome); rvAviso('PDF gerado: '+nome+' ('+N+' folha'+(N>1?'s':'')+')');
+  }catch(e){ console.error(e); rvAlerta('Não consegui gerar o PDF: '+((e&&e.message)||e)); }
   finally{
     MK_ESC=1; APTS=salvo.apts; $('pinsSvg').style.display=salvo.pins; MK_SELS=salvo.sels; MK_OCULTA=salvo.oc; MK_ON=salvo.on;
     if(salvo.pg!==V.pageNum){ V.pageNum=salvo.pg; F.valido=false; try{ await carregarPagina(); }catch(_){} }
-    V.zoom=salvo.zoom; V.panX=salvo.panX; V.panY=salvo.panY; updateCss(); scheduleRender(0); try{ renderPins(); }catch(_){} mkHint(); mkRender();
+    V.zoom=salvo.zoom; V.panX=salvo.panX; V.panY=salvo.panY; updateCss(); scheduleRender(0); try{ renderDrawings(); renderPins(); }catch(_){} mkHint(); mkRender();
   }
 }
 
