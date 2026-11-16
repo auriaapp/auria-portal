@@ -2633,6 +2633,20 @@ export async function verificarPeDireito(V, opts){
       }
     }
   }
+  // Réguas/painéis de PAREDE-CORTINA (gradil, caixilho, fachada) não são teto:
+  //  o conjunto nasce no piso. Medida peça a peça, a régua de 2,0–2,3 m de um
+  //  gradil virava "pé-direito baixo" (Diagonal: 99 de 99 achados eram isso).
+  //  Só lê o pai dos candidatos IfcMember/IfcPlate já dentro do intervalo.
+  const pecas=achados.filter(a=>a.cat==='IFCMEMBER'||a.cat==='IFCPLATE');
+  if(pecas.length){
+    const fora=new Set(), porMod={}; pecas.forEach(a=>(porMod[a.mi]=porMod[a.mi]||[]).push(a.id));
+    for(const [mi,ids] of Object.entries(porMod)){ const x=V.modelos[mi];
+      for(let p=0;p<ids.length;p+=200){ let dd=[];
+        try{ dd=await x.model.getItemsData(ids.slice(p,p+200),{attributesDefault:false,relations:{Decomposes:{attributes:true,relations:false}},relationsDefault:{attributes:false,relations:false}}); }catch(_){}
+        (dd||[]).forEach(d=>{ const lid=d&&d._localId&&d._localId.value; const pai=d&&(d.Decomposes||[])[0];
+          if(lid!=null && pai && pai._category && String(pai._category.value).toUpperCase()==='IFCCURTAINWALL') fora.add(mi+':'+lid); }); } }
+    if(fora.size){ for(let k=achados.length-1;k>=0;k--){ if(fora.has(achados[k].mi+':'+achados[k].id)) achados.splice(k,1); } }
+  }
   achados.sort((a,b)=>a.clear-b.clear);
   const CAP=300; const cortou=achados.length>CAP; const lista=achados.slice(0,CAP);
   // nomes só dos infratores (bloco por modelo)
