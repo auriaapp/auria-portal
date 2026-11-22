@@ -3300,6 +3300,45 @@ function _pinGravar(nx,ny,pg,pid){
   const L=_layerDaPrancha(pid); if(!L) return { nx, ny, pg, pid };
   const q=_baseParaCam(L,nx,ny); return { nx:q.nx, ny:q.ny, pg, pid, ref:'p' };
 }
+// ── Desenhos do apontamento (drawings_json) no mesmo esquema (2026-11-21) ──
+// No BANCO: forma com ref:'p' = pontos no referencial da prancha (s.pid ou a.prancha_id).
+// Na MEMÓRIA do editor (APT_EDIT): referencial da BASE, como a régua/edição sempre
+// trabalharam. Converte só nas bordas: ao abrir (_drwAbrir), ao salvar (_drwGravar)
+// e ao desenhar os outros apontamentos (_drwBase). Forma sem ref = legado (cru).
+// Gabarito: dados.mpp (metros por ponto) muda com a escala da camada.
+function _drwConv(s, f, kMpp){
+  const P=p=>p&&p.nx!=null ? Object.assign({}, p, f(p.nx,p.ny)) : p;
+  const o=JSON.parse(JSON.stringify(s));
+  if(o.a) o.a=P(o.a); if(o.b) o.b=P(o.b); if(Array.isArray(o.pts)) o.pts=o.pts.map(P);
+  if(o.dados){ const d=o.dados; if(d.a) d.a=P(d.a); if(d.b) d.b=P(d.b); if(Array.isArray(d.pts)) d.pts=d.pts.map(P);
+    if(d.mpp) d.mpp=d.mpp*kMpp; }
+  return o;
+}
+function _drwLayer(a,s){ return _layerDaPrancha((s&&s.pid)||(a&&a.prancha_id)); }
+// banco → base (para desenhar / editar)
+function _drwBase(a,s){
+  if(!s || s.ref!=='p') return s;
+  const L=_drwLayer(a,s), g=L&&_camGeo(L); if(!g) return s;
+  const o=_drwConv(s,(u,v)=>_camParaBase(L,u,v), 1/g.s); delete o.ref; return o;
+}
+// base → banco
+function _drwProp(a,s){
+  if(!s || s.ref==='p' || s._leg) return s;
+  const L=_drwLayer(a,s), g=L&&_camGeo(L); if(!g) return s;
+  const o=_drwConv(s,(x,y)=>_baseParaCam(L,x,y), g.s); o.ref='p'; return o;
+}
+// Ao abrir no editor: o que é da prancha aberta vai para a base; legado com a prancha
+// FECHADA fica marcado (_leg) para não ser convertido com uma composição que não é a dele.
+function _drwAbrir(a){
+  a.drawings_json=(a.drawings_json||[]).map(s=>{ if(!s) return s;
+    if(s.ref==='p') return _drwBase(a,s);
+    if(!_drwLayer(a,s)) return Object.assign({}, s, { _leg:1 });
+    return s; });
+}
+function _drwGravar(a){
+  if(!Array.isArray(a.drawings_json)) return a.drawings_json||null;
+  return a.drawings_json.map(s=>{ const o=_drwProp(a,s); if(o&&o._leg){ const c=Object.assign({},o); delete c._leg; return c; } return o; });
+}
 
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
 function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id; return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
@@ -3704,7 +3743,7 @@ function renderDrawings(){
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
     if(!_layerDoApt(a)) return;   // desenhos de qualquer prancha aberta e visível (base ou overlay)
     if(_aptResolvidoOculto(a)) return;
-    (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s, false); });
+    (a.drawings_json||[]).filter(naPagina).map(s=>_drwBase(a,s)).forEach(s=>{ out+=shapeToSvg(s, false); });
   });
   // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
   if(APT_EDIT){
@@ -8333,6 +8372,7 @@ function mobPrancha(){
 function abrirAptIdx(i){
   const a=APTS[i]; if(!a) return;
   APT_EDIT=JSON.parse(JSON.stringify(a)); APT_EDIT._novo=false;
+  _drwAbrir(APT_EDIT);   // desenhos: referencial da prancha → base (a edição trabalha na base)
   APT_IMGS=(a.imagens_json||[]).map(u=>({url:u}));
   abrirEditor();
   // Apontamento com pin 3D → abre o painel BIM já no modelo certo.
@@ -8822,7 +8862,7 @@ async function salvarApt(){
       etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
       prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
       participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs, anexos_json:anexos,
-      pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
+      pontos_json:a.pontos_json||[], drawings_json:_drwGravar(a),
       prancha_id:a.prancha_id||null,
       // Se a prancha veio do CDE, marca em qual revisão o apontamento nasceu.
       // Só grava em CRIAÇÃO — edições posteriores não sobrescrevem a origem.

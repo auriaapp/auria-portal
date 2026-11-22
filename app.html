@@ -2193,7 +2193,7 @@ async function pjSalvarApt(){
         titulo:a.titulo, descricao:a.descricao, disciplina:a.disciplina, tipo:a.tipo,
         status:'Em aberto', prioridade:a.prioridade, visibilidade:ehNota?'Coordenação':'Projeto',
         dimensao:bim?'bim':'2d', grupo_id:a.grupo_id, local_txt:a.local_txt||'',
-        pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null, imagens_json:imgs,
+        pontos_json:a.pontos_json||[], drawings_json:_drwGravar(a), imagens_json:imgs,
         prancha_id:bim?null:(a.prancha_id||null),
         prancha_nome:bim?(a._modeloNome||''):((PRANCHA&&(PRANCHA.codigo||PRANCHA.arquivo_nome))||''),
         cde_revisao_id:a.cde_revisao_id||null, data_criacao:a.data_criacao||hojeBr(),
@@ -2206,7 +2206,7 @@ async function pjSalvarApt(){
       const imgs=await subirImgsPendentes(a.id);
       const { data, error }=await sb.from('apontamentos')
         .update({ titulo:a.titulo, descricao:a.descricao, tipo:a.tipo, disciplina:a.disciplina, prioridade:a.prioridade,
-                  local_txt:a.local_txt||'', imagens_json:imgs, pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null })
+                  local_txt:a.local_txt||'', imagens_json:imgs, pontos_json:a.pontos_json||[], drawings_json:_drwGravar(a) })
         .eq('empreendimento_id',EMP.id).eq('id',a.id).select('id');
       if(error) throw error;
       if(!data||!data.length) throw new Error('o banco não aceitou a alteração.');
@@ -4046,6 +4046,45 @@ function _pinGravar(nx,ny,pg,pid){
   const L=_layerDaPrancha(pid); if(!L) return { nx, ny, pg, pid };
   const q=_baseParaCam(L,nx,ny); return { nx:q.nx, ny:q.ny, pg, pid, ref:'p' };
 }
+// ── Desenhos do apontamento (drawings_json) no mesmo esquema (2026-11-21) ──
+// No BANCO: forma com ref:'p' = pontos no referencial da prancha (s.pid ou a.prancha_id).
+// Na MEMÓRIA do editor (APT_EDIT): referencial da BASE, como a régua/edição sempre
+// trabalharam. Converte só nas bordas: ao abrir (_drwAbrir), ao salvar (_drwGravar)
+// e ao desenhar os outros apontamentos (_drwBase). Forma sem ref = legado (cru).
+// Gabarito: dados.mpp (metros por ponto) muda com a escala da camada.
+function _drwConv(s, f, kMpp){
+  const P=p=>p&&p.nx!=null ? Object.assign({}, p, f(p.nx,p.ny)) : p;
+  const o=JSON.parse(JSON.stringify(s));
+  if(o.a) o.a=P(o.a); if(o.b) o.b=P(o.b); if(Array.isArray(o.pts)) o.pts=o.pts.map(P);
+  if(o.dados){ const d=o.dados; if(d.a) d.a=P(d.a); if(d.b) d.b=P(d.b); if(Array.isArray(d.pts)) d.pts=d.pts.map(P);
+    if(d.mpp) d.mpp=d.mpp*kMpp; }
+  return o;
+}
+function _drwLayer(a,s){ return _layerDaPrancha((s&&s.pid)||(a&&a.prancha_id)); }
+// banco → base (para desenhar / editar)
+function _drwBase(a,s){
+  if(!s || s.ref!=='p') return s;
+  const L=_drwLayer(a,s), g=L&&_camGeo(L); if(!g) return s;
+  const o=_drwConv(s,(u,v)=>_camParaBase(L,u,v), 1/g.s); delete o.ref; return o;
+}
+// base → banco
+function _drwProp(a,s){
+  if(!s || s.ref==='p' || s._leg) return s;
+  const L=_drwLayer(a,s), g=L&&_camGeo(L); if(!g) return s;
+  const o=_drwConv(s,(x,y)=>_baseParaCam(L,x,y), g.s); o.ref='p'; return o;
+}
+// Ao abrir no editor: o que é da prancha aberta vai para a base; legado com a prancha
+// FECHADA fica marcado (_leg) para não ser convertido com uma composição que não é a dele.
+function _drwAbrir(a){
+  a.drawings_json=(a.drawings_json||[]).map(s=>{ if(!s) return s;
+    if(s.ref==='p') return _drwBase(a,s);
+    if(!_drwLayer(a,s)) return Object.assign({}, s, { _leg:1 });
+    return s; });
+}
+function _drwGravar(a){
+  if(!Array.isArray(a.drawings_json)) return a.drawings_json||null;
+  return a.drawings_json.map(s=>{ const o=_drwProp(a,s); if(o&&o._leg){ const c=Object.assign({},o); delete c._leg; return c; } return o; });
+}
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
 // Item 122: o pin aparece com a camada da prancha dele visível OU, se essa prancha está na análise
 // (mesmo oculta, alinhada), com alguma camada visível de disciplina PARTICIPANTE do apontamento.
@@ -4773,7 +4812,7 @@ function renderDrawings(){
     if(APT_EDIT && !APT_EDIT._novo && a.id===APT_EDIT.id) return;   // o em edição é desenhado abaixo
     if(!_layerDoApt(a) && !_aptPorParticipante(a)) return;   // desenhos de prancha visível — ou oculta, com disciplina participante visível (item 122)
     if(_aptResolvidoOculto(a)) return;
-    (a.drawings_json||[]).filter(naPagina).forEach(s=>{ out+=shapeToSvg(s.t==='mk'&&!s.cp?Object.assign({},s,{color:corPrio(a.prioridade)}):s, false); });
+    (a.drawings_json||[]).filter(naPagina).map(s=>_drwBase(a,s)).forEach(s=>{ out+=shapeToSvg(s.t==='mk'&&!s.cp?Object.assign({},s,{color:corPrio(a.prioridade)}):s, false); });
   });
   // Desenhos do apontamento EM EDIÇÃO (com halo no item destacado) + construção
   if(APT_EDIT){
@@ -9641,6 +9680,7 @@ function mobPrancha(){
 function abrirAptIdx(i){
   const a=APTS[i]; if(!a) return;
   APT_EDIT=JSON.parse(JSON.stringify(a)); APT_EDIT._novo=false;
+  _drwAbrir(APT_EDIT);   // desenhos: referencial da prancha → base (a edição trabalha na base)
   APT_IMGS=(a.imagens_json||[]).map(u=>({url:u}));
   abrirEditor();
   // Apontamento com pin 3D → abre o painel BIM já no modelo certo.
@@ -10423,7 +10463,7 @@ async function salvarApt(){
       etapa:a.etapa||'', local_txt:a.local_txt||'', data_criacao:a.data_criacao||hojeBr(),
       prazo_min:px.prazo_min, conclusao:px.conclusao, atrasado:px.atrasado, dias_atraso:px.dias_atraso,
       participantes:a.participantes, log_json:a.log_json||[], imagens_json:imgs, anexos_json:anexos,
-      pontos_json:a.pontos_json||[], drawings_json:a.drawings_json||null,
+      pontos_json:a.pontos_json||[], drawings_json:_drwGravar(a),
       prancha_id:a.prancha_id||null,
       analise_origem_id: a.analise_origem_id || undefined,   // item 110 F2: análise onde nasceu
       // Se a prancha veio do CDE, marca em qual revisão o apontamento nasceu.
