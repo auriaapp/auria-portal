@@ -433,6 +433,9 @@
   /* Uma linha só: abas com largura própria (não encolhem com a quantidade) e a
      barra ROLA na horizontal — dedo arrasta, roda do mouse rola de lado. */
   #cdeTaskbar{display:none;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;touch-action:pan-x;-webkit-overflow-scrolling:touch;gap:6px;padding:6px 10px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
+  /* O "?" da ajuda fica centrado na altura desta barra, no canto direito: a última aba
+     não pode terminar embaixo dele (o ✕ ficava coberto). Espaçador no fim da fila. */
+  #cdeTaskbar::after{content:'';flex:0 0 40px}
   .cdeTask{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;
            padding:5px 8px 5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;
            display:inline-flex;align-items:center;gap:6px;max-width:220px;overflow:hidden;flex:none}
@@ -2246,7 +2249,39 @@ function limparBusca(){
 }
 // Zera a busca SEM re-renderizar (quem chama já re-renderiza).
 function _zeraBusca(){ if(!BUSCA) return; BUSCA=''; const i=$('navBusca'); if(i) i.value=''; const x=$('navBuscaX'); if(x) x.style.display='none'; }
-function navBuscaResultados(){
+// Sigla/nome de disciplina digitado na busca → oferece o FILTRO daquela disciplina
+// (um clique: adiciona ao filtro e tira a palavra da busca). Só nome de disciplina
+// que existe no acervo e ainda não está no filtro.
+function buscaSugestDisc(){
+  const termos=buscaTermos(BUSCA); if(!termos.length) return [];
+  const discs=[...new Set(DOCS.map(d=>d.disciplina).filter(Boolean))];
+  const out=[];
+  discs.forEach(c=>{
+    if(FILTROS.disc.has(c)) return;
+    const cod=_semAcento(c), rot=_semAcento(discLabel(c));
+    const t=termos.find(t=> t===cod || (t.length>=4 && rot!==cod && rot.split(/[^a-z0-9]+/).some(w=>w.startsWith(t))));
+    if(t) out.push({ c, t });
+  });
+  return out.slice(0,4);
+}
+function buscaAplicarDisc(c, termo){
+  FILTROS.disc.add(c);
+  if(SEL_DISC==='__BIM__') SEL_DISC=null;
+  // tira só a palavra usada para a sugestão; o resto da busca continua
+  const resto=String(BUSCA).split(/\s+/).filter(w=>w && _semAcento(w)!==termo).join(' ');
+  BUSCA=resto; const i=$('navBusca'); if(i) i.value=resto;
+  const x=$('navBuscaX'); if(x) x.style.display = BUSCA ? 'block' : 'none';
+  if(BUSCA_CONTEUDO && BUSCA) buscaConteudo(BUSCA);
+  renderRail(); salvarUltimoCDE();
+}
+function navBuscaSugestHtml(){
+  const sg=buscaSugestDisc(); if(!sg.length) return '';
+  return '<div class="nav-hint" style="padding:2px 4px 8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">'
+    + sg.map(({c,t})=>`<button class="btn sec sm" onclick="buscaAplicarDisc('${esc(c)}','${esc(t)}')" title="Filtrar a lista pela disciplina ${esc(discLabel(c))}">+ Filtrar <b style="font-family:var(--mono,monospace);color:var(--navy)">${esc(c)}</b>${discLabel(c)!==c?' · '+esc(discLabel(c)):''}</button>`).join('')
+    + '</div>';
+}
+function navBuscaResultados(){ return navBuscaSugestHtml() + navBuscaResultados0(); }
+function navBuscaResultados0(){
   const q=BUSCA.toLowerCase();
   let achados, ondeTxt;
   if(BUSCA_CONTEUDO){
@@ -2569,6 +2604,7 @@ function cardFed(f){
     ${(SEM_ESCRITA && !RAMO_OBRA)?'':`<button class="fkebab" title="QR do modelo federado${SEM_ESCRITA?'':', renomear ou remover'}" onclick="fedMenu(event,'${f.id}')">⋮</button>`}
     <div style="flex-basis:100%;margin-top:4px" onclick="event.stopPropagation()">
       <button class="btn sec sm" onclick="abrirFedSalva('${f.id}')">👁 Abrir federado</button>
+      ${SEM_ESCRITA?'':`<button class="btn sec sm" onclick="fedNoApp('${f.id}')" title="Levar os modelos desta federação para o App, onde a análise vira apontamento">🔍 Abrir no App</button>`}
       ${SEM_ESCRITA?'':`<button class="btn sec sm" onclick="fedEditar('${f.id}')" title="Trocar os modelos que compõem esta federação">✎ Compor</button>`}
     </div>
   </div>`;
@@ -2583,7 +2619,13 @@ async function abrirFedSalva(fid){
   if(faltam.length && !confirm('Estes ficam de fora (3D não convertido ou sem revisão):\n\n  '
       + faltam.map(x=>x.codigo).join('\n  ') + '\n\nAbrir os '+prontos.length+' prontos?')) return;
   const w=new CdeWin(); focar(w); atualizarVempty(); atualizarTaskbar();
-  await w.setModelosFederados(prontos.map(x=>({ path:x.frag_path, nome:x.codigo+(x.revisao?(' '+x.revisao):''), provider:x.storage_provider||'r2' })), f.nome);
+  await w.setModelosFederados(prontos.map(x=>({ path:x.frag_path, nome:x.codigo+(x.revisao?(' '+x.revisao):''), provider:x.storage_provider||'r2' })), f.nome, fid, f.documentos||[]);
+}
+// Federação → App: mesmo caminho do "Abrir no App" da seleção múltipla (cde_bim=arquivos),
+// com a revisão vigente de cada componente.
+function fedNoApp(fid){
+  const f=FEDS.find(x=>x.id===fid); if(!f) return;
+  abrirBimNoApp(f.documentos||[]);
 }
 // Salvar a composição aberta (ou a seleção múltipla) como federação.
 async function fedSalvarDaSelecao(docIds, nomeSugerido){
@@ -2612,21 +2654,43 @@ function fedEditar(fid){
   _cdeToast('Marque os modelos desta federação e clique em "Salvar federação".');
 }
 // ⋮ do card 🧩: QR do modelo federado (coordenação e obra) + renomear/remover (coordenação).
-function fedMenu(ev, fid){
+// Também é o ⋮ da JANELA federada aberta (win): ali ganha "Abrir no App" e, se a
+// composição ainda não foi salva (fid nulo), "Salvar como federação".
+var FED_MENU_WIN=null;
+function fedMenu(ev, fid, win){
   ev.stopPropagation();
-  const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc==='fed:'+fid;
+  const chave='fed:'+(fid||'win');
+  const reabrir = DOC_MENU_EL && DOC_MENU_EL._doc===chave;
   docMenuClose(); if(reabrir) return;
-  const rows=[
-    `<button onclick="docMenuClose();fedQr('${fid}','img')"><span class="mi">▦</span>Baixar QR (cartaz A4)</button>`,
-    `<button onclick="docMenuClose();fedQr('${fid}','link')"><span class="mi">🔗</span>Copiar link público</button>`];
-  if(!SEM_ESCRITA) rows.push('<div class="dm-sep"></div>', `<button onclick="docMenuClose();fedRenomear('${fid}')"><span class="mi">✎</span>Renomear ou remover</button>`);
-  const m=document.createElement('div'); m.className='docmenu'; m._doc='fed:'+fid; m.innerHTML=rows.join('');
+  FED_MENU_WIN = win||null;
+  const docs = fid ? (((FEDS.find(x=>x.id===fid))||{}).documentos||[]) : ((win&&win.fedDocs)||[]);
+  const rows=[];
+  if(!SEM_ESCRITA && docs.length)
+    rows.push(`<button onclick="docMenuClose();${fid?`fedNoApp('${fid}')`:'abrirBimNoApp((FED_MENU_WIN&&FED_MENU_WIN.fedDocs)||[])'}"><span class="mi">${DM_IC.cubo}</span>Abrir no App (3D)</button>`);
+  if(fid){
+    if(rows.length) rows.push('<div class="dm-sep"></div>');
+    rows.push(`<button onclick="docMenuClose();fedQr('${fid}','img')"><span class="mi">▦</span>Baixar QR (cartaz A4)</button>`,
+      `<button onclick="docMenuClose();fedQr('${fid}','link')"><span class="mi">🔗</span>Copiar link público</button>`);
+    if(!SEM_ESCRITA) rows.push('<div class="dm-sep"></div>', `<button onclick="docMenuClose();fedRenomear('${fid}')"><span class="mi">✎</span>Renomear ou remover</button>`);
+  }else if(!SEM_ESCRITA && docs.length>=2){
+    rows.push('<div class="dm-sep"></div>', `<button onclick="docMenuClose();fedSalvarDaJanela()"><span class="mi">✎</span>Salvar como federação</button>`);
+  }
+  if(!rows.length) rows.push('<div class="dm-vazio" style="padding:8px 12px;color:var(--mut);font-size:12px">Sem opções para esta composição.</div>');
+  const m=document.createElement('div'); m.className='docmenu'; m._doc=chave; m.innerHTML=rows.join('');
   document.body.appendChild(m);
   const r=ev.currentTarget.getBoundingClientRect(), w=210, h=m.offsetHeight;
   let left=r.right-w; if(left<8) left=8;
   let top=r.bottom+5; if(top+h>window.innerHeight-8) top=Math.max(8, r.top-h-5);
   m.style.left=left+'px'; m.style.top=top+'px';
   DOC_MENU_EL=m;
+}
+// "Salvar como federação" do ⋮ da janela federada ainda não salva.
+async function fedSalvarDaJanela(){
+  const w=FED_MENU_WIN; if(!w || !w.isFed) return;
+  const antes=new Set(FEDS.map(f=>f.id));
+  await fedSalvarDaSelecao(w.fedDocs||[]);
+  const nova=FEDS.find(f=>!antes.has(f.id));
+  if(nova){ w.fedId=nova.id; w.fedLabel=nova.nome; w.titleEl.textContent=nova.nome; atualizarTaskbar(); }
 }
 // QR do federado: a página pública v.html?f=… mostra só os modelos com revisão LIBERADA.
 async function fedQr(fid, modo){
@@ -2745,10 +2809,11 @@ async function abrirBimFederado(){
                      + '\n\nAbrir os '+modelos.length+' que estão prontos?');
     if(!ok) return;
   }
+  const docIds=[...MULTI_SEL].filter(id=>{ const d=DOCS.find(x=>x.id===id); return d && docEhBim(d); });
   const w = new CdeWin();
   focar(w); atualizarVempty(); atualizarTaskbar();
   multiConcluir();
-  await w.setModelosFederados(modelos);
+  await w.setModelosFederados(modelos, null, null, docIds);
 }
 
 // O Fragments entrega a geometria com Y para cima (convenção do three), mas o
@@ -4124,7 +4189,10 @@ class CdeWin {
         if(a==='min') this.minimizar();
         else if(a==='max') this.toggleMax();
         else if(a==='close') this.fechar();
-        else if(a==='menu'){ if(this.DOC_SEL && !this.isFed && !this.isCmp){ focar(this); docMenuOpen(e, this.DOC_SEL.id); } }
+        else if(a==='menu'){
+          if(this.isFed){ focar(this); fedMenu(e, this.fedId||null, this); }
+          else if(this.DOC_SEL && !this.isCmp){ focar(this); docMenuOpen(e, this.DOC_SEL.id); }
+        }
       });
     });
     // Foca ao clicar em qualquer lugar da janela
@@ -4431,9 +4499,11 @@ class CdeWin {
   // Janela federada: várias disciplinas numa cena só. Não pertence a um
   // documento (DOC_SEL fica null), então nada que dependa de "a prancha desta
   // janela" se aplica aqui — inclusive o reaproveitamento em openDocInWindow.
-  async setModelosFederados(modelos, nomeFed){
+  async setModelosFederados(modelos, nomeFed, fedId, docIds){
     this.DOC_SEL = null;
     this.isFed = true;
+    this.fedId = fedId || null;          // federação salva (⋮ oferece QR/renomear)
+    this.fedDocs = (docIds||[]).slice(); // documentos da composição (⋮ → Abrir no App)
     this.fedLabel = nomeFed || ('Federado (' + modelos.length + ')');
     this.titleEl.textContent = nomeFed || 'Modelo federado';
     this.subEl.textContent   = modelos.map(m=>m.nome).join('  +  ');
