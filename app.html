@@ -3687,7 +3687,7 @@ async function mudarPagina(delta){
       _pinNovo(pt, e); return;                               // item 121: vai para a prancha DO apontamento (pergunta se o foco é outra)
     }
     // Split 2D/2D: apontamento aberto no OUTRO lado em edição de pins → o pin vai pra ele
-    if(PEER_EDIT){ peerCall('__peerAddPin',{nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()}); return; }
+    if(PEER_EDIT){ peerCall('__peerAddPin',_pinGravar(pt.nx,pt.ny,V.pageNum,_pranchaFocoId())); return; }
     // 3) "Apontar" (barra) → cria novo apontamento (one-shot)
     if(APONTAR && _focoAviso()) return;                 // item 121
     if(APONTAR){ APONTAR=false; $('btnApontar').classList.remove('on');
@@ -3993,7 +3993,7 @@ function _focoSelAtualiza(){ const sel=$('selFoco'); if(!sel) return; const L=_f
   [...sel.options].forEach((o,i)=>{ const oc=LAYERS[i]&&LAYERS[i].visible===false; o.textContent=o.textContent.replace(/ · oculta$/,'')+(oc?' · oculta':''); }); }
 function _pinNovo(pt, e){
   const a=APT_EDIT, fid=_pranchaFocoId(), aid=a.prancha_id, La=aid?LAYERS.find(L=>L&&L.prancha&&L.prancha.id===aid):null;
-  const pôr=pid=>{ (a.pontos_json=a.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid}); renderPins(); renderPinsList(); _peerBroadcast(); };
+  const pôr=pid=>{ (a.pontos_json=a.pontos_json||[]).push(_pinGravar(pt.nx,pt.ny,V.pageNum,pid)); renderPins(); renderPinsList(); _peerBroadcast(); };
   if(a._pinPid){ pôr(a._pinPid); return; }
   if(!La || !aid || aid===fid){ pôr(fid); return; }
   const Lf=LAYERS[FOCO_LI], x=e?e.clientX:0, y=e?e.clientY:0, ond={ getBoundingClientRect:()=>({left:x,right:x,top:y,bottom:y}) };
@@ -4004,7 +4004,48 @@ function _pinNovo(pt, e){
     { ic:'○', t:esc2(Lf,'· em foco'), f:()=>{ a._pinPid=fid; pôr(fid); rvAviso('Os próximos pins deste apontamento vão para '+_camCod(Lf)+'. Dá para trocar na lista de pins.'); } }
   ]);
 }
-function pinTrocarPrancha(i, pid){ const a=APT_EDIT; if(!a||!a.pontos_json||!a.pontos_json[i]) return; a.pontos_json[i].pid=pid||null; renderPins(); renderPinsList(); _peerBroadcast(); }
+function pinTrocarPrancha(i, pid){ const a=APT_EDIT; if(!a||!a.pontos_json||!a.pontos_json[i]) return;
+  const pt=a.pontos_json[i], q=_pinBase(a,pt), n=_pinGravar(q.nx,q.ny,pt.pg||1,pid||null);   // mesmo lugar na tela, referencial da prancha nova
+  pt.nx=n.nx; pt.ny=n.ny; pt.pid=n.pid; if(n.ref) pt.ref=n.ref; else delete pt.ref;
+  renderPins(); renderPinsList(); _peerBroadcast(); }
+// ── Referencial dos pins 2D (correção 2026-11-21) ──────────────────────────
+// Pin com ref:'p' guarda nx/ny na PRÓPRIA prancha (pid) — o mesmo referencial em
+// que o CDE e o QR (v.html) desenham a prancha sozinha. O clique chega no
+// referencial da BASE da composição; se a prancha do pin é uma camada alinhada
+// (posição/escala/rotação), converte. Pin sem ref = legado: nx/ny da base da
+// composição em que foi marcado (desenhado cru, como antes).
+// Mesma transformação do render (fórmula da camada em render()): largura da
+// camada = L.scale×largura da base; deslocamento = offset×(largura,altura) da
+// base; rotação em torno do centro da camada.
+function _layerDaPrancha(pid){ return pid ? (LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid)||null) : null; }
+function _camGeo(L){
+  const B=LAYERS[0]; if(!L||!B||!L.page||!B.page) return null;
+  const b=pageWH(B.page), l=pageWH(L.page), s=(L.scale||1)*(b.w/l.w), r=(L.rot||0)*Math.PI/180;
+  return { b, l, s, W:l.w*s, H:l.h*s, c:Math.cos(r), sn:Math.sin(r), ox:(L.offset&&L.offset.x)||0, oy:(L.offset&&L.offset.y)||0 };
+}
+function _camParaBase(L,u,v){
+  const g=_camGeo(L); if(!g) return { nx:u, ny:v };
+  let x=u*g.W, y=v*g.H;
+  if(g.sn){ const dx=x-g.W/2, dy=y-g.H/2; x=g.W/2+dx*g.c-dy*g.sn; y=g.H/2+dx*g.sn+dy*g.c; }
+  return { nx:g.ox+x/g.b.w, ny:g.oy+y/g.b.h };
+}
+function _baseParaCam(L,nx,ny){
+  const g=_camGeo(L); if(!g) return { nx, ny };
+  let x=(nx-g.ox)*g.b.w, y=(ny-g.oy)*g.b.h;
+  if(g.sn){ const dx=x-g.W/2, dy=y-g.H/2; x=g.W/2+dx*g.c+dy*g.sn; y=g.H/2-dx*g.sn+dy*g.c; }
+  return { nx:x/g.W, ny:y/g.H };
+}
+// Pin 2D → coordenada da BASE atual (para desenhar, centralizar, exportar).
+function _pinBase(a,pt){
+  if(!pt) return { nx:0, ny:0 };
+  if(pt.ref!=='p') return { nx:pt.nx, ny:pt.ny };
+  const L=_layerDaPrancha(pt.pid||(a&&a.prancha_id)); return L ? _camParaBase(L,pt.nx,pt.ny) : { nx:pt.nx, ny:pt.ny };
+}
+// Clique (coordenada da base) → pin gravado no referencial da prancha pid.
+function _pinGravar(nx,ny,pg,pid){
+  const L=_layerDaPrancha(pid); if(!L) return { nx, ny, pg, pid };
+  const q=_baseParaCam(L,nx,ny); return { nx:q.nx, ny:q.ny, pg, pid, ref:'p' };
+}
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
 // Item 122: o pin aparece com a camada da prancha dele visível OU, se essa prancha está na análise
 // (mesmo oculta, alinhada), com alguma camada visível de disciplina PARTICIPANTE do apontamento.
@@ -4074,7 +4115,7 @@ function renderPins(){
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if(!_pinVisivel(a,pt)) return;                // pin de outra prancha (split 2D/2D)
       if((pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(a,pt), p=pageToScreen(q.nx,q.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="${aptEhNota(a)?`notaClique(event,${ai},${pi})`:`pinClick(${ai},${pi})`};event.stopPropagation()">
         ${aptEhNota(a)?notaSvg(p.x,p.y,a):pinSvg(p.x,p.y,a,APP_PJ&&pjMarcado(a))}</g>`;
@@ -4086,7 +4127,7 @@ function renderPins(){
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if(pt.pid && !_pinVisivel(APT_EDIT,pt)) return;   // pin na prancha do outro lado
       if((pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(APT_EDIT,pt), p=pageToScreen(q.nx,q.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${aptEhNota(APT_EDIT)?notaSvg(p.x,p.y,APT_EDIT,true):pinSvg(p.x,p.y,APT_EDIT,true)}</g>`;
     });
   }
@@ -4094,7 +4135,7 @@ function renderPins(){
   if(PEER_EDIT){
     (PEER_EDIT.pontos||[]).forEach((pt,pi)=>{
       if(pt.k3d || !pt.pid || !_pinVisivel(PEER_EDIT,pt) || (pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(PEER_EDIT,pt), p=pageToScreen(q.nx,q.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="peerCall('__peerRmPin',${pi});event.stopPropagation()">${pinSvg(p.x,p.y,PEER_EDIT,true)}</g>`;
     });
   }
@@ -4375,9 +4416,9 @@ async function aptIrLocal(ai, pid){
   }
   const li=LAYERS.findIndex(L=>L.prancha&&L.prancha.id===pid); if(li>0) setFoco(li);
   const pt=(a.pontos_json||[]).find(p=>p&&!p.k3d&&(p.pid||a.prancha_id)===pid);
-  if(pt && li===0 && V.page && (pt.pg||1)===V.pageNum){
-    const d=pageDims(), stage=$('stage');
-    V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2; V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+  if(pt && li>=0 && V.page && (pt.pg||1)===V.pageNum){
+    const d=pageDims(), stage=$('stage'), q=_pinBase(a,pt);
+    V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2; V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
     updateCss(); scheduleRender(0);
   }
   const pi=(a.pontos_json||[]).indexOf(pt);
@@ -4445,7 +4486,7 @@ async function apRepetirPav(){
       await Promise.all(esc_.slice(i,i+3).map(async(x,j)=>{ try{ ids[i+j]=await _pranchaIdDoDoc(x.doc); }catch(e){ falhas.push(x.pav); console.warn('repetir', x.pav, e); } feitos++; st.textContent='Preparando as pranchas… '+feitos+' de '+esc_.length; }));
     }
     if(APT_EDIT!==a){ ov.remove(); return; }
-    const novos=esc_.map((x,i)=>ids[i]?{ nx:pt0.nx, ny:pt0.ny, pg:1, pid:ids[i] }:null).filter(Boolean);
+    const novos=esc_.map((x,i)=>ids[i]?Object.assign({ nx:pt0.nx, ny:pt0.ny, pg:1, pid:ids[i] }, pt0.ref?{ ref:pt0.ref }:{}):null).filter(Boolean);
     a.pontos_json=(a.pontos_json||[]).concat(novos);
     novos.forEach(p=>{ const x=esc_.find((y,i)=>ids[i]===p.pid); if(x) _PID_INFO.set(p.pid,{ doc:x.doc, pav:x.pav }); });
     ov.remove();
@@ -4457,7 +4498,7 @@ async function apRepetirPav(){
 function pinClick(ai, pi){
   const a=APTS[ai]; if(!a) return;
   const pt=(a.pontos_json||[])[pi]; if(!pt) return;
-  const p=pageToScreen(pt.nx,pt.ny), r=$('stage').getBoundingClientRect();
+  const q=_pinBase(a,pt), p=pageToScreen(q.nx,q.ny), r=$('stage').getBoundingClientRect();
   _PB_PID=pt.pid||a.prancha_id;
   mostrarBalaoPin(a, ai, r.left + p.x, r.top + p.y);
 }
@@ -9565,7 +9606,7 @@ function novoApontamento(nx,ny){
     data_criacao:hojeBr(),
     participantes:{ [disc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
-    pontos_json:[{nx:nx,ny:ny,pg:V.pageNum,pid:pr?pr.id:null}],
+    pontos_json:[_pinGravar(nx,ny,V.pageNum,pr?pr.id:null)],
     drawings_json:[],
     prancha_id: pr ? pr.id : null,
     cde_revisao_id: (pr && pr._cde_revisao_id) || null,
@@ -10439,10 +10480,10 @@ async function focarPin(){
     V.pageNum=pt.pg||1; F.valido=false;
     await carregarPagina();
   }
-  const d=pageDims(), stage=$('stage');
+  const d=pageDims(), stage=$('stage'), q=_pinBase(APT_EDIT,pt);
   if(V.zoom<0.8) V.zoom=1.2;                       // aproxima o suficiente p/ enxergar
-  V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-  V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+  V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+  V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
   fecharApt();                                     // libera a tela p/ ver o pin
   updateCss(); scheduleRender(0);
 }
@@ -10645,9 +10686,9 @@ async function clicarAptLista(i){
   if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
     const pt=a.pontos_json[0];
     if((pt.pg||1)===V.pageNum){
-      const d=pageDims(), stage=$('stage');
-      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      const d=pageDims(), stage=$('stage'), q=_pinBase(a,pt);
+      V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
       updateCss(); scheduleRender(0);
     }
   }
@@ -10678,9 +10719,9 @@ async function irParaApt(i){
   if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
     const pt=a.pontos_json[0];
     if((pt.pg||1)===V.pageNum){
-      const d=pageDims(), stage=$('stage');
-      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      const d=pageDims(), stage=$('stage'), q=_pinBase(a,pt);
+      V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
       updateCss(); scheduleRender(0);
     }
   }
@@ -13614,7 +13655,7 @@ async function mkFilaProx(){
     const i=APTS.findIndex(a=>a.id===it.alvo); if(i<0){ MK_FILA=[]; return; }
     abrirAptIdx(i); await new Promise(r=>setTimeout(r,60)); if(!APT_EDIT) return;
     const a=APT_EDIT; a.drawings_json=(a.drawings_json||[]).concat(dw);
-    const c=_mkCentro(m0); if(!(a.pontos_json||[]).some(p=>p&&!p.k3d&&(p.pid||a.prancha_id)===m0.prancha_id)) (a.pontos_json=a.pontos_json||[]).push({ nx:c.nx, ny:c.ny, pg:m0.pg||1, pid:m0.prancha_id });
+    const c=_mkCentro(m0); if(!(a.pontos_json||[]).some(p=>p&&!p.k3d&&(p.pid||a.prancha_id)===m0.prancha_id)) (a.pontos_json=a.pontos_json||[]).push(_pinGravar(c.nx, c.ny, m0.pg||1, m0.prancha_id));
     if(txt.length){ a.descricao=(a.descricao?a.descricao+'\n':'')+txt.join('\n'); const d=$('apDesc'); if(d) d.value=a.descricao; }
     logAdd(g.length+' marcação(ões) anexada(s) da análise “'+rvAnNomeTela(mkAn()||{nome:''})+'”.');
     a._mkOrigem=origem;
@@ -13842,7 +13883,7 @@ async function mkPdfGerar(o){
     const sel=o.apt ? (salvo.apts||[]).filter(a=>!aptEhNota(a) && _aptVisivel(a) && (o.res || a.status!=='Resolvido'))
       .sort((x,y)=>String(x.id).localeCompare(String(y.id),'pt',{numeric:true})) : [];
     const NUM=new Map(sel.map((a,i)=>[a.id,i+1]));
-    const pins=[]; sel.forEach(a=>(a.pontos_json||[]).forEach(pt=>{ if(pt&&!pt.k3d&&pt.nx!=null&&_pinVisivel(a,pt)) pins.push({ a, id:a.id, n:NUM.get(a.id), nx:pt.nx, ny:pt.ny, pg:pt.pg||1, cor:corPrioTxt(a.prioridade) }); }));
+    const pins=[]; sel.forEach(a=>(a.pontos_json||[]).forEach(pt=>{ if(pt&&!pt.k3d&&pt.nx!=null&&_pinVisivel(a,pt)) pins.push(Object.assign({ a, id:a.id, n:NUM.get(a.id), pg:pt.pg||1, cor:corPrioTxt(a.prioridade) }, _pinBase(a,pt))); }));
     const marcs=MARCS.filter(m=>m.tipo!=='rastro'&&mkLayer(m.prancha_id));
     const pgs=[...new Set([...(o.mk?marcs.map(m=>m.pg||1):[]), ...pins.map(p=>p.pg)])].sort((a,b)=>a-b); if(!pgs.length) pgs.push(V.pageNum);
     // pranchas com a revisão

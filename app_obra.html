@@ -3059,11 +3059,11 @@ async function mudarPagina(delta){
     if(!(pt.nx>=0&&pt.nx<=1&&pt.ny>=0&&pt.ny<=1)) return;
     // 2) Edição de pins do apontamento ABERTO → adiciona pin
     if(PIN_EDIT && APT_EDIT){
-      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push({nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()});
+      (APT_EDIT.pontos_json=APT_EDIT.pontos_json||[]).push(_pinGravar(pt.nx,pt.ny,V.pageNum,_pranchaFocoId()));
       renderPins(); renderPinsList(); _peerBroadcast(); return;
     }
     // Split 2D/2D: apontamento aberto no OUTRO lado em edição de pins → o pin vai pra ele
-    if(PEER_EDIT){ peerCall('__peerAddPin',{nx:pt.nx,ny:pt.ny,pg:V.pageNum,pid:_pranchaFocoId()}); return; }
+    if(PEER_EDIT){ peerCall('__peerAddPin',_pinGravar(pt.nx,pt.ny,V.pageNum,_pranchaFocoId())); return; }
     // 3) "Apontar" (barra) → cria novo apontamento (one-shot)
     if(APONTAR){ APONTAR=false; $('btnApontar').classList.remove('on');
       $('stage').classList.toggle('modo-pin', PIN_EDIT);
@@ -3262,6 +3262,45 @@ function peerWin(){
 }
 function peerCall(fn){ const args=[].slice.call(arguments,1); const w=peerWin();
   try{ if(w && typeof w[fn]==='function') return w[fn].apply(w,args); }catch(e){ console.warn('split peer',fn,e); } return null; }
+// ── Referencial dos pins 2D (correção 2026-11-21) ──────────────────────────
+// Pin com ref:'p' guarda nx/ny na PRÓPRIA prancha (pid) — o mesmo referencial em
+// que o CDE e o QR (v.html) desenham a prancha sozinha. O clique chega no
+// referencial da BASE da composição; se a prancha do pin é uma camada alinhada
+// (posição/escala/rotação), converte. Pin sem ref = legado: nx/ny da base da
+// composição em que foi marcado (desenhado cru, como antes).
+// Mesma transformação do render (fórmula da camada em render()): largura da
+// camada = L.scale×largura da base; deslocamento = offset×(largura,altura) da
+// base; rotação em torno do centro da camada.
+function _layerDaPrancha(pid){ return pid ? (LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid)||null) : null; }
+function _camGeo(L){
+  const B=LAYERS[0]; if(!L||!B||!L.page||!B.page) return null;
+  const b=pageWH(B.page), l=pageWH(L.page), s=(L.scale||1)*(b.w/l.w), r=(L.rot||0)*Math.PI/180;
+  return { b, l, s, W:l.w*s, H:l.h*s, c:Math.cos(r), sn:Math.sin(r), ox:(L.offset&&L.offset.x)||0, oy:(L.offset&&L.offset.y)||0 };
+}
+function _camParaBase(L,u,v){
+  const g=_camGeo(L); if(!g) return { nx:u, ny:v };
+  let x=u*g.W, y=v*g.H;
+  if(g.sn){ const dx=x-g.W/2, dy=y-g.H/2; x=g.W/2+dx*g.c-dy*g.sn; y=g.H/2+dx*g.sn+dy*g.c; }
+  return { nx:g.ox+x/g.b.w, ny:g.oy+y/g.b.h };
+}
+function _baseParaCam(L,nx,ny){
+  const g=_camGeo(L); if(!g) return { nx, ny };
+  let x=(nx-g.ox)*g.b.w, y=(ny-g.oy)*g.b.h;
+  if(g.sn){ const dx=x-g.W/2, dy=y-g.H/2; x=g.W/2+dx*g.c+dy*g.sn; y=g.H/2-dx*g.sn+dy*g.c; }
+  return { nx:x/g.W, ny:y/g.H };
+}
+// Pin 2D → coordenada da BASE atual (para desenhar, centralizar, exportar).
+function _pinBase(a,pt){
+  if(!pt) return { nx:0, ny:0 };
+  if(pt.ref!=='p') return { nx:pt.nx, ny:pt.ny };
+  const L=_layerDaPrancha(pt.pid||(a&&a.prancha_id)); return L ? _camParaBase(L,pt.nx,pt.ny) : { nx:pt.nx, ny:pt.ny };
+}
+// Clique (coordenada da base) → pin gravado no referencial da prancha pid.
+function _pinGravar(nx,ny,pg,pid){
+  const L=_layerDaPrancha(pid); if(!L) return { nx, ny, pg, pid };
+  const q=_baseParaCam(L,nx,ny); return { nx:q.nx, ny:q.ny, pg, pid, ref:'p' };
+}
+
 function _pranchaFocoId(){ const L=LAYERS[FOCO_LI]||LAYERS[0]; return (L&&L.prancha&&L.prancha.id)||(PRANCHA&&PRANCHA.id)||null; }
 function _pinVisivel(a,pt){ const pid=pt.pid||a.prancha_id; return !!LAYERS.find(L=>L&&L.prancha&&L.prancha.id===pid&&L.visible!==false); }
 function _aptVisivel(a){ return !!_layerDoApt(a) || (a.pontos_json||[]).some(pt=>pt.pid && _pinVisivel(a,pt)); }
@@ -3319,7 +3358,7 @@ function renderPins(){
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if(!_pinVisivel(a,pt)) return;                // pin de outra prancha (split 2D/2D)
       if((pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(a,pt), p=pageToScreen(q.nx,q.ny);
       if(p.x<-40||p.y<-40||p.x>svg.clientWidth+40||p.y>svg.clientHeight+40) return;
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClick(${ai},${pi});event.stopPropagation()">
         ${pinSvg(p.x,p.y, a.id_num, corPrio(a.prioridade), false)}</g>`;
@@ -3331,7 +3370,7 @@ function renderPins(){
       if(pt.k3d) return;                            // pins 3D são desenhados no painel BIM
       if(pt.pid && !_pinVisivel(APT_EDIT,pt)) return;   // pin na prancha do outro lado
       if((pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(APT_EDIT,pt), p=pageToScreen(q.nx,q.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="pinClickEdit(${pi});event.stopPropagation()">${pinSvg(p.x,p.y, APT_EDIT.id_num, corPrio(APT_EDIT.prioridade), true)}</g>`;
     });
   }
@@ -3339,7 +3378,7 @@ function renderPins(){
   if(PEER_EDIT){
     (PEER_EDIT.pontos||[]).forEach((pt,pi)=>{
       if(pt.k3d || !pt.pid || !_pinVisivel(PEER_EDIT,pt) || (pt.pg||1)!==V.pageNum) return;
-      const p=pageToScreen(pt.nx,pt.ny);
+      const q=_pinBase(PEER_EDIT,pt), p=pageToScreen(q.nx,q.ny);
       out+=`<g style="pointer-events:auto;cursor:pointer" onclick="peerCall('__peerRmPin',${pi});event.stopPropagation()">${pinSvg(p.x,p.y, PEER_EDIT.id_num, corPrio(PEER_EDIT.prioridade), true)}</g>`;
     });
   }
@@ -3379,7 +3418,7 @@ function setPinEdit(on){
 function pinClick(ai, pi){
   const a=APTS[ai]; if(!a) return;
   const pt=(a.pontos_json||[])[pi]; if(!pt) return;
-  const p=pageToScreen(pt.nx,pt.ny), r=$('stage').getBoundingClientRect();
+  const q=_pinBase(a,pt), p=pageToScreen(q.nx,q.ny), r=$('stage').getBoundingClientRect();
   mostrarBalaoPin(a, ai, r.left + p.x, r.top + p.y);
 }
 // Origem externa do apontamento (obra/projetista) — usado para o realce que
@@ -8261,7 +8300,7 @@ function novoApontamento(nx,ny){
     data_criacao:hojeBr(),
     participantes:{ [disc]:{nivel:'Pendência',emails:fornEmails,prazo:'',conclusao:''} },
     log_json:[{data:hojeBr(),texto:'Apontamento '+g.id+' criado por '+USER.nome+' — Disciplina: '+disc+'.',tipo:'sistema'}],
-    pontos_json:[{nx:nx,ny:ny,pg:V.pageNum,pid:pr?pr.id:null}],
+    pontos_json:[_pinGravar(nx,ny,V.pageNum,pr?pr.id:null)],
     drawings_json:[],
     prancha_id: pr ? pr.id : null,
     cde_revisao_id: (pr && pr._cde_revisao_id) || null,
@@ -8842,10 +8881,10 @@ async function focarPin(){
     V.pageNum=pt.pg||1; F.valido=false;
     await carregarPagina();
   }
-  const d=pageDims(), stage=$('stage');
+  const d=pageDims(), stage=$('stage'), q=_pinBase(APT_EDIT,pt);
   if(V.zoom<0.8) V.zoom=1.2;                       // aproxima o suficiente p/ enxergar
-  V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-  V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+  V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+  V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
   fecharApt();                                     // libera a tela p/ ver o pin
   updateCss(); scheduleRender(0);
 }
@@ -9023,9 +9062,9 @@ async function clicarAptLista(i){
   if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
     const pt=a.pontos_json[0];
     if((pt.pg||1)===V.pageNum){
-      const d=pageDims(), stage=$('stage');
-      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      const d=pageDims(), stage=$('stage'), q=_pinBase(a,pt);
+      V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
       updateCss(); scheduleRender(0);
     }
   }
@@ -9055,9 +9094,9 @@ async function irParaApt(i){
   if(PRANCHA&&a.prancha_id===PRANCHA.id&&(a.pontos_json||[]).length&&V.page){
     const pt=a.pontos_json[0];
     if((pt.pg||1)===V.pageNum){
-      const d=pageDims(), stage=$('stage');
-      V.panX=pt.nx*d.w*V.zoom - stage.clientWidth/2;
-      V.panY=pt.ny*d.h*V.zoom - stage.clientHeight/2;
+      const d=pageDims(), stage=$('stage'), q=_pinBase(a,pt);
+      V.panX=q.nx*d.w*V.zoom - stage.clientWidth/2;
+      V.panY=q.ny*d.h*V.zoom - stage.clientHeight/2;
       updateCss(); scheduleRender(0);
     }
   }
