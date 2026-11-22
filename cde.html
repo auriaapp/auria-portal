@@ -258,6 +258,7 @@
   /* Visualizador 3D (modelos BIM). Mesmo papel do .cdeWin-dxf: alvo de
      renderização alternativo ao canvas 2D, ocupando a janela inteira. */
   .cdeWin-bim{position:absolute;inset:0;background:#243040;overflow:hidden;display:none}
+  .cdePins3d{position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
   .cdeWin-bim canvas{display:block;width:100%;height:100%}
   .cdeWin-bim .bimDica{position:absolute;left:72px;bottom:10px;z-index:2;font-size:11px;
     color:#cbd5e1;background:rgba(15,23,42,.6);padding:5px 9px;border-radius:6px;pointer-events:none}
@@ -2451,15 +2452,16 @@ function setOrdem(m){ ORDEM=m; renderNav(); _fechaPops(); }
 // etapa (ex. "EX") existe em várias disciplinas.
 let PASTAS_ABERTAS = new Set();
 let PASTAS_DISC_VISITADAS = new Set();   // disciplinas que já receberam o default nesta máquina
+let PASTAS_TOPO = {};   // disciplina → etapa mais avançada já vista: chegou uma ACIMA dela, a pasta nova abre sozinha
 function pastasKey(){ return 'cde_pastas_'+EMP_ID; }
 function carregarPastasAbertas(){
   try{
     const raw = localStorage.getItem(pastasKey());
-    if(raw){ const o=JSON.parse(raw); PASTAS_ABERTAS=new Set(o.abertas||[]); PASTAS_DISC_VISITADAS=new Set(o.visitadas||[]); }
+    if(raw){ const o=JSON.parse(raw); PASTAS_ABERTAS=new Set(o.abertas||[]); PASTAS_DISC_VISITADAS=new Set(o.visitadas||[]); PASTAS_TOPO=o.topo||{}; }
   }catch(_){}
 }
 function salvarPastasAbertas(){
-  try{ localStorage.setItem(pastasKey(), JSON.stringify({ abertas:[...PASTAS_ABERTAS], visitadas:[...PASTAS_DISC_VISITADAS] })); }catch(_){}
+  try{ localStorage.setItem(pastasKey(), JSON.stringify({ abertas:[...PASTAS_ABERTAS], visitadas:[...PASTAS_DISC_VISITADAS], topo:PASTAS_TOPO })); }catch(_){}
 }
 function toggleEtapa(disc, et){
   const key=disc+'::'+et;
@@ -3090,10 +3092,18 @@ function navFiltrado(){
     const etapas=[...new Set(doDisc.map(d=>d.etapa||'—'))].sort((a,b)=>idx(a)-idx(b));
     // 1ª vez que esta disciplina é vista nesta máquina: abre só a etapa mais
     // avançada (as visitas seguintes respeitam o que o usuário deixou aberto).
+    // Etapa nova (mais avançada que a maior já vista nesta máquina): abre sozinha;
+    // o resto continua como o usuário deixou. Sem registro ainda = só anota, sem abrir.
+    const reais=etapas.filter(et=>idx(et)<99), topo=reais.length?reais[reais.length-1]:null;
     if(!PASTAS_DISC_VISITADAS.has(disc)){
       PASTAS_DISC_VISITADAS.add(disc);
       if(etapas.length) PASTAS_ABERTAS.add(disc+'::'+etapas[etapas.length-1]);
+      if(topo) PASTAS_TOPO[disc]=topo;
       salvarPastasAbertas();
+    }else if(topo && PASTAS_TOPO[disc]!==topo){
+      const ant=PASTAS_TOPO[disc];
+      if(ant==null){ PASTAS_TOPO[disc]=topo; salvarPastasAbertas(); }
+      else if(idx(topo)>idx(ant)){ PASTAS_TOPO[disc]=topo; PASTAS_ABERTAS.add(disc+'::'+topo); salvarPastasAbertas(); }
     }
     const folders = etapas.map(et=>{
       const ds=ordenarDocs(doDisc.filter(d=>(d.etapa||'—')===et));
@@ -4616,7 +4626,7 @@ class CdeWin {
       for(const {m, bytes} of baixados){
         this.bimMsg(baixados.length>1 ? `Carregando ${m.nome||''}…` : 'Carregando modelo…');
         const model = await fragments.load(bytes, { modelId:this.id+':'+m.path, camera });
-        carregados.push({ nome:m.nome, model });
+        carregados.push({ nome:m.nome, model, path:m.path });
         scene.add(model.object);
         if(abortado()) break;
       }
@@ -4822,6 +4832,7 @@ class CdeWin {
       this.bimRenderCamadas();
       this.bimCfgAplicar(this.bimCfgLer());   // reaplica as preferências salvas
       this.bimEspacosDetectar();              // item 86: ambientes (IfcSpace) ocultos por padrão
+      this.bimCarregarPins3D().catch(e=>console.warn('pins 3D:', e.message||e));
       await fragments.update(true);
 
       let tAnt = performance.now();
@@ -4839,6 +4850,7 @@ class CdeWin {
         if(B.ao && B.composer) B.composer.render();
         else                   B.renderer.render(B.scene, B.camera);
         this.bimAtualizarCotas();
+        this.bimPosPins3D();
       };
       loop();
       this.bimHideMsg();
@@ -6079,13 +6091,78 @@ class CdeWin {
       this.bpConteudo.innerHTML='<div class="bpVazio">Não consegui ler as propriedades: '+esc((e&&e.message)||String(e))+'</div>';
     }
   }
+  // ── Pins 3D (apontamentos BIM do App) — só leitura, mesmas regras do 2D ───
+  //  Abertos sempre; encerrados só com o 🕓 Histórico; clique abre o card.
+  //  O pin guarda o ARQUIVO do CDE (cde_arquivo_id) e a âncora LOCAL do modelo
+  //  (lx/ly/lz): a posição é refeita pelo transform do modelo nesta cena, então
+  //  não depende de quais disciplinas estão federadas (o x/y/z de mundo depende).
+  async bimCarregarPins3D(){
+    const B=this.B3; if(!B) return;
+    const paths=B.modelos.map(m=>m.path).filter(Boolean);
+    if(!paths.length) return;
+    const r=await sb.from('cde_arquivo_auria').select('id,frag_path').in('frag_path', paths);
+    if(r.error) throw r.error;
+    if(this.B3!==B) return;
+    const porPath={}; (r.data||[]).forEach(a=>{ porPath[a.frag_path]=a.id; });
+    B.modelos.forEach(m=>{ m.arquivoId=porPath[m.path]||null; });
+    const ids=B.modelos.map(m=>m.arquivoId).filter(Boolean);
+    if(!ids.length){ this.CDE_APTS3D=[]; return; }
+    const q=await sb.from('apontamentos')
+      .select('id,id_num,titulo,descricao,tipo,status,prioridade,disciplina,analista,data_criacao,prazo_min,atrasado,pontos_json,cde_revisao_id,visibilidade,imagens_json,criado_por_id,criado_por_papel,log_json,dimensao,grupo_id,empreendimento_id')
+      .eq('empreendimento_id', EMP_ID)
+      .or(ids.map(id=>'pontos_json.cs.[{"cde_arquivo_id":"'+id+'"}]').join(','));
+    if(q.error) throw q.error;
+    if(this.B3!==B) return;
+    this.CDE_APTS3D=q.data||[];
+    this.bimMontarPins3D();
+  }
+  bimMontarPins3D(){
+    const B=this.B3; if(!B || !this.bimWrap) return;
+    let lay=this.bimWrap.querySelector('.cdePins3d');
+    if(!lay){ lay=document.createElement('div'); lay.className='cdePins3d'; this.bimWrap.appendChild(lay); }
+    lay.innerHTML=''; B.pins=[];
+    const porArq={}; B.modelos.forEach(m=>{ if(m.arquivoId) porArq[m.arquivoId]=m; });
+    (this.CDE_APTS3D||[]).forEach(a=>{
+      const encerrado = a.status==='Resolvido' || a.status==='Reprovado';
+      if(encerrado && !CDE_HIST_ON) return;
+      (a.pontos_json||[]).forEach(pt=>{
+        if(!pt || !pt.k3d) return;
+        const m=porArq[pt.cde_arquivo_id]; if(!m) return;
+        const el=document.createElement('div');
+        el.className='cdePin'+(this.CDE_PIN_SEL===a.id?' sel':'');
+        el.title=a.id+' — '+(a.titulo||'');
+        const pv=cdePinSvg(a); el.innerHTML=pv.svg;
+        el.style.marginLeft=(-pv.w/2)+'px'; el.style.marginTop=(-pv.h+1)+'px'; el.style.display='none';
+        el.addEventListener('pointerdown', e=>e.stopPropagation());
+        el.addEventListener('click', e=>{ e.stopPropagation(); mostrarCdePinCard(a, e.clientX, e.clientY, this); });
+        lay.appendChild(el);
+        B.pins.push({ el, pt, m });
+      });
+    });
+    this.bimPosPins3D();
+  }
+  bimPosPins3D(){
+    const B=this.B3; if(!B || !B.pins || !B.pins.length) return;
+    const cv=B.renderer.domElement, W=cv.clientWidth, H=cv.clientHeight;
+    const v=B._pinV || (B._pinV=new B.THREE.Vector3());
+    B.pins.forEach(({el,pt,m})=>{
+      const o=m.model&&m.model.object;
+      if(pt.lx!=null && pt.ly!=null && pt.lz!=null && o){ o.updateMatrixWorld(); v.set(pt.lx,pt.ly,pt.lz); o.localToWorld(v); }
+      else v.set(pt.x||0, pt.y||0, pt.z||0);
+      v.project(B.camera);
+      const x=(v.x+1)*0.5*W, y=(1-v.y)*0.5*H;
+      if(v.z>1 || x<-30 || y<-10 || x>W+30 || y>H+50){ el.style.display='none'; return; }
+      el.style.display=''; el.style.left=x+'px'; el.style.top=y+'px';
+    });
+  }
   bimDispose(){
     this._bimJob = (this._bimJob||0)+1;   // invalida qualquer carga em curso
     if(this.bpLista) this.bpLista.innerHTML='';
     if(this.bpConteudo) this.bpConteudo.innerHTML='<div class="bpVazio">Clique num elemento do modelo.</div>';
     // As etiquetas de cota são DOM solto dentro do wrapper: sem isso ficariam
     // penduradas na tela depois de trocar de modelo.
-    if(this.bimWrap) this.bimWrap.querySelectorAll('.bimCota').forEach(el=>el.remove());
+    if(this.bimWrap) this.bimWrap.querySelectorAll('.bimCota,.cdePins3d').forEach(el=>el.remove());
+    this.CDE_APTS3D=[];
     // Ouvintes de teclado vivem no DOCUMENTO: sem tirar aqui, uma janela
     // fechada continuaria capturando W/A/S/D da sessão inteira.
     if(this._bimKeyDown){ document.removeEventListener('keydown', this._bimKeyDown); this._bimKeyDown=null; }
@@ -6472,6 +6549,7 @@ class CdeWin {
     this.updateCss();
   }
   renderPinsCDE(){
+    if(this.VIEW_FMT==='bim'){ this.bimMontarPins3D(); }
     const wrap=this.pinsWrap; if(!wrap) return; wrap.innerHTML='';
     if(this.BUSCA_HL && this.BUSCA_HL.length && this.V.page && this.VIEW_FMT==='pdf'){
       const { pw, ph } = this._dims(), z=this.V.zoom;
@@ -6659,7 +6737,7 @@ function atualizarToolbar(){
            bap.classList.toggle('on', APONTAR_ON); }
   // Histórico (mostrar encerrados): sempre disponível em PDF.
   const bh=$('btnHistCde');
-  if(bh){ bh.style.display = isPdf ? 'inline-flex' : 'none';
+  if(bh){ bh.style.display = (isPdf || w.VIEW_FMT==='bim') ? 'inline-flex' : 'none';
           bh.classList.toggle('on', CDE_HIST_ON); }
   const cmpBtn=$('btnCmpMode');
   if(w.isCmp){
