@@ -2579,7 +2579,8 @@ export async function mostrarContexto(V, porMod, R){
   for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
     try{ await x.model.setVisible(undefined,false); }catch(_){}
     if(vis[mi]&&vis[mi].length){ try{ await x.model.setVisible(vis[mi],true); }catch(_){} }
-    if(fant[mi]&&fant[mi].length){ try{ await x.model.setOpacity(fant[mi], 0.12); }catch(_){} } }
+    if(fant[mi]&&fant[mi].length){ try{ await x.model.setOpacity(fant[mi], 0.18); }catch(_){}   // entorno em branco gelo (usuário 2026-11-23): só o destaque tem cor
+      try{ await x.model.highlight(fant[mi],{color:new T.Color(0xE6EDF5),renderedFaces:1,opacity:0.18,transparent:true}); }catch(_){} } }
   V._fantasmaIds=fant;
   for(const [mi,s] of Object.entries(sel)){ const ids=[...s]; try{ await V.modelos[mi].model.setOpacity(ids,1); await V.modelos[mi].model.highlight(ids,{color:new T.Color(0xF28C28),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
   const uni={}; for(const [mi,s] of Object.entries(sel)) uni[mi]=[...s];
