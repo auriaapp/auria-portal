@@ -2551,6 +2551,42 @@ export async function pontoClash(V, aMi, aId, bMi, bId){
   const ca=bA.getCenter(new T.Vector3()), cb=bB.getCenter(new T.Vector3());
   return { x:(ca.x+cb.x)/2, y:(ca.y+cb.y)/2, z:(ca.z+cb.z)/2 };
 }
+// Contexto de uma seleção (quadro da reunião, 2026-11-23): mesma ideia do fantasma
+// do clash — a seleção fica opaca em laranja (foco), o que está a até R metros
+// dela fica translúcido (12%) e o resto some. A câmera NÃO se mexe (a viewport
+// guardou a dela). porMod = { índiceDoModelo: [localIds] }.
+export async function mostrarContexto(V, porMod, R){
+  R=R||6; const T=V.THREE, TETO=1500;
+  await _tirarAntiga(V); await _limparFantasma(V);
+  for(const x of V.modelos){ try{ await x.model.resetHighlight(); }catch(_){} }
+  const caixa=new T.Box3(); let tem=false; const sel={};
+  for(const [mi,ids] of Object.entries(porMod||{})){ const x=V.modelos[mi]; if(!x||!ids||!ids.length) continue; sel[mi]=new Set(ids);
+    const bx=await _boxesCacheadas(V, +mi, x, ids);
+    for(const id of ids){ const b=bx.get(id); if(!b) continue; caixa.expandByPoint(new T.Vector3(b.min.x,b.min.y,b.min.z)); caixa.expandByPoint(new T.Vector3(b.max.x,b.max.y,b.max.z)); tem=true; } }
+  if(!tem) return false;
+  const cand=[];
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    let ids=[]; try{ ids=Object.values(await x.model.getItemsOfCategories(CAT_VISIVEIS)||{}).flat(); }catch(_){}
+    if(!ids.length) continue;
+    const bx=await _boxesCacheadas(V, mi, x, ids);
+    for(const id of ids){ if(sel[mi]&&sel[mi].has(id)) continue; const b=bx.get(id); if(!b) continue;
+      const dx=Math.max(b.min.x-caixa.max.x,0,caixa.min.x-b.max.x), dy=Math.max(b.min.y-caixa.max.y,0,caixa.min.y-b.max.y), dz=Math.max(b.min.z-caixa.max.z,0,caixa.min.z-b.max.z);
+      const d2=dx*dx+dy*dy+dz*dz; if(d2<=R*R) cand.push([d2,mi,id]); } }
+  cand.sort((u,v)=>u[0]-v[0]); if(cand.length>TETO) cand.length=TETO;
+  const fant={}; for(const [,mi,id] of cand) (fant[mi]=fant[mi]||[]).push(id);
+  const vis={}; for(const [mi,ids] of Object.entries(fant)) vis[mi]=ids.slice();
+  for(const [mi,s] of Object.entries(sel)) (vis[mi]=vis[mi]||[]).push(...s);
+  for(let mi=0; mi<V.modelos.length; mi++){ const x=V.modelos[mi];
+    try{ await x.model.setVisible(undefined,false); }catch(_){}
+    if(vis[mi]&&vis[mi].length){ try{ await x.model.setVisible(vis[mi],true); }catch(_){} }
+    if(fant[mi]&&fant[mi].length){ try{ await x.model.setOpacity(fant[mi], 0.12); }catch(_){} } }
+  V._fantasmaIds=fant;
+  for(const [mi,s] of Object.entries(sel)){ const ids=[...s]; try{ await V.modelos[mi].model.setOpacity(ids,1); await V.modelos[mi].model.highlight(ids,{color:new T.Color(0xF28C28),renderedFaces:1,opacity:1,transparent:false}); }catch(_){} }
+  const uni={}; for(const [mi,s] of Object.entries(sel)) uni[mi]=[...s];
+  V._isolado=true; V._isoladoPorMod=vis; V._ultimaSelecao=uni; V._colorido=false; V._cores=null; V._fantasma=true;
+  try{ await V.fragments.update(true); }catch(_){}
+  return true;
+}
 // Mostra o resultado do clash: isola os envolvidos, A em vermelho, B em ciano.
 export async function mostrarClash(V, porModA, porModB){
   await _tirarAntiga(V);
