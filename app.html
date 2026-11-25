@@ -3338,29 +3338,109 @@ function atualizarCardBase(hash){
 
 // ── Camadas: estado persistido em camadas_estado_auria ──────────────────────
 async function carregarEstadoCamada(L){
+  let legado=null;
   try{
     const { data }=await sb.from('camadas_estado_auria').select('*')
       .eq('empreendimento_id',EMP.id).eq('prancha_id',L.prancha.id).maybeSingle();
     if(data){
-      L.offset={x:+data.offset_x||0,y:+data.offset_y||0}; L.scale=+data.scale||1;
-      L.rot=+data.rotation||0; L.opacity=(data.opacity==null?0.7:+data.opacity);
+      L.opacity=(data.opacity==null?0.7:+data.opacity);
       L.cor=(data.color_mode&&data.color_mode[0]==='#')?data.color_mode:null;
       L.visible=data.visible!==false;
+      legado={ x:+data.offset_x||0, y:+data.offset_y||0, s:+data.scale||1, r:+data.rotation||0 };
     }
   }catch(e){ console.warn('carregarEstadoCamada:',e.message||e); }
+  L._leg=legado;
+  await carregarGeoCamada(L);
 }
-let _saveCamTimer=null;
-function salvarEstadoCamada(L){
+// ═══ Item 153: alinhamento por PAR (base + sobreposta), tabela camada_par_auria ═══
+// Antes a posição era uma só por prancha, sem saber sobre qual base foi feita: trocar a
+// base ou usar a mesma prancha em duas análises sobrescrevia. Agora vale, nesta ordem:
+//   par      = este par já foi alinhado;
+//   inverso  = o par contrário (a base de agora sobre esta prancha) invertido;
+//   via      = as duas já foram alinhadas a uma mesma terceira prancha;
+//   herdado  = alinhada a outra base da mesma disciplina e tamanho de folha, ou posição
+//              antiga de quando não se guardava a base;
+//   novo     = nunca alinhada com esta base.
+// Só "par" é gravado; os outros são conta feita na hora e ficam para conferir.
+// Semelhança em pontos do PDF: ponto da sobreposta → ponto da base (mesma conta do _camGeo).
+function _geoT(g,b,l){ const W=g.s*b.w, k=W/l.w, H=l.h*k, t=(g.r||0)*Math.PI/180, c=Math.cos(t), n=Math.sin(t);
+  return { a:k*c, b:k*n, x:g.x*b.w+W/2-W/2*c+H/2*n, y:g.y*b.h+H/2-W/2*n-H/2*c }; }
+function _geoG(T,b,l){ const k=Math.hypot(T.a,T.b), W=k*l.w, H=k*l.h, c=T.a/k, n=T.b/k;
+  return { x:(T.x-W/2+W/2*c-H/2*n)/b.w, y:(T.y-H/2+W/2*n+H/2*c)/b.h, s:W/b.w, r:Math.abs(T.b)<1e-9&&T.a>0?0:Math.atan2(T.b,T.a)*180/Math.PI }; }
+function _geoInv(T){ const q=T.a*T.a+T.b*T.b, a=T.a/q, b=-T.b/q; return { a, b, x:-(a*T.x-b*T.y), y:-(b*T.x+a*T.y) }; }
+function _geoMul(A,B){ return { a:A.a*B.a-A.b*B.b, b:A.b*B.a+A.a*B.b, x:A.a*B.x-A.b*B.y+A.x, y:A.b*B.x+A.a*B.y+A.y }; }
+// Escala fora disso não é desenho sobre desenho (sobrou de trocas de base antigas).
+function _geoSa(g){ return !!g && [g.x,g.y,g.s,g.r].every(isFinite) && g.s>=0.15 && g.s<=6; }
+function _geoPor(L,g,origem,via){ L.offset={ x:g.x, y:g.y }; L.scale=g.s; L.rot=g.r; L._geo=origem; L._geoVia=via||null; }
+async function carregarGeoCamada(L, manter){
+  let legado=L._leg||null; if(legado && !legado.x && !legado.y && legado.s===1 && !legado.r) legado=null;
+  const B=LAYERS[0], emp=EMP&&EMP.id, pid=L.prancha&&L.prancha.id, bid=B&&B.prancha&&B.prancha.id;
+  L._geoBase=bid||null; L._geoFolha=false;
+  const semPar=()=>{ if(manter){ L._geo='herdado'; L._geoVia=null; } else if(legado) _geoPor(L,legado,'herdado'); else _geoPor(L,{x:0,y:0,s:1,r:0},'novo'); };
+  if(!emp||!pid||!bid||bid===pid||!B.page||!L.page) return semPar();
+  const b=pageWH(B.page), l=pageWH(L.page), G=d=>({ x:+d.offset_x||0, y:+d.offset_y||0, s:+d.scale||1, r:+d.rotation||0 });
+  try{
+    const ids='('+bid+','+pid+')';
+    const { data, error }=await sb.from('camada_par_auria').select('*').eq('empreendimento_id',emp).or('base_id.in.'+ids+',prancha_id.in.'+ids);
+    if(error) throw error;
+    const R=data||[], de=(x,y)=>R.find(d=>d.base_id===x&&d.prancha_id===y);
+    // 1) o próprio par
+    const d0=de(bid,pid);
+    if(d0){
+      _geoPor(L,G(d0),'par');
+      const t=(v,w)=>v!=null&&Math.abs(+v-w)>1.5;
+      L._geoFolha=t(d0.base_w,b.w)||t(d0.base_h,b.h)||t(d0.w,l.w)||t(d0.h,l.h);
+      if(d0.base_w==null && !APP_RO) sb.from('camada_par_auria').update({ base_w:b.w, base_h:b.h, w:l.w, h:l.h }).eq('empreendimento_id',emp).eq('base_id',bid).eq('prancha_id',pid).is('base_w',null).then(()=>{},()=>{});
+      return;
+    }
+    // 2) o par contrário
+    const d1=de(pid,bid);
+    if(d1){ const g=_geoG(_geoInv(_geoT(G(d1),l,b)),b,l); if(_geoSa(g)) return _geoPor(L,g,'inverso'); }
+    // 3) as duas sobre uma terceira (mais recente primeiro)
+    const ter=R.filter(d=>d.prancha_id===pid&&d.base_w).map(d=>({ d, e:de(d.base_id,bid) })).filter(x=>x.e)
+      .sort((x,y)=>String(y.d.atualizado_em).localeCompare(String(x.d.atualizado_em)));
+    for(const x of ter){ const c={ w:+x.d.base_w, h:+x.d.base_h }, g0=G(x.d), g1=G(x.e); if(!_geoSa(g0)||!_geoSa(g1)) continue;
+      const g=_geoG(_geoMul(_geoInv(_geoT(g1,c,b)),_geoT(g0,c,l)),b,l); if(_geoSa(g)) return _geoPor(L,g,'via',x.d.base_id); }
+    // 4) alinhada a outra base igual a esta (disciplina e folha): ponto de partida
+    const meus=R.filter(d=>d.prancha_id===pid);
+    if(meus.length){
+      const { data:pr }=await sb.from('pranchas_auria').select('id,disciplina,width_pts,height_pts').in('id',meus.map(d=>d.base_id));
+      const P=B.prancha, ig=meus.filter(d=>{ const q=(pr||[]).find(z=>z.id===d.base_id); return q && (q.disciplina||'')===(P.disciplina||'') && Math.abs(+q.width_pts-+P.width_pts)<2 && Math.abs(+q.height_pts-+P.height_pts)<2 && _geoSa(G(d)); })
+        .sort((x,y)=>String(y.atualizado_em).localeCompare(String(x.atualizado_em)))[0];
+      if(ig) return _geoPor(L,G(ig),'herdado',ig.base_id);
+      legado=null;   // a base da posição antiga é conhecida e é outra
+    } else if(legado && !_geoSa(legado)) legado=null;
+  }catch(e){ console.warn('carregarGeoCamada:',e.message||e); }
+  semPar();
+}
+// Sobrepostas que ainda estão na posição de outra base: busca o par com a base atual.
+async function geoConferirBase(manter){
+  const bid=LAYERS[0]&&LAYERS[0].prancha&&LAYERS[0].prancha.id;
+  for(const L of LAYERS.slice(1)) if(L._geoBase!==bid) await carregarGeoCamada(L,manter);
+}
+const GEO_TXT={ par:'Alinhada com esta base.', inverso:'Alinhamento calculado pelo par contrário. Confira.', via:'Alinhamento calculado por outra prancha. Confira.', herdado:'Posição trazida de outra base. Confira.', novo:'Ainda não alinhada com esta base.' };
+function geoConfirmar(i){ const L=LAYERS[i]; if(!L||i<=0) return; salvarEstadoCamada(L,'par'); rvAviso('Alinhamento salvo para este par.'); if($('rvCamWin')) rvCamWin(i); }
+// Opacidade, cor e visível: por prancha. Posição: só com geo (ajuste feito pela pessoa),
+// no par com a base atual. geo==='par' não toca na posição antiga por prancha (App Obra).
+function salvarEstadoCamada(L, geo){
   if(APP_RO) return;   // consulta: mexer no olho/opacidade vale só nesta tela
-  clearTimeout(_saveCamTimer);
-  _saveCamTimer=setTimeout(async()=>{
+  const emp=EMP&&EMP.id, pid=L.prancha&&L.prancha.id; if(!emp||!pid) return;
+  if(geo){
+    const B=LAYERS[0], bid=B&&B.prancha&&B.prancha.id;
+    if(bid && bid!==pid && B.page && L.page){ L._geo='par'; L._geoVia=null; L._geoBase=bid; L._geoFolha=false; L._geoPend={ bid, b:pageWH(B.page), l:pageWH(L.page), g:{ x:L.offset.x, y:L.offset.y, s:L.scale, r:L.rot } }; }
+    if(geo!=='par'){ L._geoLeg=true; L._leg={ x:L.offset.x, y:L.offset.y, s:L.scale, r:L.rot }; }
+  }
+  clearTimeout(L._camTimer);
+  L._camTimer=setTimeout(async()=>{
+    const p=L._geoPend, leg=L._geoLeg; L._geoPend=null; L._geoLeg=false;
+    const agora=new Date().toISOString();
+    const est={ empreendimento_id:emp, prancha_id:pid, opacity:L.opacity, color_mode:L.cor||'Original', visible:L.visible, atualizado_em:agora, atualizado_por:USER.id };
+    if(leg) Object.assign(est,{ offset_x:L.offset.x, offset_y:L.offset.y, scale:L.scale, rotation:L.rot });
     try{
-      await sb.from('camadas_estado_auria').upsert({
-        empreendimento_id:EMP.id, prancha_id:L.prancha.id,
-        offset_x:L.offset.x, offset_y:L.offset.y, scale:L.scale, rotation:L.rot,
-        opacity:L.opacity, color_mode:L.cor||'Original', visible:L.visible,
-        atualizado_em:new Date().toISOString(), atualizado_por:USER.id
-      }, { onConflict:'empreendimento_id,prancha_id' });
+      const w=[ sb.from('camadas_estado_auria').upsert(est,{ onConflict:'empreendimento_id,prancha_id' }) ];
+      if(p) w.push(sb.from('camada_par_auria').upsert({ empreendimento_id:emp, base_id:p.bid, prancha_id:pid, offset_x:p.g.x, offset_y:p.g.y, scale:p.g.s, rotation:p.g.r,
+        base_w:p.b.w, base_h:p.b.h, w:p.l.w, h:p.l.h, origem:'ajuste', atualizado_em:agora, atualizado_por:USER.id },{ onConflict:'empreendimento_id,base_id,prancha_id' }));
+      (await Promise.all(w)).forEach(x=>{ if(x&&x.error) console.warn('salvarEstadoCamada:',x.error.message||x.error); });
     }catch(e){ console.warn('salvarEstadoCamada:',e.message||e); }
   }, 500);
 }
@@ -3536,11 +3616,11 @@ function htmlAln(L){
     <div id="alnBody"></div>`;
 }
 
-function posMove(dx,dy){ const L=camAtual(); if(!L) return; L.offset.x+=dx*POS_STEP; L.offset.y+=dy*POS_STEP; salvarEstadoCamada(L); F.valido=false; render(); }
-function posReset(){ const L=camAtual(); if(!L) return; L.offset={x:0,y:0}; salvarEstadoCamada(L); F.valido=false; render(); }
-function posRot(d){ const L=camAtual(); if(!L) return; L.rot=(L.rot+d)%360; salvarEstadoCamada(L); posTab('pos'); renderCamadas(); F.valido=false; render(); }
-function posSetRot(v){ const L=camAtual(); if(!L) return; L.rot=v%360; salvarEstadoCamada(L); posTab('pos'); renderCamadas(); F.valido=false; render(); }
-function posSetScale(v){ const L=camAtual(); if(!L||!(v>=0.05&&v<=10)){ alert('Escala entre 0.05 e 10.'); return; } L.scale=v; salvarEstadoCamada(L); posTab('esc'); renderCamadas(); F.valido=false; render(); }
+function posMove(dx,dy){ const L=camAtual(); if(!L) return; L.offset.x+=dx*POS_STEP; L.offset.y+=dy*POS_STEP; salvarEstadoCamada(L,true); F.valido=false; render(); }
+function posReset(){ const L=camAtual(); if(!L) return; L.offset={x:0,y:0}; salvarEstadoCamada(L,true); F.valido=false; render(); }
+function posRot(d){ const L=camAtual(); if(!L) return; L.rot=(L.rot+d)%360; salvarEstadoCamada(L,true); posTab('pos'); renderCamadas(); F.valido=false; render(); }
+function posSetRot(v){ const L=camAtual(); if(!L) return; L.rot=v%360; salvarEstadoCamada(L,true); posTab('pos'); renderCamadas(); F.valido=false; render(); }
+function posSetScale(v){ const L=camAtual(); if(!L||!(v>=0.05&&v<=10)){ alert('Escala entre 0.05 e 10.'); return; } L.scale=v; salvarEstadoCamada(L,true); posTab('esc'); renderCamadas(); F.valido=false; render(); }
 
 // ── Alinhamento por ponto/linha ─────────────────────────────────────────────
 function alignReset(){
@@ -3611,7 +3691,7 @@ function aplicar2Pontos(){
   if(!ALIGN.pts.p1||!ALIGN.pts.p2){ alert('Marque P1 e P2.'); return; }
   L.offset.x += (ALIGN.pts.p2.nx-ALIGN.pts.p1.nx);
   L.offset.y += (ALIGN.pts.p2.ny-ALIGN.pts.p1.ny);
-  salvarEstadoCamada(L); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
+  salvarEstadoCamada(L,true); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
   renderCamadas(); F.valido=false; render();
 }
 function aplicarLinha(){
@@ -3633,7 +3713,7 @@ function aplicarLinha(){
   L.scale=scNew;
   L.offset.x=P.C.nx - nxImgA*scNew;
   L.offset.y=P.C.ny - nyImgA*scNew;
-  salvarEstadoCamada(L); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
+  salvarEstadoCamada(L,true); ALIGN.pts={}; $('alignSvg').innerHTML=''; renderAlnBody();
   renderCamadas(); F.valido=false; render();
 }
 
@@ -12304,12 +12384,13 @@ function rvCamWin(i, anc){
   const pos = base ? '<div class="rvMini">A base é a referência de posição: ajuste as camadas sobre ela.</div>'
     : (LOCK_POS ? `<div class="rvMini" style="margin-bottom:6px">🔒 Pranchas travadas.</div><button class="rvCwB" onclick="toggleLock(false);rvCamWin(${i})">🔓 Destravar para ajustar</button>`
     : `<div class="rvCwG"><button class="rvCwB" onclick="rvCamPos(${i},'pos')">✥ Mover</button><button class="rvCwB" onclick="rvCamPos(${i},'esc')">⤡ Escala</button><button class="rvCwB" onclick="rvCamPos(${i},'aln')">⌖ Alinhar por pontos</button></div>`);
+  const geo = base||!L._geo ? '' : `<div class="rvMini" style="margin-top:6px">${esc(L._geoFolha?'A folha mudou de tamanho depois de alinhada. Confira.':GEO_TXT[L._geo]||'')}${(!APP_RO&&(L._geoFolha||/inverso|via|herdado/.test(L._geo)))?` <button class="rvCwB" style="padding:3px 8px;margin-left:4px" onclick="geoConfirmar(${i})">Está certo</button>`:''}</div>`;
   w.innerHTML=`<div class="hd"><span class="rvSt" style="background:var(--rvLarT);color:var(--rvLar)">${base?'base':'camada '+i}</span><b title="${esc(cod)}">${esc(cod)}</b><button class="xb" onclick="rvCamWinFechar()">✕</button></div>
     <label class="rvCwL"><input type="checkbox" ${L.visible?'checked':''} onchange="camVis(${i},this.checked)"> Visível</label>
     <div class="rvLbl">Opacidade <span id="rvCwOp" style="float:right;font-family:Consolas,monospace">${Math.round(L.opacity*100)}%</span></div>
     <input type="range" min="0.1" max="1" step="0.01" value="${L.opacity}" oninput="camOpac(${i},this.value);$('rvCwOp').textContent=Math.round(this.value*100)+'%'" style="width:100%;accent-color:var(--rvLar)">
     <div class="rvLbl">Cor</div><div class="rvCwSw">${sw}</div>
-    <div class="rvLbl">Posição e escala</div>${pos}
+    <div class="rvLbl">Posição e escala</div>${pos}${geo}
     ${base ? (LAYERS.length===1?`<button class="rvCwB rvCwX" onclick="rvFechar2d()">Fechar a prancha</button>`:'') : `<button class="rvCwB rvCwX" onclick="rvCamRemover(${i})">✕ Remover camada</button>`}`;
   document.body.appendChild(w); rvIcAqui(w);
   const a=RV_CW.anc;
@@ -12342,7 +12423,7 @@ async function rvBaseTrocar(id){
   try{
     const resto=LAYERS.slice(1);
     await abrirDoCDE(id,null,false);
-    if(resto.length){ LAYERS.push(...resto); renderCamadas(); F.valido=false; render(); }
+    if(resto.length){ LAYERS.push(...resto); await geoConferirBase(true); renderCamadas(); F.valido=false; render(); try{ renderPins(); }catch(_){} }
   }catch(e){ rvAlerta('Erro ao abrir prancha do CDE: '+((e&&e.message)||e)); }
   rvLayoutPintar(); rvNavRender();
 }
@@ -12357,7 +12438,7 @@ function rvTornarBase(i){
     M.offset={ x:(M.offset.x-o.x)/k, y:(M.offset.y-o.y)*a.h*b.w/(b.h*a.w*k) }; M.scale=M.scale/k; });
   N.offset={ x:0, y:0 }; N.scale=1; N.opacity=1; if(B.opacity>=1) B.opacity=0.7;
   LAYERS.splice(i,1); LAYERS.unshift(N); setBaseShims(); FOCO_LI=0;
-  LAYERS.forEach((L,k2)=>setTimeout(()=>salvarEstadoCamada(L),k2*700));   // salvarEstadoCamada guarda só a última chamada de cada rajada
+  LAYERS.forEach((L,k2)=>salvarEstadoCamada(L, k2>0?'par':false));   // item 153: cada camada tem o próprio relógio; os pares novos ficam como estão na tela
   renderCamadas(); F.valido=false; render(); try{ renderPins(); renderListaApts(); }catch(_){}
   rvNavRender();
 }
@@ -12517,6 +12598,7 @@ async function _an2dTrocar(metas){
   } finally { _CDE_PRE.clear(); }
   if(!base){ if(LAYERS.length) rvFechar2d(); return faltando; }
   LAYERS.forEach((L,i)=>{ L._papel = i===0 ? 'base' : 'camada'; });
+  await geoConferirBase();
   if(mesmaBase){ renderPins(); renderListaApts(); }
   renderCamadas(); F.valido=false; render();
   return faltando;
